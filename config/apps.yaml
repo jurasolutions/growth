@@ -1,0 +1,57 @@
+# App factory settings (prd/pending/prd-jura-app-factory-2026-10-24.md §5.6, block 4).
+#
+# Hard limits live in jura_growth/caps.py (APP_PRDS_PER_DAY, APP_PRDS_WAITING_MAX).
+# A value here may lower a limit, never raise it.
+
+prds_per_day: 1
+waiting_max: 7
+
+categories: [Sales, Finance, Admin, HR, Marketing, Documents]
+
+# Official sources. Any *.gov.sg host counts (IRAS, MOM, CPF Board, MAS, ACRA).
+# Extra hosts accepted as official for a rule they own:
+extra_official_domains:
+  - abs.org.sg # Association of Banks in Singapore, which runs PayNow
+
+# The "date checked" on an Official sources line must be this recent.
+official_source_max_age_days: 7
+
+# Inside a scheduled run, every cited official URL must have been opened with
+# WebFetch in that run (read from the run's transcript).
+require_fetch_in_run: true
+
+# How far back the factory looks.
+usage_days: 7
+insights_days: 30
+
+# Structural rejections allowed per day before submit-prd stops accepting
+# attempts (the brand gate's own one-regeneration rule is separate).
+max_rejections_per_day: 4
+
+# Plain words accepted in tool names that the system dictionary lacks.
+name_words:
+  - email
+  - emails
+  - online
+  - payslip
+  - payslips
+  - timesheet
+  - timesheets
+  - checklist
+  - spreadsheet
+  - invoice
+  - invoices
+  - vcard
+  - csv
+  - pdf
+  - qr
+  - gst
+  - ocr
+  - e-invoice
+  - rota
+  - roster
+  - logbook
+  - to-do
+
+# Words that make a name read as marketing, not a plain tool name.
+banned_name_words: [pro, plus, ai, genie, hub, wizard, magic, smart, ninja, guru, express, lite, max, buddy, pal, bot, ultimate, instant]
