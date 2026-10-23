@@ -1,0 +1,149 @@
+# Social content agent settings.
+# PRD: jurasolutions/prd/pending/prd-jura-social-content-2026-10-24.md
+#
+# The 14-day no-repeat window and one post per platform per day are hard
+# limits in jura_growth/caps.py, not settings.
+
+# PRD open question 2. The rhythm includes Saturday and Sunday, so weekend
+# posts are on until Ting Yu says otherwise. `false` makes the 07:00 job skip
+# Saturdays and Sundays.
+weekends: true
+
+site: https://jurasolutions.sg
+
+# --- the weekly rhythm (PRD §5.2) -------------------------------------------
+#
+# If nothing good fits the day's theme, the run takes the next one in this
+# order (the next day's theme, then the one after).
+rhythm:
+  mon: ai-this-week
+  tue: automation-tip
+  wed: from-the-toolbox
+  thu: industry-pattern
+  fri: explainer
+  sat: light
+  sun: light
+
+themes:
+  ai-this-week:
+    label: AI this week
+    brief: "2–3 developments that matter to a small business, with links."
+    layout: list
+    news: true
+    min_sources: 2
+    max_sources: 3
+    # The 48 hours before 07:00 on a Monday are a weekend, so "this week"
+    # accepts developments from the last 7 days, newest first.
+    max_source_age_days: 7
+
+  automation-tip:
+    label: Automation tip
+    brief: "One small thing a team can automate this week."
+    layout: headline
+    max_sources: 2
+
+  from-the-toolbox:
+    label: From the toolbox
+    brief: "The newest or most-used tool, with a link to try it."
+    layout: tool
+    needs_tool: true
+    max_sources: 0
+
+  industry-pattern:
+    label: Industry pattern
+    brief: "How a business in one industry handles a task by hand, and what automating it looks like."
+    layout: list
+    max_sources: 2
+
+  explainer:
+    label: Explainer
+    brief: "One term in plain English, or a Singapore scheme explained with the official link."
+    layout: headline
+    max_sources: 2
+
+  light:
+    label: Weekend
+    brief: "A question to the audience, or a pointer to a good free resource."
+    layout: headline
+    max_sources: 1
+
+# --- platforms (PRD §5.3) ----------------------------------------------------
+#
+# publish_mode is `draft` (Ting Yu posts by hand from #social-drafts) or, once
+# block 3 is built and signed off, `auto`. Block 3 is not built: any other
+# value is treated as `draft` and the run says so.
+platforms:
+  linkedin:
+    label: LinkedIn page
+    enabled: true
+    words: [120, 220]
+    hashtags_max: 3
+    links: post
+    image: {width: 1200, height: 627}
+    publish_mode: draft
+
+  facebook:
+    label: Facebook Page
+    enabled: true
+    words: [60, 120]
+    hashtags_max: 2
+    links: post
+    image: {width: 1200, height: 630}
+    publish_mode: draft
+
+  instagram:
+    label: Instagram
+    enabled: true
+    words: [50, 120]
+    hashtags_max: 8
+    links: bio # captions don't make links clickable: write "Link in bio", no URL
+    image: {width: 1080, height: 1350}
+    carousel: {days: [mon, thu], max_slides: 5}
+    publish_mode: draft
+
+# --- brand rules specific to social posts (PRD §4) ---------------------------
+
+# Exactly this sentence goes in any post that mentions a grant or scheme.
+eligibility_line: "Check the official page for current eligibility."
+
+# A quotation longer than this many words fails: rewrite in Jura's own words.
+max_quote_words: 12
+
+# Topics a post never touches. Whole words or phrases, case-insensitive.
+blocked_topics:
+  - election
+  - elections
+  - electoral
+  - polling day
+  - general election
+  - campaign rally
+  - political party
+  - opposition party
+  - People's Action Party
+  - Workers' Party
+  - tragedy
+  - tragic
+  - fatal
+  - fatalities
+  - death toll
+  - killed
+  - murder
+  - terror attack
+  - terrorist
+  - shooting
+  - bombing
+  - massacre
+
+# Source links are fetched before a draft is accepted. A 404, 410 or an
+# address that doesn't resolve sends the draft back; 401, 403 and 429 (sites
+# that turn away scripts) are noted but accepted.
+verify_links: true
+
+# --- images ------------------------------------------------------------------
+
+render:
+  # JURA_GROWTH_CHROME overrides this.
+  chrome: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+  # Lets the Google web fonts the design system imports finish loading.
+  virtual_time_budget_ms: 8000
+  timeout_seconds: 60

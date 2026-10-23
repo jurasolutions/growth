@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- List card: overline, headline, short subtitle, then 2 to 5 numbered items. -->
+<html lang="en-SG">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width={{width}}, height={{height}}">
+<link rel="stylesheet" href="{{ds_styles}}">
+<link rel="stylesheet" href="{{card_css}}">
+</head>
+<body class="{{classes}}">
+<div class="card">
+  <main class="main">
+    <div class="intro">
+      <div class="overline">{{overline}}</div>
+      <h1 class="headline">{{{headline}}}</h1>
+      <p class="subtitle">{{{subtitle}}}</p>
+    </div>
+    <ol class="items">
+      {{{items}}}
+    </ol>
+  </main>
+  <footer class="foot">
+    <div class="lockup">{{{lockup}}}</div>
+    <div class="site">{{site}}</div>
+  </footer>
+</div>
+<script src="{{card_js}}"></script>
+</body>
+</html>

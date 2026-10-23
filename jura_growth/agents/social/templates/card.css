@@ -1,0 +1,305 @@
+/* Social image cards.
+ *
+ * Linked after design-system/styles.css. Every colour, font, weight, radius,
+ * shadow and space below is a design-system token; this file only lays out
+ * fixed-size canvases (the type sizes are in pixels because each card is a
+ * fixed-size image, not a responsive page).
+ *
+ * White first, green sparingly: the overline, the mark, the site address and
+ * the tool card's one button are the only green.
+ */
+
+html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+
+body {
+  background: var(--white);
+  color: var(--neutral-700);
+  font-family: var(--font-body);
+  letter-spacing: var(--tracking-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+.card {
+  --fit: 1;
+  box-sizing: border-box;
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: var(--pad);
+  background: var(--wash-brand);
+}
+
+.main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--gap);
+}
+
+.overline {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-medium);
+  font-size: var(--overline-size);
+  letter-spacing: var(--tracking-overline);
+  text-transform: uppercase;
+  color: var(--green-600);
+}
+
+.headline {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--weight-semibold);
+  font-size: calc(var(--headline-size) * var(--fit));
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-display);
+  color: var(--neutral-900);
+  text-wrap: balance;
+  max-width: var(--headline-measure, 20ch);
+  overflow-wrap: break-word;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: calc(var(--subtitle-size) * var(--fit));
+  line-height: var(--leading-normal);
+  color: var(--neutral-600);
+  text-wrap: pretty;
+  max-width: var(--subtitle-measure, 40ch);
+}
+
+.caption {
+  font-family: var(--font-mono);
+  font-size: var(--caption-size);
+  letter-spacing: var(--tracking-overline);
+  text-transform: uppercase;
+  color: var(--neutral-500);
+}
+
+.overline:empty, .subtitle:empty, .caption:empty { display: none; }
+.nw { white-space: nowrap; }
+
+.foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding-top: var(--foot-pad);
+  border-top: var(--border-hairline);
+}
+
+.lockup svg { display: block; height: var(--logo-h); width: auto; }
+
+.site {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-medium);
+  font-size: var(--site-size);
+  letter-spacing: 0.02em;
+  color: var(--green-600);
+}
+
+.mark-only, .mark-white, .site-inline { display: none; }
+
+/* --- formats ------------------------------------------------------------ */
+
+.fmt-landscape {
+  --pad: var(--space-9);
+  --gap: var(--space-5);
+  --overline-size: 17px;
+  --headline-size: 64px;
+  --subtitle-size: 27px;
+  --caption-size: 15px;
+  --item-size: 25px;
+  --site-size: 19px;
+  --logo-h: 48px;
+  --foot-pad: var(--space-5);
+  --headline-measure: 22ch;
+  --subtitle-measure: 44ch;
+}
+
+.fmt-portrait {
+  --pad: var(--space-10);
+  --gap: var(--space-6);
+  --overline-size: 22px;
+  --headline-size: 92px;
+  --subtitle-size: 36px;
+  --caption-size: 20px;
+  --item-size: 36px;
+  --site-size: 25px;
+  --logo-h: 64px;
+  --foot-pad: var(--space-6);
+  --headline-measure: 16ch;
+  --subtitle-measure: 34ch;
+}
+
+.fmt-square {
+  --pad: var(--space-10);
+  --gap: var(--space-6);
+  --overline-size: 22px;
+  --headline-size: 84px;
+  --subtitle-size: 34px;
+  --caption-size: 20px;
+  --item-size: 34px;
+  --site-size: 24px;
+  --logo-h: 60px;
+  --foot-pad: var(--space-6);
+}
+
+/* --- list card ---------------------------------------------------------- */
+
+.items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.items li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  border-top: var(--border-hairline);
+  font-size: calc(var(--item-size) * var(--fit));
+  line-height: var(--leading-snug);
+  font-weight: var(--weight-medium);
+  color: var(--neutral-800);
+}
+
+.items li:last-child { border-bottom: var(--border-hairline); }
+
+.items .num {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 0.68em;
+  letter-spacing: var(--tracking-overline);
+  color: var(--green-600);
+}
+
+.layout-list.fmt-landscape { --headline-size: 52px; --subtitle-size: 23px; --headline-measure: 15ch; }
+
+.layout-list.fmt-landscape .main {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  column-gap: var(--space-8);
+  align-items: center;
+}
+
+.layout-list .intro { display: flex; flex-direction: column; gap: var(--gap); }
+.layout-list.fmt-portrait .main { justify-content: center; }
+.layout-list.fmt-portrait .items { margin-top: var(--space-4); }
+
+/* --- tool card ---------------------------------------------------------- */
+
+.layout-tool.fmt-landscape .main {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  column-gap: var(--space-8);
+  align-items: center;
+}
+
+.layout-tool .intro { display: flex; flex-direction: column; gap: var(--gap); }
+.layout-tool.fmt-landscape { --headline-size: 60px; --subtitle-size: 24px; }
+
+.tags { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
+.tag {
+  font-size: calc(var(--caption-size) * 1.1);
+  font-weight: var(--weight-medium);
+  color: var(--neutral-700);
+  background: var(--neutral-100);
+  border-radius: var(--radius-full);
+  padding: 0.35em 0.9em;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  background: var(--surface-card);
+  border: var(--border-hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.panel .url {
+  font-family: var(--font-mono);
+  font-size: calc(var(--caption-size) * 1.05);
+  color: var(--neutral-500);
+  overflow-wrap: anywhere;
+}
+
+.panel .name {
+  font-family: var(--font-display);
+  font-weight: var(--weight-semibold);
+  font-size: calc(var(--item-size) * 1.2);
+  letter-spacing: var(--tracking-heading);
+  line-height: var(--leading-snug);
+  color: var(--neutral-900);
+}
+
+.button {
+  align-self: flex-start;
+  font-weight: var(--weight-medium);
+  font-size: calc(var(--item-size) * 0.85);
+  color: var(--brand-on);
+  background: var(--brand);
+  border-radius: var(--radius-sm);
+  padding: 0.6em 1.1em;
+}
+
+.note { font-size: calc(var(--caption-size) * 1.1); color: var(--neutral-500); }
+
+.layout-tool.fmt-portrait .panel { margin-top: var(--space-5); }
+
+/* --- profile picture (mark only) ---------------------------------------- */
+
+.mode-mark .main, .mode-mark .foot { display: none; }
+.mode-mark .card { padding: 0; align-items: center; justify-content: center; background: var(--white); }
+.mode-mark .mark-only { display: flex; }
+.mode-mark .mark-only svg { width: 52vw; height: 52vw; }
+.mode-mark.mode-dark .card { background: var(--green-900); }
+.mode-mark.mode-dark .mark-only { display: none; }
+.mode-mark.mode-dark .mark-white { display: flex; }
+.mode-mark.mode-dark .mark-white svg { width: 52vw; height: 52vw; }
+
+/* --- covers ------------------------------------------------------------- */
+
+/* Facebook cover, 1640×624. Phones crop the sides to about 1100 px, and the
+   profile picture sits over the lower left, so the words stay in the middle. */
+.fmt-cover {
+  --pad: var(--space-8) 270px var(--space-9);
+  --gap: var(--space-4);
+  --overline-size: 20px;
+  --headline-size: 64px;
+  --subtitle-size: 28px;
+  --site-size: 22px;
+  --headline-measure: 24ch;
+  --subtitle-measure: 48ch;
+}
+.fmt-cover .main { align-items: center; text-align: center; }
+.fmt-cover .foot { display: none; }
+.fmt-cover .caption { display: none; }
+.fmt-cover .site-inline { display: block; margin-top: var(--space-2); }
+
+/* LinkedIn cover, 1128×191. The page logo covers the lower left on desktop,
+   so the words sit to the right. */
+.fmt-banner {
+  --pad: var(--space-5) var(--space-8) var(--space-5) 300px;
+  --gap: var(--space-2);
+  --overline-size: 13px;
+  --headline-size: 34px;
+  --subtitle-size: 16px;
+  --headline-measure: 40ch;
+}
+.fmt-banner .main { align-items: flex-end; text-align: right; }
+.fmt-banner .subtitle, .fmt-banner .foot, .fmt-banner .caption { display: none; }
+.fmt-banner { --site-size: 15px; }
+.fmt-banner .site-inline { display: block; }
