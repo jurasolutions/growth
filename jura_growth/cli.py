@@ -259,6 +259,10 @@ def status() -> None:
     click.echo("")
     configured = [c for c in discord.channels() if discord.webhook(c)]
     click.echo(f"discord    {len(configured)} of {len(discord.channels())} channel webhooks set")
+    loaded = ", ".join(m.NAME for m in agents.plugins() if getattr(m, "NAME", None)) or "none"
+    click.echo(f"agents     {loaded}")
+    for name, error in agents.BROKEN.items():
+        click.echo(f"BROKEN     agent plug-in {name}: {error}")
     note = holidays.coverage_warning()
     if note:
         click.echo(f"holidays   {note}")

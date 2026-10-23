@@ -31,17 +31,31 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+import sys
 from functools import lru_cache
 from types import ModuleType
 
 
+BROKEN: dict[str, str] = {}
+
+
 @lru_cache(maxsize=None)
 def plugins() -> tuple[ModuleType, ...]:
+    """Every agent plug-in that imports cleanly.
+
+    A plug-in that fails to import is skipped and reported on stderr (and in
+    `BROKEN`), so one broken agent never stops the others, the digest or the
+    kill switches.
+    """
     found = []
     for info in sorted(pkgutil.iter_modules(__path__), key=lambda i: i.name):
         if info.name.startswith("_"):
             continue
-        found.append(importlib.import_module(f"{__name__}.{info.name}"))
+        try:
+            found.append(importlib.import_module(f"{__name__}.{info.name}"))
+        except Exception as error:  # noqa: BLE001
+            BROKEN[info.name] = f"{type(error).__name__}: {error}"
+            print(f"warning: agent plug-in {info.name!r} failed to load: {BROKEN[info.name]}", file=sys.stderr)
     return tuple(found)
 
 

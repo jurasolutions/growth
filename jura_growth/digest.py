@@ -56,6 +56,9 @@ def build(conn: sqlite3.Connection, day: str | None = None) -> dict:
         lines += part.get("lines", [])
         brief += part.get("brief", [])
 
+    for name, error in agents.BROKEN.items():
+        lines.append(f"{name}: plug-in failed to load ({error[:120]})")
+        brief.append(f"{name} plug-in broken")
     if paused:
         brief.append("paused: " + ", ".join(p["agent"] for p in paused))
     if failures:
