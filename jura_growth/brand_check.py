@@ -145,14 +145,16 @@ def check(
 
 # --- shared text helpers ---------------------------------------------------
 
-URL_RE = re.compile(r"\bhttps?://[^\s<>()\[\]\"']+|\bwww\.[^\s<>()\[\]\"']+", re.I)
+# URLs may hold balanced parentheses (IRAS: .../goods-services-tax-(gst)/...).
+_URL_CHARS = r"(?:[^\s<>()\[\]\"']|\([^\s<>()\[\]\"']*\))+"
+URL_RE = re.compile(rf"\bhttps?://{_URL_CHARS}|\bwww\.{_URL_CHARS}", re.I)
 EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
 TLDS = "sg|com|net|org|io|ai|co|gov|edu|app|dev|info|biz|me|asia|xyz|tech|my|uk|au|us"
 BARE_DOMAIN_RE = re.compile(
     rf"(?<![@\w./-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:{TLDS})(?:\.[a-z]{{2}})?\b(?:/[^\s<>()\[\]\"']*)?",
     re.I,
 )
-MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
+MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)\)")
 
 
 def find_links(text: str) -> list[str]:
@@ -389,7 +391,9 @@ FIGURE_RE = re.compile(
 WORD_FIGURE_RE = re.compile(
     r"\b(?:dozens|hundreds|thousands|millions|billions|twice|double|triple|tenfold|half)\b(?!-)", re.I
 )
-JURA_SELF_RE = re.compile(r"\b(?:jura|we|we'?ve|we'?re|we'?ll|we'?d|our|ours|us)\b", re.I)
+# "we're" needs its apostrophe ("were", "well" and "wed" are not Jura), and
+# "us" is lower case only ("US" is the country).
+JURA_SELF_RE = re.compile(r"\b(?:jura|we|we['’](?:ve|re|ll|d)|our|ours|(?-i:us))\b", re.I)
 RESULT_RE = re.compile(
     r"%|\bper ?cent\b|\bpercent\b|\b(?:sav(?:e|es|ed|ing|ings)|faster|quicker|cut|cuts|reduc\w*|"
     r"increas\w*|boost\w*|grow\w*|improv\w*|roi|return on|revenue|profit\w*|clients?|customers?|"
@@ -403,7 +407,8 @@ INTERFACE_UNIT_RE = re.compile(
     r"items?|lines?|characters?|chars|words?|pages?|decimal places?|digits?|columns?|rows?|"
     r"days?|weeks?|months?|minutes?|seconds?|steps?|questions?|fields?|tools?|tips?|ways?|"
     r"things?|ideas?|platforms?|posts?|groups?|templates?|layouts?|cards?|slides?|"
-    r"places?|categories|formats?)\b",
+    r"places?|categories|formats?|pdfs?|documents?|docs?|invoices?|quotes?|quotations?|"
+    r"contacts?|entries|records?|sheets?|tabs?)\b",
     re.I,
 )
 
@@ -562,6 +567,8 @@ def _links(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
             continue
         if not chosen.allow_sources:
             issues.append(Issue("links", "Links only to jurasolutions.sg on this channel", link))
-        elif declared and _normalise(link) not in declared:
+        elif not declared:
+            issues.append(Issue("links", "Declare each third-party link as a cited source", link))
+        elif _normalise(link) not in declared:
             issues.append(Issue("links", "Link is not one of the cited sources", link))
     return issues

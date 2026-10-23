@@ -19,7 +19,7 @@ from pathlib import Path
 from jura_growth import brand_check
 
 HEADING_KEYS = re.compile(
-    r"(heading|title|button|label|cta|primary|secondary|subject|eyebrow|name|tab|action)", re.I
+    r"(heading|(?<!sub)title|button|label|cta|primary|secondary|subject|eyebrow|name|tab|action)", re.I
 )
 SKIP_KEYS = re.compile(r"^(icon|href|slug|id|key|type|tier|status|category|added|prd|className|variant|src)$")
 JS_PAIR = re.compile(
@@ -77,15 +77,31 @@ def items_from_markdown(source: str) -> list[Item]:
     section = re.search(r"^#{2,4}\s+[\d.]*\s*Copy\b.*?$(.*?)(?=^#{1,4}\s)", source, re.S | re.M)
     if not section:
         return []
-    found = []
+    # A bullet may wrap onto indented continuation lines; join them first.
+    bullets: list[str] = []
     for line in section.group(1).splitlines():
-        bullet = re.match(r"^\s*-\s+(?P<label>[^:]+):\s*(?P<rest>.+)$", line)
-        if not bullet:
+        if re.match(r"^\s*-\s+", line):
+            bullets.append(line.strip()[1:].strip())
+        elif bullets and line.strip():
+            bullets[-1] += " " + line.strip()
+
+    found = []
+    for bullet in bullets:
+        match = re.match(r"^(?P<label>[^:\"“]+):\s*(?P<rest>.+)$", bullet)
+        if not match:
             continue
-        label = bullet.group("label").strip()
-        for quoted in re.findall(r"[\"“]([^\"”]+)[\"”]", bullet.group("rest")):
-            kind = "heading" if HEADING_KEYS.search(label) or re.search(r"button|heading|title", label, re.I) else "body"
-            found.append(Item(label, quoted, kind))
+        label = match.group("label").strip()
+        # `heading "..."; body "..."; button "..."` labels each string inline.
+        for part in re.finditer(r"(?:\b(?P<sub>[A-Za-z-]+)\s+)?[\"“](?P<text>[^\"”]+)[\"”]", match.group("rest")):
+            sub = (part.group("sub") or "").lower()
+            if sub in ("heading", "title", "button", "label"):
+                kind = "heading"
+            elif sub in ("body", "text", "note"):
+                kind = "body"
+            else:
+                kind = "heading" if HEADING_KEYS.search(label) else "body"
+            where = f"{label} ({sub})" if sub in ("heading", "title", "button", "label", "body") else label
+            found.append(Item(where, part.group("text"), kind))
     return found
 
 

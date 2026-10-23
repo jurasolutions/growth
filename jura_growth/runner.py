@@ -24,7 +24,7 @@ import sqlite3
 import subprocess
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
@@ -147,11 +147,34 @@ def _schedule_reason(spec: dict) -> str | None:
 
 
 def _abandon_stale(conn: sqlite3.Connection) -> None:
-    """Mark runs left 'running' by a killed process as failed."""
+    """Mark runs left 'running' by a killed process as failed.
+
+    Uses the real clock, never a frozen JURA_GROWTH_NOW, and leaves alone any
+    run whose job lock is still held: that process is alive.
+    """
     limit = int(config.settings()["claude"].get("timeout_minutes", 30)) + 15
-    cutoff = timeutil.stamp(timeutil.now_sgt() - timedelta(minutes=limit))
-    for row in conn.execute("SELECT id FROM runs WHERE status = 'running' AND started_at < ?", (cutoff,)).fetchall():
+    cutoff = datetime.now(timeutil.SGT) - timedelta(minutes=limit)
+    for row in conn.execute("SELECT id, job, started_at FROM runs WHERE status = 'running'").fetchall():
+        try:
+            started = timeutil.parse(row["started_at"])
+        except ValueError:
+            continue
+        if started > cutoff or _lock_held(row["job"]):
+            continue
         log.finish_run(conn, row["id"], "failed", error="abandoned: the process stopped before finishing")
+
+
+def _lock_held(name: str) -> bool:
+    path = paths.data_dir() / "locks" / f"{name}.lock"
+    if not path.exists():
+        return False
+    with open(path, "a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    return False
 
 
 # --- command jobs ----------------------------------------------------------
@@ -297,8 +320,18 @@ def _run_claude(name: str, spec: dict, agent: str, run_id: int | None) -> Outcom
     )
     if result.get("is_error") or process.returncode != 0:
         return Outcome("failed", summary=text[:2000], error=f"claude {result.get('subtype', 'error')}", cost_usd=cost)
-    if text.upper().startswith("FAIL:"):
-        return Outcome("failed", summary=text[:2000], error=text[:500], cost_usd=cost)
+    return _judge(text, cost, agent, run_id)
+
+
+def _judge(text: str, cost: float | None, agent: str, run_id: int | None) -> Outcome:
+    """A run fails if any line of its summary starts with FAIL:. A summary with
+    no OK:/SKIP:/FAIL: prefix at all is recorded as ok but flagged."""
+    lines = [line.strip().lstrip("*_`> ").upper() for line in text.splitlines() if line.strip()]
+    if any(line.startswith("FAIL:") for line in lines):
+        failing = next(l for l in text.splitlines() if l.strip().lstrip("*_`> ").upper().startswith("FAIL:"))
+        return Outcome("failed", summary=text[:2000], error=failing.strip()[:500], cost_usd=cost)
+    if not any(line.startswith(("OK:", "SKIP:")) for line in lines):
+        log.event(None, "claude.unprefixed", {"summary": text[:300]}, level="warning", agent=agent, run_id=run_id)
     return Outcome("ok", summary=text[:2000], cost_usd=cost)
 
 

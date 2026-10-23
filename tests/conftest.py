@@ -13,6 +13,11 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(tmp_path / "no.env"))
     monkeypatch.setenv("JURA_GROWTH_LAUNCH_AGENTS", str(tmp_path / "LaunchAgents"))
     monkeypatch.setenv("JURA_GROWTH_DISCORD", "off")
+    # Never read the real inputs/, PRD folders or website registry from a test.
+    # Tests that need them build their own and set these again.
+    monkeypatch.setenv("JURA_INPUTS_DIR", str(tmp_path / "inputs"))
+    monkeypatch.setenv("JURA_PRD_DIR", str(tmp_path / "prd"))
+    monkeypatch.setenv("JURA_SITE_REPO", str(tmp_path / "site"))
     for name in ("JURA_GROWTH_RUN_ID", "JURA_GROWTH_AGENT", "JURA_GROWTH_JOB", "JURA_GROWTH_NOW"):
         monkeypatch.delenv(name, raising=False)
     config.reset_caches()

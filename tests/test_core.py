@@ -366,3 +366,59 @@ def test_check_command_exit_codes():
     failed = invoke("check", "Amazing!")
     assert failed.exit_code == 1 and "exclamation" in failed.output
     assert invoke("check", "-", input="Plain text from stdin.").exit_code == 0
+
+
+# --- fixes from the agents' reports ----------------------------------------
+
+
+def test_urls_keep_balanced_parentheses():
+    from jura_growth.brand_check import find_links
+
+    url = "https://www.iras.gov.sg/taxes/goods-services-tax-(gst)/basics-of-gst"
+    assert url in find_links(f"See {url} for the rate.")
+    assert url in find_links(f"See [the IRAS page]({url}).")
+
+
+def test_documents_are_interface_quantities():
+    from jura_growth.brand_check import check
+
+    assert "numbers" not in {i.rule for i in check("Merge up to 20 PDFs into one file.").issues}
+
+
+def test_fail_line_anywhere_fails_the_run():
+    assert runner._judge("Did some work.\nFAIL: no ICP file", 0.1, "x", None).status == "failed"
+    assert runner._judge("**FAIL:** could not reach IRAS", 0.1, "x", None).status == "failed"
+    assert runner._judge("OK: wrote APP-004", 0.1, "x", None).status == "ok"
+    assert runner._judge("SKIP: nothing to do", 0.1, "x", None).status == "ok"
+
+
+def test_stale_sweep_ignores_frozen_clock_and_held_locks(isolated, conn, monkeypatch):
+    run_id = log.start_run(conn, "social", "social")  # started now, real clock
+    monkeypatch.setenv("JURA_GROWTH_NOW", "2030-01-01T00:00:00+08:00")
+    runner._abandon_stale(conn)
+    assert db.scalar(conn, "SELECT status FROM runs WHERE id = ?", (run_id,)) == "running"
+    conn.execute("UPDATE runs SET started_at = '2026-01-01T00:00:00+08:00' WHERE id = ?", (run_id,))
+    with runner._lock("social") as held:
+        assert held
+        runner._abandon_stale(conn)
+        assert db.scalar(conn, "SELECT status FROM runs WHERE id = ?", (run_id,)) == "running"
+    runner._abandon_stale(conn)
+    assert db.scalar(conn, "SELECT status FROM runs WHERE id = ?", (run_id,)) == "failed"
+
+
+def test_markdown_copy_reads_wrapped_bullets_and_inline_labels():
+    from jura_growth.copy_check import items_from_markdown
+
+    source = (
+        "### 5.2 Copy\n"
+        "- Subtitle: \"Make a clean quote with your logo and send it as\n"
+        "  a PDF in a few minutes.\"\n"
+        "- Talk-to-us card: heading \"Quotes, jobs and invoices, entered once\"; body \"We can connect\n"
+        "  your quoting to your jobs.\"; button \"Tell us how you quote today\"\n"
+        "\n### 5.3 Technical\n"
+    )
+    items = {(i.text, i.kind) for i in items_from_markdown(source)}
+    assert ("Make a clean quote with your logo and send it as a PDF in a few minutes.", "body") in items
+    assert ("Quotes, jobs and invoices, entered once", "heading") in items
+    assert ("We can connect your quoting to your jobs.", "body") in items
+    assert ("Tell us how you quote today", "heading") in items

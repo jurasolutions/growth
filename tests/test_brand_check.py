@@ -164,8 +164,10 @@ def test_neutral_figures_pass(text):
 
 
 def test_statutory_rate_with_official_source_passes():
-    text = "GST is charged at 9% (source: https://www.iras.gov.sg/taxes/goods-services-tax-(gst))."
-    assert "numbers" not in rules(check(text, channel_name="news"))
+    source = "https://www.iras.gov.sg/taxes/goods-services-tax-(gst)"
+    text = f"GST is charged at 9% (source: {source})."
+    result = check(text, channel_name="news", sources=[source])
+    assert result.passed, result.reasons()
 
 
 def test_statutory_rate_without_source_fails():
@@ -247,3 +249,15 @@ def test_find_links():
 def test_unknown_channel_is_an_error():
     with pytest.raises(ValueError):
         check("text", channel_name="no-such-channel")
+
+
+def test_were_and_us_are_not_jura():
+    text = "A survey found 86% of owners were using AI, and US firms led. https://example.com/survey"
+    result = check(text, channel_name="news", sources=["https://example.com/survey"])
+    assert "numbers" not in rules(result), result.reasons()
+    assert "numbers" in rules(check("We're now trusted by 40 firms.", channel_name="news", sources=["https://example.com/survey"]))
+    assert "numbers" in rules(check("Tell us about the 12,000 invoices we filed."))
+
+
+def test_news_links_must_be_declared():
+    assert "links" in rules(check("See https://example.com/report", channel_name="news"))

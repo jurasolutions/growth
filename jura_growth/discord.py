@@ -87,6 +87,7 @@ def post(
     files: list[Path] | None = None,
     username: str | None = None,
     dedupe: bool = True,
+    suppress_embeds: bool = False,
     client: httpx.Client | None = None,
 ) -> PostResult:
     if channel not in channels():
@@ -112,7 +113,7 @@ def post(
     try:
         for index, piece in enumerate(pieces):
             last = index == len(pieces) - 1
-            _send(client, url, piece, files if last else [], username)
+            _send(client, url, piece, files if last else [], username, suppress_embeds)
     except DiscordError as error:
         log.event(conn, "discord.error", {"channel": channel, "error": str(error)}, level="error")
         return PostResult(channel, delivered=False, reason=str(error))
@@ -136,8 +137,15 @@ class DiscordError(RuntimeError):
     pass
 
 
-def _send(client: httpx.Client, url: str, content: str, files: list[Path], username: str | None) -> None:
+SUPPRESS_EMBEDS = 1 << 2  # Discord message flag: no link previews
+
+
+def _send(
+    client: httpx.Client, url: str, content: str, files: list[Path], username: str | None, suppress_embeds: bool = False
+) -> None:
     payload = {"content": content, "allowed_mentions": {"parse": []}}
+    if suppress_embeds:
+        payload["flags"] = SUPPRESS_EMBEDS
     if username:
         payload["username"] = username[:80]
     for attempt in range(3):
