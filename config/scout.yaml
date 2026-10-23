@@ -1,0 +1,84 @@
+# Scout and outreach settings (jurasolutions/prd/pending/prd-jura-scout-2026-10-24.md).
+#
+# Read by both plug-ins: `scout` (research, 09:00) and `outreach` (sending
+# every 10 minutes 09:30–16:30, sync at 16:45). Hard limits live in
+# jura_growth/caps.py; a value here may lower one, never raise it. The sender
+# name ("Ting Yu, Jura Solutions"), Reply-To (info@jurasolutions.sg) and the
+# footer are fixed in code.
+#
+# `jura-growth outreach status` shows what these add up to, including every
+# reason live mode would refuse to start.
+
+# shadow: the full flow runs, but each "send" is recorded and posted to
+#   #outreach-sent marked SHADOW. Resend is never called.
+# live: real email through Resend. Refused unless legal_review_done is true,
+#   sending_domain is set, RESEND_API_KEY_OUTREACH and UNSUBSCRIBE_SECRET are
+#   set, inputs/do-not-contact.csv exists and D1 is configured.
+mode: shadow
+
+# PRD open question 1: a Singapore lawyer's view on the Spam Control Act's
+# address-harvesting provision. Set to true only once Ting Yu has it.
+legal_review_done: false
+
+# PRD open question 2: jurasolutions.sg (Resend free plan, shared with the
+# enquiry form) or a subdomain such as hello.jurasolutions.sg (Resend Pro).
+# Must be verified in Resend. Mail goes out from <from_local_part>@<sending_domain>.
+sending_domain: null
+from_local_part: tingyu
+
+research:
+  # New leads a day. The add-lead command refuses more (code ceiling: 30).
+  daily_target: 15
+  # Leads below this are not kept. The PRD's floor is 60; config may only raise it.
+  score_threshold: 60
+  # 1 or 2 industries a day, rotating by business day.
+  industries_per_day: 2
+  # Research skips a day when this many emails are already waiting to send,
+  # so the queue doesn't outgrow the warm-up caps.
+  max_queue: 40
+  # Used only when inputs/icp.md has no "Industries" heading with bullets.
+  industries:
+    - field service and maintenance
+    - logistics and delivery
+    - F&B groups
+    - renovation and interior design
+    - clinics and allied health (admin side only)
+    - accounting and corporate secretarial firms
+    - events
+    - wholesale and distribution
+    - property agencies
+    - education centres
+
+send:
+  # SGT, business days. Never wider than 09:30–16:30.
+  window: {start: "09:30", end: "16:30"}
+  per_day: 20
+  rolling_30_days: 600
+  rolling_365_days: 8000
+  per_run: 1
+  # Warm-up (5 a day in week 1, 10 in week 2, then 20) counts from the first
+  # live send. Set a date (YYYY-MM-DD) here to count from that day instead.
+  warmup_start: null
+
+follow_ups:
+  # One follow-up, 5 business days after the first email, and only when reply
+  # detection is set up (OUTREACH_IMAP_* in .env). Without it, no follow-ups.
+  enabled: true
+  after_business_days: 5
+
+# Added to jurasolutions.sg links in the HTML part only (never to the
+# unsubscribe link, never to anyone else's site).
+utm:
+  utm_source: outreach
+  utm_medium: email
+  utm_campaign: scout
+
+retention:
+  # Leads that never replied are deleted after this many months (max 24); the
+  # domain stays in contacted_domains so the company is never emailed again.
+  lead_months: 24
+  rejection_months: 12
+
+# A named person's address is used only if the business publishes it as its
+# enquiry contact, and never when the same page lists a role address.
+allow_named_contacts: true
