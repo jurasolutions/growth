@@ -103,6 +103,47 @@ def sync_cmd() -> str:
     return summary
 
 
+@outreach_group.command("requeue-shadow")
+@click.option("--since", help="Only shadow emails sent on or after this date (YYYY-MM-DD).")
+@click.option("--lead", "lead_ids", multiple=True, type=int, help="Only this lead; repeatable.")
+@click.option("--dry-run", is_flag=True, help="List what would be requeued, change nothing.")
+@click.option("--json", "as_json", is_flag=True)
+def requeue_shadow(since, lead_ids, dry_run, as_json) -> None:
+    """After the shadow trial: queue shadow emails for live sending.
+
+    Runs only when live mode is ready. Each requeued email goes through every
+    send-time check and the brand gate again, recomposed with the live
+    unsubscribe token. Companies that are suppressed, on the do-not-contact
+    list or already contacted live are left alone. Safe to run twice.
+    """
+    from jura_growth.agents.outreach import requeue
+
+    if since:
+        try:
+            timeutil.parse(since)
+        except ValueError:
+            raise click.UsageError("--since must be a date, YYYY-MM-DD") from None
+    with db.session() as conn:
+        try:
+            plan = requeue.requeue_shadow(conn, since=since, lead_ids=lead_ids, dry_run=dry_run)
+        except requeue.RequeueError as error:
+            click.echo(str(error))
+            sys.exit(1)
+    if as_json:
+        _echo_json(plan.as_dict())
+        return
+    verb = "would requeue" if dry_run else "requeued"
+    for item in plan.requeued:
+        target = "" if dry_run else f" as message {item['message_id']}"
+        click.echo(f"{verb} shadow message {item['shadow_id']}{target}: {item['domain']} ({item['subject']})")
+    for item in plan.skipped:
+        click.echo(f"left alone shadow message {item['shadow_id']} ({item['domain'] or 'lead ' + str(item['lead_id'])}): {item['reason']}")
+    if not plan.requeued and not plan.skipped:
+        click.echo("no shadow emails to requeue")
+    else:
+        click.echo(f"{len(plan.requeued)} {verb}, {len(plan.skipped)} left alone")
+
+
 @outreach_group.command("queue-list")
 @click.option("--all", "show_all", is_flag=True, help="Include sent, skipped and dropped messages.")
 @click.option("--limit", default=50, show_default=True)

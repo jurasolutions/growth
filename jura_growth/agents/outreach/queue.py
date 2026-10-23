@@ -18,6 +18,10 @@ from jura_growth.agents.scout import contact as contact_rules
 from jura_growth.agents.scout import dnc, registry, settings
 
 
+# Message statuses that don't hold the company's one first email (or follow-up).
+INACTIVE = "('dropped', 'cancelled', 'skipped', 'failed', 'requeued')"
+
+
 class QueueError(ValueError):
     pass
 
@@ -67,11 +71,14 @@ def blockers(conn: sqlite3.Connection, lead: dict, row: dict, kind: str) -> list
         found.append(f"on inputs/do-not-contact.csv ({entry.company or entry.domain})")
     if lead["status"] in store.FINAL_LEAD_STATUSES:
         found.append(f"lead {lead['id']} is {lead['status']}")
+    # Live sends only: a shadow send contacted no one. (In shadow mode the
+    # unique index still holds one active first email per company.)
     sent = {
         r["kind"]: r["n"]
         for r in db.rows(
             conn,
-            "SELECT kind, count(*) AS n FROM outreach_messages WHERE lead_id = ? AND sent_at IS NOT NULL GROUP BY kind",
+            "SELECT kind, count(*) AS n FROM outreach_messages WHERE lead_id = ? AND mode = 'live' "
+            "AND sent_at IS NOT NULL GROUP BY kind",
             (lead["id"],),
         )
     }
@@ -97,24 +104,25 @@ def build(conn: sqlite3.Connection, lead: dict, row: dict, *, subject: str, body
     )
 
 
-def gate_email(conn: sqlite3.Connection, item_key: str, lead: dict, email: compose.Email, *, kind: str, tool: str | None, alert: bool = True) -> gate.GateResult:
-    tools = registry.live_slugs()
-    return gate.gate(
-        conn,
-        item_key,
-        email.check_text,
-        agent=store.AGENT,
-        alert=alert,
-        subject=email.subject,
-        channel_name="email",
-        proper_nouns=[lead["company"], lead["display_name"]],
-        context={
+def check_args(lead: dict, email: compose.Email, *, kind: str, tool: str | None) -> dict:
+    """The brand-check arguments for an outreach email (gate and pre-checks alike)."""
+    return {
+        "subject": email.subject,
+        "channel_name": "email",
+        "proper_nouns": [lead["company"], lead["display_name"]],
+        "context": {
             "company": lead["display_name"],
             "observations": json.loads(lead["observations_json"] or "[]"),
-            "tools": tools,
+            "tools": registry.live_slugs(),
             "tool": tool,
             "kind": kind,
         },
+    }
+
+
+def gate_email(conn: sqlite3.Connection, item_key: str, lead: dict, email: compose.Email, *, kind: str, tool: str | None, alert: bool = True) -> gate.GateResult:
+    return gate.gate(
+        conn, item_key, email.check_text, agent=store.AGENT, alert=alert, **check_args(lead, email, kind=kind, tool=tool)
     )
 
 
@@ -138,7 +146,7 @@ def queue(conn: sqlite3.Connection, lead_id: int, data: dict) -> Queued:
         existing = db.one(
             conn,
             "SELECT id, status FROM outreach_messages WHERE lead_id = ? AND kind = 'first' "
-            "AND status NOT IN ('dropped', 'cancelled', 'skipped', 'failed')",
+            f"AND status NOT IN {INACTIVE}",
             (lead_id,),
         )
         if existing:

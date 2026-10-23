@@ -144,7 +144,7 @@ def follow_up_problem(conn: sqlite3.Connection, lead_id: int, today: date | None
     existing = db.one(
         conn,
         "SELECT id, status FROM outreach_messages WHERE lead_id = ? AND kind = 'follow_up' "
-        "AND status NOT IN ('dropped', 'cancelled', 'skipped', 'failed')",
+        "AND status NOT IN ('dropped', 'cancelled', 'skipped', 'failed', 'requeued')",
         (lead_id,),
     )
     if existing:

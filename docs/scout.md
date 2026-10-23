@@ -43,6 +43,7 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
 | `outreach suppress <email\|domain>` | Suppress and cancel anything queued for it |
 | `outreach unsubscribe-link <email>` | The unsubscribe URL, to test the website's function |
 | `outreach status [--json]` | Mode, every reason live mode would refuse, caps, warm-up, queue |
+| `outreach requeue-shadow [--since YYYY-MM-DD] [--lead ID ...] [--dry-run]` | After the shadow trial: queue shadow emails for live sending (live mode only) |
 
 ## Block 1: research and the contact rules (code, not prompt)
 
@@ -146,9 +147,10 @@ its draft at send time, so the real token is always the one sent.
 6. D1 suppression sync. A failed sync pauses outreach. No D1: a logged warning in shadow, a
    refusal in live.
 7. Per message: suppression (address and domain), do-not-contact, `contacted_domains`, one
-   first email and one follow-up per company ever (also a unique index), the brand gate again.
+   first email and one follow-up per company ever (counted on live sends; a unique index also
+   keeps one active first email per company), the brand gate again.
 8. Shadow: status `shadow`, posted to `#outreach-sent` as **SHADOW** with the subject and body;
-   Resend is never called. Live: `POST https://api.resend.com/emails` with the outreach key,
+   Resend is never called, and nothing goes into `contacted_domains` (no one was contacted). Live: `POST https://api.resend.com/emails` with the outreach key,
    from `"Ting Yu, Jura Solutions" <tingyu@<sending_domain>>`, Reply-To
    info@jurasolutions.sg, text and HTML, the unsubscribe headers and an `Idempotency-Key`; the
    domain goes into `contacted_domains`; `#outreach-sent` gets the domain, subject and first
@@ -156,6 +158,26 @@ its draft at send time, so the real token is always the one sent.
 
 Resend 401/403, quota 429 and domain 422 errors pause outreach. 5xx and rate limits retry
 (the message fails after three tries). Other 4xx errors fail the message.
+
+### After the shadow trial: requeue-shadow
+
+A shadow email was never delivered, so its company was never contacted.
+`jura-growth outreach requeue-shadow` turns shadow first emails back into queued live
+candidates:
+
+- It refuses unless live sending is ready (`outreach status` shows every pre-condition
+  holding), so it can't run in shadow mode.
+- It leaves alone any company that is suppressed (address or domain), on the do-not-contact
+  list, in `contacted_domains`, finished (replied, unsubscribed ...), already holding an
+  active first email, or whose email fails the brand check as it stands now (for example its
+  tool was unpublished). Each is listed with the reason.
+- The shadow row keeps its record (mode `shadow`, sent time) with status `requeued`; a new
+  queued row (`requeued_from`) is recomposed with the live unsubscribe token and goes through
+  the whole send run: window, live caps and warm-up, spacing, the D1 sync, every per-message
+  check and the brand gate.
+- It is idempotent: a second run finds nothing to requeue.
+- `--dry-run` lists what it would do; `--since` and `--lead` narrow it to the emails you
+  reviewed and are happy with.
 
 ### Sync, replies and follow-ups
 
@@ -229,6 +251,10 @@ a failed suppression sync. `jura-growth resume outreach` restarts it.
       (not built in; the footer would need a code change).
 - [ ] Optional: `OUTREACH_IMAP_*` for reply detection and follow-ups (open question 3).
 - [ ] `jura-growth outreach status` shows "every pre-condition holds" once `mode: live` is set.
+- [ ] After the shadow trial, review and requeue the shadow emails you're happy with:
+      `jura-growth outreach queue-list --all` and `outreach preview <id>` to review, then
+      `jura-growth outreach requeue-shadow --dry-run`, then run it for real (narrow it with
+      `--lead ID` or `--since YYYY-MM-DD`). They go out under the live warm-up caps.
 - [ ] Watch the first live day: at most 5 sends, spread across the window. Test a complaint
       from Resend's dashboard or a test webhook: outreach pauses; `jura-growth resume outreach`.
 

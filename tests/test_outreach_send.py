@@ -393,17 +393,27 @@ def test_contacted_domain_is_never_emailed_twice(conn, monkeypatch):
 
 
 def test_one_first_email_per_company(conn, monkeypatch):
-    at(monkeypatch, MONDAY_10AM)
-    seeded = seed(conn, 1)
-    assert send.send_due(conn).summary.startswith("SHADOW")
     from jura_growth.agents.outreach import queue as queue_mod
 
+    at(monkeypatch, MONDAY_10AM)
+    seeded = seed(conn, 1)
+    # shadow: the company keeps one active first email, so a second can't be queued
+    assert send.send_due(conn).summary.startswith("SHADOW")
     with pytest.raises(queue_mod.QueueError, match="already has a first email"):
         queue_mod.queue(conn, seeded["lead_id"], {"subject": "Again", "body": "Hi", "tool": "quote-builder"})
-    # and the send-time check refuses a second first email for the company
     lead = db.one(conn, "SELECT * FROM leads WHERE id = ?", (seeded["lead_id"],))
     row = db.one(conn, "SELECT * FROM contacts WHERE lead_id = ?", (seeded["lead_id"],))
-    assert "has had its first email" in " ".join(queue_mod.blockers(conn, lead, row, "first"))
+    assert queue_mod.blockers(conn, lead, row, "first") == []  # a shadow send contacted no one
+
+    # live: after a real send, the per-company rule and contacted_domains both refuse a second
+    other = seed(conn, 2)
+    live_ready(monkeypatch)
+    fake_resend(monkeypatch)
+    assert send.send_due(conn).summary == f"sent message {other['message_id']} to birchlogistics.sg"
+    lead = db.one(conn, "SELECT * FROM leads WHERE id = ?", (other["lead_id"],))
+    row = db.one(conn, "SELECT * FROM contacts WHERE lead_id = ?", (other["lead_id"],))
+    reasons = " ".join(queue_mod.blockers(conn, lead, row, "first"))
+    assert "has had its first email" in reasons and "contacted before" in reasons
 
 
 def test_brand_gate_runs_again_at_send_time(conn, monkeypatch):
