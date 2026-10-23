@@ -1,0 +1,106 @@
+# Jura growth settings.
+#
+# Hard limits live in jura_growth/caps.py. A value here may lower a limit,
+# never raise it; raising one is a code change.
+#
+# Every time below is Singapore time (SGT, UTC+8). `jura-growth schedule
+# install` converts to the Mac's local zone if it differs.
+
+discord:
+  server: Jura HQ
+  channels:
+    - daily-digest
+    - scout-leads
+    - outreach-sent
+    - outreach-replies
+    - app-factory
+    - social-drafts
+    - community
+    - alerts
+
+# Headless Claude Code runs (`claude -p`).
+claude:
+  binary: claude
+  timeout_minutes: 30
+  # Per-run spending ceiling passed as --max-budget-usd. A job may set its own.
+  max_budget_usd: 3.00
+  model: null # null keeps Claude Code's default
+
+# An agent pauses itself after this many failed runs in a row.
+auto_pause_after_failures: 3
+
+retention:
+  backups_days: 14
+  transcripts_days: 30
+
+# Jobs `pause all` leaves running: housekeeping, and the digest that reports
+# the pause.
+system_agents: [digest, backup]
+
+jobs:
+  heartbeat:
+    agent: heartbeat
+    kind: command
+    command: [heartbeat]
+    schedule: {daily: "12:00"}
+
+  app-factory:
+    agent: app-factory
+    kind: claude
+    prompt: app-factory.md
+    tools: [WebSearch, WebFetch]
+    schedule: {daily: "06:30"}
+
+  social:
+    agent: social
+    kind: claude
+    prompt: social.md
+    tools: [WebSearch, WebFetch]
+    schedule: {daily: "07:00"}
+
+  scout-research:
+    agent: scout
+    kind: claude
+    prompt: scout.md
+    tools: [WebSearch, WebFetch]
+    max_budget_usd: 5.00
+    schedule: {business_days: "09:00"}
+
+  scout-send:
+    agent: outreach
+    kind: command
+    command: [outreach, send-due]
+    quiet: true # no Discord post or run row when there is nothing to send
+    schedule: {business_days_every: {start: "09:30", end: "16:30", minutes: 10}}
+
+  scout-sync:
+    agent: outreach
+    kind: command
+    command: [outreach, sync]
+    schedule: {business_days: "16:45"}
+
+  digest:
+    agent: digest
+    kind: command
+    command: [digest]
+    schedule: {daily: "17:30"}
+
+  community:
+    agent: community
+    kind: claude
+    prompt: community.md
+    tools: [WebSearch, WebFetch]
+    disallowed_tools:
+      - WebFetch(domain:facebook.com)
+      - WebFetch(domain:www.facebook.com)
+      - WebFetch(domain:m.facebook.com)
+      - WebFetch(domain:web.facebook.com)
+      - WebFetch(domain:fb.com)
+      - WebFetch(domain:fb.me)
+    schedule: {weekly: {day: mon, time: "07:30"}}
+
+  backup:
+    agent: backup
+    kind: command
+    command: [backup]
+    schedule: {daily: "23:30"}

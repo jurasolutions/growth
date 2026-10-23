@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets. Never commit them.
+.env
+.env.*
+!.env.example
+
+# The kill switch is a local file, not part of the code.
+PAUSE
+
+# Rendered launchd plists carry absolute paths for this machine.
+launchd/generated/
+
+.DS_Store

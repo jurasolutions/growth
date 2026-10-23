@@ -1,0 +1,21 @@
+# Figures Jura can evidence. Any figure in a claim about Jura or its results
+# must match one of these, or the brand checker blocks the text.
+#
+# `match` is the part of the sentence that carries the figure. It is matched
+# case-insensitively with flexible spacing. Keep the "+" and the hedges: they
+# are what keep the claim honest.
+#
+# Add a claim only when there is evidence for it, and say where the evidence is.
+
+claims:
+  - id: automate-80-plus
+    text: "Automate 80%+ of the manual steps in a process"
+    match:
+      - "80%+ of the manual steps"
+    evidence: "design-system/README.md §3 (house range, EffortMeter default)"
+
+  - id: first-automations-weeks
+    text: "Most first automations go live within weeks"
+    match:
+      - "most first automations go live within weeks"
+    evidence: "design-system/README.md §3"

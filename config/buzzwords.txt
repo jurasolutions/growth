@@ -1,0 +1,24 @@
+# Words the brand checker refuses (design-system/README.md §3).
+# One per line, case-insensitive. Hyphens and spaces match each other, and
+# common endings (-s, -ed, -ing, -ly, -er) are caught too.
+leverage
+synergy
+transformative
+cutting-edge
+end-to-end
+seamless
+revolutionise
+revolutionize
+game-changer
+unlock
+supercharge
+empower
+disrupt
+best-in-class
+world-class
+next-gen
+robust
+holistic
+paradigm
+turnkey
+AI-powered
