@@ -413,6 +413,12 @@ INTERFACE_UNIT_RE = re.compile(
 )
 
 
+INPUT_HINT_RE = re.compile(
+    r"^\s*(?:use|enter|type|add|pick|choose|set|write)\b[^.]*\b(?:like|for example|e\.g\.|such as|from \d|between \d|up to \d)",
+    re.I,
+)
+
+
 @lru_cache(maxsize=None)
 def approved_phrases() -> tuple[str, ...]:
     path = paths.config_dir() / "approved_claims.yaml"
@@ -457,6 +463,8 @@ def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
         about_jura = bool(JURA_SELF_RE.search(sentence))
         results = bool(RESULT_RE.search(sentence))
         statutory = bool(STATUTORY_RE.search(sentence)) and official
+        # "Use a number, like 120.50." Example inputs in a form hint are not claims.
+        input_hint = bool(INPUT_HINT_RE.search(sentence)) and not results
 
         for m in figures:
             figure = m.group(0).strip()
@@ -468,7 +476,7 @@ def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
                 continue
             elif results:
                 issues.append(Issue("numbers", f"“{figure}” in a results claim with no source", sentence.strip()))
-            elif _is_interface_quantity(sentence, m) or _is_small_count(figure):
+            elif _is_interface_quantity(sentence, m) or _is_small_count(figure) or input_hint:
                 continue
             else:
                 issues.append(Issue("numbers", f"“{figure}” needs a source", sentence.strip()))

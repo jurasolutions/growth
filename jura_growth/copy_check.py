@@ -21,6 +21,9 @@ from jura_growth import brand_check
 HEADING_KEYS = re.compile(
     r"(heading|(?<!sub)title|button|label|cta|primary|secondary|subject|eyebrow|name|tab|action)", re.I
 )
+# Keys whose strings are running text even though the key mentions a label
+# (`imageLabel` describes a placeholder, `meterLabel` continues a figure).
+BODY_KEYS = re.compile(r"(meter|image|placeholder|caption|hint|helper|lede|body|text|description|note|message|error)", re.I)
 SKIP_KEYS = re.compile(r"^(icon|href|slug|id|key|type|tier|status|category|added|prd|className|variant|src)$")
 JS_PAIR = re.compile(
     r"""(?:(?P<key>[A-Za-z_$][\w$]*)\s*:\s*)?(?P<q>["'`])(?P<value>(?:\\.|(?!(?P=q)).)*)(?P=q)""",
@@ -46,7 +49,7 @@ def items_from_js(source: str) -> list[Item]:
         if not _is_copy(value) or SKIP_KEYS.match(key):
             continue
         line = source.count("\n", 0, match.start()) + 1
-        kind = "heading" if key and HEADING_KEYS.search(key) else "body"
+        kind = "heading" if key and HEADING_KEYS.search(key) and not BODY_KEYS.search(key) else "body"
         found.append(Item(f"line {line}" + (f" ({key})" if key else ""), value, kind))
     return found
 
@@ -59,7 +62,7 @@ def items_from_json(data, where: str = "") -> list[Item]:
                 continue
             if isinstance(value, str):
                 if _is_copy(value):
-                    kind = "heading" if HEADING_KEYS.search(str(key)) else "body"
+                    kind = "heading" if HEADING_KEYS.search(str(key)) and not BODY_KEYS.search(str(key)) else "body"
                     found.append(Item(f"{where}.{key}".lstrip("."), value, kind))
             else:
                 found += items_from_json(value, f"{where}.{key}")

@@ -8,7 +8,7 @@ and the PRD require, so those parts are certain:
 
     You're receiving this because <Company> lists this address for business
     enquiries on <their site>. Not interested? Unsubscribe here: <link>, or
-    reply "unsubscribe".
+    reply "unsubscribe". How we handle your details: https://jurasolutions.sg/privacy
 
 The unsubscribe token must match the website's Pages Function exactly:
 
@@ -38,6 +38,9 @@ from jura_growth.agents.scout import registry, settings
 SIGNATURE = f"{settings.SIGNATURE_NAME}\nJura Solutions · {settings.SITE}"
 RECEIVING = "You're receiving this because {company} lists this address for business enquiries on {site}."
 UNSUBSCRIBE_LINE = 'Not interested? Unsubscribe here: {link}, or reply "unsubscribe".'
+# Scout PRD §5.9: the privacy notice is linked from every email.
+PRIVACY_URL = f"https://{settings.SITE}/privacy"
+PRIVACY_LINE = f"How we handle your details: {PRIVACY_URL}"
 # What the brand gate sees in place of the recipient's own site name: the
 # email channel allows jurasolutions.sg links only, and the footer's mention of
 # the company's own domain is code-generated from the verified source page.
@@ -113,7 +116,7 @@ def tidy_draft(body: str) -> str:
 
 
 def footer(company: str, site: str, link: str) -> str:
-    return RECEIVING.format(company=company, site=site) + " " + UNSUBSCRIBE_LINE.format(link=link)
+    return RECEIVING.format(company=company, site=site) + " " + UNSUBSCRIBE_LINE.format(link=link) + " " + PRIVACY_LINE
 
 
 def compose(*, subject: str, body: str, company: str, site: str, email: str, secret: str | None = None) -> Email:
@@ -166,7 +169,8 @@ def to_html(draft: str, company: str, site: str, link: str) -> str:
         '<p style="margin:0;font-size:13px;color:#4e5852;">'
         + html.escape(RECEIVING.format(company=company, site=site))
         + f' Not interested? <a href="{html.escape(link, quote=True)}" style="color:#0f5132;">Unsubscribe here</a>, '
-        + "or reply &quot;unsubscribe&quot;.</p>"
+        + "or reply &quot;unsubscribe&quot;. "
+        + f'How we handle your details: <a href="{html.escape(PRIVACY_URL, quote=True)}" style="color:#0f5132;">jurasolutions.sg/privacy</a>.</p>'
     )
     return (
         '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"></head>\n'
@@ -259,6 +263,8 @@ def check_email(text: str, ctx: dict) -> list[brand_check.Issue]:
         issues.append(Issue("channel", "Missing the unsubscribe link"))
     if 'or reply "unsubscribe"' not in tail:
         issues.append(Issue("channel", 'Missing “or reply "unsubscribe"”'))
+    if PRIVACY_URL not in tail:
+        issues.append(Issue("channel", "Missing the link to the privacy notice"))
 
     # The body the model wrote.
     if re.search(r"unsubscribe|you're receiving this", draft, re.I):

@@ -261,3 +261,12 @@ def test_were_and_us_are_not_jura():
 
 def test_news_links_must_be_declared():
     assert "links" in rules(check("See https://example.com/report", channel_name="news"))
+
+
+@pytest.mark.parametrize("text", ["Use a number, like 120 or 120.50.", "Use a percentage from 0 to 100.", "Enter an amount such as 1,250.00."])
+def test_input_hints_pass(text):
+    assert "numbers" not in rules(check(text)), check(text).reasons()
+
+
+def test_input_hint_does_not_excuse_a_claim():
+    assert "numbers" in rules(check("Use our tool, like 300 clients do."))

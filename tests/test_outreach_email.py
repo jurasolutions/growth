@@ -400,3 +400,20 @@ def test_queue_and_preview_commands(isolated, monkeypatch, conn):
     assert "You're receiving this because Alder Logistics lists this address" in preview.output
     listing = CliRunner().invoke(cli, ["outreach", "queue-list"])
     assert "alderlogistics.sg" in listing.output
+
+
+def test_every_email_links_the_privacy_notice():
+    from jura_growth.agents.outreach import compose
+
+    email = compose.compose(
+        subject="A free quote builder for Acme Aircon",
+        body="Hi there,\n\nAcme Aircon asks customers to request quotes by form.",
+        company="Acme Aircon",
+        site="acmeaircon.sg",
+        email="info@acmeaircon.sg",
+        secret="s",
+    )
+    assert compose.PRIVACY_URL in email.text
+    assert 'href="https://jurasolutions.sg/privacy"' in email.html
+    missing = email.check_text.replace(compose.PRIVACY_LINE, "")
+    assert any("privacy" in i.message for i in compose.check_email(missing, {"company": "Acme Aircon", "subject": "x"}))
