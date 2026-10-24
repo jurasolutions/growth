@@ -359,6 +359,12 @@ def _rhythm(text: str) -> list[Issue]:
 #   - otherwise, an interface quantity ("up to 3 files", "4 MB", "30 days")
 #     or a small count ("5 tips") is fine, and anything else needs a source.
 #
+# A figure written in words follows the same rules, read to its value: from
+# "two" up, when it counts a following noun ("twelve businesses", "forty of
+# our clients", "a dozen firms"). "One", "a" on its own, a number word that
+# counts nothing ("one or two", "the two you picked") and a hyphenated
+# compound ("two-step", "nine-to-five") are not figures.
+#
 # The visitor's own inputs are never brand-checked, so they never reach here.
 
 MONTHS = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
@@ -390,6 +396,39 @@ FIGURE_RE = re.compile(
 )
 WORD_FIGURE_RE = re.compile(
     r"\b(?:dozens|hundreds|thousands|millions|billions|twice|double|triple|tenfold|half)\b(?!-)", re.I
+)
+# Figures written as words: "twelve", "forty-five", "a dozen", "a hundred and
+# fifty", "two thousand". Each is read to its value; "one" (and "a" on its own)
+# never counts as a figure.
+_UNITS = "one two three four five six seven eight nine".split()
+_TEENS = "ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
+_TENS = "twenty thirty forty fifty sixty seventy eighty ninety".split()
+NUMBER_WORDS = (
+    {word: value for value, word in enumerate(_UNITS + _TEENS, start=1)}
+    | {word: 10 * tens for tens, word in enumerate(_TENS, start=2)}
+)
+SCALE_WORDS = {"dozen": 12, "hundred": 100, "thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000}
+_BELOW_100 = rf"(?:(?:{'|'.join(_TENS)})(?:[\s-]+(?:{'|'.join(_UNITS)}))?|{'|'.join(_TEENS)}|{'|'.join(_UNITS)})"
+_BELOW_1000 = rf"(?:(?:an?|{_BELOW_100})\s+hundred(?:\s+(?:and\s+)?{_BELOW_100})?|{_BELOW_100})"
+NUMBER_WORD_RE = re.compile(
+    rf"\b(?:(?:an?|{_BELOW_1000})\s+(?:thousand|million|billion)(?:\s+(?:and\s+)?{_BELOW_1000})?"
+    rf"|(?:an?|{_BELOW_100})\s+dozen"
+    rf"|{_BELOW_1000})\b",
+    re.I,
+)
+# A number word counts something when a noun follows it ("twelve businesses",
+# "twelve of our clients"). These words after it mean it counts nothing ("one
+# or two", "the two you picked", "those two are").
+NEXT_WORD_RE = re.compile(r"\s+([A-Za-z][\w'’]*)")
+NOT_COUNTED = frozenset(
+    """
+    a an the and or nor but so yet than then if
+    to in on at by for from with into onto about after before over under between per
+    is are was were be been being am has have had do does did
+    will would can could should shall may might must
+    i you he she it we they me him her us them this that these those who whom which what whose
+    my your his its our their o'clock pm
+    """.split()
 )
 # "we're" needs its apostrophe ("were", "well" and "wed" are not Jura), and
 # "us" is lower case only ("US" is the country).
@@ -456,7 +495,16 @@ def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
     issues = []
     cleaned = _without_exempt(text)
     for sentence in sentences(cleaned):
-        figures = [m for m in FIGURE_RE.finditer(sentence) if re.search(r"\d", m.group(0))]
+        figures = [
+            (m, m.group(0).strip(), _is_small_count(m.group(0).strip()))
+            for m in FIGURE_RE.finditer(sentence)
+            if re.search(r"\d", m.group(0))
+        ]
+        figures += [
+            (m, m.group(0), value <= 12)
+            for m in NUMBER_WORD_RE.finditer(sentence)
+            if (value := _number_value(m.group(0))) >= 2 and _counts_a_noun(sentence, m)
+        ]
         words = list(WORD_FIGURE_RE.finditer(sentence))
         if not figures and not words:
             continue
@@ -466,8 +514,7 @@ def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
         # "Use a number, like 120.50." Example inputs in a form hint are not claims.
         input_hint = bool(INPUT_HINT_RE.search(sentence)) and not results
 
-        for m in figures:
-            figure = m.group(0).strip()
+        for m, figure, small in figures:
             if statutory and not about_jura:
                 continue
             if about_jura:
@@ -476,7 +523,7 @@ def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
                 continue
             elif results:
                 issues.append(Issue("numbers", f"“{figure}” in a results claim with no source", sentence.strip()))
-            elif _is_interface_quantity(sentence, m) or _is_small_count(figure) or input_hint:
+            elif _is_interface_quantity(sentence, m) or small or input_hint:
                 continue
             else:
                 issues.append(Issue("numbers", f"“{figure}” needs a source", sentence.strip()))
@@ -488,6 +535,34 @@ def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
 
 def _is_interface_quantity(sentence: str, match: re.Match) -> bool:
     return bool(INTERFACE_UNIT_RE.match(sentence[match.end():]))
+
+
+def _number_value(phrase: str) -> int:
+    """"a hundred and fifty" -> 150, "forty-five" -> 45, "two dozen" -> 24."""
+    total = current = 0
+    for word in re.findall(r"[a-z]+", phrase.lower()):
+        if word in ("a", "an"):
+            current = 1
+        elif word in ("dozen", "hundred"):
+            current = (current or 1) * SCALE_WORDS[word]
+        elif word in SCALE_WORDS:
+            total += (current or 1) * SCALE_WORDS[word]
+            current = 0
+        elif word != "and":
+            current += NUMBER_WORDS[word]
+    return total + current
+
+
+def _counts_a_noun(sentence: str, match: re.Match) -> bool:
+    # Fused by a hyphen ("two-step", "nine-to-five"), it is part of a word,
+    # as "2-step" and "9-to-5" are for digits.
+    if sentence[match.start() - 1 : match.start()] == "-" or sentence[match.end() : match.end() + 1] == "-":
+        return False
+    following = NEXT_WORD_RE.match(sentence, match.end())
+    if not following:
+        return False
+    word = following.group(1).lower().replace("’", "'")
+    return word not in NOT_COUNTED and word not in NUMBER_WORDS and word not in SCALE_WORDS
 
 
 def _is_small_count(figure: str) -> bool:

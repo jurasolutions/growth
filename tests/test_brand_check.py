@@ -1,7 +1,9 @@
 """Passing and failing examples for every brand-check rule (foundation PRD §5.6)."""
 
 import pytest
+import yaml
 
+from jura_growth import paths
 from jura_growth.brand_check import check, find_links, sentence_case_problem
 
 
@@ -187,6 +189,101 @@ def test_news_figure_about_jura_still_fails():
 
 def test_unsourced_statistic_fails():
     assert "numbers" in rules(check("Most SMEs spend 15 hours on admin."))
+
+
+# A figure written in words is still a figure (code review 01 B3).
+@pytest.mark.parametrize(
+    "text",
+    [
+        "We have helped twelve businesses go live.",
+        "Jura has served forty clients across Singapore.",
+    ],
+)
+def test_spelled_out_figures_about_jura_fail(text):
+    assert "numbers" in rules(check(text)), check(text).reasons()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Most SMEs spend fifteen hours on admin.",
+        "Twelve businesses go live each month.",
+        "Owners lose thirty hours to retyping.",
+    ],
+)
+def test_spelled_out_figures_need_a_source_like_digits(text):
+    assert "numbers" in rules(check(text)), check(text).reasons()
+
+
+def approved_claim_texts():
+    data = yaml.safe_load((paths.config_dir() / "approved_claims.yaml").read_text(encoding="utf-8"))
+    return [claim["text"] for claim in data["claims"]]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Most first automations go live within weeks.",
+        "Start with one process.",
+        "We start with one process and a short call.",
+        *approved_claim_texts(),
+    ],
+)
+def test_one_and_approved_claims_still_pass(text):
+    assert "numbers" not in rules(check(text)), check(text).reasons()
+
+
+def test_spelled_out_news_figure_with_source_passes_on_news_channel():
+    text = "A survey found forty firms plan to adopt AI tools this year. https://example.com/report"
+    result = check(text, channel_name="news", sources=["https://example.com/report"])
+    assert "numbers" not in rules(result), result.reasons()
+
+
+# The rule flags a number word that counts a following noun (G2 decision).
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Tell us which of the two you would hand over first.",
+        "We can start with one or two.",
+        "Those two are where we start.",
+    ],
+)
+def test_number_word_counting_nothing_passes(text):
+    assert "numbers" not in rules(check(text)), check(text).reasons()
+
+
+def test_number_word_counting_through_of_fails():
+    assert "numbers" in rules(check("We've helped twelve of the region's firms."))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Forty-five owners asked the same question.",
+        "Twenty one owners asked the same question.",
+        "Two thousand owners read the guide.",
+        "A hundred and fifty owners asked.",
+        "Two dozen owners asked the same question.",
+        "We have a dozen clients.",
+        "We have helped a hundred businesses.",
+        "Jura has one hundred clients.",
+    ],
+)
+def test_compound_number_words_are_read_in_full(text):
+    assert "numbers" in rules(check(text)), check(text).reasons()
+
+
+# Hyphenated compounds are words, the way "2-step" and "9-to-5" already are.
+@pytest.mark.parametrize(
+    "text",
+    [
+        "We take the nine-to-five admin off your plate.",
+        "We use a three-step handover.",
+        "Our forty-five-minute call maps one process.",
+    ],
+)
+def test_hyphenated_number_compounds_pass(text):
+    assert "numbers" not in rules(check(text)), check(text).reasons()
 
 
 # 8. sentence case
