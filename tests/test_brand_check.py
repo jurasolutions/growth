@@ -273,6 +273,49 @@ def test_compound_number_words_are_read_in_full(text):
     assert "numbers" in rules(check(text)), check(text).reasons()
 
 
+# Code review 04 probes: each of these passed on the first version of the rule.
+@pytest.mark.parametrize(
+    "text",
+    [
+        # B1: "per cent" written as two words
+        "We cut admin by forty per cent.",
+        "Jura automates ninety per cent of your invoicing.",
+        "Our clients see a hundred per cent accuracy.",
+        "Most SMEs lose thirty per cent of their week to admin.",
+        # S1: hedged counts
+        "We have helped twelve or more businesses.",
+        "Jura has served forty or so clients.",
+        "We start with two or three processes.",
+        # S2: approximate scales
+        "We have helped a couple of dozen businesses.",
+        "We have helped several hundred businesses.",
+        "We have helped a few dozen businesses.",
+    ],
+)
+def test_review_04_spelled_out_figures_fail(text):
+    assert "numbers" in rules(check(text)), check(text).reasons()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # S4: the number counts no noun
+        "We'd like to meet the two of you.",
+        "These two matter most to us.",
+        "Both of these work, and the two fit together for us.",
+        # "one or two" hedges towards "one", which G2 allows
+        "We start with one or two processes.",
+    ],
+)
+def test_review_04_number_words_counting_nothing_pass(text):
+    assert "numbers" not in rules(check(text)), check(text).reasons()
+
+
+@pytest.mark.parametrize("text", ["We have helped ſixty businesses.", "Jura has ſeven clients."])
+def test_unicode_lookalike_number_words_do_not_crash(text):
+    check(text)
+
+
 # Hyphenated compounds are words, the way "2-step" and "9-to-5" already are.
 @pytest.mark.parametrize(
     "text",

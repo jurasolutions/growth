@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Callable, Iterable
+from typing import Callable, Iterable, NamedTuple
 from urllib.parse import urlsplit
 
 import yaml
@@ -394,12 +394,19 @@ FIGURE_RE = re.compile(
     r"(?:S\$|US\$|\$|SGD\s?|USD\s?)?\d[\d,]*(?:\.\d+)?(?:\s?(?:%|percent|per\s?cent)|x\b|k\b|m\b|bn\b)?\+?",
     re.I,
 )
-WORD_FIGURE_RE = re.compile(
-    r"\b(?:dozens|hundreds|thousands|millions|billions|twice|double|triple|tenfold|half)\b(?!-)", re.I
+# A count this small ("5 tips", "five tips") needs no source outside a claim.
+SMALL_COUNT_MAX = 12
+# Quantities with no exact value: flagged only in a claim about Jura or its results.
+SCALE_WORDS = {"dozen": 12, "hundred": 100, "thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000}
+_SCALES = "|".join(SCALE_WORDS)
+VAGUE_FIGURE_RE = re.compile(
+    rf"\b(?:dozens|hundreds|thousands|millions|billions|twice|double|triple|tenfold|half"
+    rf"|(?:several|many|some|a\s+few|a\s+couple\s+of)\s+(?:{_SCALES}))\b(?!-)",
+    re.I | re.A,
 )
-# Figures written as words: "twelve", "forty-five", "a dozen", "a hundred and
-# fifty", "two thousand". Each is read to its value; "one" (and "a" on its own)
-# never counts as a figure.
+# Exact figures written as words: "twelve", "forty-five", "a dozen", "a hundred
+# and fifty", "two thousand". Each is read to its value. ASCII only, so a
+# lookalike letter ("ſixty") never reaches the value lookup.
 _UNITS = "one two three four five six seven eight nine".split()
 _TEENS = "ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
 _TENS = "twenty thirty forty fifty sixty seventy eighty ninety".split()
@@ -407,23 +414,42 @@ NUMBER_WORDS = (
     {word: value for value, word in enumerate(_UNITS + _TEENS, start=1)}
     | {word: 10 * tens for tens, word in enumerate(_TENS, start=2)}
 )
-SCALE_WORDS = {"dozen": 12, "hundred": 100, "thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000}
+_LARGE_SCALES = "|".join(word for word, value in SCALE_WORDS.items() if value >= 1_000)
 _BELOW_100 = rf"(?:(?:{'|'.join(_TENS)})(?:[\s-]+(?:{'|'.join(_UNITS)}))?|{'|'.join(_TEENS)}|{'|'.join(_UNITS)})"
 _BELOW_1000 = rf"(?:(?:an?|{_BELOW_100})\s+hundred(?:\s+(?:and\s+)?{_BELOW_100})?|{_BELOW_100})"
-NUMBER_WORD_RE = re.compile(
-    rf"\b(?:(?:an?|{_BELOW_1000})\s+(?:thousand|million|billion)(?:\s+(?:and\s+)?{_BELOW_1000})?"
+_CARDINAL = (
+    rf"(?:(?:an?|{_BELOW_1000})\s+(?:{_LARGE_SCALES})(?:\s+(?:and\s+)?{_BELOW_1000})?"
     rf"|(?:an?|{_BELOW_100})\s+dozen"
-    rf"|{_BELOW_1000})\b",
-    re.I,
+    rf"|{_BELOW_1000})"
 )
-# A number word counts something when a noun follows it ("twelve businesses",
-# "twelve of our clients"). These words after it mean it counts nothing ("one
-# or two", "the two you picked", "those two are").
-NEXT_WORD_RE = re.compile(r"\s+([A-Za-z][\w'’]*)")
-NOT_COUNTED = frozenset(
+CARDINAL_WORDS_RE = re.compile(rf"\b{_CARDINAL}\b", re.I | re.A)
+# Whether a number word counts a noun ("twelve businesses", "twelve of our
+# clients", "forty per cent") is read from the words after it:
+#   - a hedge is skipped to reach the noun ("twelve or more businesses",
+#     "two or three processes"), but "one or two" hedges towards "one" and
+#     claims nothing;
+#   - "of you", "of us" and "of them" count people, not a figure ("the two of you");
+#   - a common verb after "the two", "these two" and so on is a verb ("these two
+#     matter most");
+#   - any word in COUNTS_NOTHING_AFTER means it counts nothing ("the two you
+#     picked", "those two are").
+# Known limits: a noun before the number ("a team of five"), "zero", ordinals
+# ("our fortieth client"), other verbs after a number ("two businesses I spoke
+# to" counts, as it should; "the two overlap" counts too) and suffix compounds
+# ("forty-odd", "twenty-plus", shared with the digit path).
+NEXT_WORD_RE = re.compile(r"\s+([A-Za-z][\w'’]*)", re.A)
+HEDGE_RE = re.compile(rf"\s+or\s+(?:more|so|fewer|less|over|{_CARDINAL})\b", re.I | re.A)
+ONE_OR_BEFORE_RE = re.compile(r"\bone\s+or\s+$", re.I)
+OF_PEOPLE_RE = re.compile(r"\s+of\s+(?:you|us|them)\b", re.I)
+DETERMINER_BEFORE_RE = re.compile(r"\b(?:the|these|those|both|all|our|your|their|its|my)\s+$", re.I)
+VERBS_AFTER_A_NUMBER = frozenset(
+    "matter work fit go come seem stand belong sit differ happen apply help need make take share "
+    "look run show mean cover connect talk sync link add cost".split()
+)
+COUNTS_NOTHING_AFTER = frozenset(
     """
     a an the and or nor but so yet than then if
-    to in on at by for from with into onto about after before over under between per
+    to in on at by for from with into onto about after before over under between
     is are was were be been being am has have had do does did
     will would can could should shall may might must
     i you he she it we they me him her us them this that these those who whom which what whose
@@ -496,16 +522,16 @@ def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
     cleaned = _without_exempt(text)
     for sentence in sentences(cleaned):
         figures = [
-            (m, m.group(0).strip(), _is_small_count(m.group(0).strip()))
+            _Figure(m, m.group(0).strip(), _is_small_count(m.group(0).strip()))
             for m in FIGURE_RE.finditer(sentence)
             if re.search(r"\d", m.group(0))
         ]
         figures += [
-            (m, m.group(0), value <= 12)
-            for m in NUMBER_WORD_RE.finditer(sentence)
-            if (value := _number_value(m.group(0))) >= 2 and _counts_a_noun(sentence, m)
+            _Figure(m, m.group(0), value <= SMALL_COUNT_MAX)
+            for m in CARDINAL_WORDS_RE.finditer(sentence)
+            if (value := _number_value(m.group(0))) >= 2 and _counts_a_noun(sentence, m, value)
         ]
-        words = list(WORD_FIGURE_RE.finditer(sentence))
+        words = list(VAGUE_FIGURE_RE.finditer(sentence))
         if not figures and not words:
             continue
         about_jura = bool(JURA_SELF_RE.search(sentence))
@@ -537,13 +563,19 @@ def _is_interface_quantity(sentence: str, match: re.Match) -> bool:
     return bool(INTERFACE_UNIT_RE.match(sentence[match.end():]))
 
 
+class _Figure(NamedTuple):
+    match: re.Match
+    text: str
+    small: bool
+
+
 def _number_value(phrase: str) -> int:
     """"a hundred and fifty" -> 150, "forty-five" -> 45, "two dozen" -> 24."""
     total = current = 0
     for word in re.findall(r"[a-z]+", phrase.lower()):
         if word in ("a", "an"):
             current = 1
-        elif word in ("dozen", "hundred"):
+        elif word in SCALE_WORDS and SCALE_WORDS[word] < 1_000:  # dozen, hundred
             current = (current or 1) * SCALE_WORDS[word]
         elif word in SCALE_WORDS:
             total += (current or 1) * SCALE_WORDS[word]
@@ -553,20 +585,30 @@ def _number_value(phrase: str) -> int:
     return total + current
 
 
-def _counts_a_noun(sentence: str, match: re.Match) -> bool:
+def _counts_a_noun(sentence: str, match: re.Match, value: int) -> bool:
+    before, start = sentence[: match.start()], match.end()
     # Fused by a hyphen ("two-step", "nine-to-five"), it is part of a word,
     # as "2-step" and "9-to-5" are for digits.
-    if sentence[match.start() - 1 : match.start()] == "-" or sentence[match.end() : match.end() + 1] == "-":
+    if before.endswith("-") or sentence[start : start + 1] == "-":
         return False
-    following = NEXT_WORD_RE.match(sentence, match.end())
+    if value == 2 and ONE_OR_BEFORE_RE.search(before):
+        return False
+    hedge = HEDGE_RE.match(sentence, start)
+    if hedge:
+        start = hedge.end()
+    if OF_PEOPLE_RE.match(sentence, start):
+        return False
+    following = NEXT_WORD_RE.match(sentence, start)
     if not following:
         return False
     word = following.group(1).lower().replace("’", "'")
-    return word not in NOT_COUNTED and word not in NUMBER_WORDS and word not in SCALE_WORDS
+    if word in VERBS_AFTER_A_NUMBER and DETERMINER_BEFORE_RE.search(before):
+        return False
+    return word not in COUNTS_NOTHING_AFTER and word not in NUMBER_WORDS and word not in SCALE_WORDS
 
 
 def _is_small_count(figure: str) -> bool:
-    return bool(re.fullmatch(r"\d{1,2}", figure)) and int(figure) <= 12
+    return bool(re.fullmatch(r"\d{1,2}", figure)) and int(figure) <= SMALL_COUNT_MAX
 
 
 def _dedupe(issues: list[Issue]) -> list[Issue]:
