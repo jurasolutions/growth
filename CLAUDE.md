@@ -23,3 +23,21 @@ this folder, so these rules load for every scheduled agent as well as for intera
 
 `README.md` covers layout, commands, tests and the plug-in interface. Agents live in
 `jura_growth/agents/<name>/`; the core never imports them by name.
+
+## Agent skills
+
+For development work on this repo, not for scheduled runs.
+
+Crew operating card: docs/agents/crew.md
+
+### Issue tracker
+
+Local markdown under `.scratch/<feature>/`; PRDs stay in `jurasolutions/prd/pending/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default roles, each label equal to its name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

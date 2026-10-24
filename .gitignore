@@ -14,4 +14,7 @@ PAUSE
 # Rendered launchd plists carry absolute paths for this machine.
 launchd/generated/
 
+# Crew developer worktrees.
+.claude/worktrees/
+
 .DS_Store
