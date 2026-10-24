@@ -9,8 +9,10 @@ import plistlib
 import sqlite3
 
 import pytest
+from click.testing import CliRunner
 
-from jura_growth import paths, runner, schedule
+from jura_growth import paths, runner, schedule, timeutil
+from jura_growth.cli import cli
 
 MISSING = "no-such-folder-from-a-test"
 
@@ -71,3 +73,58 @@ def test_each_test_gets_its_own_copy_of_the_prompts():
     assert paths.prompts_dir() != real
     assert sorted(p.name for p in paths.prompts_dir().iterdir()) == sorted(p.name for p in real.iterdir())
     assert (paths.prompts_dir() / "social.md").read_text() == (real / "social.md").read_text()
+
+
+# --- the frozen clock --------------------------------------------------------
+
+MONDAY = "2026-10-26T07:00:00+08:00"
+
+
+@pytest.fixture
+def live_root(monkeypatch, tmp_path):
+    """A temp folder standing in for jurasolutions/, with the data and outputs
+    folders left at their defaults inside it, as on the Mac with no overrides."""
+    root = tmp_path / "jurasolutions"
+    monkeypatch.setattr(paths, "JURA_ROOT", root)
+    monkeypatch.delenv("JURA_GROWTH_DATA_DIR")
+    monkeypatch.delenv("JURA_GROWTH_OUTPUTS_DIR")
+    return root
+
+
+@pytest.mark.parametrize("data_dir", [None, "data/growth", "data/growth-copy"])
+def test_a_frozen_clock_refuses_the_live_data_folder(live_root, monkeypatch, tmp_path, data_dir):
+    if data_dir:
+        monkeypatch.setenv("JURA_GROWTH_DATA_DIR", str(live_root / data_dir))
+    monkeypatch.setenv("JURA_GROWTH_OUTPUTS_DIR", str(tmp_path / "outputs"))
+    monkeypatch.setenv("JURA_GROWTH_NOW", MONDAY)
+    result = CliRunner().invoke(cli, ["status"])
+    assert result.exit_code == 1
+    assert "JURA_GROWTH_NOW" in result.output and "JURA_GROWTH_DATA_DIR" in result.output
+    assert not (live_root / "data").exists()  # growth.db was never opened
+
+
+def test_a_frozen_clock_refuses_the_live_outputs_folder(live_root, monkeypatch, tmp_path):
+    monkeypatch.setenv("JURA_GROWTH_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("JURA_GROWTH_NOW", MONDAY)
+    result = CliRunner().invoke(cli, ["status"])
+    assert result.exit_code == 1
+    assert "JURA_GROWTH_OUTPUTS_DIR" in result.output and "JURA_GROWTH_DATA_DIR" not in result.output
+
+
+def test_a_frozen_clock_runs_against_temp_folders(live_root, monkeypatch, tmp_path):
+    monkeypatch.setenv("JURA_GROWTH_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("JURA_GROWTH_OUTPUTS_DIR", str(tmp_path / "outputs"))
+    monkeypatch.setenv("JURA_GROWTH_NOW", MONDAY)
+    result = CliRunner().invoke(cli, ["status"])
+    assert result.exit_code == 0, result.output
+    assert timeutil.today_str() == "2026-10-26"
+
+
+def test_the_clock_itself_refuses_live_folders_outside_the_cli(live_root, monkeypatch):
+    monkeypatch.setenv("JURA_GROWTH_NOW", MONDAY)
+    with pytest.raises(timeutil.FrozenClockRefused, match="JURA_GROWTH_DATA_DIR"):
+        timeutil.now()
+
+
+def test_the_real_clock_runs_against_live_folders(live_root):
+    assert timeutil.now().year >= 2026
