@@ -18,6 +18,13 @@ Source of truth: `jurasolutions/prd/pending/prd-jura-scout-2026-10-24.md` (§5.1
   website (contact page, footer). Record the exact page URL. Prefer role addresses (info@,
   enquiry@, sales@, hello@, admin@). Use a named person's address only if the site publishes
   it as the enquiry contact, and then add `"enquiry_contact": true`.
+- The address must belong to the business. The code refuses an address on another
+  business's domain: it must be on the company's own website domain (or a subdomain of it).
+  A free-mail address (gmail.com, outlook.com, hotmail.com, yahoo.com, icloud.com,
+  singnet.com.sg) passes the code wherever it appears, so use one only when the business
+  publishes it as its own enquiry contact, never a partner's, supplier's or web designer's.
+- `website` is the company's own home page (`https://acme.sg`), never a listing or profile
+  page on another site. The code refuses a website with a path or query.
 - **Never** guess, construct or pattern-generate an address (no "info@" + domain unless you
   saw it on the page). Never take an address from a directory, a search result snippet, a
   social profile, a marketplace, a job board or any list. Directories and news are fine for

@@ -1,5 +1,8 @@
 """Contact rules for the scout (PRD §5.2 step 5), enforced in code.
 
+- The address must belong to the business: its domain is the company's
+  website domain or a subdomain of it, or one of the free-mail providers in
+  `FREE_MAIL_CONTACTS` (config may shorten that list, never add to it).
 - The address must be one the business publishes on its own website. The
   source page must sit on the company's own domain, and the code fetches that
   page itself and confirms the exact address appears on it, after decoding the
@@ -47,6 +50,11 @@ FREE_MAIL = frozenset(
     }
 )
 
+# The free-mail providers a small business may publish as its enquiry address
+# (Ting Yu's decision, 2026-10-24). This is the ceiling: `free_mail_contacts`
+# in config/scout.yaml may shorten it, never add to it.
+FREE_MAIL_CONTACTS = ("gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com", "singnet.com.sg")
+
 # Hosts that are never a company's own website: social profiles, directories,
 # marketplaces and link pages (PRD: no third-party lists or scraped directories).
 NOT_OWN_SITE = (
@@ -76,9 +84,20 @@ class PageCheck:
 # --- domains ---------------------------------------------------------------
 
 
-def host_of(url: str) -> str:
+def _split(url: str):
     candidate = url if re.match(r"^[a-z][a-z0-9+.-]*://", url or "", re.I) else f"https://{url}"
-    return (urlsplit(candidate).hostname or "").lower().strip(".")
+    return urlsplit(candidate)
+
+
+def host_of(url: str) -> str:
+    return (_split(url).hostname or "").lower().strip(".")
+
+
+def is_site_root(url: str) -> bool:
+    """True for a site's home page: no path beyond "/" and no query. A
+    directory or marketplace listing sits at a path on someone else's site."""
+    parts = _split(url)
+    return parts.path in ("", "/") and not parts.query
 
 
 def site_domain(url: str) -> str:
@@ -102,6 +121,22 @@ def mail_domain(email: str) -> str:
 
 def is_free_mail(email_or_domain: str) -> bool:
     return mail_domain(email_or_domain) in FREE_MAIL
+
+
+def ownership_problem(email: str, domain: str, free_mail: tuple[str, ...]) -> str | None:
+    """Why `email` can't be the business's own address, or None when it can be.
+
+    The address must sit on the company's site domain (or a subdomain of it),
+    or at one of the `free_mail` providers. A partner's or web designer's
+    address on the company's site fails, and so does a company's address
+    found on a directory, because the directory is then the "site".
+    """
+    if on_domain(mail_domain(email), domain) or mail_domain(email) in free_mail:
+        return None
+    allowed = f"on {domain} (or a subdomain of it)"
+    if free_mail:
+        allowed += f" or at a free-mail provider ({', '.join(free_mail)})"
+    return f"{email} does not belong to the business: the address must be {allowed}"
 
 
 def normalise_email(value: str) -> str:

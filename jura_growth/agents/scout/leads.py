@@ -4,17 +4,20 @@ In order, and the first failure rejects the lead:
 
  1. The record is complete: company, own website, industry, 1–3 observations,
     source URLs (one on the company's own site), score 0–100 with reasons.
- 2. ICP exclusions code can tell: government domains (.gov.sg), and websites
-    that are social profiles, directories or marketplaces.
+ 2. ICP exclusions code can tell: government domains (.gov.sg), websites
+    that are social profiles, directories or marketplaces, and a website with
+    a path or query (a listing page, not the company's own home page).
  3. Not already known: a lead with this domain, a domain in
     `contacted_domains`, a suppressed domain or address, or a row in
     `inputs/do-not-contact.csv` (by company name or domain).
  4. Score at or above the threshold (60, config may raise it).
  5. Today's lead target not yet met.
- 6. The contact: an address the business publishes on its own site, which the
-    code finds on the source page itself (see contact.py), with an MX record.
-    A role address on the same page is preferred over a named one. A contact
-    form only gives `channel = form`.
+ 6. The contact: an address that belongs to the business (on its website
+    domain or a subdomain of it, or at an allowed free-mail provider), which
+    the code finds on a source page of the company's own site (see
+    contact.py), with an MX record. A role address on the same page is
+    preferred over a named one on the company's domain; a free-mail address
+    is never swapped. A contact form only gives `channel = form`.
 """
 
 from __future__ import annotations
@@ -215,6 +218,13 @@ def add_lead(conn: sqlite3.Connection, data: dict, *, client: httpx.Client | Non
         return _reject(conn, outcome, f"{domain} is a social, directory or marketplace site, not the company's own website", domain=domain, company=company)
     if is_government(domain):
         return _reject(conn, outcome, f"{domain} is a government domain (ICP exclusion)", domain=domain, company=company)
+    if not contact.is_site_root(website):
+        return _reject(
+            conn, outcome,
+            f"the website {website} has a path or query; give the company's own home page (https://{domain}). "
+            "A listing on another site is not the company's website",
+            domain=domain, company=company, remember=False,
+        )
     if not any(contact.on_domain(url, domain) for url in sources):
         return _reject(conn, outcome, f"no source URL is on the company's own website ({domain})", domain=domain, company=company, remember=False)
 
@@ -307,6 +317,9 @@ def _verify_email(conn, outcome: Outcome, email: str, raw: dict, domain: str, cl
         return f"{email!r} is not an email address"
     if contact.not_for_enquiries(email):
         return f"{email} is not an enquiry address"
+    not_theirs = contact.ownership_problem(email, domain, settings.free_mail_contacts())
+    if not_theirs:
+        return not_theirs
     source = str(raw.get("source_url") or "").strip()
     if not source:
         return "an email contact needs `source_url`: the page on the company's own site that lists it"
@@ -323,11 +336,15 @@ def _verify_email(conn, outcome: Outcome, email: str, raw: dict, domain: str, cl
 
     kind = contact.kind_of(email)
     if kind == "named":
-        own = {contact.mail_domain(email), domain}
-        roles = sorted(
-            a for a in page.addresses
-            if contact.is_enquiry_role(a) and (contact.mail_domain(a) in own or contact.mail_domain(a).endswith("." + domain))
-        )
+        # Only an address on the company's own domain is swapped for a role
+        # address there. A free-mail address is never swapped: when the "site"
+        # is a directory, its role address is the directory's own.
+        roles = []
+        if contact.on_domain(contact.mail_domain(email), domain):
+            roles = sorted(
+                a for a in page.addresses
+                if contact.is_enquiry_role(a) and contact.on_domain(contact.mail_domain(a), domain)
+            )
         if roles:
             outcome.notes.append(f"used the role address {roles[0]} from the same page instead of {email}")
             email, kind = roles[0], "role"

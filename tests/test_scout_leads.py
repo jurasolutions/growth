@@ -3,6 +3,7 @@
 import json
 from datetime import date
 
+import pytest
 from click.testing import CliRunner
 
 from jura_growth import db, paths, runner, suppression
@@ -10,7 +11,7 @@ from jura_growth.agents import scout
 from jura_growth.agents.scout import icp, leads
 from jura_growth.cli import cli
 
-from test_scout_support import add, at, configure, contact_page, lead_data, outbox, pages, scout_env, seed  # noqa: F401
+from test_scout_support import add, at, configure, contact_page, domain_of, lead_data, outbox, pages, scout_env, seed  # noqa: F401
 
 
 def test_lead_is_added_with_its_verified_address(conn):
@@ -56,6 +57,146 @@ def test_source_page_must_be_on_the_company_site(conn):
     data = lead_data(1, contact={"email": "info@alderlogistics.sg", "source_url": "https://www.sgpbusiness.com/alder"})
     outcome = add(conn, data)
     assert outcome.status == "rejected" and "not on the company's own website" in outcome.reasons[0]
+
+
+def test_address_on_another_business_domain_is_rejected(conn):
+    # Audit repro F4: a partner's address on the lead's own partners page.
+    data = lead_data(1, contact={"email": "info@someoneelse.sg", "source_url": "https://www.alderlogistics.sg/partners"})
+    outcome = add(conn, data)
+    assert outcome.status == "rejected"
+    assert "info@someoneelse.sg does not belong to the business" in outcome.reasons[0]
+    assert "alderlogistics.sg" in outcome.reasons[0]
+    assert db.scalar(conn, "SELECT count(*) FROM leads") == 0
+
+
+@pytest.mark.parametrize("email", ["hello@alder.com.sg", "sales@mail.alder.com.sg"])
+def test_address_on_the_company_domain_or_a_subdomain_is_accepted(conn, email):
+    data = lead_data(1, domain="alder.com.sg", contact={"email": email, "source_url": "https://www.alder.com.sg/contact"})
+    outcome = add(conn, data)
+    assert outcome.status == "added", outcome.reasons
+    assert outcome.contact["email"] == email
+
+
+@pytest.mark.parametrize("email", ["info@notalder.com.sg", "info@alder.com.sg.mailer.io", "info@com.sg"])
+def test_lookalike_domains_do_not_belong_to_the_business(conn, email):
+    data = lead_data(1, domain="alder.com.sg", contact={"email": email, "source_url": "https://www.alder.com.sg/contact"})
+    outcome = add(conn, data)
+    assert outcome.status == "rejected" and "does not belong to the business" in outcome.reasons[0]
+
+
+def free_mail_lead(n: int, email: str) -> dict:
+    """A small business that publishes its own free-mail address as the enquiry contact."""
+    source = f"https://www.{domain_of(n)}/contact"
+    return lead_data(n, contact={"email": email, "source_url": source, "enquiry_contact": True})
+
+
+# G2 decision: these six free-mail providers, published on the company's own site.
+@pytest.mark.parametrize("provider", ["gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com", "singnet.com.sg"])
+def test_free_mail_published_on_the_company_site_is_accepted(conn, provider):
+    outcome = add(conn, free_mail_lead(1, f"alderlogistics@{provider}"))
+    assert outcome.status == "added", outcome.reasons
+    assert outcome.contact["email"] == f"alderlogistics@{provider}"
+
+
+@pytest.mark.parametrize("provider", ["yahoo.com.sg", "protonmail.com", "live.com", "qq.com"])
+def test_other_free_mail_providers_are_refused(conn, provider):
+    outcome = add(conn, free_mail_lead(1, f"alderlogistics@{provider}"))
+    assert outcome.status == "rejected" and "does not belong to the business" in outcome.reasons[0]
+    assert "gmail.com" in outcome.reasons[0]
+
+
+def test_config_may_shorten_the_free_mail_list_but_never_add_to_it(conn, monkeypatch):
+    configure(monkeypatch, free_mail_contacts=["Gmail.com", "protonmail.com"])
+    assert add(conn, free_mail_lead(1, "alderlogistics@gmail.com")).status == "added"
+    for n, email in ((2, "birchlogistics@outlook.com"), (3, "cedarlogistics@protonmail.com")):
+        outcome = add(conn, free_mail_lead(n, email))
+        assert outcome.status == "rejected" and "does not belong to the business" in outcome.reasons[0]
+        assert "(gmail.com)" in outcome.reasons[0]
+
+
+def test_config_can_turn_free_mail_off(conn, monkeypatch):
+    configure(monkeypatch, free_mail_contacts=[])
+    outcome = add(conn, free_mail_lead(1, "alderlogistics@gmail.com"))
+    assert outcome.status == "rejected"
+    assert outcome.reasons[0].endswith("must be on alderlogistics.sg (or a subdomain of it)")
+
+
+# A directory that is missing from NOT_OWN_SITE, and one of its listing pages.
+DIRECTORY = "https://www.sgbizlistings.sg"
+LISTING = f"{DIRECTORY}/alder-logistics"
+
+
+def directory_lead(website: str, email: str, **contact_extra) -> dict:
+    contact = {"email": email, "source_url": LISTING, **contact_extra}
+    return lead_data(1, website=website, source_urls=[LISTING], contact=contact)
+
+
+def test_unlisted_directory_does_not_pass_as_the_company_site(conn):
+    # Audit repro F4b: the listing page given as the website, with the company's real address.
+    outcome = add(conn, directory_lead(LISTING, "info@alderlogistics.sg"))
+    assert outcome.status == "rejected"
+    assert f"{LISTING} has a path" in outcome.reasons[0]
+    assert db.scalar(conn, "SELECT count(*) FROM leads") == 0
+
+
+def test_directory_home_page_as_the_website_refuses_the_company_address(conn):
+    # F4b with the directory's home page as the website: the address isn't the directory's.
+    outcome = add(conn, directory_lead(DIRECTORY, "info@alderlogistics.sg"))
+    assert outcome.status == "rejected"
+    assert "info@alderlogistics.sg does not belong to the business" in outcome.reasons[0]
+    assert "sgbizlistings.sg" in outcome.reasons[0]
+    assert db.scalar(conn, "SELECT count(*) FROM leads") == 0
+
+
+def test_free_mail_on_a_directory_listing_is_refused(conn):
+    # Review 06 repro r1: the company's gmail address on an unlisted directory's listing.
+    outcome = add(conn, directory_lead(LISTING, "alderlogistics@gmail.com", enquiry_contact=True))
+    assert outcome.status == "rejected" and f"{LISTING} has a path" in outcome.reasons[0]
+    assert db.scalar(conn, "SELECT count(*) FROM leads") == 0
+
+
+def test_directory_footer_address_never_replaces_a_listing_address(conn):
+    # Review 06 repro r2: the listing's footer shows the directory's own role address.
+    page = (
+        "<html><body><h1>Alder Logistics</h1><p>Email alderlogistics@gmail.com</p>"
+        "<footer>Contact the directory: info@sgbizlistings.sg</footer></body></html>"
+    )
+    outcome = add(conn, directory_lead(LISTING, "alderlogistics@gmail.com", enquiry_contact=True), page_html=page)
+    assert outcome.status == "rejected" and f"{LISTING} has a path" in outcome.reasons[0]
+    assert db.scalar(conn, "SELECT count(*) FROM contacts") == 0
+
+
+def test_directory_home_page_as_the_website_never_swaps_in_the_directory_address(conn):
+    # Review 06 repro r2 with the directory's home page as the website: the role-address swap
+    # would have picked the directory's own footer address.
+    page = (
+        "<html><body><h1>Alder Logistics</h1><p>Email alderlogistics@gmail.com</p>"
+        "<footer>Contact the directory: info@sgbizlistings.sg</footer></body></html>"
+    )
+    outcome = add(conn, directory_lead(DIRECTORY, "alderlogistics@gmail.com", enquiry_contact=True), page_html=page)
+    assert (outcome.contact or {}).get("email") != "info@sgbizlistings.sg"
+    assert db.scalar(conn, "SELECT count(*) FROM contacts WHERE email LIKE '%@sgbizlistings.sg'") == 0
+
+
+def test_free_mail_address_is_never_swapped_for_a_role_address(conn):
+    page = "<p>Orders: alderlogistics@gmail.com. Accounts: info@alderlogistics.sg</p>"
+    outcome = add(conn, free_mail_lead(1, "alderlogistics@gmail.com"), page_html=page)
+    assert outcome.status == "added", outcome.reasons
+    assert outcome.contact["email"] == "alderlogistics@gmail.com" and outcome.contact["kind"] == "named"
+    assert not any("role address" in note for note in outcome.notes)
+
+
+@pytest.mark.parametrize("website", ["https://www.alderlogistics.sg/", "alderlogistics.sg", "http://alderlogistics.sg#contact"])
+def test_website_at_the_site_root_is_accepted(conn, website):
+    outcome = add(conn, lead_data(1, website=website))
+    assert outcome.status == "added", outcome.reasons
+
+
+@pytest.mark.parametrize("website", ["https://www.alderlogistics.sg/en", "https://www.alderlogistics.sg/?ref=directory"])
+def test_website_with_a_path_or_query_is_refused(conn, website):
+    outcome = add(conn, lead_data(1, website=website))
+    assert outcome.status == "rejected" and "https://alderlogistics.sg" in outcome.reasons[0]
+    assert db.scalar(conn, "SELECT count(*) FROM scout_rejections") == 0
 
 
 def test_website_must_be_the_company_own_site(conn):
