@@ -41,6 +41,16 @@ def channels() -> dict[str, brand_check.Channel]:
     }
 
 
+def permissions(job: str):
+    """The `jura-growth` commands `prompts/app-factory.md` uses, plus
+    `scout insights`, which `apps context` reads in-process."""
+    if job != JOB:
+        return None
+    from jura_growth.headless import Permissions
+
+    return Permissions(commands=("apps context", "apps submit-prd", "check", "scout insights"))
+
+
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     if job != JOB:
         return None

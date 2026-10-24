@@ -8,6 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from jura_growth import config, paths
+from jura_growth.agents.community import groups as groups_mod
 from jura_growth.cli import cli
 
 
@@ -110,6 +111,75 @@ def test_terminal_use_still_reads_any_ordinary_file(tmp_path):
     draft.parent.mkdir()
     draft.write_text("A calm, plain sentence.")
     assert invoke("check", "--file", str(draft)).output.strip() == "pass"
+
+
+# --- the per-job command allowlist ----------------------------------------------
+
+GROUP = {
+    "channel": "facebook",
+    "name": "Some SG group",
+    "url": "https://www.facebook.com/groups/somesg",
+    "audience": "Singapore SME owners",
+    "size_hint": "not stated",
+    "active_hint": "not stated",
+    "promo_rules": "not stated in public sources",
+    "fit": "good fit",
+    "fit_reason": "Owners asking each other about admin and paperwork.",
+    "source_urls": ["https://example.sg/best-groups#somesg"],
+}
+
+
+def in_run(monkeypatch, job, agent):
+    monkeypatch.setenv("JURA_GROWTH_JOB", job)
+    monkeypatch.setenv("JURA_GROWTH_AGENT", agent)
+
+
+def test_a_community_run_cannot_mark_a_group_joined(conn, monkeypatch):
+    """Regression for audit F4: joining a group is Ting Yu's step."""
+    _, group_id, _ = groups_mod.add(conn, GROUP)
+    conn.commit()
+    in_run(monkeypatch, "community", "community")
+    result = invoke("community", "set", str(group_id), "joined=yes", "rules_confirmed=yes")
+    assert result.exit_code == 2, result.output
+    assert "refused: a `community` run may not use `jura-growth community set`" in result.output
+    assert not groups_mod.get(conn, group_id)["joined"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("outreach", "send-due"),
+        ("outreach", "requeue-shadow"),
+        ("outreach", "unsubscribe-link", "someone@example.sg"),
+        ("outreach", "sync"),
+    ],
+    ids=lambda a: a[1],
+)
+def test_scout_research_cannot_reach_send_time_controls(monkeypatch, args):
+    in_run(monkeypatch, "scout-research", "scout")
+    result = invoke(*args)
+    assert result.exit_code == 2, result.output
+    assert f"may not use `jura-growth outreach {args[1]}`" in result.output
+
+
+def test_a_run_may_use_the_commands_its_prompt_uses(monkeypatch):
+    in_run(monkeypatch, "scout-research", "scout")
+    result = invoke("outreach", "status")
+    assert result.exit_code == 0, result.output
+    assert "refused" not in result.output
+
+
+def test_terminal_use_of_human_commands_is_unchanged(conn):
+    _, group_id, _ = groups_mod.add(conn, GROUP)
+    conn.commit()
+    result = invoke("community", "set", str(group_id), "joined=yes")
+    assert result.exit_code == 0, result.output
+    assert groups_mod.get(conn, group_id)["joined"]
+
+
+def test_an_unknown_job_may_run_nothing(monkeypatch):
+    in_run(monkeypatch, "not-a-job", "nobody")
+    assert invoke("status").exit_code == 2
 
 
 def outbox_files(tmp_path):
