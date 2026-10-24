@@ -25,6 +25,13 @@ core. A plug-in module may define any of:
     precheck(job: str, conn) -> str | None
         Called before a scheduled job starts. Return a reason to skip the run
         (for example "7 app PRDs already waiting"), or None to go ahead.
+
+    permissions(job: str) -> headless.Permissions | None
+        For a `claude` job this agent runs: the `jura-growth` commands its
+        prompt (`prompts/<job>.md`) uses, and any extra Claude Code deny rules.
+        The run may use those commands and no others, in Claude Code's own
+        rules and again in code (see `jura_growth/headless.py`). Return None
+        for jobs the agent doesn't run.
 """
 
 from __future__ import annotations

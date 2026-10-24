@@ -6,8 +6,9 @@ a slow run and its next slot never overlap, then the job itself.
 
 A `command` job calls a `jura-growth` command in-process. A `claude` job runs
 headless Claude Code (`claude -p`) with the job's prompt file and a tight tool
-allowlist: read anything under jurasolutions/, run `jura-growth`, write only
-in the job's scratch folder, plus the job's own tools (web search and fetch).
+allowlist: read anything under jurasolutions/ except secret files, run the
+job's own `jura-growth` commands (headless.py), write only in the job's
+scratch folder, plus the job's own tools (web search and fetch).
 No MCP servers, no user settings, a per-run spending ceiling, and the full
 stream-json transcript kept for audit.
 

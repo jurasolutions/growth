@@ -107,10 +107,19 @@ growth jobs use launchd. Each runs `jura-growth run <job>`.
 A `claude` job runs `claude -p` in this folder with its prompt file on stdin and:
 
 - `--permission-mode dontAsk`: anything not allowed below is refused, never prompted.
-- Allowed: reading under `jurasolutions/`, `Bash(jura-growth:*)`, writing only in
+- Allowed: reading under `jurasolutions/`, the `jura-growth` commands the job's prompt uses
+  (each plug-in declares them in `permissions(job)`) and their `--help`, writing only in
   `data/growth/work/<job>/`, plus the job's own tools (web search and fetch).
-- Refused: reading `.env`, `jura-growth run`, `resume` and `schedule`, and anything the job
+- Refused: reading any `.env*`, `*.env` or `.dev.vars` file under `jurasolutions/`, every other
+  `jura-growth` command (`run`, `resume`, `schedule` and `discord` always), and anything the job
   lists in `disallowed_tools` (the community job can't fetch facebook.com).
+- The code enforces the same command list again: with `JURA_GROWTH_JOB` set, any other command
+  exits with status 2 and a `refused:` line (`jura_growth/headless.py`). A command job may run
+  only its own command. Commands you run in Terminal are unaffected.
+- Every file a command takes goes through `paths.guard()`: secret files are always refused, and
+  inside a run only the job's `work/` folder and `outputs/growth/` are accepted.
+- Configured secret values (secret-named settings and `keychain:` references) are masked in
+  everything `jura-growth` prints.
 - `--strict-mcp-config` and `--setting-sources project`: no MCP servers (no Notion, no Zapier)
   and none of the user-level settings, plug-ins or hooks.
 - `--max-budget-usd` per run (US$3 by default, US$5 for scout research).
@@ -144,6 +153,7 @@ imports it by name. The module may define:
 | `channels()` | `{name: brand_check.Channel}` with the agent's rule-10 checks |
 | `digest(conn, day)` | `{"figures": {}, "lines": [], "brief": []}` for the digest and morning brief |
 | `precheck(job, conn)` | A reason to skip a scheduled run before it starts, or `None` |
+| `permissions(job)` | For a `claude` job the agent runs: `headless.Permissions` with the `jura-growth` commands its prompt uses (and any extra Claude Code deny rules), or `None`. A job with no declaration may run no commands |
 
 Its prompt goes in `prompts/<job>.md`, its settings in `config/<name>.yaml`, and its hard limits
 in `caps.py`.
