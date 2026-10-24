@@ -167,8 +167,7 @@ def _send(
             # Only the error's type: httpx messages can quote the URL, which is the secret.
             raise DiscordError(f"Discord could not be reached ({type(error).__name__})") from None
         if response.status_code == 429 and attempt < 2:
-            retry_after = float(response.json().get("retry_after", 1.0))
-            time.sleep(min(retry_after, 10.0))
+            time.sleep(_retry_after(response))
             continue
         if response.status_code >= 500 and attempt < 2:
             time.sleep(2.0)
@@ -178,6 +177,18 @@ def _send(
             raise DiscordError(f"Discord answered {response.status_code}")
         return
     raise DiscordError("Discord kept refusing the message")
+
+
+def _retry_after(response: httpx.Response) -> float:
+    """Seconds a 429 asks us to wait, at most 10. One second if the answer doesn't say
+    (Cloudflare's rate-limit page in front of Discord is HTML, not JSON)."""
+    try:
+        seconds = float(response.json().get("retry_after", 1.0))
+    except (ValueError, TypeError, AttributeError):
+        return 1.0
+    if not seconds >= 0:  # negative, or NaN
+        return 1.0
+    return min(seconds, 10.0)
 
 
 def _posted_today(conn: sqlite3.Connection, channel: str, digest: str) -> bool:
