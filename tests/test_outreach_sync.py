@@ -229,6 +229,35 @@ def test_a_sync_that_fails_part_way_keeps_nothing_and_is_retried_whole(conn, mon
     assert "0 new suppressions" in sync.run(conn)
 
 
+def _three_unsubscribes_synced(conn, monkeypatch):
+    seeded, table = live_sends(conn, monkeypatch, 1)
+    for n in range(3):
+        table.rows.append(d1_row(f"person{n}@elsewhere.sg", "unsubscribe", created=f"2026-10-26 11:0{n}:00"))
+    sync.run(conn)
+    return seeded[0], table
+
+
+def test_a_d1_table_recreated_behind_the_cursor_fails_closed(conn, monkeypatch):
+    first, table = _three_unsubscribes_synced(conn, monkeypatch)
+    # The site's table is dropped and recreated (ids start again at 1); a complaint arrives.
+    table.rows[:] = [d1_row(first["email"], "complaint", resend_id=first["resend_id"])]
+    summary = sync.run(conn)
+    assert "suppression sync failed" in summary and "event 3" in summary
+    assert "suppression sync from D1 failed" in pause.is_paused(conn, "outreach")
+    assert any("Paused `outreach`" in p["content"] for p in outbox("alerts"))
+
+
+def test_a_d1_table_rewritten_at_the_cursor_fails_closed(conn, monkeypatch):
+    first, table = _three_unsubscribes_synced(conn, monkeypatch)
+    # Recreated and refilled past the old cursor: id 3 is now a different event.
+    table.rows[:] = [
+        d1_row(f"new{n}@elsewhere.sg", "unsubscribe", created=f"2026-10-27 09:0{n}:00") for n in range(3)
+    ] + [d1_row(first["email"], "complaint", resend_id=first["resend_id"], created="2026-10-27 09:05:00")]
+    summary = sync.run(conn)
+    assert "suppression sync failed" in summary
+    assert "suppression sync from D1 failed" in pause.is_paused(conn, "outreach")
+
+
 def test_a_d1_row_without_an_id_fails_the_sync_and_pauses(conn, monkeypatch):
     # The old contract (email_hash as the primary key, no id) can't be read safely.
     d1_env(monkeypatch)

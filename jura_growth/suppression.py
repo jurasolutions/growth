@@ -80,24 +80,38 @@ def add(
 D1_CURSOR = "d1:suppression"
 
 
-def sync_from_d1(conn: sqlite3.Connection, apply: Callable[[list[dict]], None] | None = None) -> list[dict]:
+class D1ContractError(ValueError):
+    """D1's suppression table doesn't look like the append-only log the sync
+    relies on (docs/scout.md, D1 contract)."""
+
+
+def sync_from_d1(conn: sqlite3.Connection, apply: Callable[[list[dict]], None]) -> list[dict]:
     """Copy the website's D1 suppression events not yet processed here and
     return them, oldest first (id, email_hash, email, reason, source,
     resend_email_id, created_at).
 
     D1 keeps one row per event with its own id, so an address that is already
     suppressed here still brings in its later complaint or bounce. `apply` (the
-    caller acting on bounces and complaints) runs in the same transaction as the
-    local copy and the cursor move. A failure anywhere rolls all three back, so
-    the batch is tried again on the next sync, and an event that was processed
-    is never processed again.
+    caller acting on bounces and complaints, database writes only) runs in the
+    same transaction as the local copy and the cursor move. A failure anywhere
+    rolls all three back, so the batch is tried again on the next sync, and an
+    event that was processed is never processed again.
+
+    The event the cursor points at must come back unchanged. If it is missing
+    or different, the table was recreated or rewritten behind the cursor, and
+    new events could be hiding under old ids, so this raises D1ContractError
+    instead of skipping them.
     """
-    after = _cursor(conn, D1_CURSOR)
+    after, marker = _cursor(conn, D1_CURSOR)
     rows = cloudflare.query(
         "SELECT id, email_hash, email, reason, source, resend_email_id, created_at FROM suppression "
-        "WHERE id > ? ORDER BY id",
+        "WHERE id >= ? ORDER BY id",
         [after],
     )
+    if after:
+        _check_cursor_row(rows, after, marker)
+    # Filter again here as well as in the query: the sync must never re-apply
+    # an event, whatever D1 returns.
     events = sorted((row for row in rows if _event_id(row) > after), key=_event_id)
     if events:
         with db.transaction(conn):
@@ -109,30 +123,46 @@ def sync_from_d1(conn: sqlite3.Connection, apply: Callable[[list[dict]], None] |
                     reason=row["reason"],
                     source=f"d1:{row['source']}",
                 )
-            if apply is not None:
-                apply(events)
-            _move_cursor(conn, D1_CURSOR, _event_id(events[-1]))
+            apply(events)
+            _move_cursor(conn, D1_CURSOR, _event_id(events[-1]), _marker(events[-1]))
     log.event(conn, "suppression.sync", {"fetched": len(rows), "new": len(events), "after_id": after})
     return events
+
+
+def _marker(row: dict) -> str:
+    return "|".join(str(row.get(key) or "") for key in ("email_hash", "reason", "source", "created_at"))
+
+
+def _check_cursor_row(rows: list[dict], after: int, marker: str | None) -> None:
+    found = [row for row in rows if _event_id(row) == after]
+    if not found or (marker is not None and _marker(found[0]) != marker):
+        state = "is missing" if not found else "has changed"
+        raise D1ContractError(
+            f"D1 suppression event {after}, the last one processed here, {state}: the site's table was "
+            "recreated or rewritten, so newer events may be hidden under old ids. Check the table against "
+            "the D1 contract in docs/scout.md before resuming outreach"
+        )
 
 
 def _event_id(row: dict) -> int:
     try:
         return int(row["id"])
     except (KeyError, TypeError, ValueError):
-        raise ValueError(
+        raise D1ContractError(
             "a D1 suppression row has no numeric id: the site's table must be append-only, one row per "
             "event with its own id (docs/scout.md, D1 contract)"
         ) from None
 
 
-def _cursor(conn: sqlite3.Connection, name: str) -> int:
-    return db.scalar(conn, "SELECT position FROM sync_cursors WHERE name = ?", (name,)) or 0
+def _cursor(conn: sqlite3.Connection, name: str) -> tuple[int, str | None]:
+    row = db.one(conn, "SELECT position, marker FROM sync_cursors WHERE name = ?", (name,))
+    return (row["position"], row["marker"]) if row else (0, None)
 
 
-def _move_cursor(conn: sqlite3.Connection, name: str, position: int) -> None:
+def _move_cursor(conn: sqlite3.Connection, name: str, position: int, marker: str) -> None:
     conn.execute(
-        "INSERT INTO sync_cursors (name, position, updated_at) VALUES (?, ?, ?) "
-        "ON CONFLICT (name) DO UPDATE SET position = excluded.position, updated_at = excluded.updated_at",
-        (name, position, timeutil.stamp()),
+        "INSERT INTO sync_cursors (name, position, marker, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT (name) DO UPDATE SET position = excluded.position, marker = excluded.marker, "
+        "updated_at = excluded.updated_at",
+        (name, position, marker, timeutil.stamp()),
     )

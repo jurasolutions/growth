@@ -221,6 +221,16 @@ candidates:
     sync tries the batch again.
   - A row without an `id`, as in the old table keyed on `email_hash`, fails the sync, so
     outreach stays paused until the site's table matches this contract.
+  - The event the cursor points at must come back from D1 unchanged. If it is missing or
+    different, the table was recreated or rewritten behind the cursor and new events could
+    sit under old ids, so the sync fails and outreach pauses with an alert. An upsert on an
+    older row can't be seen this way, which is why plain inserts are part of the contract.
+  - To recover once the site's table is right again, clear the cursor
+    (`sqlite3 data/growth/growth.db "DELETE FROM sync_cursors WHERE name = 'd1:suppression'"`)
+    and `jura-growth resume outreach`. The next sync replays the whole table once, so an old
+    complaint pauses outreach one more time; resume again after it.
+  - Start the site's table empty. Copying old rows into it replays them on the first sync
+    (Discord posts again, and an old complaint pauses outreach once).
 - **Reply detection** (optional; on when `OUTREACH_IMAP_HOST`, `_USER` and `_PASSWORD` are
   set): read-only IMAP (EXAMINE, BODY.PEEK) over the last 45 days. Only replies from
   addresses we emailed count. Stored: lead, contact, received time and a hash of the
