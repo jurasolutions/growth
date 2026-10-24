@@ -37,6 +37,11 @@ def launch_agents_dir() -> Path:
     return Path(os.environ.get("JURA_GROWTH_LAUNCH_AGENTS", Path.home() / "Library" / "LaunchAgents"))
 
 
+def generated_dir() -> Path:
+    """Where `render` writes plists. Tests point it at a temp folder with `JURA_GROWTH_PLIST_DIR`."""
+    return Path(os.environ.get("JURA_GROWTH_PLIST_DIR", paths.REPO_ROOT / "launchd" / "generated"))
+
+
 def _hm(value: str) -> tuple[int, int]:
     hour, minute = value.split(":")
     return int(hour), int(minute)
@@ -113,7 +118,7 @@ def render(jobs: list[str] | None = None) -> list[Path]:
     specs = config.settings()["jobs"]
     out = []
     for job in jobs or list(specs):
-        path = paths.REPO_ROOT / "launchd" / "generated" / f"{label(job)}.plist"
+        path = generated_dir() / f"{label(job)}.plist"
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as handle:
             plistlib.dump(plist(job, specs[job]), handle)

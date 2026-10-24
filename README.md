@@ -155,4 +155,6 @@ uv run pytest
 ```
 
 Tests never touch `jurasolutions/data/`, Discord, launchd or the network. `conftest.py` points
-every path at a temporary folder.
+every path at a temporary folder, including rendered plists (`JURA_GROWTH_PLIST_DIR`) and a copy
+of `prompts/` (`JURA_GROWTH_PROMPTS_DIR`). Its write guard fails any test that writes into this
+repo or anywhere under `jurasolutions/`, or opens a database there.
