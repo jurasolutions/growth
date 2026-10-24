@@ -112,14 +112,7 @@ def is_free_mail(email_or_domain: str) -> bool:
     return mail_domain(email_or_domain) in FREE_MAIL
 
 
-def on_mail_domain(email: str, domain: str) -> bool:
-    """True when the address sits on `domain` or a subdomain of it."""
-    address_domain = mail_domain(email)
-    domain = domain.lower().removeprefix("www.")
-    return bool(address_domain and domain) and (address_domain == domain or address_domain.endswith("." + domain))
-
-
-def ownership_problem(email: str, domain: str, free_mail: tuple[str, ...] = FREE_MAIL_CONTACTS) -> str | None:
+def ownership_problem(email: str, domain: str, free_mail: tuple[str, ...]) -> str | None:
     """Why `email` can't be the business's own address, or None when it can be.
 
     The address must sit on the company's site domain (or a subdomain of it),
@@ -127,7 +120,7 @@ def ownership_problem(email: str, domain: str, free_mail: tuple[str, ...] = FREE
     address on the company's site fails, and so does a company's address
     found on a directory, because the directory is then the "site".
     """
-    if on_mail_domain(email, domain) or mail_domain(email) in free_mail:
+    if on_domain(mail_domain(email), domain) or mail_domain(email) in free_mail:
         return None
     allowed = f"on {domain} (or a subdomain of it)"
     if free_mail:
