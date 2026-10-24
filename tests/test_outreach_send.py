@@ -288,7 +288,7 @@ def test_warm_up_schedule(conn, monkeypatch):
 
 
 def test_warmup_start_in_the_past_keeps_the_first_live_day_at_five(conn, monkeypatch):
-    # Review finding F2: a past warmup_start lifted day one to 20. Config may only delay the warm-up.
+    # Config may only delay the warm-up, so a past warmup_start never lifts day one.
     at(monkeypatch, MONDAY_10AM)
     configure(monkeypatch, send={"warmup_start": "2026-01-01"})
     assert send.daily_cap(conn, "live")[0] == 5
@@ -353,7 +353,7 @@ def test_spacing_skips_a_slot_when_the_draw_is_high(conn, monkeypatch):
 
 
 def test_back_to_back_send_due_calls_send_live_only_once(conn, monkeypatch):
-    # Review finding F3: two calls in the same minute both reached Resend.
+    # Live sends stay 10 minutes apart however often send-due is called.
     at(monkeypatch, "2026-10-26T08:00:00+08:00")
     seed(conn, 1)
     seed(conn, 2)
