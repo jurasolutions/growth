@@ -140,8 +140,10 @@ its draft at send time, so the real token is always the one sent.
    jurasolutions.sg or a subdomain, `RESEND_API_KEY_OUTREACH` and `UNSUBSCRIBE_SECRET` are set,
    `inputs/do-not-contact.csv` exists and D1 is configured.
 4. Caps, counted per mode: per day 20, rolling 30 days 600, rolling 365 days 8,000, warm-up
-   (5 a day for days 1–7, 10 for days 8–14, then 20, from the first send in that mode or
-   `send.warmup_start`), one email per run. Config may lower any of them.
+   (5 a day for days 1–7, 10 for days 8–14, then 20, from the first send in that mode), one
+   email per run. Config may lower any of them. In live mode `send.warmup_start` can only
+   delay the warm-up: it counts from the later of that date and the first live send, so a
+   date in the past changes nothing.
 5. Random spacing: this slot sends with probability `min(quota left, emails due) ÷ slots
    left`. The last slot is certain, so the day's quota goes out, spread across the window.
 6. D1 suppression sync. A failed sync pauses outreach. No D1: a logged warning in shadow, a

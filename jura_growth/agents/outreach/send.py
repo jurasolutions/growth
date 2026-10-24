@@ -170,11 +170,16 @@ def counts(conn: sqlite3.Connection, mode: str) -> dict[str, int]:
 
 
 def first_send_day(conn: sqlite3.Connection, mode: str) -> date | None:
-    configured = settings.get()["send"].get("warmup_start")
-    if mode == "live" and configured:
-        return configured if isinstance(configured, date) else date.fromisoformat(str(configured))
+    """The day the warm-up counts from. In live mode `send.warmup_start` may
+    only delay it: the later of that date and the first live send wins, and a
+    first live send that hasn't happened yet counts as today."""
     value = store.get_state(conn, f"first_{mode}_send_at")
-    return timeutil.parse(value).date() if value else None
+    recorded = timeutil.parse(value).date() if value else None
+    configured = settings.get()["send"].get("warmup_start")
+    if mode != "live" or not configured:
+        return recorded
+    start = configured if isinstance(configured, date) else date.fromisoformat(str(configured))
+    return max(start, recorded or timeutil.today())
 
 
 def daily_cap(conn: sqlite3.Connection, mode: str) -> tuple[int, str]:

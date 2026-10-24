@@ -57,7 +57,8 @@ send:
   rolling_365_days: 8000
   per_run: 1
   # Warm-up (5 a day in week 1, 10 in week 2, then 20) counts from the first
-  # live send. Set a date (YYYY-MM-DD) here to count from that day instead.
+  # live send. A date (YYYY-MM-DD) here can only start it later: the warm-up
+  # counts from whichever is later, this date or the first live send.
   warmup_start: null
 
 follow_ups:

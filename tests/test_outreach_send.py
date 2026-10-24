@@ -286,6 +286,17 @@ def test_warm_up_schedule(conn, monkeypatch):
     assert send.daily_cap(conn, "live")[0] == 5  # day 7 counted from the configured start
 
 
+def test_warmup_start_in_the_past_keeps_the_first_live_day_at_five(conn, monkeypatch):
+    # Review finding F2: a past warmup_start lifted day one to 20. Config may only delay the warm-up.
+    at(monkeypatch, MONDAY_10AM)
+    configure(monkeypatch, send={"warmup_start": "2026-01-01"})
+    assert send.daily_cap(conn, "live")[0] == 5
+    store.set_state(conn, "first_live_send_at", "2026-10-23T10:00:00+08:00")
+    assert send.daily_cap(conn, "live") == (5, "warm-up day 4, 5 a day; daily cap 5")
+    store.set_state(conn, "first_live_send_at", "2026-10-16T10:00:00+08:00")
+    assert send.daily_cap(conn, "live")[0] == 10  # day 11, counted from the real first live send
+
+
 def test_rolling_30_day_cap(conn, monkeypatch):
     at(monkeypatch, MONDAY_10AM)
     seed(conn, 1)
