@@ -88,3 +88,16 @@ def test_unreachable_webhook_saves_to_outbox_without_quoting_the_url(conn, monke
     events = db.rows(conn, "SELECT payload_json FROM events WHERE kind = 'discord.error'")
     assert events and all("secret" not in e["payload_json"] for e in events)
 
+
+def test_auto_pause_runs_whatever_happens_to_the_alert(failing_job, monkeypatch):
+    def broken_alert(*args, **kwargs):
+        raise RuntimeError("alert broke")
+
+    monkeypatch.setattr(discord, "alert", broken_alert)
+
+    for _ in range(3):
+        with pytest.raises(RuntimeError, match="alert broke"):
+            runner.run(failing_job)
+
+    with db.session() as c:
+        assert pause.is_paused(c, "boomer") == "3 failed runs in a row"
