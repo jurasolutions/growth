@@ -91,8 +91,9 @@ Otherwise:
      official .gov.sg page in the item's `"sources"`, and the page must not be linked in the text.
 4. **Write 2–3 reply ideas**: helpful answers (10–120 words) to common questions in those groups,
    with the question they answer. No links and no promotion.
-5. **Image (optional).** Only if `image_renderer` is true: see `jura-growth social render --help`
-   and pass the image file as `"image_path"`. Otherwise leave it out.
+5. **Image (optional).** Only if `image_renderer` is true: see `jura-growth social render --help`,
+   render into your scratch folder (`--out <scratch>/images`) and pass the PNG as `"image_path"`.
+   Any other file or folder is refused. Otherwise leave it out.
 6. Pre-check any text with `jura-growth check --channel community-post "<text>"` (or
    `--channel community-reply`).
 7. Write the plan to `plan.json` in your scratch folder:
