@@ -128,3 +128,11 @@ def test_the_clock_itself_refuses_live_folders_outside_the_cli(live_root, monkey
 
 def test_the_real_clock_runs_against_live_folders(live_root):
     assert timeutil.now().year >= 2026
+
+
+def test_render_refuses_a_plist_folder_inside_inputs(monkeypatch):
+    target = paths.inputs_dir() / "plists"
+    monkeypatch.setenv("JURA_GROWTH_PLIST_DIR", str(target))
+    with pytest.raises(PermissionError, match="read-only"):
+        schedule.render(["heartbeat"])
+    assert not target.exists()

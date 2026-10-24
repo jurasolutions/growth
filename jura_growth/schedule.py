@@ -118,8 +118,7 @@ def render(jobs: list[str] | None = None) -> list[Path]:
     specs = config.settings()["jobs"]
     out = []
     for job in jobs or list(specs):
-        path = generated_dir() / f"{label(job)}.plist"
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path = paths.writable(generated_dir() / f"{label(job)}.plist")
         with open(path, "wb") as handle:
             plistlib.dump(plist(job, specs[job]), handle)
         out.append(path)
