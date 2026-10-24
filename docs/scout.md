@@ -58,8 +58,11 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
    `inputs/do-not-contact.csv` (company name as whole words, or domain and its subdomains).
 4. Scores below 60 (config may raise the threshold, never lower it).
 5. More than the day's target (15; code ceiling 30).
-6. The address: it must be an enquiry address (not careers@, noreply@ ...), its source page
-   must be on the company's own domain, and **the code fetches that page and finds the exact
+6. The address: it must be an enquiry address (not careers@, noreply@ ...), it must belong
+   to the business (on the website's domain or a subdomain of it, or at one of the free-mail
+   providers in `free_mail_contacts`: gmail.com, outlook.com, hotmail.com, yahoo.com,
+   icloud.com, singnet.com.sg; config may shorten that list, never add to it), its source
+   page must be on the company's own domain, and **the code fetches that page and finds the exact
    address on it**, after decoding HTML entities, `mailto:` (percent-encoded too),
    `info [at] acme [dot] sg` and its bracket and word variants, and Cloudflare email
    protection (`data-cfemail` and `/cdn-cgi/l/email-protection#<hex>`, XOR with the first
