@@ -14,6 +14,7 @@ from jura_growth.agents.community import rules as rules_mod
 from jura_growth.cli import cli
 
 MONDAY = "2026-10-26"  # 2026-W44
+MON_TO_FRI = ["mon", "tue", "wed", "thu", "fri"]
 
 
 def invoke(*args):
@@ -163,21 +164,22 @@ def test_day_problem_applies_promotion_days_to_promotional_posts_only():
     assert rules_mod.day_problem(weekdays, 6, promotional=False)
 
 
-WEEKDAYS_ONLY = ["mon", "tue", "wed", "thu", "fri"]
-
-
 @pytest.mark.parametrize(
     "text, promo_days, post_days",
     [
         # audit C-B1: each of these used to parse as the forbidden days only
-        ("No promotion on weekends.", WEEKDAYS_ONLY, None),
-        ("No posts on Sundays.", None, WEEKDAYS_ONLY + ["sat"]),
+        ("No promotion on weekends.", MON_TO_FRI, None),
+        ("No posts on Sundays.", None, MON_TO_FRI + ["sat"]),
         # a link makes a post promotional, so a links ban on some days narrows the promotion days
-        ("Promotion allowed Monday to Friday. No links on weekends.", WEEKDAYS_ONLY, None),
-        ("No links on weekends.", WEEKDAYS_ONLY, None),
-        ("Members can't post links on weekends.", WEEKDAYS_ONLY, None),
-        ("Members cannot post ads on Sundays.", WEEKDAYS_ONLY + ["sat"], None),
-        ("Promotion is not allowed on Saturdays or Sundays.", WEEKDAYS_ONLY, None),
+        ("Promotion allowed Monday to Friday. No links on weekends.", MON_TO_FRI, None),
+        ("No links on weekends.", MON_TO_FRI, None),
+        ("Members can't post links on weekends.", MON_TO_FRI, None),
+        ("Members cannot post ads on Sundays.", MON_TO_FRI + ["sat"], None),
+        ("Promotion is not allowed on Saturdays or Sundays.", MON_TO_FRI, None),
+        # code review 07 B2: any n't form is a negation
+        ("Promotion isn't allowed on weekends.", MON_TO_FRI, None),
+        ("Promos aren't permitted on Sundays.", MON_TO_FRI + ["sat"], None),
+        ("Strictly no selling on Sundays.", MON_TO_FRI + ["sat"], None),
     ],
 )
 def test_a_rule_that_forbids_days_leaves_the_other_days_open(text, promo_days, post_days):
@@ -197,6 +199,26 @@ def test_a_rule_that_forbids_days_leaves_the_other_days_open(text, promo_days, p
         "No links on weekends, only on weekdays.",
         "No promotion except on Sundays, never on Saturdays.",
         "Promotion is welcome every day except Sundays.",
+        # code review 07 B1: a permitted day followed by a negation of something
+        "Promo on Fridays, no DMs.",
+        "Promo on Fridays but don't spam.",
+        "Promo Fridays - please do not tag members.",
+        "Self-promo on Fridays, never on other days.",
+        "Promo on Fridays, you cannot promote on other days.",
+        "Promo on Saturdays, no links.",
+        "Sales posts on weekends, never during the week.",
+        "Weekends: no promo.",
+        "Promo on Fridays (not Saturdays).",
+        # code review 07 B1: a ban followed by a permission in the same clause
+        "No promo on weekends, promo Fridays.",
+        "No promotion on weekends, Fridays are for promo.",
+        "No promo on weekends and promo on Fridays.",
+        "1) No promo on weekends 2) Promo on Fridays",
+        # code review 07 B2: an except word that excepts no day
+        "No links on weekends unless approved by admin.",
+        "Promotion is not allowed on weekends unless it is in the weekly thread.",
+        "Only admins can approve posts, no promo on weekends.",
+        "No promo on weekdays, Saturdays only.",
     ],
 )
 def test_a_clause_that_both_permits_and_bans_days_needs_a_person(text):
@@ -207,10 +229,36 @@ def test_a_clause_that_both_permits_and_bans_days_needs_a_person(text):
     assert "rules_ok" in rules.summary()
 
 
+@pytest.mark.parametrize(
+    "text, promo_days",
+    [
+        ("Promotion only on Saturdays, no spam.", ["sat"]),
+        ("Self-promotion on Sundays only, no DMs.", ["sun"]),
+        ("No promotion, Saturdays only", ["sat"]),
+        ("Promo Saturdays only, not on other days", ["sat"]),
+        ("No promo except on Sundays.", ["sun"]),
+        ("Do not post ads except on Fridays.", ["fri"]),
+    ],
+)
+def test_a_permission_with_its_days_next_to_only_or_except_still_parses(text, promo_days):
+    rules = rules_mod.parse(text)
+    assert rules.parsed and not rules.no_promo
+    assert rules_mod.day_names(rules.promo_days) == promo_days
+
+
+@pytest.mark.parametrize("text", ["Promotion only on Saturdays, no links.", "Promo on Saturdays, no links."])
+def test_a_links_ban_inside_a_day_clause_is_kept(text):
+    """Code review 07 S1: the closing line's link is refused whatever the day."""
+    rules = rules_mod.parse(text)
+    assert rules.no_links
+    if rules.parsed:
+        assert rules_mod.day_names(rules.promo_days) == ["sat"]
+
+
 def test_one_mixed_clause_still_needs_a_person_when_the_others_are_clear():
     rules = rules_mod.parse("No posts on Sundays. Promotion on weekdays, not on weekends.")
     assert not rules.parsed
-    assert rules_mod.day_names(rules.post_days) == WEEKDAYS_ONLY + ["sat"]  # the clear clause still counts
+    assert rules_mod.day_names(rules.post_days) == MON_TO_FRI + ["sat"]  # the clear clause still counts
 
 
 @pytest.mark.parametrize(

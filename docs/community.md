@@ -92,8 +92,12 @@ Structural problems reject the whole plan and store nothing, without touching th
 - **Days:** the day is in the plan week and not past. Rules are parsed into days
   (`agents/community/rules.py`): "promo Saturdays only", "self-promotion on Fridays", "ads on
   weekends", "no promotion except the Sunday thread" limit promotional posts; "posts Mon to Fri
-  only" limits every post; "no self-promo" and "no links" are bans. A post is promotional when it
-  mentions Jura or carries a link. Rules the parser can't read need a `rules_ok` statement.
+  only" limits every post; "no self-promo" and "no links" are bans. A rule that bans days leaves
+  the others open: "no promotion on weekends" means promotion Monday to Friday. A post is
+  promotional when it mentions Jura or carries a link. Rules the parser can't read need a
+  `rules_ok` statement, and so does a clause that mixes a permission and a ban ("promo on
+  Fridays, no DMs", "no links on weekends unless approved"): the code doesn't guess which days
+  are which.
 - **Words:** posts 60–150, reply ideas 10–120.
 - **Distinct texts:** no sentence of four or more words shared with another group's post this
   week or any post from the last 28 days, and word-trigram overlap at most 0.25.

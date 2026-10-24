@@ -45,8 +45,9 @@ PROMO_RE = re.compile(
 LINK_RE = re.compile(r"\b(?:links?|urls?)\b", re.I)
 POST_RE = re.compile(r"\bpost(?:s|ing)?\b", re.I)
 NEG_RE = re.compile(
-    r"\b(?:no|not allowed|not permitted|prohibited|banned|forbidden|disallowed|strictly no|don['’]?t|do not|never|zero|"
-    r"can(?:not|['’]?t)|can not|may not|must not|mustn['’]?t|should not|shouldn['’]?t)\b",
+    r"\b(?:no|not allowed|not permitted|prohibited|banned|forbidden|disallowed|strictly no|do not|never|zero|"
+    r"don['’]?t|can(?:not|['’]?t)|can not|may not|must not|should not|"
+    r"\w+n['’]t(?:\s+be)?(?:\s+(?:allowed|permitted))?)\b",  # isn't (allowed), aren't, won't, mustn't ...
     re.I,
 )
 # In a clause that names days a bare "not" counts too ("promo on weekdays, not weekends"):
@@ -54,6 +55,12 @@ NEG_RE = re.compile(
 DAY_NEG_RE = re.compile(rf"{NEG_RE.pattern}|\bnot\b", re.I)
 EXCEPT_RE = re.compile(r"\b(?:except|other than|apart from|unless|outside of|save for|only)\b", re.I)
 ALLOWED_RE = re.compile(r"\b(?:allowed|welcome[ds]?|ok|okay|permitted|fine|encouraged|can|may)\b", re.I)
+SUBJECT_RE = re.compile(rf"{PROMO_RE.pattern}|{LINK_RE.pattern}|{POST_RE.pattern}", re.I)
+DAY_PHRASE = rf"(?:{DAY}\s*(?:-|–|—|to|through|thru|till|until)\s*{DAY}|{DAY}|weekends?|weekdays?)"
+DAY_MENTION_RE = re.compile(rf"\b(?:{DAY_PHRASE}|every day|everyday|daily|any day)\b", re.I)
+# "only" excepts days when it sits next to them: "Saturdays only", "only on Fridays"
+ONLY_DAYS_RE = re.compile(rf"\bonly\s+(?:(?:on|during|in)\s+)?(?:the\s+)?{DAY_PHRASE}\b|\b{DAY_PHRASE}\s+only\b", re.I)
+ALL_DAYS = frozenset(range(7))
 
 
 @dataclass
@@ -103,7 +110,7 @@ def day_names(days: frozenset[int] | None) -> list[str] | None:
 
 
 def _posts_only_on(days: frozenset[int]) -> str:
-    return "posts only on " + ", ".join(WEEKDAYS[d] for d in sorted(days)) if days else "no posts on any day"
+    return "posts only on " + ", ".join(day_names(days) or []) if days else "no posts on any day"
 
 
 def _day(token: str) -> int:
@@ -130,8 +137,87 @@ def days_in(clause: str) -> frozenset[int] | None:
         elif word.startswith("weekday"):
             found.update(range(5))
         else:
-            found.update(range(7))
+            found.update(ALL_DAYS)
     return frozenset(found) if found else None
+
+
+def _day_rule(clause: str) -> str:
+    """Whether a clause that names days permits them, bans them, or can't be read.
+
+    "Promo on Saturdays", "No promo except the Sunday thread" and "No promotion,
+    Saturdays only" permit their days. "No promotion on weekends" bans them: a ban
+    needs every day to come after the negation, with no second subject or permission
+    after the first day. Anything else that mixes the two is "unclear":
+    "Promo on Fridays, no DMs" (what does the "no" negate?), "No promo on weekends,
+    promo Fridays", "No links on weekends unless approved", "every day except
+    Sundays". The code can't tell which days are which, so the plan has to say why
+    its day fits (rules_ok). Erring this way costs one sentence; reading a ban as a
+    permission can get Ting Yu removed from the group.
+    """
+    negations = list(DAY_NEG_RE.finditer(clause))
+    exceptions = list(EXCEPT_RE.finditer(clause))
+    if not negations:
+        # "every day except Sundays": the days after the exception are banned
+        if any(m[0].lower() != "only" and days_in(clause[m.end():]) for m in exceptions):
+            return "unclear"
+        return "allow"
+    if any(days_in(clause[:n.start()]) and days_in(clause[n.end():]) for n in negations):
+        return "unclear"
+    if exceptions:
+        return "allow" if _days_all_excepted(clause, exceptions[0]) else "unclear"
+    first_day = DAY_MENTION_RE.search(clause)
+    day_start, day_end = first_day.span() if first_day else (len(clause), len(clause))
+    if day_start < negations[0].start() or SUBJECT_RE.search(clause, day_end):
+        return "unclear"
+    if ALLOWED_RE.search(DAY_NEG_RE.sub(" ", clause)):
+        return "unclear"
+    return "ban"
+
+
+def _days_all_excepted(clause: str, exception: re.Match) -> bool:
+    """True when every day the clause names sits inside its exception: after
+    "except" or "unless", or next to "only" ("Saturdays only", "only on Fridays")."""
+    if exception[0].lower() == "only":
+        beside = ONLY_DAYS_RE.search(clause)
+        if not beside:
+            return False
+        start, end = beside.span()
+    else:
+        start, end = exception.end(), len(clause)
+    return bool(days_in(clause[start:end])) and not days_in(clause[:start] + " " + clause[end:])
+
+
+def _bans_links_on_every_day(clause: str) -> bool:
+    """A negation right before "links" with no day after it: "Promo Saturdays only, no links"."""
+    for link in LINK_RE.finditer(clause):
+        negations = list(DAY_NEG_RE.finditer(clause, 0, link.start()))
+        if not negations:
+            continue
+        between = clause[negations[-1].end():link.start()]
+        if not days_in(between) and not PROMO_RE.search(between) and not days_in(clause[link.end():]):
+            return True
+    return False
+
+
+@dataclass
+class _DaySets:
+    """The days a group's rules permit and ban for one kind of post."""
+
+    permitted: set[int] = field(default_factory=set)
+    banned: set[int] = field(default_factory=set)
+
+    def add(self, days: frozenset[int], *, ban: bool) -> None:
+        (self.banned if ban else self.permitted).update(days)
+
+    def open_days(self, *, blanket_ban: bool = False) -> set[int] | None:
+        """The days left open, or None when no rule names a day. Permitted days lift
+        a blanket ban ("No promo. Promo thread on Sundays"); banned days only narrow
+        what is left."""
+        if self.permitted:
+            return self.permitted - self.banned
+        if self.banned and not blanket_ban:
+            return set(ALL_DAYS - self.banned)
+        return None
 
 
 def parse(text: str | None) -> Rules:
@@ -139,10 +225,7 @@ def parse(text: str | None) -> Rules:
     if not raw or UNKNOWN_RE.match(raw):
         return Rules(raw, known=False, parsed=True)
     rules = Rules(raw, known=True, parsed=False)
-    promo_days: set[int] = set()
-    promo_banned: set[int] = set()
-    post_days: set[int] = set()
-    post_banned: set[int] = set()
+    promo_sets, post_sets = _DaySets(), _DaySets()
     unclear = False
     for clause in re.split(r"[.;\n]+|\s\|\s", raw):
         clause = clause.strip()
@@ -151,90 +234,46 @@ def parse(text: str | None) -> Rules:
         days = days_in(clause) or frozenset()
         promo = bool(PROMO_RE.search(clause))
         link = bool(LINK_RE.search(clause))
+        post = bool(POST_RE.search(clause))
         negative = bool(NEG_RE.search(clause))
-        day_rule = _day_rule(clause) if days and (promo or link or POST_RE.search(clause)) else None
+        if link and days and _bans_links_on_every_day(clause):
+            rules.no_links = True  # kept even when the rest of the clause is unclear
+        day_rule = _day_rule(clause) if days and (promo or link or post) else None
         if day_rule == "unclear":
             unclear = True
             continue
-        bans_days = day_rule == "ban"
-        if promo:
-            if bans_days:
-                promo_banned |= days
-                rules.parsed = True
-            elif days:
-                promo_days |= days
-                rules.promo_allowed = True
-                rules.parsed = True
-            elif negative:
-                rules.no_promo = True
-                rules.parsed = True
-            elif ALLOWED_RE.search(clause):
-                rules.promo_allowed = True
-                rules.parsed = True
-        if link:
-            if days and not promo:
-                if bans_days:
-                    promo_banned |= days
-                else:
-                    promo_days |= days
-                rules.parsed = True
-            elif negative and not days:
-                rules.no_links = True
-                rules.parsed = True
-            elif ALLOWED_RE.search(clause) and not promo:
-                rules.parsed = True
-        if not promo and not link and POST_RE.search(clause) and days:
-            if bans_days:
-                post_banned |= days
-            else:
-                post_days |= days
+        ban = day_rule == "ban"
+        if days and (promo or link):
+            # a link makes a post promotional, so a links rule about days is a promotion rule
+            promo_sets.add(days, ban=ban)
+            rules.promo_allowed = rules.promo_allowed or (promo and not ban)
             rules.parsed = True
-    # Days a rule permits lift a blanket ban ("No promo. Promo thread on Sundays");
-    # days it bans only narrow what is left, and a ban on every day is no promotion.
-    open_promo = None
-    if promo_days:
-        open_promo = promo_days - promo_banned
-    elif promo_banned and not rules.no_promo:
-        open_promo = set(range(7)) - promo_banned
+        elif days and post:
+            post_sets.add(days, ban=ban)
+            rules.parsed = True
+        elif promo and negative:
+            rules.no_promo = True
+            rules.parsed = True
+        elif promo and ALLOWED_RE.search(clause):
+            rules.promo_allowed = True
+            rules.parsed = True
+        if link and not days and negative:
+            rules.no_links = True
+            rules.parsed = True
+        elif link and not promo and not days and ALLOWED_RE.search(clause):
+            rules.parsed = True
+    open_promo = promo_sets.open_days(blanket_ban=rules.no_promo)
     if open_promo:
         rules.promo_days = frozenset(open_promo)
         rules.no_promo = False
     elif open_promo is not None:
-        rules.no_promo = True
-    if post_days or post_banned:
-        rules.post_days = frozenset((post_days or set(range(7))) - post_banned)
+        rules.no_promo = True  # every permitted day is also banned
+    open_posts = post_sets.open_days()
+    if open_posts is not None:
+        rules.post_days = frozenset(open_posts)
     if unclear:
         rules.parsed = False
     return rules
-
-
-def _day_rule(clause: str) -> str:
-    """Whether a clause that names days permits them, bans them, or can't be read.
-
-    "Promo on Saturdays" and "No promo except the Sunday thread" permit their days;
-    "No promotion on weekends" bans them. The clause is "unclear" when it names days
-    on both sides of a negation or of its "except" ("promo on weekdays, not
-    weekends"), when a ban also carries a permission word ("no promo on weekends,
-    weekdays are fine"), or when it makes exceptions to a permission ("every day
-    except Sundays"). The code can't tell which days are which, so the plan has to
-    say why its day fits (rules_ok). Erring this way costs one sentence; reading a
-    ban as a permission can get Ting Yu removed from the group.
-    """
-    exceptions = list(EXCEPT_RE.finditer(clause))
-    negations = list(DAY_NEG_RE.finditer(clause))
-    if not negations:
-        # "every day except Sundays": the days after the exception are banned
-        if any(m[0].lower() != "only" and days_in(clause[m.end():]) for m in exceptions):
-            return "unclear"
-        return "allow"
-    for pivot in negations + exceptions[:1]:
-        if days_in(clause[:pivot.start()]) and days_in(clause[pivot.end():]):
-            return "unclear"
-    if exceptions:
-        return "allow"
-    if ALLOWED_RE.search(DAY_NEG_RE.sub(" ", clause)):
-        return "unclear"
-    return "ban"
 
 
 def day_problem(rules: Rules, weekday: int, *, promotional: bool) -> str | None:
