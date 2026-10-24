@@ -22,6 +22,7 @@ from jura_growth import (
     db,
     digest as digest_mod,
     discord,
+    headless,
     holidays,
     log,
     pause as pause_mod,
@@ -392,3 +393,5 @@ for _module in agents.plugins():
     _register = getattr(_module, "register", None)
     if _register:
         _register(cli)
+
+headless.install(cli)

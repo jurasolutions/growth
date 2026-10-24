@@ -7,6 +7,9 @@ Tests point both somewhere temporary with `JURA_GROWTH_DATA_DIR` and
 
 `inputs/` and `design-system/` are human-maintained and read-only. Every write
 helper in this package goes through `writable()`, which refuses them.
+
+Every CLI option or plan field that takes a file path goes through `guard()`,
+which keeps secret files away from anything the CLI prints or uploads.
 """
 
 from __future__ import annotations
@@ -63,6 +66,49 @@ def db_path() -> Path:
 def work_dir(job: str) -> Path:
     """Scratch space a headless run may write drafts into."""
     return data_dir() / "work" / job
+
+
+class PathRefused(PermissionError):
+    """A CLI option or plan field named a file it may not use."""
+
+
+def is_secret_file(path: Path) -> bool:
+    """`.env`, `.env.local`, `prod.env`, `.dev.vars` and the like."""
+    name = Path(path).name
+    return name.startswith((".env", ".dev.vars")) or name.endswith(".env")
+
+
+def run_folders(job: str) -> list[Path]:
+    """The folders a run of `job` may hand to a CLI option or plan field:
+
+    - `data/growth/work/<job>/`, its scratch folder (drafts, plans, leads,
+      rendered images);
+    - `outputs/growth/`, the engine's own generated files (rendered social
+      cards and other images, plans, digests).
+    """
+    return [work_dir(job), outputs_dir()]
+
+
+def guard(path: Path | str) -> Path:
+    """Return `path` resolved, or raise PathRefused.
+
+    Always refused: secret files (see `is_secret_file`), the configured env
+    file, and a link to either. Inside a run (`JURA_GROWTH_JOB` set), anything
+    outside `run_folders(job)` is refused too. That is tighter than
+    `JURA_ROOT`, so a headless run never reaches a file outside jurasolutions/.
+    Outside a run (Ting Yu in Terminal) any other file is accepted, as before.
+    """
+    given = Path(path).expanduser()
+    resolved = given.resolve()
+    if is_secret_file(given) or is_secret_file(resolved) or resolved == env_file().expanduser().resolve():
+        raise PathRefused(f"refused: {given} is a secrets file")
+    job = os.environ.get("JURA_GROWTH_JOB")
+    if job:
+        folders = [folder.resolve() for folder in run_folders(job)]
+        if not any(resolved == folder or folder in resolved.parents for folder in folders):
+            allowed = " or ".join(str(folder) for folder in folders)
+            raise PathRefused(f"refused: a `{job}` run may only use files in {allowed}")
+    return resolved
 
 
 def writable(path: Path) -> Path:
