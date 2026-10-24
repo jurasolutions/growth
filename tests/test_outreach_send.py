@@ -351,6 +351,45 @@ def test_spacing_skips_a_slot_when_the_draw_is_high(conn, monkeypatch):
     assert send.send_due(conn).summary
 
 
+def test_back_to_back_send_due_calls_send_live_only_once(conn, monkeypatch):
+    # Review finding F3: two calls in the same minute both reached Resend.
+    at(monkeypatch, "2026-10-26T08:00:00+08:00")
+    seed(conn, 1)
+    seed(conn, 2)
+    live_ready(monkeypatch)
+    sent = fake_resend(monkeypatch)
+    at(monkeypatch, MONDAY_10AM)
+    assert send.send_due(conn).summary.startswith("sent message")
+    second = send.send_due(conn)  # same minute
+    assert second.summary is None
+    assert "0 minutes ago" in second.note and "at least 10 minutes apart" in second.note
+    at(monkeypatch, "2026-10-26T10:09:00+08:00")
+    assert send.send_due(conn).summary is None
+    assert len(sent) == 1
+
+
+def test_the_next_ten_minute_slot_still_sends_live(conn, monkeypatch):
+    # The gap is counted in whole clock minutes, so the seconds a send takes
+    # never block the next scheduled slot.
+    at(monkeypatch, "2026-10-26T08:00:00+08:00")
+    seed(conn, 1)
+    seed(conn, 2)
+    live_ready(monkeypatch)
+    sent = fake_resend(monkeypatch)
+    at(monkeypatch, "2026-10-26T10:00:04+08:00")
+    assert send.send_due(conn).summary.startswith("sent message")
+    at(monkeypatch, "2026-10-26T10:10:01+08:00")
+    assert send.send_due(conn).summary.startswith("sent message")
+    assert len(sent) == 2
+
+
+def test_shadow_sends_have_no_minimum_gap(conn, monkeypatch):
+    seed_many(conn, monkeypatch, 2)
+    at(monkeypatch, MONDAY_10AM)
+    assert send.send_due(conn).summary.startswith("SHADOW")
+    assert send.send_due(conn).summary.startswith("SHADOW")
+
+
 @pytest.mark.parametrize("seed_value", [1, 7, 42, 2026])
 def test_first_live_day_sends_at_most_five_spread_across_the_window(conn, monkeypatch, seed_value):
     seed_many(conn, monkeypatch, 9)
