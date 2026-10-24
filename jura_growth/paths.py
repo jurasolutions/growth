@@ -89,14 +89,17 @@ def run_folders(job: str) -> list[Path]:
     return [work_dir(job), outputs_dir()]
 
 
-def guard(path: Path | str) -> Path:
+def guard(path: str | os.PathLike[str]) -> Path:
     """Return `path` resolved, or raise PathRefused.
 
     Always refused: secret files (see `is_secret_file`), the configured env
-    file, and a link to either. Inside a run (`JURA_GROWTH_JOB` set), anything
-    outside `run_folders(job)` is refused too. That is tighter than
-    `JURA_ROOT`, so a headless run never reaches a file outside jurasolutions/.
-    Outside a run (Ting Yu in Terminal) any other file is accepted, as before.
+    file, and a link to either.
+
+    Inside a run (`JURA_GROWTH_JOB` set), only `run_folders(job)` are
+    accepted: the job's `data/growth/work/<job>/` scratch folder and
+    `outputs/growth/`. Both sit inside jurasolutions/, so this is tighter than
+    a `JURA_ROOT` boundary. Outside a run (Ting Yu in Terminal) any other file
+    is accepted, as before.
     """
     given = Path(path).expanduser()
     resolved = given.resolve()

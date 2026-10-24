@@ -156,9 +156,17 @@ class GuardedPath(click.Path):
 
 
 def _guarded(kind: click.Path) -> GuardedPath:
-    guarded = GuardedPath.__new__(GuardedPath)
-    guarded.__dict__.update(kind.__dict__)
-    return guarded
+    return GuardedPath(
+        exists=kind.exists,
+        file_okay=kind.file_okay,
+        dir_okay=kind.dir_okay,
+        writable=kind.writable,
+        readable=kind.readable,
+        resolve_path=kind.resolve_path,
+        allow_dash=kind.allow_dash,
+        path_type=kind.type,
+        executable=kind.executable,
+    )
 
 
 def _enforced(name: str, callback: Callable) -> Callable:
@@ -166,10 +174,13 @@ def _enforced(name: str, callback: Callable) -> Callable:
     def run(*args, **kwargs):
         job = os.environ.get("JURA_GROWTH_JOB")
         if job and not may_use(job, name):
-            log.mirror({
-                "ts": timeutil.stamp(), "agent": log.current_agent(), "level": "warning",
-                "kind": "command.refused", "payload": {"job": job, "command": name},
-            })
+            try:
+                log.mirror({
+                    "ts": timeutil.stamp(), "agent": log.current_agent(), "level": "warning",
+                    "kind": "command.refused", "payload": {"job": job, "command": name},
+                })
+            except OSError:
+                pass  # the refusal stands even if the log can't be written
             raise Refused(f"refused: a `{job}` run may not use `jura-growth {name}`")
         return callback(*args, **kwargs)
 
