@@ -31,7 +31,7 @@ from email.utils import formataddr
 
 import httpx
 
-from jura_growth import caps, cloudflare, config, db, discord, holidays, log, pause, timeutil
+from jura_growth import caps, cloudflare, config, db, discord, holidays, locks, log, pause, timeutil
 from jura_growth.agents.outreach import compose, queue, replies, store, sync
 from jura_growth.agents.scout import contact as contact_rules
 from jura_growth.agents.scout import dnc, registry, settings
@@ -228,7 +228,21 @@ def due(conn: sqlite3.Connection) -> list[dict]:
 # --- the run ---------------------------------------------------------------
 
 
+SEND_LOCK = "outreach-send"
+
+
 def send_due(conn: sqlite3.Connection, *, client: httpx.Client | None = None) -> SendResult:
+    """One send run. The whole run, from the cap and gap checks to the Resend
+    call and the record of the send, holds an exclusive lock, so a second
+    `send-due` started meanwhile (by hand, or by another process) skips instead
+    of sending past the gap or the daily cap."""
+    with locks.held(SEND_LOCK) as acquired:
+        if not acquired:
+            return SendResult(None, "skipped: another send-due run is still going")
+        return _send_due(conn, client)
+
+
+def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> SendResult:
     moment = timeutil.now_sgt()
     reason = pause.is_paused(conn, store.AGENT)
     if reason:

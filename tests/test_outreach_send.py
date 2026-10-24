@@ -3,6 +3,7 @@ per-company rule, suppression, shadow versus live, Resend errors."""
 
 import json
 import random
+import threading
 from datetime import timedelta
 
 import httpx
@@ -388,6 +389,58 @@ def test_shadow_sends_have_no_minimum_gap(conn, monkeypatch):
     at(monkeypatch, MONDAY_10AM)
     assert send.send_due(conn).summary.startswith("SHADOW")
     assert send.send_due(conn).summary.startswith("SHADOW")
+
+
+def _parallel_send_due(monkeypatch, *, per_day=None):
+    """Run B starts first and is held in its D1 sync while run A tries to send;
+    then B finishes. Returns each run's result and the Resend requests."""
+    at(monkeypatch, "2026-10-26T08:00:00+08:00")
+    setup = db.connect()
+    seed(setup, 1)
+    seed(setup, 2)
+    setup.close()
+    live_ready(monkeypatch)
+    if per_day is not None:
+        configure(monkeypatch, mode="live", legal_review_done=True, sending_domain="hello.jurasolutions.sg", send={"per_day": per_day})
+    a_done, b_in_sync = threading.Event(), threading.Event()
+
+    def d1(request):
+        if threading.current_thread().name == "B":
+            b_in_sync.set()
+            a_done.wait(10)
+        return httpx.Response(200, json={"success": True, "result": [{"results": []}]})
+
+    fake_d1(monkeypatch, d1)
+    sent = fake_resend(monkeypatch)
+    at(monkeypatch, MONDAY_10AM)
+    results = {}
+
+    def run(name):
+        conn = db.connect()
+        try:
+            results[name] = send.send_due(conn)
+        finally:
+            conn.close()
+
+    b = threading.Thread(target=run, args=("B",), name="B")
+    b.start()
+    assert b_in_sync.wait(10)
+    run("A")
+    a_done.set()
+    b.join(10)
+    return results, sent
+
+
+def test_parallel_send_due_calls_send_live_only_once(monkeypatch):
+    results, sent = _parallel_send_due(monkeypatch)
+    assert len(sent) == 1
+    assert results["B"].summary.startswith("sent message")
+    assert results["A"].summary is None and "another send-due run is still going" in results["A"].note
+
+
+def test_parallel_send_due_calls_stay_within_the_daily_cap(monkeypatch):
+    results, sent = _parallel_send_due(monkeypatch, per_day=1)
+    assert len(sent) == 1
 
 
 @pytest.mark.parametrize("seed_value", [1, 7, 42, 2026])

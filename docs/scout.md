@@ -146,7 +146,9 @@ its draft at send time, so the real token is always the one sent.
    date in the past changes nothing. A live send also needs 10 minutes since the last live
    send (`caps.OUTREACH_MINUTES_BETWEEN_LIVE_SENDS`, counted in whole clock minutes, not
    configurable), so calling `send-due` back to back can't send twice. Shadow sends have no
-   gap.
+   gap. Each `send-due` holds `data/growth/locks/outreach-send.lock` from these checks to the
+   record of the send, so a second one started meanwhile skips and the gap and caps hold for
+   parallel calls too.
 5. Random spacing: this slot sends with probability `min(quota left, emails due) ÷ slots
    left`. The last slot is certain, so the day's quota goes out, spread across the window.
 6. D1 suppression sync. A failed sync pauses outreach. No D1: a logged warning in shadow, a

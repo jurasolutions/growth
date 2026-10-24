@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from jura_growth import agents, config, db, discord, holidays, log, pause, paths, timeutil
+from jura_growth import agents, config, db, discord, holidays, locks, log, pause, paths, timeutil
 
 BUSINESS_DAY_KINDS = ("business_days", "business_days_every")
 
@@ -56,21 +56,7 @@ def job(name: str) -> dict:
         raise JobError(f"unknown job {name!r}; known: {', '.join(jobs())}") from None
 
 
-@contextmanager
-def _lock(name: str) -> Iterator[bool]:
-    path = paths.writable(paths.data_dir() / "locks" / f"{name}.lock")
-    handle = open(path, "w")
-    try:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        handle.close()
-        yield False
-        return
-    try:
-        yield True
-    finally:
-        fcntl.flock(handle, fcntl.LOCK_UN)
-        handle.close()
+_lock = locks.held  # one lock per job
 
 
 def run(name: str, *, ignore_schedule: bool = False) -> Outcome:
