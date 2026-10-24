@@ -87,6 +87,44 @@ def test_every_file_option_refuses_an_env_file(tmp_path, args):
     assert outbox_files(tmp_path) == []
 
 
+# --- secret values in CLI output ------------------------------------------------
+
+
+@pytest.fixture
+def configured(tmp_path, monkeypatch):
+    """A fake env file with two secrets, one of them in the (fake) Keychain."""
+    env = tmp_path / "configured-secrets"
+    env.write_text(
+        "CLOUDFLARE_API_TOKEN=FAKEcfTOKENabcdef1234567890\n"
+        "UNSUBSCRIBE_SECRET=keychain:jura-growth-fake\n"
+        "OUTREACH_IMAP_HOST=imap.example.sg\n"
+    )
+    env.chmod(0o600)
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(env))
+    monkeypatch.setattr(config, "_keychain", lambda service: "kcFAKEunsubscribe42" if service == "jura-growth-fake" else None)
+    config.reset_caches()
+
+
+def test_configured_secret_values_never_reach_cli_output(configured):
+    text = "Our token is FAKEcfTOKENabcdef1234567890 and the secret is kcFAKEunsubscribe42."
+    for args in (("check", text), ("check", "--json", text)):
+        result = invoke(*args)
+        assert result.exit_code == 1  # the numbers rule quotes the sentence back
+        assert "FAKEcfTOKENabcdef1234567890" not in result.output
+        assert "kcFAKEunsubscribe42" not in result.output
+        assert "[redacted]" in result.output
+
+
+def test_error_messages_are_redacted_too(configured):
+    result = invoke("social", "today", "--date", "FAKEcfTOKENabcdef1234567890")
+    assert result.exit_code == 2 and "is not a date" in result.output
+    assert "FAKEcfTOKENabcdef1234567890" not in result.output
+
+
+def test_only_secret_values_are_masked(configured):
+    assert config.redact("imap.example.sg FAKEcfTOKENabcdef1234567890") == "imap.example.sg [redacted]"
+
+
 # --- the folders a run may use --------------------------------------------------
 
 
