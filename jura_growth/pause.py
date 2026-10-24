@@ -52,7 +52,13 @@ def pause(conn: sqlite3.Connection, agent: str, reason: str, *, notify: bool = T
     )
     log.event(conn, "pause", {"agent": agent, "reason": reason}, level="warning", agent=agent)
     if notify:
-        discord.alert(conn, f"Paused `{agent}`: {reason}. Resume with `jura-growth resume {agent}`.", agent=agent)
+        announce(conn, agent, reason)
+
+
+def announce(conn: sqlite3.Connection, agent: str, reason: str) -> None:
+    """The #alerts post for a pause. `pause(..., notify=False)` inside a
+    transaction, then this once it has committed."""
+    discord.alert(conn, f"Paused `{agent}`: {reason}. Resume with `jura-growth resume {agent}`.", agent=agent)
 
 
 def resume(conn: sqlite3.Connection, agent: str) -> None:

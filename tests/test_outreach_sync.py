@@ -1,11 +1,13 @@
 """Suppression sync from D1, auto-pause, reply detection, follow-ups,
 retention and the digest figures."""
 
+import sqlite3
+
 import httpx
 import pytest
 from click.testing import CliRunner
 
-from jura_growth import db, pause, runner, suppression, timeutil
+from jura_growth import db, discord, pause, paths, runner, suppression, timeutil
 from jura_growth.agents import outreach
 from jura_growth.agents.outreach import queue as queue_mod
 from jura_growth.agents.outreach import replies, send, store, sync
@@ -147,8 +149,8 @@ def test_complaint_pauses_outreach_and_resume_restarts_it(conn, monkeypatch):
 
 
 def test_complaint_after_an_unsubscribe_still_pauses(conn, monkeypatch):
-    # Review finding F1: "report spam and unsubscribe". The one-click POST
-    # suppressed the address first, so the complaint after it was dropped.
+    # "Report spam and unsubscribe": the one-click POST suppresses the address
+    # first, and the complaint that follows must still pause outreach.
     seeded, table = live_sends(conn, monkeypatch, 1)
     first = seeded[0]
     table.rows.append(d1_row(first["email"], "unsubscribe", source="unsubscribe-post", with_email=False, created="2026-10-26 11:00:00"))
@@ -227,6 +229,64 @@ def test_a_sync_that_fails_part_way_keeps_nothing_and_is_retried_whole(conn, mon
     assert "complaint" in pause.is_paused(conn, "outreach")
     pause.resume(conn, "outreach")
     assert "0 new suppressions" in sync.run(conn)
+
+
+def test_discord_posts_go_out_after_the_sync_commits(conn, monkeypatch):
+    # Other jobs must be able to write while the sync talks to Discord.
+    seeded, table = live_sends(conn, monkeypatch, 2)
+    table.rows.append(d1_row(seeded[0]["email"], "unsubscribe", source="unsubscribe-link", with_email=False))
+    table.rows.append(d1_row(seeded[1]["email"], "complaint", resend_id=seeded[1]["resend_id"]))
+    errors, posted = [], []
+
+    def other_job_writes():
+        other = sqlite3.connect(paths.db_path(), timeout=0.2)
+        try:
+            other.execute("INSERT INTO events (ts, level, kind, payload_json) VALUES ('x', 'info', 'probe', '{}')")
+            other.commit()
+        except sqlite3.OperationalError as error:
+            errors.append(str(error))
+        finally:
+            other.close()
+
+    real_post, real_alert = store.post, discord.alert
+
+    def post(c, channel, text):
+        other_job_writes()
+        posted.append(channel)
+        real_post(c, channel, text)
+
+    def alert(c, text, **kwargs):
+        other_job_writes()
+        posted.append("alerts")
+        return real_alert(c, text, **kwargs)
+
+    monkeypatch.setattr(store, "post", post)
+    monkeypatch.setattr(discord, "alert", alert)
+    sync.run(conn)
+    assert posted == ["outreach-replies", "alerts"]
+    assert errors == []
+    assert "complaint" in pause.is_paused(conn, "outreach")
+    assert any("Paused `outreach`: 1 spam complaint received" in p["content"] for p in outbox("alerts"))
+
+
+def test_a_failed_batch_posts_nothing_from_it(conn, monkeypatch):
+    seeded, table = live_sends(conn, monkeypatch, 1)
+    table.rows.append(d1_row(seeded[0]["email"], "unsubscribe", source="unsubscribe-link", with_email=False))
+    table.rows.append(d1_row("someone@else.sg", "unsubscribe", source="unsubscribe-link", with_email=False))
+    real_cancel, calls = store.cancel_queued, []
+
+    def cancel(c, lead_ids, reason):
+        calls.append(reason)
+        if len(calls) == 2:
+            raise RuntimeError("the second event fails while it is applied")
+        return real_cancel(c, lead_ids, reason)
+
+    monkeypatch.setattr(store, "cancel_queued", cancel)
+    assert "suppression sync failed" in sync.run(conn)
+    assert not any("Unsubscribe" in p["content"] for p in outbox("outreach-replies"))
+    assert [p for p in outbox("alerts") if "Paused" in p["content"]] and all(
+        "suppression sync from D1 failed" in p["content"] for p in outbox("alerts") if "Paused" in p["content"]
+    )
 
 
 def _three_unsubscribes_synced(conn, monkeypatch):

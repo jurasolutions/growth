@@ -72,9 +72,10 @@ def record_contacted(conn: sqlite3.Connection, domain: str) -> None:
 # --- auto-pause (PRD §5.7) -------------------------------------------------
 
 
-def auto_pause(conn: sqlite3.Connection, reason: str) -> None:
-    """Pause outreach and post to #alerts (pause.pause does both)."""
-    pause.pause(conn, AGENT, reason)
+def auto_pause(conn: sqlite3.Connection, reason: str, *, notify: bool = True) -> None:
+    """Pause outreach and post to #alerts (pause.pause does both). Inside a
+    transaction pass notify=False and call pause.announce after the commit."""
+    pause.pause(conn, AGENT, reason, notify=notify)
 
 
 def _last_resume_id(conn: sqlite3.Connection) -> int:
@@ -108,9 +109,10 @@ def record_qa(conn: sqlite3.Connection, item: str, passed: bool, reasons: list[s
     return False
 
 
-def bounce_rate_pause(conn: sqlite3.Connection) -> bool:
+def bounce_rate_pause(conn: sqlite3.Connection, *, notify: bool = True) -> str | None:
     """Bounce rate above 3% over the last 50 live sends pauses outreach. With
-    fewer than 50 sends the denominator stays 50, so two bounces pause."""
+    fewer than 50 sends the denominator stays 50, so two bounces pause.
+    Returns the pause reason, or None."""
     recent = db.rows(
         conn,
         "SELECT status FROM outreach_messages WHERE mode = 'live' AND sent_at IS NOT NULL "
@@ -119,9 +121,10 @@ def bounce_rate_pause(conn: sqlite3.Connection) -> bool:
     bounced = sum(1 for r in recent if r["status"] == "bounced")
     rate = bounced / 50
     if rate > 0.03:
-        auto_pause(conn, f"bounce rate {rate:.0%} over the last 50 sends ({bounced} bounced of {len(recent)} sent)")
-        return True
-    return False
+        reason = f"bounce rate {rate:.0%} over the last 50 sends ({bounced} bounced of {len(recent)} sent)"
+        auto_pause(conn, reason, notify=notify)
+        return reason
+    return None
 
 
 def post(conn: sqlite3.Connection, channel: str, text: str) -> None:
