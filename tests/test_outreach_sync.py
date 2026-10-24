@@ -40,12 +40,16 @@ def d1_row(email, reason, *, source="resend-webhook", resend_id=None, with_email
 
 
 class D1:
-    """A D1 suppression table the test can add rows to."""
+    """The site's append-only D1 suppression table: one row per event, each
+    with the next id. It answers every query with every row, so the sync has to
+    skip what it has already processed by itself."""
 
     def __init__(self):
         self.rows = []
 
     def __call__(self, request):
+        for number, row in enumerate(self.rows, 1):
+            row.setdefault("id", number)
         return httpx.Response(200, json={"success": True, "result": [{"results": list(self.rows)}]})
 
 
@@ -140,6 +144,98 @@ def test_complaint_pauses_outreach_and_resume_restarts_it(conn, monkeypatch):
     assert CliRunner().invoke(cli, ["resume", "outreach"]).exit_code == 0
     at(monkeypatch, "2026-10-26T13:20:00+08:00")
     assert send.send_due(conn).summary == f"sent message {waiting['message_id']} to birchlogistics.sg"
+
+
+def test_complaint_after_an_unsubscribe_still_pauses(conn, monkeypatch):
+    # Review finding F1: "report spam and unsubscribe". The one-click POST
+    # suppressed the address first, so the complaint after it was dropped.
+    seeded, table = live_sends(conn, monkeypatch, 1)
+    first = seeded[0]
+    table.rows.append(d1_row(first["email"], "unsubscribe", source="unsubscribe-post", with_email=False, created="2026-10-26 11:00:00"))
+    sync.run(conn)
+    assert pause.is_paused(conn, "outreach") is None
+    table.rows.append(d1_row(first["email"], "complaint", resend_id=first["resend_id"], created="2026-10-26 12:00:00"))
+    summary = sync.run(conn)
+    assert "1 new suppression (0 unsubscribe, 0 bounce, 1 complaint)" in summary
+    assert "complaint" in pause.is_paused(conn, "outreach")  # PRD 5.7: any complaint pauses
+    assert db.scalar(conn, "SELECT status FROM outreach_messages WHERE id = ?", (first["message_id"],)) == "complained"
+    assert db.scalar(conn, "SELECT status FROM leads WHERE id = ?", (first["lead_id"],)) == "complained"
+
+
+def test_complaint_after_a_reply_unsubscribe_still_pauses(conn, monkeypatch):
+    seeded, table = live_sends(conn, monkeypatch, 1)
+    first = seeded[0]
+    suppression.add(conn, email=first["email"], reason="unsubscribe", source="reply")  # what replies._record does
+    table.rows.append(d1_row(first["email"], "complaint", resend_id=first["resend_id"], created="2026-10-26 12:00:00"))
+    sync.run(conn)
+    assert "complaint" in pause.is_paused(conn, "outreach")
+
+
+def test_bounce_after_an_unsubscribe_still_marks_the_bounce(conn, monkeypatch):
+    seeded, table = live_sends(conn, monkeypatch, 1)
+    first = seeded[0]
+    table.rows.append(d1_row(first["email"], "unsubscribe", source="unsubscribe-link", with_email=False))
+    table.rows.append(d1_row(first["email"], "bounce", resend_id=first["resend_id"], created="2026-10-26 11:05:00"))
+    sync.run(conn)
+    assert db.scalar(conn, "SELECT status FROM outreach_messages WHERE id = ?", (first["message_id"],)) == "bounced"
+    assert db.scalar(conn, "SELECT status FROM leads WHERE id = ?", (first["lead_id"],)) == "bounced"
+
+
+def test_a_later_unsubscribe_never_weakens_a_complaint(conn, monkeypatch):
+    # The webhook and the one-click POST arrive in either order.
+    seeded, table = live_sends(conn, monkeypatch, 1)
+    first = seeded[0]
+    table.rows.append(d1_row(first["email"], "complaint", resend_id=first["resend_id"]))
+    table.rows.append(d1_row(first["email"], "unsubscribe", source="unsubscribe-post", with_email=False, created="2026-10-26 11:01:00"))
+    table.rows.append(d1_row(first["email"], "manual", source="manual", created="2026-10-26 11:02:00"))
+    sync.run(conn)
+    assert db.scalar(conn, "SELECT status FROM leads WHERE id = ?", (first["lead_id"],)) == "complained"
+    assert db.scalar(conn, "SELECT status FROM outreach_messages WHERE id = ?", (first["message_id"],)) == "complained"
+    assert "complaint" in pause.is_paused(conn, "outreach")
+
+
+def test_a_processed_d1_event_is_never_applied_again(conn, monkeypatch):
+    seeded, table = live_sends(conn, monkeypatch, 1)
+    calls = fake_d1(monkeypatch, table)
+    table.rows.append(d1_row(seeded[0]["email"], "complaint", resend_id=seeded[0]["resend_id"]))
+    sync.run(conn)
+    pause.resume(conn, "outreach")
+    alerts = len(outbox("alerts"))
+    summary = sync.run(conn)  # the fake D1 still returns the old complaint
+    assert "0 new suppressions" in summary
+    assert pause.is_paused(conn, "outreach") is None
+    assert len(outbox("alerts")) == alerts
+    assert calls[0]["params"] == [0] and calls[-1]["params"] == [1]  # D1 is asked only for later events
+
+
+def test_a_sync_that_fails_part_way_keeps_nothing_and_is_retried_whole(conn, monkeypatch):
+    seeded, table = live_sends(conn, monkeypatch, 1)
+    first = seeded[0]
+    table.rows.append(d1_row(first["email"], "complaint", resend_id=first["resend_id"]))
+    table.rows.append(d1_row("someone@else.sg", "spam-report"))  # a reason the contract doesn't allow
+    summary = sync.run(conn)
+    assert "suppression sync failed" in summary
+    assert "suppression sync from D1 failed" in pause.is_paused(conn, "outreach")
+    assert db.scalar(conn, "SELECT status FROM outreach_messages WHERE id = ?", (first["message_id"],)) == "sent"
+    assert suppression.is_suppressed(conn, first["email"]) is None
+
+    table.rows[1]["reason"] = "complaint"  # the site fixes its row
+    pause.resume(conn, "outreach")
+    summary = sync.run(conn)
+    assert "2 new suppressions (0 unsubscribe, 0 bounce, 2 complaint)" in summary
+    assert db.scalar(conn, "SELECT status FROM outreach_messages WHERE id = ?", (first["message_id"],)) == "complained"
+    assert "complaint" in pause.is_paused(conn, "outreach")
+    pause.resume(conn, "outreach")
+    assert "0 new suppressions" in sync.run(conn)
+
+
+def test_a_d1_row_without_an_id_fails_the_sync_and_pauses(conn, monkeypatch):
+    # The old contract (email_hash as the primary key, no id) can't be read safely.
+    d1_env(monkeypatch)
+    fake_d1(monkeypatch, [d1_row("a@b.sg", "complaint")])
+    summary = sync.run(conn)
+    assert "suppression sync failed" in summary and "append-only" in summary
+    assert "suppression sync from D1 failed" in pause.is_paused(conn, "outreach")
 
 
 def test_bounce_rate_above_three_percent_pauses(conn, monkeypatch):
