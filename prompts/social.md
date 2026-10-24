@@ -65,9 +65,9 @@ Every variant:
 - **Numbers:** no figures about Jura beyond the approved claims. Never put a digit, or a number
   word from two up ("twelve", "a dozen"), in a sentence that contains "we", "our", "us" or
   "Jura". A figure from a news story is fine in a sentence about that story, with the source
-  linked. For now the checker also reads "were", "well" and
-  "wed" as "we're", "we'll" and "we'd", so keep those words out of any sentence with a digit
-  ("86% of them use AI", not "86% were using AI").
+  linked. For now the checker also reads "were", "well" and "wed" as "we're", "we'll" and
+  "we'd", so keep those words out of any sentence with a figure ("86% of them use AI", not
+  "86% were using AI").
 - Plain text only. No markdown: no `**bold**`, no `#` headings, no `[text](url)` links. Write
   links in full (`https://...`). Lines starting with "- " are fine.
 - Hashtags go together on the last line, nowhere else.
