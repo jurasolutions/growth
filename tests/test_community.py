@@ -163,6 +163,90 @@ def test_day_problem_applies_promotion_days_to_promotional_posts_only():
     assert rules_mod.day_problem(weekdays, 6, promotional=False)
 
 
+WEEKDAYS_ONLY = ["mon", "tue", "wed", "thu", "fri"]
+
+
+@pytest.mark.parametrize(
+    "text, promo_days, post_days",
+    [
+        # audit C-B1: each of these used to parse as the forbidden days only
+        ("No promotion on weekends.", WEEKDAYS_ONLY, None),
+        ("No posts on Sundays.", None, WEEKDAYS_ONLY + ["sat"]),
+        # a link makes a post promotional, so a links ban on some days narrows the promotion days
+        ("Promotion allowed Monday to Friday. No links on weekends.", WEEKDAYS_ONLY, None),
+        ("No links on weekends.", WEEKDAYS_ONLY, None),
+        ("Members can't post links on weekends.", WEEKDAYS_ONLY, None),
+        ("Members cannot post ads on Sundays.", WEEKDAYS_ONLY + ["sat"], None),
+        ("Promotion is not allowed on Saturdays or Sundays.", WEEKDAYS_ONLY, None),
+    ],
+)
+def test_a_rule_that_forbids_days_leaves_the_other_days_open(text, promo_days, post_days):
+    rules = rules_mod.parse(text)
+    assert (rules.known, rules.parsed) == (True, True)
+    assert rules_mod.day_names(rules.promo_days) == promo_days
+    assert rules_mod.day_names(rules.post_days) == post_days
+    assert not rules.no_promo and not rules.no_links
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Promotion on weekdays, not on weekends.",
+        "Promotion is allowed on weekdays but never on weekends.",
+        "No promotion on weekends, weekdays are fine.",
+        "No links on weekends, only on weekdays.",
+        "No promotion except on Sundays, never on Saturdays.",
+        "Promotion is welcome every day except Sundays.",
+    ],
+)
+def test_a_clause_that_both_permits_and_bans_days_needs_a_person(text):
+    """The code can't tell which of the named days are which, so the plan must
+    say why its day fits (rules_ok) instead of trusting a guess."""
+    rules = rules_mod.parse(text)
+    assert (rules.known, rules.parsed) == (True, False)
+    assert "rules_ok" in rules.summary()
+
+
+def test_one_mixed_clause_still_needs_a_person_when_the_others_are_clear():
+    rules = rules_mod.parse("No posts on Sundays. Promotion on weekdays, not on weekends.")
+    assert not rules.parsed
+    assert rules_mod.day_names(rules.post_days) == WEEKDAYS_ONLY + ["sat"]  # the clear clause still counts
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "No promotion on any day.",
+        "Promo on Sundays. No promotion on weekends.",  # every permitted day is also banned
+        "No promotion. No promotion on weekends.",  # a day ban never lifts a blanket ban
+    ],
+)
+def test_promotion_banned_on_every_day_is_no_promotion(text):
+    rules = rules_mod.parse(text)
+    assert rules.parsed and rules.no_promo and rules.promo_days is None
+    assert rules.summary() == "no promotion"
+
+
+def test_no_promotion_on_weekends_refuses_a_saturday_closing_line():
+    rules = rules_mod.parse("No promotion on weekends.")
+    assert rules_mod.day_problem(rules, 5, promotional=True)  # Saturday with a closing line
+    assert rules_mod.day_problem(rules, 5, promotional=False) is None  # a value post is fine
+    assert rules_mod.day_problem(rules, 0, promotional=True) is None  # Monday with a closing line
+
+
+def test_no_posts_on_sundays_refuses_even_a_value_post_on_sunday():
+    rules = rules_mod.parse("No posts on Sundays.")
+    assert rules_mod.day_problem(rules, 6, promotional=False)
+    assert rules_mod.day_problem(rules, 2, promotional=False) is None  # Wednesday
+
+
+def test_posts_banned_on_every_day_leave_no_day_open():
+    rules = rules_mod.parse("No posts on weekdays. No posts on weekends.")
+    assert rules.parsed and rules.post_days == frozenset()
+    assert rules.summary() == "no posts on any day"
+    assert rules_mod.day_problem(rules, 2, promotional=False) == "the group allows no posts on any day"
+
+
 # --- the register (block 1) ------------------------------------------------
 
 
@@ -419,6 +503,47 @@ def test_context_lists_open_days_and_link_permission(conn, three):
     tue = next(d for d in eligible[fnb["id"]]["days_open"] if d["weekday"] == "tue")
     assert sat["with_closing_line"] and not tue["with_closing_line"] and tue["value_post"]
     assert view["toolbox_live"] == ["quote-builder"] and view["limits"]["groups_per_week"] == 3
+
+
+def test_context_keeps_the_days_a_group_forbids_closed(conn):
+    weekend = joined(conn, group("SG cafe owners", "sgcafe", rules="No promotion on weekends."), "rules_confirmed=yes")
+    sunday = joined(conn, group("SG tuition centres", "sgtuition", rules="No posts on Sundays."), "rules_confirmed=yes")
+    mixed = joined(conn, group("SG retail owners", "sgretail", rules="Promotion on weekdays, not on weekends."), "rules_confirmed=yes")
+    view = json.loads(invoke("community", "context", "--json").output)
+    eligible = {g["id"]: g for g in view["eligible"]}
+
+    promo = {d["weekday"]: d for d in eligible[weekend["id"]]["days_open"]}
+    assert promo["mon"]["with_closing_line"] and not promo["sat"]["with_closing_line"] and not promo["sun"]["with_closing_line"]
+    assert promo["sat"]["value_post"]
+    assert eligible[weekend["id"]]["rules_summary"] == "promotion only on mon, tue, wed, thu, fri"
+    assert eligible[weekend["id"]]["link_allowed"] and not eligible[weekend["id"]]["needs_rules_ok"]
+
+    posts = {d["weekday"]: d for d in eligible[sunday["id"]]["days_open"]}
+    assert not posts["sun"]["value_post"] and not posts["sun"]["with_closing_line"] and posts["sat"]["value_post"]
+
+    assert eligible[mixed["id"]]["needs_rules_ok"]
+
+
+def test_checklist_plans_around_the_days_a_group_forbids(conn):
+    weekend = joined(conn, group("SG cafe owners", "sgcafe", rules="No promotion on weekends."), "rules_confirmed=yes")
+    sunday = joined(conn, group("SG tuition centres", "sgtuition", rules="No posts on Sundays."), "rules_confirmed=yes")
+    closing_line = POST_FNB.format(slug=weekend["slug"])
+    refused = plan_mod.add(conn, {"week": "2026-W44", "posts": [
+        {"group_id": weekend["id"], "day": "saturday", "text": closing_line},
+        {"group_id": sunday["id"], "day": "sunday", "text": POST_HOME},
+    ]})
+    assert any("Sat 31 Oct breaks the rules" in e for e in refused.errors), refused.errors
+    assert any("Sun 01 Nov breaks the rules" in e for e in refused.errors), refused.errors
+
+    planned = plan_mod.add(conn, {"week": "2026-W44", "posts": [
+        {"group_id": weekend["id"], "day": "monday", "text": closing_line},
+        {"group_id": sunday["id"], "day": "saturday", "text": POST_HOME},
+    ]})
+    assert planned.ok, planned.lines
+    file, *_ = plan_mod.publish(conn)
+    checklist = file.read_text()
+    assert "Planned as: promotion only on mon, tue, wed, thu, fri." in checklist
+    assert "Planned as: posts only on mon, tue, wed, thu, fri, sat." in checklist
 
 
 def test_brand_channels():
