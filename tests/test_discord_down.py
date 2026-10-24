@@ -5,15 +5,15 @@ webhook is unreachable, so the failure path (alert, then auto-pause) must hold
 up without Discord. Regression tests for the foundation review's B2.
 """
 
-import json
 import socket
 
 import httpx
 import pytest
 from click.testing import CliRunner
 
-from jura_growth import config, db, discord, pause, paths, runner, timeutil
+from jura_growth import config, db, discord, pause, runner
 from jura_growth.cli import cli
+from test_scout_support import outbox
 
 
 @pytest.fixture
@@ -60,8 +60,7 @@ def test_cli_run_exits_with_the_runs_own_status_when_discord_is_down(discord_dow
 def test_undelivered_alert_lands_in_the_outbox(discord_down, failing_job):
     runner.run(failing_job)
 
-    outbox = paths.data_dir() / "discord-outbox" / f"{timeutil.today_str()}.jsonl"
-    records = [json.loads(line) for line in outbox.read_text().splitlines()]
+    records = outbox()
     assert [r["channel"] for r in records] == ["alerts"]
     assert "`boomer` failed" in records[0]["content"]
 
@@ -83,8 +82,7 @@ def test_unreachable_webhook_saves_to_outbox_without_quoting_the_url(conn, monke
 
     assert not result.delivered
     assert "saved to outbox" in result.reason and "secret" not in result.reason
-    outbox = paths.data_dir() / "discord-outbox" / f"{timeutil.today_str()}.jsonl"
-    assert json.loads(outbox.read_text().splitlines()[-1])["content"] == "hello"
+    assert outbox("alerts")[-1]["content"] == "hello"
     events = db.rows(conn, "SELECT payload_json FROM events WHERE kind = 'discord.error'")
     assert events and all("secret" not in e["payload_json"] for e in events)
 
