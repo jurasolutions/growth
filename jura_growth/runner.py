@@ -131,8 +131,10 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
     log.finish_run(conn, run_id, outcome.status, summary=outcome.summary, error=outcome.error, cost_usd=outcome.cost_usd)
 
     if outcome.status == "failed":
-        discord.alert(conn, f"`{name}` failed: {outcome.error[:500]}", agent=agent)
-        pause.check_auto_pause(conn, agent)
+        try:
+            discord.alert(conn, f"`{name}` failed: {outcome.error[:500]}", agent=agent)
+        finally:
+            pause.check_auto_pause(conn, agent)  # whatever happened to the alert
     return outcome
 
 
