@@ -87,8 +87,9 @@ Otherwise:
    - If `needs_rules_ok` is true, add `"rules_ok"`: why this day and this post fit the group's
      rules, quoting them.
    - Voice: warm, plain, second person, short sentences. No exclamation marks, emoji, buzzwords,
-     urgency or hashtags. No figures about Jura. A statutory figure (the GST rate) needs its
-     official .gov.sg page in the item's `"sources"`, and the page must not be linked in the text.
+     urgency or hashtags. No figures about Jura, in digits or in number words from two up. A
+     statutory figure (the GST rate) needs its official .gov.sg page in the item's `"sources"`,
+     and the page must not be linked in the text.
 4. **Write 2–3 reply ideas**: helpful answers (10–120 words) to common questions in those groups,
    with the question they answer. No links and no promotion.
 5. **Image (optional).** Only if `image_renderer` is true: see `jura-growth social render --help`
