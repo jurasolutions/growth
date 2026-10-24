@@ -80,7 +80,9 @@ retention:
   rejection_months: 12
 
 # A named person's address is used only if the business publishes it as its
-# enquiry contact, and never when the same page lists a role address.
+# enquiry contact. A named address on the company's domain is never used when
+# the same page lists a role address there (that one is used instead); a
+# free-mail address is never swapped for another.
 allow_named_contacts: true
 
 # The address must belong to the business: it sits on the company's own

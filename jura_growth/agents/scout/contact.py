@@ -84,9 +84,20 @@ class PageCheck:
 # --- domains ---------------------------------------------------------------
 
 
-def host_of(url: str) -> str:
+def _split(url: str):
     candidate = url if re.match(r"^[a-z][a-z0-9+.-]*://", url or "", re.I) else f"https://{url}"
-    return (urlsplit(candidate).hostname or "").lower().strip(".")
+    return urlsplit(candidate)
+
+
+def host_of(url: str) -> str:
+    return (_split(url).hostname or "").lower().strip(".")
+
+
+def is_site_root(url: str) -> bool:
+    """True for a site's home page: no path beyond "/" and no query. A
+    directory or marketplace listing sits at a path on someone else's site."""
+    parts = _split(url)
+    return parts.path in ("", "/") and not parts.query
 
 
 def site_domain(url: str) -> str:

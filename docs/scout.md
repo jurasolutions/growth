@@ -52,7 +52,8 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
 1. Incomplete records: company, website, industry, 1–3 observations, source URLs (one on the
    company's own site), a 0–100 score with written reasons.
 2. Websites that are social profiles, directories, marketplaces or job boards
-   (`contact.NOT_OWN_SITE`), and government domains (`.gov.sg`, `.mil.sg`).
+   (`contact.NOT_OWN_SITE`), government domains (`.gov.sg`, `.mil.sg`), and a website with a
+   path or query: `https://directory.sg/acme` is a listing, not the company's home page.
 3. Anything already known: a lead with the domain (or the address's domain), a domain in
    `contacted_domains`, a suppressed address or domain, or a row in
    `inputs/do-not-contact.csv` (company name as whole words, or domain and its subdomains).
@@ -66,9 +67,10 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
    address on it**, after decoding HTML entities, `mailto:` (percent-encoded too),
    `info [at] acme [dot] sg` and its bracket and word variants, and Cloudflare email
    protection (`data-cfemail` and `/cdn-cgi/l/email-protection#<hex>`, XOR with the first
-   byte). Redirects off the domain fail. A named address is refused when the same page lists
-   an enquiry role address (the role address is used instead), and otherwise needs
-   `"enquiry_contact": true`. Then an MX lookup (dnspython), and nothing else.
+   byte). Redirects off the domain fail. A named address on the company's domain is refused
+   when the same page lists an enquiry role address on that domain (the role address is used
+   instead). A free-mail address is never swapped for another. Otherwise a named address
+   needs `"enquiry_contact": true`. Then an MX lookup (dnspython), and nothing else.
 7. A contact form only gives `channel = form`: never emailed, listed in the digest.
 
 Rejections for exclusions, low scores, suppression, contacted domains and the do-not-contact
