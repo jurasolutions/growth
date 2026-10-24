@@ -12,6 +12,7 @@ import copy
 from typing import Any
 
 from jura_growth import caps, config
+from jura_growth.agents.scout import contact
 
 SENDER_NAME = "Ting Yu, Jura Solutions"
 SIGNATURE_NAME = "Ting Yu"
@@ -63,6 +64,7 @@ DEFAULTS: dict[str, Any] = {
     "utm": {"utm_source": "outreach", "utm_medium": "email", "utm_campaign": "scout"},
     "retention": {"lead_months": 24, "rejection_months": 12},
     "allow_named_contacts": True,
+    "free_mail_contacts": list(contact.FREE_MAIL_CONTACTS),
 }
 
 
@@ -140,6 +142,18 @@ def retention_months() -> int:
 
 def rejection_months() -> int:
     return max(1, int(get()["retention"].get("rejection_months") or 12))
+
+
+def free_mail_contacts() -> tuple[str, ...]:
+    """The free-mail providers a contact address may use. Config may drop some
+    of `contact.FREE_MAIL_CONTACTS`; a provider it adds is ignored."""
+    configured = get().get("free_mail_contacts")
+    if configured is None:
+        return contact.FREE_MAIL_CONTACTS
+    if not isinstance(configured, (list, tuple)):
+        configured = [configured]
+    wanted = {str(item).strip().lower() for item in configured}
+    return tuple(d for d in contact.FREE_MAIL_CONTACTS if d in wanted)
 
 
 def utm() -> dict[str, str]:

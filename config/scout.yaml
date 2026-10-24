@@ -82,3 +82,17 @@ retention:
 # A named person's address is used only if the business publishes it as its
 # enquiry contact, and never when the same page lists a role address.
 allow_named_contacts: true
+
+# The address must belong to the business: it sits on the company's own
+# website domain (or a subdomain of it), or at one of these free-mail
+# providers, and is published on the company's own site. The code holds this
+# list as a ceiling (contact.FREE_MAIL_CONTACTS): remove a provider here to
+# refuse it, or set [] to refuse free mail altogether. A provider added here
+# is ignored.
+free_mail_contacts:
+  - gmail.com
+  - outlook.com
+  - hotmail.com
+  - yahoo.com
+  - icloud.com
+  - singnet.com.sg

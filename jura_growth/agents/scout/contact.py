@@ -1,5 +1,8 @@
 """Contact rules for the scout (PRD §5.2 step 5), enforced in code.
 
+- The address must belong to the business: its domain is the company's
+  website domain or a subdomain of it, or one of the free-mail providers in
+  `FREE_MAIL_CONTACTS` (config may shorten that list, never add to it).
 - The address must be one the business publishes on its own website. The
   source page must sit on the company's own domain, and the code fetches that
   page itself and confirms the exact address appears on it, after decoding the
@@ -46,6 +49,11 @@ FREE_MAIL = frozenset(
         "pacific.net.sg", "starhub.net.sg", "zoho.com", "gmx.com", "mail.com", "qq.com", "163.com",
     }
 )
+
+# The free-mail providers a small business may publish as its enquiry address
+# (Ting Yu's decision, 2026-10-24). This is the ceiling: `free_mail_contacts`
+# in config/scout.yaml may shorten it, never add to it.
+FREE_MAIL_CONTACTS = ("gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com", "singnet.com.sg")
 
 # Hosts that are never a company's own website: social profiles, directories,
 # marketplaces and link pages (PRD: no third-party lists or scraped directories).
@@ -102,6 +110,29 @@ def mail_domain(email: str) -> str:
 
 def is_free_mail(email_or_domain: str) -> bool:
     return mail_domain(email_or_domain) in FREE_MAIL
+
+
+def on_mail_domain(email: str, domain: str) -> bool:
+    """True when the address sits on `domain` or a subdomain of it."""
+    address_domain = mail_domain(email)
+    domain = domain.lower().removeprefix("www.")
+    return bool(address_domain and domain) and (address_domain == domain or address_domain.endswith("." + domain))
+
+
+def ownership_problem(email: str, domain: str, free_mail: tuple[str, ...] = FREE_MAIL_CONTACTS) -> str | None:
+    """Why `email` can't be the business's own address, or None when it can be.
+
+    The address must sit on the company's site domain (or a subdomain of it),
+    or at one of the `free_mail` providers. A partner's or web designer's
+    address on the company's site fails, and so does a company's address
+    found on a directory, because the directory is then the "site".
+    """
+    if on_mail_domain(email, domain) or mail_domain(email) in free_mail:
+        return None
+    allowed = f"on {domain} (or a subdomain of it)"
+    if free_mail:
+        allowed += f" or at a free-mail provider ({', '.join(free_mail)})"
+    return f"{email} does not belong to the business: the address must be {allowed}"
 
 
 def normalise_email(value: str) -> str:

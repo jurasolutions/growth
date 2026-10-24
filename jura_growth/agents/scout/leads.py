@@ -11,10 +11,11 @@ In order, and the first failure rejects the lead:
     `inputs/do-not-contact.csv` (by company name or domain).
  4. Score at or above the threshold (60, config may raise it).
  5. Today's lead target not yet met.
- 6. The contact: an address the business publishes on its own site, which the
-    code finds on the source page itself (see contact.py), with an MX record.
-    A role address on the same page is preferred over a named one. A contact
-    form only gives `channel = form`.
+ 6. The contact: an address that belongs to the business (on its website
+    domain or a subdomain of it, or at an allowed free-mail provider), which
+    the code finds on a source page of the company's own site (see
+    contact.py), with an MX record. A role address on the same page is
+    preferred over a named one. A contact form only gives `channel = form`.
 """
 
 from __future__ import annotations
@@ -307,6 +308,9 @@ def _verify_email(conn, outcome: Outcome, email: str, raw: dict, domain: str, cl
         return f"{email!r} is not an email address"
     if contact.not_for_enquiries(email):
         return f"{email} is not an enquiry address"
+    not_theirs = contact.ownership_problem(email, domain, settings.free_mail_contacts())
+    if not_theirs:
+        return not_theirs
     source = str(raw.get("source_url") or "").strip()
     if not source:
         return "an email contact needs `source_url`: the page on the company's own site that lists it"
