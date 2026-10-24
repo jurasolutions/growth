@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from jura_growth import agents, config, db, discord, holidays, log, pause, paths, timeutil
+from jura_growth import agents, config, db, discord, headless, holidays, log, pause, paths, timeutil
 
 BUSINESS_DAY_KINDS = ("business_days", "business_days_every")
 
@@ -223,17 +223,16 @@ def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
         raise JobError(f"prompt file missing: {prompt_file}")
     work = paths.writable(paths.work_dir(name) / ".keep").parent
 
+    # Only the job's own jura-growth commands, and no secret files (headless.py).
+    commands_allowed, commands_disallowed = headless.claude_rules(name)
     allowed = [
-        "Bash(jura-growth:*)",
+        *commands_allowed,
         f"Write(/{work}/**)",
         f"Edit(/{work}/**)",
         *spec.get("tools", []),
     ]
     disallowed = [
-        f"Read(/{paths.env_file()})",
-        "Bash(jura-growth run:*)",
-        "Bash(jura-growth resume:*)",
-        "Bash(jura-growth schedule:*)",
+        *commands_disallowed,
         *spec.get("disallowed_tools", []),
     ]
     budget = spec.get("max_budget_usd", settings.get("max_budget_usd", 3.0))

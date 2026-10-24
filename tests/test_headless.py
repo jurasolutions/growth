@@ -4,10 +4,12 @@ the folders a run may read, and secret values in CLI output.
 Fake secret values only. Nothing here reads a real `.env`.
 """
 
+import re
+
 import pytest
 from click.testing import CliRunner
 
-from jura_growth import config, paths
+from jura_growth import config, headless, paths, runner
 from jura_growth.agents.community import groups as groups_mod
 from jura_growth.cli import cli
 
@@ -180,6 +182,65 @@ def test_terminal_use_of_human_commands_is_unchanged(conn):
 def test_an_unknown_job_may_run_nothing(monkeypatch):
     in_run(monkeypatch, "not-a-job", "nobody")
     assert invoke("status").exit_code == 2
+
+
+# --- the claude job's own permission rules --------------------------------------
+
+CLAUDE_JOBS = sorted(name for name, spec in config.settings()["jobs"].items() if spec["kind"] == "claude")
+PROMPT_COMMAND = re.compile(r"jura-growth ([a-z][a-z-]*)(?: ([a-z][a-z-]*))?")
+
+
+def rules(job):
+    argv, _ = runner.claude_command(job, config.settings()["jobs"][job])
+    start, middle = argv.index("--allowedTools"), argv.index("--disallowedTools")
+    end = next((i for i in range(middle + 1, len(argv)) if argv[i].startswith("--")), len(argv))
+    return argv[start + 1:middle], argv[middle + 1:end]
+
+
+@pytest.mark.parametrize("job", CLAUDE_JOBS)
+def test_claude_command_carries_the_jobs_allowlist(job):
+    allowed, denied = rules(job)
+    commands = headless.permissions(job).commands
+    assert commands, f"{job} declares no commands"
+    for command in commands:
+        assert f"Bash(jura-growth {command}:*)" in allowed
+        assert f"Bash(jura-growth {command}:*)" not in denied
+    assert "Bash(jura-growth:*)" not in allowed
+    assert all(r.startswith("Bash(jura-growth ") for r in allowed if r.startswith("Bash"))
+    for never in ("run", "resume", "schedule install", "discord post"):
+        assert f"Bash(jura-growth {never}:*)" in denied
+
+
+@pytest.mark.parametrize("job", CLAUDE_JOBS)
+def test_claude_command_denies_every_secret_file_under_jura_root(job):
+    _, denied = rules(job)
+    root = paths.JURA_ROOT
+    for rule in (f"Read(/{root}/**/.env*)", f"Read(/{root}/**/*.env)", f"Read(/{root}/**/.dev.vars*)", f"Read(/{paths.env_file()})"):
+        assert rule in denied
+
+
+def test_claude_rules_refuse_human_and_other_jobs_commands():
+    _, scout = rules("scout-research")
+    for command in ("outreach send-due", "outreach requeue-shadow", "outreach unsubscribe-link", "outreach sync"):
+        assert f"Bash(jura-growth {command}:*)" in scout
+    _, community = rules("community")
+    for command in ("community set", "community posted", "community removed", "social skip", "social published", "social submit"):
+        assert f"Bash(jura-growth {command}:*)" in community
+
+
+@pytest.mark.parametrize("job", CLAUDE_JOBS)
+def test_every_command_a_prompt_uses_is_declared(job):
+    """prompts/<job>.md is the source of the job's allowlist."""
+    prompt = (paths.prompts_dir() / config.settings()["jobs"][job]["prompt"]).read_text()
+    leaves = {name for name, _ in headless.leaves(cli)}
+    used = set()
+    for match in PROMPT_COMMAND.finditer(prompt):
+        name = headless.command_name([w for w in match.groups() if w])
+        if name in leaves:
+            used.add(name)
+    declared = set(headless.permissions(job).commands)
+    assert used <= declared, f"{job}: the prompt uses {sorted(used - declared)}"
+    assert declared <= leaves, f"{job}: declares unknown commands {sorted(declared - leaves)}"
 
 
 def outbox_files(tmp_path):

@@ -15,6 +15,11 @@ logged. No declaration means no commands. `NEVER` is refused to every run,
 whatever a plug-in declares. Help (`--help`) is always answered, because it
 never runs a command. Outside a run (Ting Yu in Terminal) nothing changes.
 
+The same allowlist becomes the claude job's `--allowedTools` and
+`--disallowedTools` (`claude_rules`), so Claude Code refuses a command before
+it starts and the code refuses it again if it does start. Those rules also
+refuse reading any `.env*` or `.dev.vars` file under `JURA_ROOT`.
+
 **Files.** Every path a command takes (any `click.Path` option or argument, in
 the core or a plug-in) goes through `paths.guard()`, so no command can read,
 print or upload a secret file, and a run can only use its own folders.
@@ -86,6 +91,52 @@ def command_name(argv: list[str]) -> str:
         group = group.commands[word]
         words.append(word)
     return " ".join(words)
+
+
+# --- Claude Code's own rules for a claude job -----------------------------------
+
+
+def secret_read_rules() -> list[str]:
+    """Read denials for every secret file under jurasolutions/ and the
+    configured env file (Read rules also cover Grep and Glob)."""
+    root = paths.JURA_ROOT
+    return [
+        f"Read(/{paths.env_file()})",
+        f"Read(/{root}/**/.env*)",
+        f"Read(/{root}/**/*.env)",
+        f"Read(/{root}/**/.dev.vars*)",
+    ]
+
+
+def claude_rules(job: str) -> tuple[list[str], list[str]]:
+    """(allowed, disallowed) Claude Code rules for a claude job: its own
+    `jura-growth` commands and help, and a denial for every other command,
+    for `NEVER`, for secret files, and for the plug-in's own extra rules.
+
+    Each command is written both bare and with `:*`, so it matches with or
+    without arguments.
+    """
+    from jura_growth.cli import cli
+
+    declared = permissions(job)
+    commands = [c for c in declared.commands if c.split()[0] not in NEVER]
+    allowed = ["Bash(jura-growth --help)"]
+    allowed += [f"Bash(jura-growth {group} --help)" for group in sorted({c.split()[0] for c in commands if " " in c})]
+    for command in commands:
+        allowed += [f"Bash(jura-growth {command})", f"Bash(jura-growth {command}:*)"]
+
+    disallowed = secret_read_rules()
+    disallowed += [f"Bash(jura-growth {name}:*)" for name in NEVER]
+    for name, _ in leaves(cli):
+        if name in commands:
+            continue
+        disallowed.append(f"Bash(jura-growth {name})")
+        # A prefix rule would also catch an allowed command that starts with
+        # this name ("check" and "check-copy"); the bare rule still applies.
+        if not any(c.startswith(name) for c in commands):
+            disallowed.append(f"Bash(jura-growth {name}:*)")
+    disallowed += list(declared.disallowed_tools)
+    return allowed, list(dict.fromkeys(disallowed))
 
 
 # --- enforcement in code -------------------------------------------------------
