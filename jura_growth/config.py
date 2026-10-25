@@ -11,11 +11,14 @@ anything that is, and `redacted_output()` from everything the CLI writes.
 
 from __future__ import annotations
 
+import html
+import json
 import os
 import re
 import stat
 import subprocess
 import sys
+import urllib.parse
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -56,12 +59,13 @@ def read_lines(name: str) -> list[str]:
 
 
 def reset_caches() -> None:
-    global _secrets
+    global _secrets, _masking_loaded
     for cached in (settings, agent_config, _env_file):
         clear = getattr(cached, "cache_clear", None)  # tests may swap these out
         if clear:
             clear()
     _secrets = None
+    _masking_loaded = False
     _from_keychain.clear()
 
 
@@ -157,6 +161,31 @@ MIN_SECRET_LENGTH = 8
 _secrets: tuple[str, ...] | None = None
 _finding_secrets = False
 _from_keychain: set[str] = set()
+_masking_loaded = False
+
+
+def load_secrets_for_masking() -> None:
+    """Read every `keychain:` setting now, so `redact()` masks those values too.
+
+    `secret_values()` only knows the Keychain values this process has read
+    itself. A message built from disk (a run summary, a transcript, another
+    process's output) can still carry one, so the one-pager, run updates and
+    approval cards call this once before they build anything. It runs the
+    Keychain lookups once per process; later calls do nothing.
+    """
+    global _masking_loaded
+    if _masking_loaded:
+        return
+    _masking_loaded = True
+    file = _env_file()
+    names = set(file) | set(_parse_env(paths.REPO_ROOT / ".env.example"))
+    names |= {name for name, value in os.environ.items() if value.startswith("keychain:")}
+    for name in sorted(names):
+        raw = os.environ.get(name)
+        if raw is None:
+            raw = file.get(name, "")
+        if raw.startswith("keychain:"):
+            secret(name)
 
 
 def secret_values() -> tuple[str, ...]:
@@ -200,12 +229,52 @@ def redact(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [redact(v) for v in value]
     if isinstance(value, str):
-        for secret_value in secret_values():
-            value = value.replace(secret_value, "[redacted]")
+        known = secret_values()
+        for form in _encoded_forms(known):
+            value = value.replace(form, "[redacted]")
         for pattern in _SECRET_VALUES:
             value = pattern.sub("[redacted]", value)
+        pieces = _pieces_pattern(known)
+        if pieces is not None:
+            value = pieces.sub("[redacted]", value)
         return value
     return value
+
+
+@lru_cache(maxsize=8)
+def _encoded_forms(values: tuple[str, ...]) -> tuple[str, ...]:
+    """Each secret value as written, and as it reads once URL-encoded (either case of hex),
+    HTML-escaped or JSON-escaped, longest first."""
+    forms = set(values)
+    for value in values:
+        quoted = urllib.parse.quote(value, safe="")
+        forms |= {
+            quoted,
+            re.sub(r"%[0-9A-F]{2}", lambda m: m.group(0).lower(), quoted),
+            urllib.parse.quote_plus(value, safe=""),
+            html.escape(value),
+            json.dumps(value, ensure_ascii=False)[1:-1],
+        }
+    return tuple(sorted((f for f in forms if len(f) >= MIN_SECRET_LENGTH), key=len, reverse=True))
+
+
+@lru_cache(maxsize=8)
+def _pieces_pattern(values: tuple[str, ...]) -> re.Pattern | None:
+    """What a cut leaves of a secret: its first or last characters, at least
+    MIN_SECRET_LENGTH of them, where something like `error[:500]` cut it short.
+
+    For a URL (a webhook) only the last path segment, the token, counts: the
+    start of the URL is the same for every webhook and every ordinary link.
+    """
+    pieces = set()
+    for value in values:
+        token = value.rstrip("/").rsplit("/", 1)[-1] if "://" in value else value
+        for size in range(MIN_SECRET_LENGTH, len(token)):
+            pieces |= {token[:size], token[-size:]}
+    if not pieces:
+        return None
+    alternatives = "|".join(re.escape(p) for p in sorted(pieces, key=len, reverse=True))
+    return re.compile(f"(?:{alternatives})")
 
 
 class _RedactingStream:

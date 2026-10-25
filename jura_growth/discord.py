@@ -100,6 +100,10 @@ def post(
     if len(files) > MAX_FILES:
         raise ValueError(f"Discord takes at most {MAX_FILES} files per message")
 
+    # The last line of defence, before the hash so dedupe sees what is sent. Only the
+    # values already loaded: no Keychain lookup here (MC §4.3).
+    content = config.redact(content)
+    username = config.redact(username) if username else username
     digest = content_hash(content, files)
     if dedupe and conn is not None and _posted_today(conn, channel, digest):
         return PostResult(channel, delivered=False, reason="already posted today")
