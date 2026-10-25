@@ -321,3 +321,21 @@ questions: 3 frozen-clock social drafts dated 2026-10-26 still in live growth.db
 evidence:  uv run --frozen pytest at db218a0, temp data/outputs -> 987 passed in 21.82s
 evidence:  git ls-remote origin -> main 6eabfe7 = merge-base; branch not on the remote
 evidence:  git diff main... blocked-path and secret greps -> only fake fixtures; gh auth status -> not logged in
+
+## 2026-10-25T18:39+0800 conductor (G4)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: -
+decisions: G4 opened by Ting Yu: open a PR into main; waivers accepted as recommended (conductor-verified final rounds of 04, 07, 09; final review approved the merged tree)
+questions: gh login is Ting Yu's step
+evidence:  -
+
+## 2026-10-25T18:46+0800 conductor (close)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: PR https://github.com/jurasolutions/growth/pull/1 (crew/growth-blocker-fixes -> main)
+decisions: G4 carried out: branch pushed, PR opened with pr-body.md; Ting Yu merges on GitHub; no crew worktrees remain
+questions: -
+evidence:  git worktree list -> main checkout only; uv run pytest at db218a0 -> 987 passed
