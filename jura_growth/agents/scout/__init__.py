@@ -67,3 +67,8 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         listed = ", ".join(f"{r['company']} ({r['form_url']})" for r in forms[:10])
         lines.append(f"Form-only leads to contact by hand if you want to: {listed}")
     return {"figures": {"leads_added": added, "leads_form_only": len(forms)}, "lines": lines, "brief": brief}
+
+
+def named_addresses(conn: sqlite3.Connection) -> list[str]:
+    """Contact addresses that name a person, so `privacy` keeps their names out of Discord."""
+    return [r["email"] for r in db.rows(conn, "SELECT email FROM contacts WHERE kind = 'named'")]

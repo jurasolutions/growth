@@ -67,6 +67,17 @@ def reset_caches() -> None:
     _secrets = None
     _masking_loaded = False
     _from_keychain.clear()
+    for forget in _reset_hooks:
+        forget()
+
+
+_reset_hooks: list = []
+
+
+def on_reset(forget) -> None:
+    """Call `forget()` from `reset_caches()`: for modules that learn values to mask (privacy)."""
+    if forget not in _reset_hooks:
+        _reset_hooks.append(forget)
 
 
 # --- secrets ---------------------------------------------------------------
