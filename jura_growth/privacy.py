@@ -75,11 +75,7 @@ PHONE_RE = re.compile(
     rf"|(?<![\w+])\+\d{{1,3}}(?:{SEP}?\(?\d{{1,4}}\)?){{2,5}}(?![\w])"
 )
 FULL_WIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
-# Not the placeholder itself, so text masked once can sit inside another line and be
-# masked again (as `discord.post()` does) without losing that line.
-FINANCE_LINE_RE = re.compile(
-    r"^.*(?!(?<=\[removed: )personal finance\])personal(?:[-_ ]|%2d)?finance.*$", re.I | re.M
-)
+FINANCE_LINE_RE = re.compile(r"^.*personal(?:[-_ ]|%2d)?finance.*$", re.I | re.M)
 # Short words that a name part never masks.
 NOT_NAMES = frozenset(
     """
