@@ -109,7 +109,8 @@ def test_every_file_option_refuses_an_env_file(tmp_path, args):
 
 @pytest.fixture
 def configured(tmp_path, monkeypatch):
-    """A fake env file with two secrets, one of them in the (fake) Keychain."""
+    """A fake env file with two secrets, one of them in the (fake) Keychain.
+    Returns the Keychain services looked up."""
     env = tmp_path / "configured-secrets"
     env.write_text(
         "CLOUDFLARE_API_TOKEN=FAKEcfTOKENabcdef1234567890\n"
@@ -118,18 +119,36 @@ def configured(tmp_path, monkeypatch):
     )
     env.chmod(0o600)
     monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(env))
-    monkeypatch.setattr(config, "_keychain", lambda service: "kcFAKEunsubscribe42" if service == "jura-growth-fake" else None)
+    looked_up = []
+
+    def keychain(service):
+        looked_up.append(service)
+        return "kcFAKEunsubscribe42" if service == "jura-growth-fake" else None
+
+    monkeypatch.setattr(config, "_keychain", keychain)
     config.reset_caches()
+    return looked_up
 
 
 def test_configured_secret_values_never_reach_cli_output(configured):
-    text = "Our token is FAKEcfTOKENabcdef1234567890 and the secret is kcFAKEunsubscribe42."
+    text = "Our token is FAKEcfTOKENabcdef1234567890 and it stays private."
     for args in (("check", text), ("check", "--json", text)):
         result = invoke(*args)
         assert result.exit_code == 1  # the numbers rule quotes the sentence back
         assert "FAKEcfTOKENabcdef1234567890" not in result.output
-        assert "kcFAKEunsubscribe42" not in result.output
         assert "[redacted]" in result.output
+
+
+def test_a_command_that_reads_no_secret_never_asks_the_keychain(configured):
+    assert invoke("check", "A calm, plain sentence.").output.strip() == "pass"
+    assert invoke("--help").exit_code == 0
+    assert configured == []
+
+
+def test_a_keychain_secret_is_masked_once_the_process_has_read_it(configured):
+    assert config.secret("UNSUBSCRIBE_SECRET") == "kcFAKEunsubscribe42"
+    assert configured == ["jura-growth-fake"]
+    assert config.redact("the secret is kcFAKEunsubscribe42") == "the secret is [redacted]"
 
 
 def test_error_messages_are_redacted_too(configured):

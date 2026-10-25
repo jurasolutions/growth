@@ -62,6 +62,7 @@ def reset_caches() -> None:
         if clear:
             clear()
     _secrets = None
+    _from_keychain.clear()
 
 
 # --- secrets ---------------------------------------------------------------
@@ -105,7 +106,10 @@ def secret(name: str) -> str | None:
     if not value:
         return None
     if value.startswith("keychain:"):
-        return _keychain(value.removeprefix("keychain:"))
+        resolved = _keychain(value.removeprefix("keychain:"))
+        if resolved and len(resolved) >= MIN_SECRET_LENGTH:
+            _from_keychain.add(resolved)  # masked from now on (secret_values)
+        return resolved
     return value
 
 
@@ -152,41 +156,37 @@ MIN_SECRET_LENGTH = 8
 
 _secrets: tuple[str, ...] | None = None
 _finding_secrets = False
+_from_keychain: set[str] = set()
 
 
 def secret_values() -> tuple[str, ...]:
     """The configured secret values, longest first.
 
-    A configured secret is a setting named in `.env` or `.env.example` whose
-    name says it is one (key, token, secret, password, webhook), read from the
-    environment or `.env`, or any setting stored as a `keychain:` reference,
-    resolved. Ordinary settings (hosts, ports, account ids) are not masked.
+    These are the settings named in `.env` or `.env.example` whose name says
+    they are secrets (key, token, secret, password, webhook, authorization),
+    read from the environment or `.env`, plus every `keychain:` value this
+    process has read through `secret()`. A Keychain value is never looked up
+    just to mask it: one that was never read can't be printed. Ordinary
+    settings (hosts, ports, account ids) are not masked.
     """
     global _secrets, _finding_secrets
-    if _secrets is not None:
-        return _secrets
-    if _finding_secrets:  # something printed while `.env` was being read
-        return ()
-    _finding_secrets = True
-    try:
-        file = _env_file()
-        found = set()
-        for name in set(file) | set(_parse_env(paths.REPO_ROOT / ".env.example")):
-            raw = os.environ.get(name)
-            if raw is None:
-                raw = file.get(name, "")
-            if raw.startswith("keychain:"):
-                value = _keychain(raw.removeprefix("keychain:")) or ""
-            elif _SECRET_KEYS.search(name):
-                value = raw
-            else:
-                continue
-            if len(value) >= MIN_SECRET_LENGTH:
-                found.add(value)
-        _secrets = tuple(sorted(found, key=len, reverse=True))
-    finally:
-        _finding_secrets = False
-    return _secrets
+    if _secrets is None:
+        if _finding_secrets:  # something printed while `.env` was being read
+            return tuple(_from_keychain)
+        _finding_secrets = True
+        try:
+            file = _env_file()
+            found = set()
+            for name in set(file) | set(_parse_env(paths.REPO_ROOT / ".env.example")):
+                raw = os.environ.get(name)
+                if raw is None:
+                    raw = file.get(name, "")
+                if _SECRET_KEYS.search(name) and not raw.startswith("keychain:") and len(raw) >= MIN_SECRET_LENGTH:
+                    found.add(raw)
+            _secrets = tuple(found)
+        finally:
+            _finding_secrets = False
+    return tuple(sorted({*_secrets, *_from_keychain}, key=len, reverse=True))
 
 
 def redact(value: Any) -> Any:
