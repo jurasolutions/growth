@@ -428,9 +428,11 @@ CARDINAL_WORDS_RE = re.compile(rf"\b{_CARDINAL}\b", re.I | re.A)
 #   - a hedge is skipped to reach the noun ("twelve or more businesses",
 #     "two or three processes"), but "one or two" hedges towards "one" and
 #     claims nothing;
-#   - "of you", "of us" and "of them" count people, not a figure ("the two of you");
-#   - a common verb after "the two", "these two" and so on is a verb ("these two
-#     matter most");
+#   - "the two of you", "the three of us" count no figure; without "the" in
+#     front ("twelve of us", "forty of them") it is a count like any other;
+#   - a common verb after "the two", "these two", "both", "all" is a verb
+#     ("these two matter most"), but after a possessive it is a noun ("our
+#     forty sync jobs");
 #   - any word in COUNTS_NOTHING_AFTER means it counts nothing ("the two you
 #     picked", "those two are").
 # Known limits: a noun before the number ("a team of five"), "zero", ordinals
@@ -441,7 +443,8 @@ NEXT_WORD_RE = re.compile(r"\s+([A-Za-z][\w'’]*)", re.A)
 HEDGE_RE = re.compile(rf"\s+or\s+(?:more|so|fewer|less|over|{_CARDINAL})\b", re.I | re.A)
 ONE_OR_BEFORE_RE = re.compile(r"\bone\s+or\s+$", re.I)
 OF_PEOPLE_RE = re.compile(r"\s+of\s+(?:you|us|them)\b", re.I)
-DETERMINER_BEFORE_RE = re.compile(r"\b(?:the|these|those|both|all|our|your|their|its|my)\s+$", re.I)
+THE_BEFORE_RE = re.compile(r"\bthe\s+$", re.I)
+DETERMINER_BEFORE_RE = re.compile(r"\b(?:the|these|those|both|all)\s+$", re.I)
 VERBS_AFTER_A_NUMBER = frozenset(
     "matter work fit go come seem stand belong sit differ happen apply help need make take share "
     "look run show mean cover connect talk sync link add cost".split()
@@ -596,7 +599,7 @@ def _counts_a_noun(sentence: str, match: re.Match, value: int) -> bool:
     hedge = HEDGE_RE.match(sentence, start)
     if hedge:
         start = hedge.end()
-    if OF_PEOPLE_RE.match(sentence, start):
+    if THE_BEFORE_RE.search(before) and OF_PEOPLE_RE.match(sentence, start):
         return False
     following = NEXT_WORD_RE.match(sentence, start)
     if not following:

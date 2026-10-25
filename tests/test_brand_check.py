@@ -290,6 +290,14 @@ def test_compound_number_words_are_read_in_full(text):
         "We have helped a couple of dozen businesses.",
         "We have helped several hundred businesses.",
         "We have helped a few dozen businesses.",
+        # Round 2, R2-B1: "of us/you/them" counts people unless "the" comes first
+        "There are twelve of us at Jura.",
+        "We have helped forty of them go live.",
+        "Forty of you have booked a call with us.",
+        "We have helped two or three of them.",
+        # Round 2, R2-S1: after a possessive, a verb-like word is a noun
+        "Our forty sync jobs run each night.",
+        "Our twelve work streams run in parallel.",
     ],
 )
 def test_review_04_spelled_out_figures_fail(text):
