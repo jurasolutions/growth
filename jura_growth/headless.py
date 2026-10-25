@@ -18,7 +18,7 @@ never runs a command. Outside a run (Ting Yu in Terminal) nothing changes.
 The same allowlist becomes the claude job's `--allowedTools` and
 `--disallowedTools` (`claude_rules`), so Claude Code refuses a command before
 it starts and the code refuses it again if it does start. Those rules also
-refuse reading any `.env*` or `.dev.vars` file under `JURA_ROOT`.
+refuse reading any secret file under `JURA_ROOT` (`paths.SECRET_FILE_PATTERNS`).
 
 **Files.** Every path a command takes (any `click.Path` option or argument, in
 the core or a plug-in) goes through `paths.guard()`, so no command can read,
@@ -97,15 +97,11 @@ def command_name(argv: list[str]) -> str:
 
 
 def secret_read_rules() -> list[str]:
-    """Read denials for every secret file under jurasolutions/ and the
-    configured env file (Read rules also cover Grep and Glob)."""
+    """Read denials for every secret file under jurasolutions/
+    (`paths.SECRET_FILE_PATTERNS`) and the configured env file. Read rules
+    also cover Grep and Glob."""
     root = paths.JURA_ROOT
-    return [
-        f"Read(/{paths.env_file()})",
-        f"Read(/{root}/**/.env*)",
-        f"Read(/{root}/**/*.env)",
-        f"Read(/{root}/**/.dev.vars*)",
-    ]
+    return [f"Read(/{paths.env_file()})", *(f"Read(/{root}/**/{pattern})" for pattern in paths.SECRET_FILE_PATTERNS)]
 
 
 def claude_rules(job: str) -> tuple[list[str], list[str]]:

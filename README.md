@@ -110,7 +110,8 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
 - Allowed: reading under `jurasolutions/`, the `jura-growth` commands the job's prompt uses
   (each plug-in declares them in `permissions(job)`) and their `--help`, writing only in
   `data/growth/work/<job>/`, plus the job's own tools (web search and fetch).
-- Refused: reading any `.env*`, `*.env` or `.dev.vars` file under `jurasolutions/`, every other
+- Refused: reading any secret file under `jurasolutions/` (`.env*`, `*.env`, `.dev.vars*`, kept
+  in `paths.SECRET_FILE_PATTERNS`), every other
   `jura-growth` command (`run`, `resume`, `schedule` and `discord` always), and anything the job
   lists in `disallowed_tools` (the community job can't fetch facebook.com).
 - The code enforces the same command list again: with `JURA_GROWTH_JOB` set, any other command

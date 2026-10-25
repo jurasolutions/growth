@@ -38,7 +38,10 @@ def test_check_file_refuses_an_env_file_and_echoes_no_secret(tmp_path):
     assert "re_FAKEKEY123" not in result.output
 
 
-@pytest.mark.parametrize("name", [".env", ".env.local", "prod.env", ".dev.vars", "link-to-env.txt"])
+@pytest.mark.parametrize(
+    "name",
+    [".env", ".env.local", "prod.env", ".dev.vars", "link-to-env.txt", ".ENV", ".Env.Local", "PROD.ENV", ".DEV.VARS"],
+)
 def test_secret_files_are_refused_by_name_or_link(tmp_path, name):
     real = tmp_path / "real" / ".env"
     real.parent.mkdir()
@@ -60,6 +63,20 @@ def test_the_configured_env_file_is_refused_whatever_its_name(tmp_path, monkeypa
     config.reset_caches()
     result = invoke("check", "--file", str(secrets))
     assert result.exit_code == 2 and "refused" in result.output
+
+
+def test_the_configured_env_file_is_refused_under_another_spelling_or_a_hard_link(tmp_path, monkeypatch):
+    """macOS folders are case-insensitive: GROWTH-SECRETS.TXT opens growth-secrets.txt."""
+    secrets = tmp_path / "growth-secrets.txt"
+    secrets.write_text(FAKE_ENV)
+    hard_link = tmp_path / "notes.txt"
+    hard_link.hardlink_to(secrets)
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(secrets))
+    config.reset_caches()
+    for other in (tmp_path / "GROWTH-SECRETS.TXT", hard_link):
+        result = invoke("check", "--file", str(other))
+        assert result.exit_code == 2 and "refused" in result.output, other
+        assert "FAKE-TOKEN-abc" not in result.output
 
 
 FILE_COMMANDS = [

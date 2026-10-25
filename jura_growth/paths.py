@@ -14,6 +14,7 @@ which keeps secret files away from anything the CLI prints or uploads.
 
 from __future__ import annotations
 
+import fnmatch
 import os
 from pathlib import Path
 
@@ -72,10 +73,23 @@ class PathRefused(PermissionError):
     """A CLI option or plan field named a file it may not use."""
 
 
-def is_secret_file(path: Path) -> bool:
-    """`.env`, `.env.local`, `prod.env`, `.dev.vars` and the like."""
-    name = Path(path).name
-    return name.startswith((".env", ".dev.vars")) or name.endswith(".env")
+# File names that hold secrets. The one list: the path guard matches it, and
+# headless.secret_read_rules turns it into Claude Code's Read denials.
+SECRET_FILE_PATTERNS = (".env*", "*.env", ".dev.vars*")
+
+
+def is_secret_file(path: str | os.PathLike[str]) -> bool:
+    """`.env`, `.env.local`, `prod.env`, `.dev.vars` and the like, in any case
+    (macOS folders are case-insensitive, so `.ENV` opens `.env`)."""
+    name = Path(path).name.lower()
+    return any(fnmatch.fnmatchcase(name, pattern) for pattern in SECRET_FILE_PATTERNS)
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:  # either one missing
+        return False
 
 
 def run_folders(job: str) -> list[Path]:
@@ -93,7 +107,7 @@ def guard(path: str | os.PathLike[str]) -> Path:
     """Return `path` resolved, or raise PathRefused.
 
     Always refused: secret files (see `is_secret_file`), the configured env
-    file, and a link to either.
+    file under any spelling or hard link, and a symlink to either.
 
     Inside a run (`JURA_GROWTH_JOB` set), only `run_folders(job)` are
     accepted: the job's `data/growth/work/<job>/` scratch folder and
@@ -103,7 +117,7 @@ def guard(path: str | os.PathLike[str]) -> Path:
     """
     given = Path(path).expanduser()
     resolved = given.resolve()
-    if is_secret_file(given) or is_secret_file(resolved) or resolved == env_file().expanduser().resolve():
+    if is_secret_file(given) or is_secret_file(resolved) or _same_file(resolved, env_file().expanduser()):
         raise PathRefused(f"refused: {given} is a secrets file")
     job = os.environ.get("JURA_GROWTH_JOB")
     if job:
