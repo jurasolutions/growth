@@ -21,7 +21,7 @@ import json
 import os
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -38,6 +38,10 @@ class PostResult:
     delivered: bool
     reason: str = ""
     messages: int = 0
+    # With `wait=True`: each message's id, and the text each piece carried
+    # as sent (masked), in order. A card keeps the first of each.
+    message_ids: list[str | None] = field(default_factory=list)
+    pieces: list[str] = field(default_factory=list)
 
 
 def channels() -> list[str]:
@@ -143,8 +147,13 @@ def post(
     suppress_embeds: bool = False,
     client: httpx.Client | None = None,
     own_copy: list[str] | tuple[str, ...] = (),
+    wait: bool = False,
 ) -> PostResult:
     """Post `content` (and `files`) to a channel, or save it to the outbox.
+
+    With `wait`, each piece is posted with `?wait=true` and the result lists
+    the message ids Discord gave back and the text each piece carried, so the
+    message can be edited later (`edit()`; approval cards, MC §4.6 A12).
 
     The last line of defence (MC §4.3, §4.4): the content, username, file names
     and text files go through `privacy.for_discord()`, after `privacy.learn()`
@@ -185,12 +194,15 @@ def post(
         return PostResult(channel, delivered=False, reason=f"{env_name(channel)} not set; saved to outbox")
 
     pieces = split(content)
+    message_ids: list[str | None] = []
     owns_client = client is None
     client = client or httpx.Client(timeout=30)
     try:
         for index, piece in enumerate(pieces):
             last = index == len(pieces) - 1
-            _send(client, url, piece, uploads if last else [], username, suppress_embeds)
+            response = _send(client, url, piece, uploads if last else [], username, suppress_embeds, wait=wait)
+            if wait:
+                message_ids.append(_message_id(response))
     except DiscordError as error:
         _outbox(channel, content, saved, username)
         _record(conn, channel, digest, delivered=False)
@@ -202,7 +214,42 @@ def post(
 
     _record(conn, channel, digest, delivered=True)
     log.event(conn, "discord.post", {"channel": channel, "chars": len(content), "files": len(uploads)})
-    return PostResult(channel, delivered=True, messages=len(pieces))
+    return PostResult(
+        channel, delivered=True, messages=len(pieces), message_ids=message_ids, pieces=pieces if wait else []
+    )
+
+
+def edit(conn: sqlite3.Connection | None, channel: str, message_id: str, content: str) -> PostResult:
+    """Replace the text of a message this channel's webhook posted.
+
+    Masked like a post, mentioning nobody, never split (an edited card's
+    first piece stays one message) and never saved to the outbox: an edit
+    that doesn't reach Discord is reported, and the caller decides what to
+    post instead. Edits don't notify (MC §5.1, decided cards)."""
+    if channel not in channels():
+        raise ValueError(f"unknown Discord channel {channel!r}; expected one of {channels()}")
+    privacy.learn(conn)
+    content = privacy.for_discord(content)[:MAX_CONTENT]
+    url = webhook(channel)
+    if not url:
+        return PostResult(channel, delivered=False, reason=f"{env_name(channel)} not set")
+    target = f"{url.rstrip('/')}/messages/{message_id}"
+    try:
+        with httpx.Client(timeout=30) as client:
+            _deliver(client, "PATCH", target, {"content": content, "allowed_mentions": {"parse": []}}, [])
+    except DiscordError as error:
+        log.event(conn, "discord.edit_failed", {"channel": channel, "error": str(error)}, level="warning")
+        return PostResult(channel, delivered=False, reason=str(error))
+    log.event(conn, "discord.edit", {"channel": channel, "chars": len(content)})
+    return PostResult(channel, delivered=True, messages=1)
+
+
+def _message_id(response: httpx.Response) -> str | None:
+    try:
+        value = response.json().get("id")
+    except (ValueError, AttributeError):
+        return None
+    return str(value) if value else None
 
 
 def alert(conn: sqlite3.Connection | None, text: str, *, agent: str | None = None) -> PostResult:
@@ -231,21 +278,35 @@ def _send(
     files: list[tuple[str, bytes]],
     username: str | None,
     suppress_embeds: bool = False,
-) -> None:
+    *,
+    wait: bool = False,
+) -> httpx.Response:
     payload = {"content": content, "allowed_mentions": {"parse": []}}
     if suppress_embeds:
         payload["flags"] = SUPPRESS_EMBEDS
     if username:
         payload["username"] = username[:80]
+    return _deliver(client, "POST", url, payload, files, params={"wait": "true"} if wait else None)
+
+
+def _deliver(
+    client: httpx.Client,
+    method: str,
+    url: str,
+    payload: dict,
+    files: list[tuple[str, bytes]],
+    *,
+    params: dict | None = None,
+) -> httpx.Response:
     for attempt in range(3):
         try:
             if files:
                 multipart: dict = {"payload_json": (None, json.dumps(payload), "application/json")}
                 for i, (name, body) in enumerate(files):
                     multipart[f"files[{i}]"] = (name, body)
-                response = client.post(url, files=multipart)
+                response = client.request(method, url, files=multipart, params=params)
             else:
-                response = client.post(url, json=payload)
+                response = client.request(method, url, json=payload, params=params)
         except (httpx.HTTPError, httpx.InvalidURL) as error:
             # Only the error's type: httpx messages can quote the URL, which is the secret.
             raise DiscordError(f"Discord could not be reached ({type(error).__name__})") from None
@@ -258,7 +319,7 @@ def _send(
         if response.status_code >= 300:
             # Never include the URL: it is the secret.
             raise DiscordError(f"Discord answered {response.status_code}")
-        return
+        return response
     raise DiscordError("Discord kept refusing the message")
 
 
