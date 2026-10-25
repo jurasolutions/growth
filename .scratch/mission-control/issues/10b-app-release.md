@@ -32,6 +32,7 @@ When a handed-off build is finished on its own task branch with a preview, `apps
   date and a sign-off line naming both approvals.
 - [ ] AC-M4.1 to AC-M4.7 (owned by 04) hold for `app-release` through its adapter file, with the claim in `release-plan` before anything is printed to run (AC-M4.3).
 - [ ] **X2 and X3 for this kind.**
+- [ ] The sweep in `tests/sweep.py` passes over this ticket's messages (the `app-release` cards): no planted secret or personal data reaches the Discord double or the outbox (AC-M11.1 and AC-M12.1, owned by 02).
 - [ ] AC-M15.1 (owned by 01) still holds.
 
 ## Done when

@@ -1,19 +1,18 @@
-Feature: browser-publishing   Route: L   Phase: tickets cut and revised after the tech lead's ticket review (G3 pending)   As of: 2026-10-25 SGT
-Next decision for the user: G3, approve the ticket breakdown in `issues/`, and the shared-branch question in `.scratch/mission-control/reviews/status.md`. Also: start 01 (your Chrome profile and checks) now? Recommended: yes; it touches no code and gates 03.
+Feature: browser-publishing   Route: L   Phase: build (mission control's wave 1 running; nothing here started)   As of: 2026-10-25 19:35 SGT
+Next decision for the user: start 01 (your Chrome profile and checks) now? Recommended: yes; it touches no code and gates 03.
 
-Precondition for every agent ticket, in order:
-  1. `crew/growth-blocker-fixes` (PR #1, including blocker tickets 02 and 07) merged into `main`.
-  2. The conductor's first commit on `crew/mission-control` adds `CONTEXT.md`, `docs/adr/` and both feature folders before any worktree (tickets-technical T11).
-  3. If Ting Yu agrees at G3, these tickets are built on `crew/mission-control` too, as `crew/mission-control-bpNN`.
+Precondition: met. PR #1 (with blocker tickets 02 and 07) merged into `main` (855e48c); the tickets are on `crew/mission-control` (1acc1eb). G3 approved the breakdown at 19:22, and these tickets build on `crew/mission-control` as `crew/mission-control-bpNN`.
+
+Ticket edits since G3: 02, 02b and 03 gained the sweep criterion; 03 now lists R2 and R3 before U12; 06 gained AC-P11.1's join identity (test strategy v3 Q9, Q10). None started; no edge moved.
 
 Frontier (ready to start): 01 BP-01 Chrome profile setup and checks (ready-for-human, Ting Yu).
 
 In flight: none.
 
-Blocked (mission-control wave once the precondition holds — blocked by — what would clear it):
+Blocked (mission-control wave — blocked by — what would clear it):
   - 02 BP-02a publish queue for social posts — w4 — mission-control#01, mission-control#04b — both merged
   - 02b BP-02b community items — w5 — 02 — 02 merged
-  - 03 BP-03 browser job, Facebook Page — w5 — 01, 02, mission-control#03, #08, #11 — 01's checks passed and the four merged; closes after R1 to R4, R6 and U12
+  - 03 BP-03 browser job, Facebook Page — w5 — 01, 02, mission-control#03, #08, #11 — 01's checks passed and the four merged; closes after R1, R2, R3, R4 and R6, then U12
   - 04 BP-04 Instagram and LinkedIn — w6 — 03 — 03 closed; and your weekend-posts answer (in the ticket)
   - 06 BP-06 joins as the Page — w6 — 03, 02b, mission-control#05 — all done; closes after R5 and U15
   - 05 BP-05 community posts as the Page — w7 — 03, 06, mission-control#05 — all done (06 first: a group must be joined as the Page before a post can go in as the Page); closes after U14
@@ -30,6 +29,5 @@ Risks:
   - An API key or setup-token in the launchd environment silently drops the Chrome tools — possible / medium — QA lead — 03's precheck skips with the reason and `status` lists it as a setup gap
 
 Open questions:
-  - G3: approve the revised breakdown? Recommended: yes.
-  - Start 01 now, before PR #1 merges? Recommended: yes.
+  - Start 01 now? Recommended: yes.
   - Weekend posts, asked in 04 before Instagram and LinkedIn move to `browser`. Recommended: keep weekends on; turn `weekends: false` for all platforms if three weekend cards prove too many.

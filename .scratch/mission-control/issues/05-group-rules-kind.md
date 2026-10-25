@@ -15,7 +15,7 @@ Confirming a group's rules and its open days becomes an approval. Ting Yu answer
 - `community set <id> rules=…` raises a request. (`publish note-rules` raises one too, in browser-publishing#06.)
 - `community set … rules_confirmed=yes` from Terminal creates and decides a `group-rules` approval in one step with the Terminal origin.
 - Existing confirmations stand, and each is recorded once as an event, by a one-off, idempotent pass in code. No community migration here; browser-publishing#02b takes the next community migration number.
-- `tests/gate_adapter_group_rules.py` ("went out" means `rules_confirmed` changed).
+- `tests/gate_adapter_group_rules.py` ("went out" means `rules_confirmed` changed). Call 02's `assert_clean` over the `group-rules` cards.
 
 ## Acceptance criteria
 
@@ -26,6 +26,8 @@ Confirming a group's rules and its open days becomes an approval. Ting Yu answer
 - [ ] **MC §5.7, `group-rules` row.** Raised by `publish note-rules` and `community set … rules=`; content covers the group id and rules text; decide-by 14 days; applied on decide; approve needs typed `promo_days` and `post_days` and sets `rules_confirmed` and both days fields through `groups.set_fields`; skip leaves the rules unconfirmed, and posts there carry no link (as today); on expire, as skip.
 - [ ] **X9.** `community set … rules_confirmed=yes` from Terminal creates and decides a `group-rules` approval with the Terminal origin in one step; existing confirmations stand and are recorded once as an event; researched rules never raise a request.
 - [ ] AC-M4.1 to AC-M4.7 (owned by 04) hold for `group-rules` through its adapter file.
+- [ ] **X2 for this kind.** The `group-rules` deadlines (decide-by 14 days; applied on decide) hold at the reference dates under `TZ` set to `Asia/Singapore`, `UTC` and `America/New_York`.
+- [ ] The sweep in `tests/sweep.py` passes over this ticket's messages (the `group-rules` cards): no planted secret or personal data reaches the Discord double or the outbox (AC-M11.1 and AC-M12.1, owned by 02).
 - [ ] AC-M15.1 (owned by 01) still holds.
 
 ## Done when

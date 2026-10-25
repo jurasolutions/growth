@@ -36,6 +36,7 @@ The Monday community run proposes joins for good-fit groups, up to three a week,
   *Owned here: the handler for every item kind, and the join-screen branch. 05 adds the composer branch.*
 - [ ] **AC-P4.4** Given `join_status = member` from a join item, then `joined_as = page` is set. The
   group's rules and open days still need a `group-rules` decision.
+- [ ] **AC-P11.1 (owned by 03), the join identity.** Before submitting a join or its answers, the run checks that the Jura Page is the selected joining identity, and calls `publish stopped <id> --reason wrong-identity` when another identity is shown. A screen that offers no way to act as the Page is AC-P4.3's `pages-not-allowed`, not a stop.
 - [ ] **X10.** `publish note-rules` raises one `group-rules` request for the rules text seen, and never for researched rules.
 - [ ] **AC-P5.1 line 4 (owned by 02) end to end.** A fourth join in the ISO week (SGT) is refused, and the Monday run proposes no more than the weekly cap allows.
 - [ ] **AC-P9.1 (owned by 03) still holds.** `community` keeps its Facebook `WebFetch` denies and gains no browser tools.

@@ -280,3 +280,17 @@ decisions: Q1-Q7 marked settled from tickets-technical.md (NothingToDo -> run.qu
 questions: PM Q9: add the sweep line to MC-05, MC-09, MC-10b, BP-02a, BP-02b, BP-03, and X2 to MC-05 (rec yes); PM Q10: add R2 and R3 to BP-03 and AC-P11.1's join identity to BP-06 (rec yes); functional lead Q8 still open
 evidence:  python check -> MC 80/80, BP 36/36 rows, sets equal to the PRDs; 38 matrix rows (G1-G37 with G4a/G4b)
 evidence:  python check -> 21 ticket ids used, all with an issue file; bare MC-04/BP-02 only in the §0 split note; 25 issue files covered
+
+## 2026-10-25T19:31+0800 project-manager (QA lead's Q9 and Q10 ticket edits)
+status:    done
+persona:   project-manager
+ticket:    mc 05, 09, 10b; bp 02, 02b, 03, 06
+artifacts: those 7 issue files; both reviews/status.md
+decisions: Q9: a sweep criterion (tests/sweep.py over the ticket's own messages) added to mc 05, 09, 10b and bp 02a, 02b, 03; X2 added to mc 05
+decisions: Q10: bp 03 lists R2 and R3 explicitly, before U12 (E13); bp 06 gains AC-P11.1's join identity (wrong-identity stop, distinct from pages-not-allowed)
+decisions: mc 01 and 02 (in build) not touched; no edge or frontier changed
+decisions: status files now show the precondition met, G3 answered, and 01 and 02 in flight
+questions: -
+evidence:  render.py to a temp folder -> MC 80/80, BP 36/36 placed once, exit 0
+evidence:  cmp -> exactly the 7 named tickets differ
+evidence:  git diff --stat -> 7 issue files, 11+/3-, no code

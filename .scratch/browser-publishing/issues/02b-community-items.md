@@ -15,7 +15,7 @@ Every planned community post in a group joined as the Jura Page, and every propo
 - The `community-post` and `group-join` kinds (including the membership-answers step), declared by the publish plug-in, with the content, deadlines and actions in BP §5.5.
 - Item creation from `community publish-plan` (each planned post in a group joined as the Page) and `community propose-join <group-id>` (good-fit groups not joined as the Page, `pages_allowed` not `no`, up to the weekly join cap). Adding `propose-join` to the Monday run is 06.
 - The community checks in `agents/publish/claim.py`, and `config/community.yaml` gaining `browser: false` and `joins_per_week` (may only lower the cap).
-- `tests/gate_adapter_community_post.py` and `tests/gate_adapter_group_join.py`.
+- `tests/gate_adapter_community_post.py` and `tests/gate_adapter_group_join.py`. Call mission-control#02's `assert_clean` over community and join cards.
 
 ## Acceptance criteria
 
@@ -25,6 +25,7 @@ Every planned community post in a group joined as the Jura Page, and every propo
 - [ ] AC-P1.3's supersede rule (owned by 02) holds for a community post's text or group, and for a join's answers.
 - [ ] AC-M4.1 to AC-M4.7 (owned by mission-control#04) hold for `community-post` and `group-join`, including the answers step, through their adapter files.
 - [ ] **X7.** The `community_groups` migration changes no existing row, and legacy `joined = yes` groups read as `joined_as = profile`.
+- [ ] The sweep in `tests/sweep.py` passes over this ticket's messages (the `community-post` and `group-join` cards, including the answers step): no planted secret or personal data reaches the Discord double or the outbox (AC-M11.1 and AC-M12.1, owned by mission-control#02).
 - [ ] AC-M15.1 (owned by mission-control#01) still holds.
 
 ## Done when

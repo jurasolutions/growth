@@ -99,6 +99,7 @@ Every social variant on a platform in `browser` mode that passes the brand gate 
 - [ ] AC-M4.1 to AC-M4.7 (owned by mission-control#04) hold for `social-post` through its adapter file, with the publish double asserting at call time that the record is already used.
 - [ ] **X6.** A Saturday social draft on a `browser` platform raises a request (`weekends: true` kept).
 - [ ] **X7 and X8 (copy).** The `publish_items` migration changes no existing row; `publish next` copies the item's images into the run's scratch folder.
+- [ ] The sweep in `tests/sweep.py` passes over this ticket's messages (the `social-post` cards and the `#social-drafts` pointer): no planted secret or personal data reaches the Discord double or the outbox (AC-M11.1 and AC-M12.1, owned by mission-control#02).
 - [ ] Two `publish next` calls racing for one item give one claim.
 - [ ] AC-M15.1 (owned by mission-control#01) still holds.
 

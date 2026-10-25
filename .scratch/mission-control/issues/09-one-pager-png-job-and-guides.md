@@ -36,6 +36,7 @@ At 08:00 SGT every day `#mission-control` receives the one-pager with a PNG of t
 - [ ] **X12 (one-pager job).** The 08:00 job calls `expire_due()` before it builds.
 - [ ] AC-M1.5 (owned by 01) covers the new `one-pager` job.
 - [ ] `tests/test_social_render.py` passes unchanged, and `grep jura_growth.agents. jura_growth/one_pager.py jura_growth/images.py` finds nothing.
+- [ ] The sweep in `tests/sweep.py` passes over this ticket's messages (the posted one-pager, its split pieces and the PNG): no planted secret or personal data reaches the Discord double or the outbox (AC-M11.1 and AC-M12.1, owned by 02).
 - [ ] AC-M15.1 (owned by 01) still holds.
 
 ## Done when
