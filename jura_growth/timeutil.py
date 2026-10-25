@@ -34,8 +34,8 @@ def frozen_clock_problem() -> str | None:
         ("JURA_GROWTH_DATA_DIR", "data", paths.data_dir()),
         ("JURA_GROWTH_OUTPUTS_DIR", "outputs", paths.outputs_dir()),
     ):
-        guarded, here = (paths.JURA_ROOT / folder).resolve(), current.resolve()
-        if here == guarded or guarded in here.parents:
+        here = current.resolve()
+        if paths.is_within(here, paths.JURA_ROOT / folder):
             live.append((variable, here))
     if not live:
         return None

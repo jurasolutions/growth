@@ -136,3 +136,12 @@ def test_render_refuses_a_plist_folder_inside_inputs(monkeypatch):
     with pytest.raises(PermissionError, match="read-only"):
         schedule.render(["heartbeat"])
     assert not target.exists()
+
+
+@pytest.mark.parametrize(
+    "inner, inside",
+    [("data", True), ("data/growth/x.db", True), ("data/../data/growth", True), ("data-old", False), ("outputs", False)],
+)
+def test_is_within_matches_the_folder_and_what_is_under_it(tmp_path, inner, inside):
+    (tmp_path / "data").mkdir()
+    assert paths.is_within(tmp_path / inner, tmp_path / "data") is inside
