@@ -20,7 +20,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from jura_growth import brand_check, caps, db, discord, gate, log, paths, timeutil
+from jura_growth import brand_check, caps, db, discord, gate, images, log, paths, timeutil
 from jura_growth.agents.community import groups as groups_mod
 from jura_growth.agents.community import rules as rules_mod
 
@@ -385,8 +385,12 @@ def prepare(conn: sqlite3.Connection, plan: dict, week: str | None = None) -> tu
             )
         if TAGGING.search(text):
             errors.append(f"{where}: no tagging, DMs or asking for members' details")
-        if item.image_path and not Path(item.image_path).is_file():
-            errors.append(f"{where}: image {item.image_path} doesn't exist")
+        if item.image_path:
+            problem = image_problem(item.image_path)
+            if problem:
+                errors.append(f"{where}: {problem}")
+            else:
+                item.image_path = str(paths.guard(item.image_path))
         items.append(item)
 
     # the weekly cap
@@ -574,7 +578,8 @@ def render(conn: sqlite3.Connection, week: str) -> str:
     monday = week_monday(week)
     posts = db.rows(
         conn,
-        "SELECT p.*, g.name AS group_name, g.url AS group_url, g.promo_rules, g.rules_confirmed "
+        "SELECT p.*, g.name AS group_name, g.url AS group_url, g.promo_rules, g.rules_confirmed, "
+        "g.promo_days_confirmed, g.post_days_confirmed "
         "FROM community_posts p JOIN community_groups g ON g.id = p.group_id "
         "WHERE p.week = ? AND p.kind = 'post' AND p.status != 'skipped' ORDER BY p.planned_day, p.id",
         (week,),
@@ -604,7 +609,7 @@ def render(conn: sqlite3.Connection, week: str) -> str:
     for p in posts:
         day = date.fromisoformat(p["planned_day"])
         box = "x" if p["status"] == "posted" else " "
-        rules = rules_mod.parse(p["promo_rules"])
+        rules = groups_mod.rules_for(p)
         confirmed = "confirmed by you" if p["rules_confirmed"] else "not yet confirmed by you"
         qa = json.loads(p["qa_json"] or "{}")
         out += [
@@ -612,7 +617,9 @@ def render(conn: sqlite3.Connection, week: str) -> str:
             "",
             f"- [{box}] Post item {p['id']} on {day:%a %d %b} in [{p['group_name']}]({p['group_url']})"
             + (f" · posted {p['posted_url']}" if p["posted_url"] else ""),
-            f"- Rules reminder: {p['promo_rules'] or 'unknown'} ({confirmed}). Planned as: {rules.summary()}."
+            f"- Rules reminder: {p['promo_rules'] or 'unknown'} ({confirmed}"
+            + (f"; {rules_mod.TIMING_HINT}" if rules.mentions_timing else "")
+            + f"). Planned as: {rules.summary()}."
             + (f" Why this day fits: {qa['rules_ok']}" if qa.get("rules_ok") else ""),
             f"- Image: {p['image_path'] or 'none'}",
             "",
@@ -631,6 +638,20 @@ def render(conn: sqlite3.Connection, week: str) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
+def image_problem(path: str) -> str | None:
+    """Why `path` can't be a post's image, or None. Only a PNG that
+    `paths.guard()` accepts (in a run, one from its own folders) is attached."""
+    try:
+        resolved = paths.guard(path)
+    except paths.PathRefused as error:
+        return f"image {path}: {error}"
+    if not resolved.is_file():
+        return f"image {path} doesn't exist"
+    if images.png_size(resolved) is None:
+        return f"image {path} is not a PNG"
+    return None
+
+
 def publish(conn: sqlite3.Connection, week: str | None = None) -> tuple[Path, discord.PostResult, int, int]:
     week = week or current_week()
     sync_ticks(conn)
@@ -641,7 +662,16 @@ def publish(conn: sqlite3.Connection, week: str | None = None) -> tuple[Path, di
     text = render(conn, week)
     target = paths.writable(plan_dir() / f"{week}.md")
     target.write_text(text, encoding="utf-8")
-    images = [Path(p["image_path"]) for p in posts if p["image_path"] and Path(p["image_path"]).is_file()][:10]
+    images = []
+    for p in posts:
+        if not p["image_path"]:
+            continue
+        problem = image_problem(p["image_path"])
+        if problem:  # changed since plan-add: never upload it
+            log.event(conn, "community.image.skipped", {"item": p["id"], "problem": problem}, level="warning", agent=NAME)
+        else:
+            images.append(paths.guard(p["image_path"]))
+    images = images[:10]
     message = discord_message(conn, week, target)
     result = discord.post(conn, "community", message, files=images, username="Jura growth · community")
     log.event(conn, "community.plan.published", {"week": week, "file": str(target), "posts": len(posts), "replies": len(replies)}, agent=NAME)

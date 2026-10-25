@@ -52,20 +52,25 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
 1. Incomplete records: company, website, industry, 1–3 observations, source URLs (one on the
    company's own site), a 0–100 score with written reasons.
 2. Websites that are social profiles, directories, marketplaces or job boards
-   (`contact.NOT_OWN_SITE`), and government domains (`.gov.sg`, `.mil.sg`).
+   (`contact.NOT_OWN_SITE`), government domains (`.gov.sg`, `.mil.sg`), and a website with a
+   path or query: `https://directory.sg/acme` is a listing, not the company's home page.
 3. Anything already known: a lead with the domain (or the address's domain), a domain in
    `contacted_domains`, a suppressed address or domain, or a row in
    `inputs/do-not-contact.csv` (company name as whole words, or domain and its subdomains).
 4. Scores below 60 (config may raise the threshold, never lower it).
 5. More than the day's target (15; code ceiling 30).
-6. The address: it must be an enquiry address (not careers@, noreply@ ...), its source page
-   must be on the company's own domain, and **the code fetches that page and finds the exact
+6. The address: it must be an enquiry address (not careers@, noreply@ ...), it must belong
+   to the business (on the website's domain or a subdomain of it, or at one of the free-mail
+   providers in `free_mail_contacts`: gmail.com, outlook.com, hotmail.com, yahoo.com,
+   icloud.com, singnet.com.sg; config may shorten that list, never add to it), its source
+   page must be on the company's own domain, and **the code fetches that page and finds the exact
    address on it**, after decoding HTML entities, `mailto:` (percent-encoded too),
    `info [at] acme [dot] sg` and its bracket and word variants, and Cloudflare email
    protection (`data-cfemail` and `/cdn-cgi/l/email-protection#<hex>`, XOR with the first
-   byte). Redirects off the domain fail. A named address is refused when the same page lists
-   an enquiry role address (the role address is used instead), and otherwise needs
-   `"enquiry_contact": true`. Then an MX lookup (dnspython), and nothing else.
+   byte). Redirects off the domain fail. A named address on the company's domain is refused
+   when the same page lists an enquiry role address on that domain (the role address is used
+   instead). A free-mail address is never swapped for another. Otherwise a named address
+   needs `"enquiry_contact": true`. Then an MX lookup (dnspython), and nothing else.
 7. A contact form only gives `channel = form`: never emailed, listed in the digest.
 
 Rejections for exclusions, low scores, suppression, contacted domains and the do-not-contact
@@ -140,8 +145,15 @@ its draft at send time, so the real token is always the one sent.
    jurasolutions.sg or a subdomain, `RESEND_API_KEY_OUTREACH` and `UNSUBSCRIBE_SECRET` are set,
    `inputs/do-not-contact.csv` exists and D1 is configured.
 4. Caps, counted per mode: per day 20, rolling 30 days 600, rolling 365 days 8,000, warm-up
-   (5 a day for days 1–7, 10 for days 8–14, then 20, from the first send in that mode or
-   `send.warmup_start`), one email per run. Config may lower any of them.
+   (5 a day for days 1–7, 10 for days 8–14, then 20, from the first send in that mode), one
+   email per run. Config may lower any of them. In live mode `send.warmup_start` can only
+   delay the warm-up: it counts from the later of that date and the first live send, so a
+   date in the past changes nothing. A live send also needs 10 minutes since the last live
+   send (`caps.OUTREACH_MINUTES_BETWEEN_LIVE_SENDS`, counted in whole clock minutes, not
+   configurable), so calling `send-due` back to back can't send twice. Shadow sends have no
+   gap. Each `send-due` holds `data/growth/locks/outreach-send.lock` from these checks to the
+   record of the send, so a second one started meanwhile skips and the gap and caps hold for
+   parallel calls too.
 5. Random spacing: this slot sends with probability `min(quota left, emails due) ÷ slots
    left`. The last slot is certain, so the day's quota goes out, spread across the window.
 6. D1 suppression sync. A failed sync pauses outreach. No D1: a logged warning in shadow, a
@@ -181,12 +193,49 @@ candidates:
 
 ### Sync, replies and follow-ups
 
-- **D1 contract.** The site's table is `suppression(email_hash TEXT PRIMARY KEY, email TEXT,
-  reason TEXT, source TEXT, resend_email_id TEXT, created_at TEXT)`; reasons unsubscribe,
-  bounce, complaint, manual; sources unsubscribe-link, unsubscribe-post, resend-webhook.
-  `suppression.sync_from_d1` copies new rows; outreach matches `resend_email_id` to
-  `outreach_messages.resend_id` (or the hash to `contacts.email_hash`) and marks the message
-  and lead bounced, complained or unsubscribed, cancelling anything queued.
+- **D1 contract.** The site's `suppression` table is an append-only log with one row per
+  event:
+
+  ```sql
+  CREATE TABLE suppression (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email_hash TEXT NOT NULL,
+    email TEXT,
+    reason TEXT NOT NULL CHECK (reason IN ('unsubscribe', 'bounce', 'complaint', 'manual')),
+    source TEXT NOT NULL,
+    resend_email_id TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX suppression_email_hash ON suppression (email_hash);
+  ```
+
+  - Every unsubscribe, bounce and complaint inserts a new row, even for an address that is
+    already in the table. Rows are never updated or deleted. `AUTOINCREMENT` keeps ids from
+    being reused, so the sync's cursor can't skip an event.
+  - Sources are unsubscribe-link, unsubscribe-post and resend-webhook. `email` is empty for
+    unsubscribes, which only see the hash. `created_at` is for people reading the table; the
+    sync doesn't use it.
+  - `suppression.sync_from_d1` asks for the rows after the last id it processed (kept in
+    `sync_cursors`) and copies each address into the local list. Outreach then acts on every
+    event, whether or not the address was already suppressed. It matches `resend_email_id` to
+    `outreach_messages.resend_id` (or the hash to `contacts.email_hash`), marks the message
+    and lead bounced, complained or unsubscribed, and cancels anything queued. A later,
+    weaker event never overwrites a complaint or a bounce on the lead.
+  - The local copy, outreach's changes and the cursor move commit together, so each event is
+    processed once. A failed sync keeps nothing from the batch, pauses outreach, and the next
+    sync tries the batch again.
+  - A row without an `id`, as in the old table keyed on `email_hash`, fails the sync, so
+    outreach stays paused until the site's table matches this contract.
+  - The event the cursor points at must come back from D1 unchanged. If it is missing or
+    different, the table was recreated or rewritten behind the cursor and new events could
+    sit under old ids, so the sync fails and outreach pauses with an alert. An upsert on an
+    older row can't be seen this way, which is why plain inserts are part of the contract.
+  - To recover once the site's table is right again, clear the cursor
+    (`sqlite3 data/growth/growth.db "DELETE FROM sync_cursors WHERE name = 'd1:suppression'"`)
+    and `jura-growth resume outreach`. The next sync replays the whole table once, so an old
+    complaint pauses outreach one more time; resume again after it.
+  - Start the site's table empty. Copying old rows into it replays them on the first sync
+    (Discord posts again, and an old complaint pauses outreach once).
 - **Reply detection** (optional; on when `OUTREACH_IMAP_HOST`, `_USER` and `_PASSWORD` are
   set): read-only IMAP (EXAMINE, BODY.PEEK) over the last 45 days. Only replies from
   addresses we emailed count. Stored: lead, contact, received time and a hash of the
@@ -202,7 +251,8 @@ candidates:
 
 ### Auto-pause (§5.7)
 
-Outreach pauses and posts to `#alerts` on any complaint; a bounce rate above 3% over the last
+Outreach pauses and posts to `#alerts` on any complaint, including one from an address that
+had already unsubscribed; a bounce rate above 3% over the last
 50 live sends (the denominator stays 50 while there are fewer, so two bounces pause; checked
 when a new bounce arrives); two brand-check failures in a row (counted since the last resume, so
 an email that fails its regeneration pauses outreach); any Resend auth, quota or domain error;
@@ -243,7 +293,8 @@ a failed suppression sync. `jura-growth resume outreach` restarts it.
       `jura-growth outreach unsubscribe-link you@yourdomain` and open it; the next
       `outreach sync` should show the unsubscribe.
 - [ ] The site's `/unsubscribe` page and function, `/api/resend-webhook` (bounced, complained,
-      signature-verified), D1 `suppression` table and the privacy notice are live.
+      signature-verified), D1 `suppression` table (append-only, as in the D1 contract above)
+      and the privacy notice are live.
 - [ ] `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `D1_DATABASE_ID` set;
       `jura-growth outreach sync` reports suppressions without an error.
 - [ ] `inputs/do-not-contact.csv` exists.

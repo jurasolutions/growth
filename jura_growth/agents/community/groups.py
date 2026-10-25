@@ -31,9 +31,42 @@ def settings() -> dict:
     return config.agent_config("community")
 
 
+class BlockedDomainError(ValueError):
+    """A blocked_fetch_domains entry that isn't a bare domain. It would make
+    deny rules that match no host, so nothing that reads the list carries on."""
+
+
+BARE_DOMAIN_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$")
+
+
 def blocked_domains() -> tuple[str, ...]:
-    configured = settings().get("blocked_fetch_domains") or ()
+    """The one list of domains the community run may not fetch: Facebook's
+    own, plus any in community.yaml. Each covers its subdomains too (the job's
+    WebFetch denials, `is_blocked`, `community audit-run`).
+
+    A configured entry must be a bare domain. Case, surrounding spaces, a
+    leading "*." and a trailing dot are tidied (" *.Example.COM. " is
+    example.com); a URL, path, port or anything else raises BlockedDomainError."""
+    configured = []
+    for entry in settings().get("blocked_fetch_domains") or ():
+        domain = str(entry).strip().lower().removeprefix("*.").rstrip(".")
+        if not BARE_DOMAIN_RE.match(domain):
+            raise BlockedDomainError(
+                f"config/community.yaml blocked_fetch_domains: {entry!r} is not a bare domain; "
+                "write it as a host name only, like example.com (it covers every subdomain)"
+            )
+        configured.append(domain)
     return tuple(dict.fromkeys([*BLOCKED_DEFAULT, *configured]))
+
+
+def fetch_denials() -> tuple[str, ...]:
+    """Claude Code deny rules for every blocked domain. Claude Code matches
+    `WebFetch(domain:x)` by exact host and `WebFetch(domain:*.x)` by subdomain
+    only (2.1.310, checked with a headless probe), so each domain gets both."""
+    return tuple(
+        rule for domain in blocked_domains()
+        for rule in (f"WebFetch(domain:{domain})", f"WebFetch(domain:*.{domain})")
+    )
 
 
 def host(url: str) -> str:
@@ -159,7 +192,11 @@ def add(conn: sqlite3.Connection, record: dict) -> tuple[str, int | None, list[s
     return "added", cursor.lastrowid, []
 
 
-SETTABLE = {"joined", "rules", "promo_rules", "rules_confirmed", "fit", "fit_reason", "notes", "audience", "size_hint", "active_hint", "name"}
+SETTABLE = {
+    "joined", "rules", "promo_rules", "rules_confirmed", "promo_days", "post_days",
+    "fit", "fit_reason", "notes", "audience", "size_hint", "active_hint", "name",
+}
+DAY_COLUMNS = {"promo_days": "promo_days_confirmed", "post_days": "post_days_confirmed"}
 YES = {"yes", "y", "true", "1", "on"}
 NO = {"no", "n", "false", "0", "off"}
 
@@ -190,15 +227,39 @@ def set_fields(conn: sqlite3.Connection, group_id: int, pairs: list[str]) -> dic
             updates["fit"] = value.lower()
         elif key in ("rules", "promo_rules"):
             updates["promo_rules"] = value
+        elif key in DAY_COLUMNS:
+            try:
+                updates[DAY_COLUMNS[key]] = rules_mod.days_text(rules_mod.read_days(value))
+            except ValueError as error:
+                raise GroupError(f"{key}: {error}") from None
         else:
             updates[key] = value
     if not updates:
         raise GroupError("nothing to set")
+    if "promo_rules" in updates and updates["promo_rules"] != group["promo_rules"]:
+        # days confirmed for the old text don't carry over to new text
+        for column in DAY_COLUMNS.values():
+            updates.setdefault(column, None)
+    if updates.get("rules_confirmed") == 1:
+        _check_days_confirmed({**group, **updates})
     updates["updated_at"] = timeutil.stamp()
     assignments = ", ".join(f"{k} = ?" for k in updates)
     conn.execute(f"UPDATE community_groups SET {assignments} WHERE id = ?", (*updates.values(), group_id))
     log.event(conn, "community.group.set", {"id": group_id, **{k: v for k, v in updates.items() if k != "updated_at"}}, agent=NAME)
     return get(conn, group_id)
+
+
+def _check_days_confirmed(group: dict) -> None:
+    """Confirming a group's rules means saying which days are open, for every group:
+    code never reads days out of the rules text. A later change of rules text clears
+    the days, and the group has no open day until Ting Yu sets them again."""
+    missing = [key for key, column in DAY_COLUMNS.items() if group.get(column) is None]
+    if missing:
+        raise GroupError(
+            f"say which days are open for these rules (\"{group['promo_rules'] or 'unknown'}\") as well: "
+            "promo_days=... post_days=..., each any, none, or days like sat,sun or mon-fri "
+            f"(missing: {', '.join(missing)})"
+        )
 
 
 def remove(conn: sqlite3.Connection, group_id: int, reason: str) -> dict:
@@ -245,4 +306,8 @@ def counts(conn: sqlite3.Connection) -> dict:
 
 
 def rules_for(group: dict) -> rules_mod.Rules:
-    return rules_mod.parse(group.get("promo_rules"))
+    """The group's rules, with the days Ting Yu confirmed. Plans, `context` and the
+    checklist read rules only through this."""
+    return rules_mod.confirm_days(
+        rules_mod.parse(group.get("promo_rules")), group.get("promo_days_confirmed"), group.get("post_days_confirmed")
+    )

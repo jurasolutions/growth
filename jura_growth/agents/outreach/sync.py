@@ -1,16 +1,23 @@
 """Suppression sync, bounces and complaints, follow-ups and retention.
 
-The website's D1 `suppression` table collects unsubscribes (link and one-click
-POST) and Resend's bounce and complaint webhooks. `suppression.sync_from_d1`
-copies new rows here; this module acts on them:
+The website's D1 `suppression` table is an append-only log of unsubscribes
+(link and one-click POST) and Resend's bounce and complaint webhooks, one row
+per event. `suppression.sync_from_d1` hands over the events after the last one
+processed, and this module acts on every one of them, even when the address
+was already suppressed here:
 
 - a bounce marks the message (matched by `resend_email_id`) and the lead
   `bounced`; a bounce rate above 3% over the last 50 sends pauses outreach;
 - a complaint marks them `complained` and pauses outreach;
 - an unsubscribe marks the lead `unsubscribed`;
+- a weaker event never overwrites a stronger one on the lead;
 - every one cancels anything still queued for that company.
 
-A failed sync pauses outreach when D1 is configured (PRD §5.7).
+All of this commits in one transaction with the sync cursor, so each event is
+applied once. The Discord posts and pause alerts for a batch go out only after
+it commits, so no write lock is held while Discord answers and a retried batch
+never posts twice. A failed sync keeps and posts nothing from the batch, pauses
+outreach when D1 is configured (PRD §5.7), and the next sync tries it again.
 """
 
 from __future__ import annotations
@@ -20,7 +27,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date
 
-from jura_growth import cloudflare, db, holidays, log, suppression, timeutil
+from jura_growth import cloudflare, db, holidays, log, pause, suppression, timeutil
 from jura_growth.agents.outreach import replies, store
 from jura_growth.agents.scout import registry, settings
 
@@ -35,6 +42,9 @@ class D1Result:
     complaints: int = 0
     unsubscribes: int = 0
     paused: list[str] = field(default_factory=list)
+    # Discord posts and pause alerts, sent only after the batch has committed.
+    posts: list[tuple[str, str]] = field(default_factory=list)
+    alerts: list[str] = field(default_factory=list)
 
 
 def sync_suppression(conn: sqlite3.Connection) -> D1Result:
@@ -42,16 +52,22 @@ def sync_suppression(conn: sqlite3.Connection) -> D1Result:
         return D1Result(configured=False)
     result = D1Result()
     try:
-        rows = suppression.sync_from_d1(conn)
+        # Every D1 event is acted on, even for an address already suppressed
+        # here, in the same transaction that moves the sync cursor.
+        rows = suppression.sync_from_d1(conn, lambda events: apply_rows(conn, events, result))
     except Exception as error:  # noqa: BLE001 - any failure means the list may be stale
-        result.ok = False
-        result.error = f"{type(error).__name__}: {str(error)[:200]}"
+        # Nothing from this batch was kept or posted, so start the result afresh.
+        result = D1Result(ok=False, error=f"{type(error).__name__}: {str(error)[:200]}")
         reason = f"suppression sync from D1 failed ({result.error})"
         store.auto_pause(conn, reason)
         result.paused.append(reason)
         return result
     result.new = len(rows)
-    apply_rows(conn, rows, result)
+    # The transaction has committed: now Discord, with no write lock held.
+    for channel, text in result.posts:
+        store.post(conn, channel, text)
+    for reason in result.alerts:
+        pause.announce(conn, store.AGENT, reason)
     return result
 
 
@@ -73,7 +89,29 @@ def _matching(conn: sqlite3.Connection, row: dict) -> tuple[dict | None, set[int
     return message, lead_ids
 
 
+# What a D1 event makes of a lead, weakest first. Events for one address arrive
+# in either order ("report spam and unsubscribe"), so a weaker one never
+# overwrites a stronger outcome.
+_OUTCOMES = ("suppressed", "unsubscribed", "bounced", "complained")
+
+
+def _mark_leads(conn: sqlite3.Connection, lead_ids: set[int], status: str) -> None:
+    stronger = _OUTCOMES[_OUTCOMES.index(status) + 1 :]
+    if lead_ids and stronger:
+        held = db.rows(
+            conn,
+            f"SELECT id FROM leads WHERE id IN ({','.join('?' * len(lead_ids))}) AND status IN ({','.join('?' * len(stronger))})",
+            (*lead_ids, *stronger),
+        )
+        lead_ids = set(lead_ids) - {r["id"] for r in held}
+    store.set_lead_status(conn, lead_ids, status)
+
+
 def apply_rows(conn: sqlite3.Connection, rows: list[dict], result: D1Result) -> None:
+    """Act on D1 events, whether or not the address was already suppressed.
+    Database writes only: it runs inside the sync's transaction, so Discord
+    posts and pause alerts go into `result` for the caller to send after the
+    commit."""
     for row in rows:
         reason = row.get("reason")
         message, lead_ids = _matching(conn, row)
@@ -83,19 +121,19 @@ def apply_rows(conn: sqlite3.Connection, rows: list[dict], result: D1Result) -> 
             result.bounces += 1
             if message:
                 conn.execute("UPDATE outreach_messages SET status = 'bounced' WHERE id = ?", (message["id"],))
-            store.set_lead_status(conn, lead_ids, "bounced")
-            store.post(conn, "outreach-replies", f"**Bounce** from {where} ({row.get('source')}). The address is suppressed.")
+            _mark_leads(conn, lead_ids, "bounced")
+            result.posts.append(("outreach-replies", f"**Bounce** from {where} ({row.get('source')}). The address is suppressed."))
         elif reason == "complaint":
             result.complaints += 1
             if message:
                 conn.execute("UPDATE outreach_messages SET status = 'complained' WHERE id = ?", (message["id"],))
-            store.set_lead_status(conn, lead_ids, "complained")
+            _mark_leads(conn, lead_ids, "complained")
         elif reason == "unsubscribe":
             result.unsubscribes += 1
-            store.set_lead_status(conn, lead_ids, "unsubscribed")
-            store.post(conn, "outreach-replies", f"**Unsubscribe** from {where} ({row.get('source')}). The address is suppressed.")
+            _mark_leads(conn, lead_ids, "unsubscribed")
+            result.posts.append(("outreach-replies", f"**Unsubscribe** from {where} ({row.get('source')}). The address is suppressed."))
         else:
-            store.set_lead_status(conn, lead_ids, "suppressed")
+            _mark_leads(conn, lead_ids, "suppressed")
         store.cancel_queued(conn, lead_ids, f"suppressed ({reason})")
         log.event(
             conn,
@@ -105,10 +143,14 @@ def apply_rows(conn: sqlite3.Connection, rows: list[dict], result: D1Result) -> 
         )
     if result.complaints:
         reason = f"{result.complaints} spam complaint{'s' if result.complaints != 1 else ''} received"
-        store.auto_pause(conn, reason)
+        store.auto_pause(conn, reason, notify=False)
         result.paused.append(reason)
-    if result.bounces and store.bounce_rate_pause(conn):
-        result.paused.append("bounce rate")
+        result.alerts.append(reason)
+    if result.bounces:
+        reason = store.bounce_rate_pause(conn, notify=False)
+        if reason:
+            result.paused.append("bounce rate")
+            result.alerts.append(reason)
 
 
 # --- follow-ups ------------------------------------------------------------

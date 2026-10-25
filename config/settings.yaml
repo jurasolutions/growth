@@ -90,13 +90,8 @@ jobs:
     kind: claude
     prompt: community.md
     tools: [WebSearch, WebFetch]
-    disallowed_tools:
-      - WebFetch(domain:facebook.com)
-      - WebFetch(domain:www.facebook.com)
-      - WebFetch(domain:m.facebook.com)
-      - WebFetch(domain:web.facebook.com)
-      - WebFetch(domain:fb.com)
-      - WebFetch(domain:fb.me)
+    # No WebFetch denials here: the community plug-in denies every domain in
+    # config/community.yaml blocked_fetch_domains, and every subdomain of it.
     schedule: {weekly: {day: mon, time: "07:30"}}
 
   backup:

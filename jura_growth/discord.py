@@ -8,6 +8,10 @@ name upper-cased, dashes to underscores). A channel without a webhook is not
 an error: the message goes to `data/growth/discord-outbox/YYYY-MM-DD.jsonl`
 instead, so nothing is lost while the server is being set up.
 `JURA_GROWTH_DISCORD=off` forces that path (the tests use it).
+
+A message Discord doesn't take (unreachable, timed out, or refused) goes to
+the same outbox, and `post()` reports it as not delivered instead of raising.
+A failing run must still record itself and auto-pause when Discord is down.
 """
 
 from __future__ import annotations
@@ -115,8 +119,10 @@ def post(
             last = index == len(pieces) - 1
             _send(client, url, piece, files if last else [], username, suppress_embeds)
     except DiscordError as error:
+        _outbox(channel, content, files, username)
+        _record(conn, channel, digest, delivered=False)
         log.event(conn, "discord.error", {"channel": channel, "error": str(error)}, level="error")
-        return PostResult(channel, delivered=False, reason=str(error))
+        return PostResult(channel, delivered=False, reason=f"{error}; saved to outbox")
     finally:
         if owns_client:
             client.close()
@@ -149,16 +155,19 @@ def _send(
     if username:
         payload["username"] = username[:80]
     for attempt in range(3):
-        if files:
-            multipart = {"payload_json": (None, json.dumps(payload), "application/json")}
-            for i, file in enumerate(files):
-                multipart[f"files[{i}]"] = (file.name, file.read_bytes())
-            response = client.post(url, files=multipart)
-        else:
-            response = client.post(url, json=payload)
+        try:
+            if files:
+                multipart = {"payload_json": (None, json.dumps(payload), "application/json")}
+                for i, file in enumerate(files):
+                    multipart[f"files[{i}]"] = (file.name, file.read_bytes())
+                response = client.post(url, files=multipart)
+            else:
+                response = client.post(url, json=payload)
+        except (httpx.HTTPError, httpx.InvalidURL) as error:
+            # Only the error's type: httpx messages can quote the URL, which is the secret.
+            raise DiscordError(f"Discord could not be reached ({type(error).__name__})") from None
         if response.status_code == 429 and attempt < 2:
-            retry_after = float(response.json().get("retry_after", 1.0))
-            time.sleep(min(retry_after, 10.0))
+            time.sleep(_retry_after(response))
             continue
         if response.status_code >= 500 and attempt < 2:
             time.sleep(2.0)
@@ -168,6 +177,18 @@ def _send(
             raise DiscordError(f"Discord answered {response.status_code}")
         return
     raise DiscordError("Discord kept refusing the message")
+
+
+def _retry_after(response: httpx.Response) -> float:
+    """Seconds a 429 asks us to wait, at most 10. One second if the answer doesn't say
+    (Cloudflare's rate-limit page in front of Discord is HTML, not JSON)."""
+    try:
+        seconds = float(response.json().get("retry_after", 1.0))
+    except (ValueError, TypeError, AttributeError):
+        return 1.0
+    if not seconds >= 0:  # negative, or NaN
+        return 1.0
+    return min(seconds, 10.0)
 
 
 def _posted_today(conn: sqlite3.Connection, channel: str, digest: str) -> bool:

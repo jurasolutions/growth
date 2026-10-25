@@ -62,11 +62,12 @@ Every variant:
   (say "uses AI" instead). No urgency ("act now", "limited", "don't miss").
 - No "this, not that" lines: avoid "X, not Y", "not just X but Y" and "it's not about X, it's
   about Y". Say the positive thing directly.
-- **Numbers:** no figures about Jura beyond the approved claims. Never put a digit in a sentence
-  that contains "we", "our", "us" or "Jura". A figure from a news story is fine in a sentence
-  about that story, with the source linked. For now the checker also reads "were", "well" and
-  "wed" as "we're", "we'll" and "we'd", so keep those words out of any sentence with a digit
-  ("86% of them use AI", not "86% were using AI").
+- **Numbers:** no figures about Jura beyond the approved claims. Never put a digit, or a number
+  word from two up ("twelve", "a dozen"), in a sentence that contains "we", "our", "us" or
+  "Jura". A figure from a news story is fine in a sentence about that story, with the source
+  linked. For now the checker also reads "were", "well" and "wed" as "we're", "we'll" and
+  "we'd", so keep those words out of any sentence with a figure ("86% of them use AI", not
+  "86% were using AI").
 - Plain text only. No markdown: no `**bold**`, no `#` headings, no `[text](url)` links. Write
   links in full (`https://...`). Lines starting with "- " are fine.
 - Hashtags go together on the last line, nowhere else.

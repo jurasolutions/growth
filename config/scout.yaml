@@ -57,7 +57,8 @@ send:
   rolling_365_days: 8000
   per_run: 1
   # Warm-up (5 a day in week 1, 10 in week 2, then 20) counts from the first
-  # live send. Set a date (YYYY-MM-DD) here to count from that day instead.
+  # live send. A date (YYYY-MM-DD) here can only start it later: the warm-up
+  # counts from whichever is later, this date or the first live send.
   warmup_start: null
 
 follow_ups:
@@ -80,5 +81,21 @@ retention:
   rejection_months: 12
 
 # A named person's address is used only if the business publishes it as its
-# enquiry contact, and never when the same page lists a role address.
+# enquiry contact. A named address on the company's domain is never used when
+# the same page lists a role address there (that one is used instead); a
+# free-mail address is never swapped for another.
 allow_named_contacts: true
+
+# The address must belong to the business: it sits on the company's own
+# website domain (or a subdomain of it), or at one of these free-mail
+# providers, and is published on the company's own site. The code holds this
+# list as a ceiling (contact.FREE_MAIL_CONTACTS): remove a provider here to
+# refuse it, or set [] to refuse free mail altogether. A provider added here
+# is ignored.
+free_mail_contacts:
+  - gmail.com
+  - outlook.com
+  - hotmail.com
+  - yahoo.com
+  - icloud.com
+  - singnet.com.sg

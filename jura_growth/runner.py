@@ -6,8 +6,9 @@ a slow run and its next slot never overlap, then the job itself.
 
 A `command` job calls a `jura-growth` command in-process. A `claude` job runs
 headless Claude Code (`claude -p`) with the job's prompt file and a tight tool
-allowlist: read anything under jurasolutions/, run `jura-growth`, write only
-in the job's scratch folder, plus the job's own tools (web search and fetch).
+allowlist: read anything under jurasolutions/ except secret files, run the
+job's own `jura-growth` commands (headless.py), write only in the job's
+scratch folder, plus the job's own tools (web search and fetch).
 No MCP servers, no user settings, a per-run spending ceiling, and the full
 stream-json transcript kept for audit.
 
@@ -16,7 +17,6 @@ Three failed runs in a row pause the agent (pause.check_auto_pause).
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import shlex
@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from jura_growth import agents, config, db, discord, holidays, log, pause, paths, timeutil
+from jura_growth import agents, config, db, discord, headless, holidays, locks, log, pause, paths, timeutil
 
 BUSINESS_DAY_KINDS = ("business_days", "business_days_every")
 
@@ -56,21 +56,7 @@ def job(name: str) -> dict:
         raise JobError(f"unknown job {name!r}; known: {', '.join(jobs())}") from None
 
 
-@contextmanager
-def _lock(name: str) -> Iterator[bool]:
-    path = paths.writable(paths.data_dir() / "locks" / f"{name}.lock")
-    handle = open(path, "w")
-    try:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        handle.close()
-        yield False
-        return
-    try:
-        yield True
-    finally:
-        fcntl.flock(handle, fcntl.LOCK_UN)
-        handle.close()
+_lock = locks.held  # one lock per job
 
 
 def run(name: str, *, ignore_schedule: bool = False) -> Outcome:
@@ -131,8 +117,10 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
     log.finish_run(conn, run_id, outcome.status, summary=outcome.summary, error=outcome.error, cost_usd=outcome.cost_usd)
 
     if outcome.status == "failed":
-        discord.alert(conn, f"`{name}` failed: {outcome.error[:500]}", agent=agent)
-        pause.check_auto_pause(conn, agent)
+        try:
+            discord.alert(conn, f"`{name}` failed: {outcome.error[:500]}", agent=agent)
+        finally:
+            pause.check_auto_pause(conn, agent)  # whatever happened to the alert
     return outcome
 
 
@@ -159,22 +147,9 @@ def _abandon_stale(conn: sqlite3.Connection) -> None:
             started = timeutil.parse(row["started_at"])
         except ValueError:
             continue
-        if started > cutoff or _lock_held(row["job"]):
+        if started > cutoff or locks.is_held(row["job"]):
             continue
         log.finish_run(conn, row["id"], "failed", error="abandoned: the process stopped before finishing")
-
-
-def _lock_held(name: str) -> bool:
-    path = paths.data_dir() / "locks" / f"{name}.lock"
-    if not path.exists():
-        return False
-    with open(path, "a") as handle:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return True
-        fcntl.flock(handle, fcntl.LOCK_UN)
-    return False
 
 
 # --- command jobs ----------------------------------------------------------
@@ -223,17 +198,16 @@ def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
         raise JobError(f"prompt file missing: {prompt_file}")
     work = paths.writable(paths.work_dir(name) / ".keep").parent
 
+    # Only the job's own jura-growth commands, and no secret files (headless.py).
+    commands_allowed, commands_disallowed = headless.claude_rules(name)
     allowed = [
-        "Bash(jura-growth:*)",
+        *commands_allowed,
         f"Write(/{work}/**)",
         f"Edit(/{work}/**)",
         *spec.get("tools", []),
     ]
     disallowed = [
-        f"Read(/{paths.env_file()})",
-        "Bash(jura-growth run:*)",
-        "Bash(jura-growth resume:*)",
-        "Bash(jura-growth schedule:*)",
+        *commands_disallowed,
         *spec.get("disallowed_tools", []),
     ]
     budget = spec.get("max_budget_usd", settings.get("max_budget_usd", 3.0))
@@ -264,12 +238,24 @@ def _preamble(name: str, spec: dict, run_id: int | None) -> str:
         f"- Job: `{name}` (agent `{spec['agent']}`), run {run_id}\n"
         f"- Now: {moment.strftime('%A')} {timeutil.stamp(moment)} SGT\n"
         f"- Scratch folder: `{work}`. It is the only place you can write files.\n"
-        "- Every side effect (database, Discord, files outside scratch, email) goes through "
-        "`jura-growth`. Run `jura-growth --help` and `jura-growth <group> --help` for the commands.\n"
+        f"{_commands_line(name)}"
         "- Jura Solutions only. Never read `taskwise-*` or ZenexFlow folders. No Notion, no Zapier.\n"
         "- `inputs/` and `design-system/` are read-only.\n"
         "- Finish with a one to three line summary that starts with `OK:` if the run did its job, "
         "`SKIP:` if there was nothing to do, or `FAIL:` if it could not.\n\n---\n\n"
+    )
+
+
+def _commands_line(name: str) -> str:
+    """The job's own `jura-growth` commands, the only ones this run may use
+    (headless.permissions), so the preamble never invites a refused call."""
+    commands = [c for c in headless.permissions(name).commands if c.split()[0] not in headless.NEVER]
+    if not commands:
+        return "- This job may run no jura-growth commands; anything you try is refused.\n"
+    listed = ", ".join(f"`jura-growth {command}`" for command in commands)
+    return (
+        "- Every side effect (database, files outside scratch, email) goes through this job's own commands, "
+        f"and any other command is refused: {listed}. Add `--help` to one of them for its options.\n"
     )
 
 

@@ -3,6 +3,7 @@ per-company rule, suppression, shadow versus live, Resend errors."""
 
 import json
 import random
+import threading
 from datetime import timedelta
 
 import httpx
@@ -286,6 +287,17 @@ def test_warm_up_schedule(conn, monkeypatch):
     assert send.daily_cap(conn, "live")[0] == 5  # day 7 counted from the configured start
 
 
+def test_warmup_start_in_the_past_keeps_the_first_live_day_at_five(conn, monkeypatch):
+    # Config may only delay the warm-up, so a past warmup_start never lifts day one.
+    at(monkeypatch, MONDAY_10AM)
+    configure(monkeypatch, send={"warmup_start": "2026-01-01"})
+    assert send.daily_cap(conn, "live")[0] == 5
+    store.set_state(conn, "first_live_send_at", "2026-10-23T10:00:00+08:00")
+    assert send.daily_cap(conn, "live") == (5, "warm-up day 4, 5 a day; daily cap 5")
+    store.set_state(conn, "first_live_send_at", "2026-10-16T10:00:00+08:00")
+    assert send.daily_cap(conn, "live")[0] == 10  # day 11, counted from the real first live send
+
+
 def test_rolling_30_day_cap(conn, monkeypatch):
     at(monkeypatch, MONDAY_10AM)
     seed(conn, 1)
@@ -338,6 +350,97 @@ def test_spacing_skips_a_slot_when_the_draw_is_high(conn, monkeypatch):
     assert result.summary is None and "spacing" in result.note
     at(monkeypatch, "2026-10-26T16:30:00+08:00")  # last slot: probability 1
     assert send.send_due(conn).summary
+
+
+def test_back_to_back_send_due_calls_send_live_only_once(conn, monkeypatch):
+    # Live sends stay 10 minutes apart however often send-due is called.
+    at(monkeypatch, "2026-10-26T08:00:00+08:00")
+    seed(conn, 1)
+    seed(conn, 2)
+    live_ready(monkeypatch)
+    sent = fake_resend(monkeypatch)
+    at(monkeypatch, MONDAY_10AM)
+    assert send.send_due(conn).summary.startswith("sent message")
+    second = send.send_due(conn)  # same minute
+    assert second.summary is None
+    assert "0 minutes ago" in second.note and "at least 10 minutes apart" in second.note
+    at(monkeypatch, "2026-10-26T10:09:00+08:00")
+    assert send.send_due(conn).summary is None
+    assert len(sent) == 1
+
+
+def test_the_next_ten_minute_slot_still_sends_live(conn, monkeypatch):
+    # The gap is counted in whole clock minutes, so the seconds a send takes
+    # never block the next scheduled slot.
+    at(monkeypatch, "2026-10-26T08:00:00+08:00")
+    seed(conn, 1)
+    seed(conn, 2)
+    live_ready(monkeypatch)
+    sent = fake_resend(monkeypatch)
+    at(monkeypatch, "2026-10-26T10:00:04+08:00")
+    assert send.send_due(conn).summary.startswith("sent message")
+    at(monkeypatch, "2026-10-26T10:10:01+08:00")
+    assert send.send_due(conn).summary.startswith("sent message")
+    assert len(sent) == 2
+
+
+def test_shadow_sends_have_no_minimum_gap(conn, monkeypatch):
+    seed_many(conn, monkeypatch, 2)
+    at(monkeypatch, MONDAY_10AM)
+    assert send.send_due(conn).summary.startswith("SHADOW")
+    assert send.send_due(conn).summary.startswith("SHADOW")
+
+
+def _parallel_send_due(monkeypatch, *, per_day=None):
+    """Run B starts first and is held in its D1 sync while run A tries to send;
+    then B finishes. Returns each run's result and the Resend requests."""
+    at(monkeypatch, "2026-10-26T08:00:00+08:00")
+    setup = db.connect()
+    seed(setup, 1)
+    seed(setup, 2)
+    setup.close()
+    live_ready(monkeypatch)
+    if per_day is not None:
+        configure(monkeypatch, mode="live", legal_review_done=True, sending_domain="hello.jurasolutions.sg", send={"per_day": per_day})
+    a_done, b_in_sync = threading.Event(), threading.Event()
+
+    def d1(request):
+        if threading.current_thread().name == "B":
+            b_in_sync.set()
+            a_done.wait(10)
+        return httpx.Response(200, json={"success": True, "result": [{"results": []}]})
+
+    fake_d1(monkeypatch, d1)
+    sent = fake_resend(monkeypatch)
+    at(monkeypatch, MONDAY_10AM)
+    results = {}
+
+    def run(name):
+        conn = db.connect()
+        try:
+            results[name] = send.send_due(conn)
+        finally:
+            conn.close()
+
+    b = threading.Thread(target=run, args=("B",), name="B")
+    b.start()
+    assert b_in_sync.wait(10)
+    run("A")
+    a_done.set()
+    b.join(10)
+    return results, sent
+
+
+def test_parallel_send_due_calls_send_live_only_once(monkeypatch):
+    results, sent = _parallel_send_due(monkeypatch)
+    assert len(sent) == 1
+    assert results["B"].summary.startswith("sent message")
+    assert results["A"].summary is None and "another send-due run is still going" in results["A"].note
+
+
+def test_parallel_send_due_calls_stay_within_the_daily_cap(monkeypatch):
+    results, sent = _parallel_send_due(monkeypatch, per_day=1)
+    assert len(sent) == 1
 
 
 @pytest.mark.parametrize("seed_value", [1, 7, 42, 2026])

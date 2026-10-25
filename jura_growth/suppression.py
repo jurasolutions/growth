@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from collections.abc import Callable
 
-from jura_growth import cloudflare, log, timeutil
+from jura_growth import cloudflare, db, log, timeutil
 
 
 def email_hash(email: str) -> str:
@@ -76,37 +77,92 @@ def add(
     return bool(cursor.rowcount)
 
 
-def sync_from_d1(conn: sqlite3.Connection) -> list[dict]:
-    """Copy new suppression rows from the website's D1. Returns the new rows
-    (email_hash, email, reason, source, resend_email_id, created_at) so the
-    caller can act on bounces and complaints."""
-    since = conn.execute(
-        "SELECT max(added_at) FROM suppression WHERE source LIKE 'd1:%'"
-    ).fetchone()[0]
+D1_CURSOR = "d1:suppression"
+
+
+class D1ContractError(ValueError):
+    """D1's suppression table doesn't look like the append-only log the sync
+    relies on (docs/scout.md, D1 contract)."""
+
+
+def sync_from_d1(conn: sqlite3.Connection, apply: Callable[[list[dict]], None]) -> list[dict]:
+    """Copy the website's D1 suppression events not yet processed here and
+    return them, oldest first (id, email_hash, email, reason, source,
+    resend_email_id, created_at).
+
+    D1 keeps one row per event with its own id, so an address that is already
+    suppressed here still brings in its later complaint or bounce. `apply` (the
+    caller acting on bounces and complaints, database writes only) runs in the
+    same transaction as the local copy and the cursor move. A failure anywhere
+    rolls all three back, so the batch is tried again on the next sync, and an
+    event that was processed is never processed again.
+
+    The event the cursor points at must come back unchanged. If it is missing
+    or different, the table was recreated or rewritten behind the cursor, and
+    new events could be hiding under old ids, so this raises D1ContractError
+    instead of skipping them.
+    """
+    after, marker = _cursor(conn, D1_CURSOR)
     rows = cloudflare.query(
-        "SELECT email_hash, email, reason, source, resend_email_id, created_at FROM suppression "
-        "WHERE created_at >= ? ORDER BY created_at",
-        [_d1_since(since)],
+        "SELECT id, email_hash, email, reason, source, resend_email_id, created_at FROM suppression "
+        "WHERE id >= ? ORDER BY id",
+        [after],
     )
-    new = []
-    for row in rows:
-        added = add(
-            conn,
-            email=row.get("email"),
-            email_hash_value=row["email_hash"],
-            reason=row["reason"],
-            source=f"d1:{row['source']}",
+    if after:
+        _check_cursor_row(rows, after, marker)
+    # Filter again here as well as in the query: the sync must never re-apply
+    # an event, whatever D1 returns.
+    events = sorted((row for row in rows if _event_id(row) > after), key=_event_id)
+    if events:
+        with db.transaction(conn):
+            for row in events:
+                add(
+                    conn,
+                    email=row.get("email"),
+                    email_hash_value=row["email_hash"],
+                    reason=row["reason"],
+                    source=f"d1:{row['source']}",
+                )
+            apply(events)
+            _move_cursor(conn, D1_CURSOR, _event_id(events[-1]), _marker(events[-1]))
+    log.event(conn, "suppression.sync", {"fetched": len(rows), "new": len(events), "after_id": after})
+    return events
+
+
+def _marker(row: dict) -> str:
+    return "|".join(str(row.get(key) or "") for key in ("email_hash", "reason", "source", "created_at"))
+
+
+def _check_cursor_row(rows: list[dict], after: int, marker: str | None) -> None:
+    found = [row for row in rows if _event_id(row) == after]
+    if not found or (marker is not None and _marker(found[0]) != marker):
+        state = "is missing" if not found else "has changed"
+        raise D1ContractError(
+            f"D1 suppression event {after}, the last one processed here, {state}: the site's table was "
+            "recreated or rewritten, so newer events may be hidden under old ids. Check the table against "
+            "the D1 contract in docs/scout.md before resuming outreach"
         )
-        if added:
-            new.append(row)
-    log.event(conn, "suppression.sync", {"fetched": len(rows), "new": len(new)})
-    return new
 
 
-def _d1_since(local_added_at: str | None) -> str:
-    # D1 rows carry the site's own created_at, so re-read a day of overlap and
-    # let INSERT OR IGNORE drop what is already here.
-    if not local_added_at:
-        return "1970-01-01"
-    moment = timeutil.parse(local_added_at)
-    return (moment - timeutil.timedelta_days(1)).date().isoformat()
+def _event_id(row: dict) -> int:
+    try:
+        return int(row["id"])
+    except (KeyError, TypeError, ValueError):
+        raise D1ContractError(
+            "a D1 suppression row has no numeric id: the site's table must be append-only, one row per "
+            "event with its own id (docs/scout.md, D1 contract)"
+        ) from None
+
+
+def _cursor(conn: sqlite3.Connection, name: str) -> tuple[int, str | None]:
+    row = db.one(conn, "SELECT position, marker FROM sync_cursors WHERE name = ?", (name,))
+    return (row["position"], row["marker"]) if row else (0, None)
+
+
+def _move_cursor(conn: sqlite3.Connection, name: str, position: int, marker: str) -> None:
+    conn.execute(
+        "INSERT INTO sync_cursors (name, position, marker, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT (name) DO UPDATE SET position = excluded.position, marker = excluded.marker, "
+        "updated_at = excluded.updated_at",
+        (name, position, marker, timeutil.stamp()),
+    )

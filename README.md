@@ -41,7 +41,7 @@ jurasolutions/data/growth/
   runs/YYYY-MM-DD.jsonl       every event, one JSON line each
   transcripts/YYYY-MM-DD/     full stream-json transcript of each headless run (30 days)
   backups/                    nightly copies of growth.db (14 days)
-  discord-outbox/             messages for channels with no webhook yet
+  discord-outbox/             messages Discord didn't take: no webhook yet, or unreachable
   daily-summary.json          what the digest and the morning brief read
   work/<job>/                 scratch space a headless run may write drafts into
 
@@ -107,10 +107,22 @@ growth jobs use launchd. Each runs `jura-growth run <job>`.
 A `claude` job runs `claude -p` in this folder with its prompt file on stdin and:
 
 - `--permission-mode dontAsk`: anything not allowed below is refused, never prompted.
-- Allowed: reading under `jurasolutions/`, `Bash(jura-growth:*)`, writing only in
+- Allowed: reading under `jurasolutions/`, the `jura-growth` commands the job's prompt uses
+  (each plug-in declares them in `permissions(job)`) and their `--help`, writing only in
   `data/growth/work/<job>/`, plus the job's own tools (web search and fetch).
-- Refused: reading `.env`, `jura-growth run`, `resume` and `schedule`, and anything the job
-  lists in `disallowed_tools` (the community job can't fetch facebook.com).
+- Refused: reading any secret file under `jurasolutions/` (`.env*`, `*.env`, `.dev.vars*`, kept
+  in `paths.SECRET_FILE_PATTERNS`), every other
+  `jura-growth` command (`run`, `resume`, `schedule` and `discord` always), anything the job
+  lists in `disallowed_tools`, and the plug-in's own `disallowed_tools` from `permissions(job)`
+  (the community job can't fetch any domain in `config/community.yaml` `blocked_fetch_domains`,
+  or any subdomain of one).
+- The code enforces the same command list again: with `JURA_GROWTH_JOB` set, any other command
+  exits with status 2 and a `refused:` line (`jura_growth/headless.py`). A command job may run
+  only its own command. Commands you run in Terminal are unaffected.
+- Every file a command takes goes through `paths.guard()`: secret files are always refused, and
+  inside a run only the job's `work/` folder and `outputs/growth/` are accepted.
+- Configured secret values (secret-named settings and `keychain:` references) are masked in
+  everything `jura-growth` prints.
 - `--strict-mcp-config` and `--setting-sources project`: no MCP servers (no Notion, no Zapier)
   and none of the user-level settings, plug-ins or hooks.
 - `--max-budget-usd` per run (US$3 by default, US$5 for scout research).
@@ -144,6 +156,7 @@ imports it by name. The module may define:
 | `channels()` | `{name: brand_check.Channel}` with the agent's rule-10 checks |
 | `digest(conn, day)` | `{"figures": {}, "lines": [], "brief": []}` for the digest and morning brief |
 | `precheck(job, conn)` | A reason to skip a scheduled run before it starts, or `None` |
+| `permissions(job)` | For a `claude` job the agent runs: `headless.Permissions` with the `jura-growth` commands its prompt uses (and any extra Claude Code deny rules), or `None`. A job with no declaration may run no commands |
 
 Its prompt goes in `prompts/<job>.md`, its settings in `config/<name>.yaml`, and its hard limits
 in `caps.py`.
@@ -155,4 +168,10 @@ uv run pytest
 ```
 
 Tests never touch `jurasolutions/data/`, Discord, launchd or the network. `conftest.py` points
-every path at a temporary folder.
+every path at a temporary folder, including rendered plists (`JURA_GROWTH_PLIST_DIR`) and a copy
+of `prompts/` (`JURA_GROWTH_PROMPTS_DIR`). Its write guard is an audit hook that refuses, and
+fails the test for, any write the test process makes into this repo or under `jurasolutions/`:
+opening a file for writing, creating, removing, renaming or truncating it, changing its mode or
+times, and opening a SQLite file there at all. It doesn't see writes made by subprocesses, or
+operations relative to an open folder (`dir_fd`, as inside `shutil.rmtree`), and it allows
+`__pycache__/` and `.pytest_cache/`.

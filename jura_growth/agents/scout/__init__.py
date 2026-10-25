@@ -24,6 +24,19 @@ def register(cli) -> None:
     cli.add_command(scout_group)
 
 
+def permissions(job: str):
+    """The `jura-growth` commands `prompts/scout.md` uses. Sending, syncing,
+    requeueing and unsubscribe links stay with code and Ting Yu."""
+    if job != "scout-research":
+        return None
+    from jura_growth.headless import Permissions
+
+    return Permissions(commands=(
+        "scout today", "scout tools", "scout check", "scout add-lead", "scout leads",
+        "outreach status", "outreach follow-ups-due", "outreach queue",
+    ))
+
+
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     if job != "scout-research":
         return None

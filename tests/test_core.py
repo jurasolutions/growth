@@ -245,7 +245,7 @@ def test_claude_command_is_locked_down(monkeypatch):
     joined = " ".join(argv)
     for flag in ("--permission-mode dontAsk", "--strict-mcp-config", "--setting-sources project", "--max-budget-usd"):
         assert flag in joined
-    assert "Bash(jura-growth:*)" in argv
+    assert "Bash(jura-growth:*)" not in argv  # only the job's own commands (test_headless.py)
     assert "Bash(jura-growth resume:*)" in argv  # disallowed
     assert not any(a == "Bash" or a.startswith("Bash(*") for a in argv)
 
@@ -404,6 +404,16 @@ def test_stale_sweep_ignores_frozen_clock_and_held_locks(isolated, conn, monkeyp
         assert db.scalar(conn, "SELECT status FROM runs WHERE id = ?", (run_id,)) == "running"
     runner._abandon_stale(conn)
     assert db.scalar(conn, "SELECT status FROM runs WHERE id = ?", (run_id,)) == "failed"
+
+
+def test_is_held_sees_another_holder_without_taking_the_lock(isolated):
+    from jura_growth import locks
+
+    assert not locks.is_held("social")
+    assert not (paths.data_dir() / "locks" / "social.lock").exists()
+    with locks.held("social") as got:
+        assert got and locks.is_held("social")
+    assert not locks.is_held("social")
 
 
 def test_markdown_copy_reads_wrapped_bullets_and_inline_labels():

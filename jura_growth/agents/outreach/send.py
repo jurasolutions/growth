@@ -10,7 +10,8 @@ Every rule is code. In order:
     pre-condition in `live_problems()` holds.
  4. Caps from caps.py (config may lower them): per day, rolling 30 and 365
     days, the warm-up (5 a day in week 1, 10 in week 2, then 20), at most one
-    email per run.
+    email per run, and in live mode no send within 10 minutes of the last
+    live send, however often `send-due` is called.
  5. Random spacing: this slot sends with probability remaining quota ÷
     remaining slots, so the day's emails spread across the window.
  6. Suppression synced from D1 at the start of the send. A failed sync pauses
@@ -30,7 +31,7 @@ from email.utils import formataddr
 
 import httpx
 
-from jura_growth import caps, cloudflare, config, db, discord, holidays, log, pause, timeutil
+from jura_growth import caps, cloudflare, config, db, discord, holidays, locks, log, pause, timeutil
 from jura_growth.agents.outreach import compose, queue, replies, store, sync
 from jura_growth.agents.scout import contact as contact_rules
 from jura_growth.agents.scout import dnc, registry, settings
@@ -169,12 +170,28 @@ def counts(conn: sqlite3.Connection, mode: str) -> dict[str, int]:
     }
 
 
+def minutes_since_last_live_send(conn: sqlite3.Connection, moment: datetime) -> int | None:
+    """Whole clock minutes from the last live send to `moment`, or None if
+    nothing has gone out live yet."""
+    last = db.scalar(conn, "SELECT max(sent_at) FROM outreach_messages WHERE mode = 'live' AND sent_at IS NOT NULL")
+    if not last:
+        return None
+    then = timeutil.parse(last).astimezone(timeutil.SGT).replace(second=0, microsecond=0)
+    now = moment.astimezone(timeutil.SGT).replace(second=0, microsecond=0)
+    return int((now - then).total_seconds() // 60)
+
+
 def first_send_day(conn: sqlite3.Connection, mode: str) -> date | None:
-    configured = settings.get()["send"].get("warmup_start")
-    if mode == "live" and configured:
-        return configured if isinstance(configured, date) else date.fromisoformat(str(configured))
+    """The day the warm-up counts from. In live mode `send.warmup_start` may
+    only delay it: the later of that date and the first live send wins, and a
+    first live send that hasn't happened yet counts as today."""
     value = store.get_state(conn, f"first_{mode}_send_at")
-    return timeutil.parse(value).date() if value else None
+    recorded = timeutil.parse(value).date() if value else None
+    configured = settings.get()["send"].get("warmup_start")
+    if mode != "live" or not configured:
+        return recorded
+    start = configured if isinstance(configured, date) else date.fromisoformat(str(configured))
+    return max(start, recorded or timeutil.today())
 
 
 def daily_cap(conn: sqlite3.Connection, mode: str) -> tuple[int, str]:
@@ -211,7 +228,21 @@ def due(conn: sqlite3.Connection) -> list[dict]:
 # --- the run ---------------------------------------------------------------
 
 
+SEND_LOCK = "outreach-send"
+
+
 def send_due(conn: sqlite3.Connection, *, client: httpx.Client | None = None) -> SendResult:
+    """One send run. The whole run, from the cap and gap checks to the Resend
+    call and the record of the send, holds an exclusive lock, so a second
+    `send-due` started meanwhile (by hand, or by another process) skips instead
+    of sending past the gap or the daily cap."""
+    with locks.held(SEND_LOCK) as acquired:
+        if not acquired:
+            return SendResult(None, "skipped: another send-due run is still going")
+        return _send_due(conn, client)
+
+
+def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> SendResult:
     moment = timeutil.now_sgt()
     reason = pause.is_paused(conn, store.AGENT)
     if reason:
@@ -236,6 +267,15 @@ def send_due(conn: sqlite3.Connection, *, client: httpx.Client | None = None) ->
         return SendResult(None, f"nothing more today: {binding} reached")
     if settings.per_run() <= 0:
         return SendResult(None, "per_run is 0 in config/scout.yaml")
+    if mode == "live":
+        gap = minutes_since_last_live_send(conn, moment)
+        floor = caps.OUTREACH_MINUTES_BETWEEN_LIVE_SENDS
+        if gap is not None and gap < floor:
+            return SendResult(
+                None,
+                f"spacing: the last live send was {gap} minute{'s' if gap != 1 else ''} ago; live sends are at "
+                f"least {floor} minutes apart",
+            )
 
     probability = min(1.0, min(left, len(waiting)) / slots_left(moment))
     if chance() >= probability:

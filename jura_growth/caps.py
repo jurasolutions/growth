@@ -14,6 +14,10 @@ OUTREACH_ROLLING_365_DAYS = 8000
 OUTREACH_FIRST_EMAILS_PER_COMPANY = 1
 OUTREACH_FOLLOW_UPS_PER_COMPANY = 1
 OUTREACH_PER_SEND_RUN = 1
+# No live send within this many minutes of the last one, however often
+# `send-due` is called. Counted in whole clock minutes, so the seconds a send
+# takes never block the next 10-minute slot. A floor, so not configurable.
+OUTREACH_MINUTES_BETWEEN_LIVE_SENDS = 10
 # Warm-up by days since the first live send: (until day, daily cap).
 OUTREACH_WARMUP = ((7, 5), (14, 10))
 OUTREACH_WORDS_MAX = 120

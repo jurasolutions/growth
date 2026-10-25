@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Callable, Iterable
+from typing import Callable, Iterable, NamedTuple
 from urllib.parse import urlsplit
 
 import yaml
@@ -359,6 +359,12 @@ def _rhythm(text: str) -> list[Issue]:
 #   - otherwise, an interface quantity ("up to 3 files", "4 MB", "30 days")
 #     or a small count ("5 tips") is fine, and anything else needs a source.
 #
+# A figure written in words follows the same rules, read to its value: from
+# "two" up, when it counts a following noun ("twelve businesses", "forty of
+# our clients", "a dozen firms"). "One", "a" on its own, a number word that
+# counts nothing ("one or two", "the two you picked") and a hyphenated
+# compound ("two-step", "nine-to-five") are not figures.
+#
 # The visitor's own inputs are never brand-checked, so they never reach here.
 
 MONTHS = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
@@ -388,8 +394,70 @@ FIGURE_RE = re.compile(
     r"(?:S\$|US\$|\$|SGD\s?|USD\s?)?\d[\d,]*(?:\.\d+)?(?:\s?(?:%|percent|per\s?cent)|x\b|k\b|m\b|bn\b)?\+?",
     re.I,
 )
-WORD_FIGURE_RE = re.compile(
-    r"\b(?:dozens|hundreds|thousands|millions|billions|twice|double|triple|tenfold|half)\b(?!-)", re.I
+# A count this small ("5 tips", "five tips") needs no source outside a claim.
+SMALL_COUNT_MAX = 12
+# Quantities with no exact value: flagged only in a claim about Jura or its results.
+SCALE_WORDS = {"dozen": 12, "hundred": 100, "thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000}
+_SCALES = "|".join(SCALE_WORDS)
+VAGUE_FIGURE_RE = re.compile(
+    rf"\b(?:dozens|hundreds|thousands|millions|billions|twice|double|triple|tenfold|half"
+    rf"|(?:several|many|some|a\s+few|a\s+couple\s+of)\s+(?:{_SCALES}))\b(?!-)",
+    re.I | re.A,
+)
+# Exact figures written as words: "twelve", "forty-five", "a dozen", "a hundred
+# and fifty", "two thousand". Each is read to its value. ASCII only, so a
+# lookalike letter ("ſixty") never reaches the value lookup.
+_UNITS = "one two three four five six seven eight nine".split()
+_TEENS = "ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
+_TENS = "twenty thirty forty fifty sixty seventy eighty ninety".split()
+NUMBER_WORDS = (
+    {word: value for value, word in enumerate(_UNITS + _TEENS, start=1)}
+    | {word: 10 * tens for tens, word in enumerate(_TENS, start=2)}
+)
+_LARGE_SCALES = "|".join(word for word, value in SCALE_WORDS.items() if value >= 1_000)
+_BELOW_100 = rf"(?:(?:{'|'.join(_TENS)})(?:[\s-]+(?:{'|'.join(_UNITS)}))?|{'|'.join(_TEENS)}|{'|'.join(_UNITS)})"
+_BELOW_1000 = rf"(?:(?:an?|{_BELOW_100})\s+hundred(?:\s+(?:and\s+)?{_BELOW_100})?|{_BELOW_100})"
+_CARDINAL = (
+    rf"(?:(?:an?|{_BELOW_1000})\s+(?:{_LARGE_SCALES})(?:\s+(?:and\s+)?{_BELOW_1000})?"
+    rf"|(?:an?|{_BELOW_100})\s+dozen"
+    rf"|{_BELOW_1000})"
+)
+CARDINAL_WORDS_RE = re.compile(rf"\b{_CARDINAL}\b", re.I | re.A)
+# Whether a number word counts a noun ("twelve businesses", "twelve of our
+# clients", "forty per cent") is read from the words after it:
+#   - a hedge is skipped to reach the noun ("twelve or more businesses",
+#     "two or three processes"), but "one or two" hedges towards "one" and
+#     claims nothing;
+#   - "the two of you", "the three of us" count no figure; without "the" in
+#     front ("twelve of us", "forty of them") it is a count like any other;
+#   - a common verb after "the two", "these two", "both", "all" is a verb
+#     ("these two matter most"), but after a possessive it is a noun ("our
+#     forty sync jobs");
+#   - any word in COUNTS_NOTHING_AFTER means it counts nothing ("the two you
+#     picked", "those two are").
+# Known limits: a noun before the number ("a team of five"), "zero", ordinals
+# ("our fortieth client"), other verbs after a number ("two businesses I spoke
+# to" counts, as it should; "the two overlap" counts too) and suffix compounds
+# ("forty-odd", "twenty-plus", shared with the digit path).
+NEXT_WORD_RE = re.compile(r"\s+([A-Za-z][\w'’]*)", re.A)
+HEDGE_RE = re.compile(rf"\s+or\s+(?:more|so|fewer|less|over|{_CARDINAL})\b", re.I | re.A)
+ONE_OR_BEFORE_RE = re.compile(r"\bone\s+or\s+$", re.I)
+OF_PEOPLE_RE = re.compile(r"\s+of\s+(?:you|us|them)\b", re.I)
+THE_BEFORE_RE = re.compile(r"\bthe\s+$", re.I)
+DETERMINER_BEFORE_RE = re.compile(r"\b(?:the|these|those|both|all)\s+$", re.I)
+VERBS_AFTER_A_NUMBER = frozenset(
+    "matter work fit go come seem stand belong sit differ happen apply help need make take share "
+    "look run show mean cover connect talk sync link add cost".split()
+)
+COUNTS_NOTHING_AFTER = frozenset(
+    """
+    a an the and or nor but so yet than then if
+    to in on at by for from with into onto about after before over under between
+    is are was were be been being am has have had do does did
+    will would can could should shall may might must
+    i you he she it we they me him her us them this that these those who whom which what whose
+    my your his its our their o'clock pm
+    """.split()
 )
 # "we're" needs its apostrophe ("were", "well" and "wed" are not Jura), and
 # "us" is lower case only ("US" is the country).
@@ -456,8 +524,17 @@ def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
     issues = []
     cleaned = _without_exempt(text)
     for sentence in sentences(cleaned):
-        figures = [m for m in FIGURE_RE.finditer(sentence) if re.search(r"\d", m.group(0))]
-        words = list(WORD_FIGURE_RE.finditer(sentence))
+        figures = [
+            _Figure(m, m.group(0).strip(), _is_small_count(m.group(0).strip()))
+            for m in FIGURE_RE.finditer(sentence)
+            if re.search(r"\d", m.group(0))
+        ]
+        figures += [
+            _Figure(m, m.group(0), value <= SMALL_COUNT_MAX)
+            for m in CARDINAL_WORDS_RE.finditer(sentence)
+            if (value := _number_value(m.group(0))) >= 2 and _counts_a_noun(sentence, m, value)
+        ]
+        words = list(VAGUE_FIGURE_RE.finditer(sentence))
         if not figures and not words:
             continue
         about_jura = bool(JURA_SELF_RE.search(sentence))
@@ -466,8 +543,7 @@ def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
         # "Use a number, like 120.50." Example inputs in a form hint are not claims.
         input_hint = bool(INPUT_HINT_RE.search(sentence)) and not results
 
-        for m in figures:
-            figure = m.group(0).strip()
+        for m, figure, small in figures:
             if statutory and not about_jura:
                 continue
             if about_jura:
@@ -476,7 +552,7 @@ def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
                 continue
             elif results:
                 issues.append(Issue("numbers", f"“{figure}” in a results claim with no source", sentence.strip()))
-            elif _is_interface_quantity(sentence, m) or _is_small_count(figure) or input_hint:
+            elif _is_interface_quantity(sentence, m) or small or input_hint:
                 continue
             else:
                 issues.append(Issue("numbers", f"“{figure}” needs a source", sentence.strip()))
@@ -490,8 +566,52 @@ def _is_interface_quantity(sentence: str, match: re.Match) -> bool:
     return bool(INTERFACE_UNIT_RE.match(sentence[match.end():]))
 
 
+class _Figure(NamedTuple):
+    match: re.Match
+    text: str
+    small: bool
+
+
+def _number_value(phrase: str) -> int:
+    """"a hundred and fifty" -> 150, "forty-five" -> 45, "two dozen" -> 24."""
+    total = current = 0
+    for word in re.findall(r"[a-z]+", phrase.lower()):
+        if word in ("a", "an"):
+            current = 1
+        elif word in SCALE_WORDS and SCALE_WORDS[word] < 1_000:  # dozen, hundred
+            current = (current or 1) * SCALE_WORDS[word]
+        elif word in SCALE_WORDS:
+            total += (current or 1) * SCALE_WORDS[word]
+            current = 0
+        elif word != "and":
+            current += NUMBER_WORDS[word]
+    return total + current
+
+
+def _counts_a_noun(sentence: str, match: re.Match, value: int) -> bool:
+    before, start = sentence[: match.start()], match.end()
+    # Fused by a hyphen ("two-step", "nine-to-five"), it is part of a word,
+    # as "2-step" and "9-to-5" are for digits.
+    if before.endswith("-") or sentence[start : start + 1] == "-":
+        return False
+    if value == 2 and ONE_OR_BEFORE_RE.search(before):
+        return False
+    hedge = HEDGE_RE.match(sentence, start)
+    if hedge:
+        start = hedge.end()
+    if THE_BEFORE_RE.search(before) and OF_PEOPLE_RE.match(sentence, start):
+        return False
+    following = NEXT_WORD_RE.match(sentence, start)
+    if not following:
+        return False
+    word = following.group(1).lower().replace("’", "'")
+    if word in VERBS_AFTER_A_NUMBER and DETERMINER_BEFORE_RE.search(before):
+        return False
+    return word not in COUNTS_NOTHING_AFTER and word not in NUMBER_WORDS and word not in SCALE_WORDS
+
+
 def _is_small_count(figure: str) -> bool:
-    return bool(re.fullmatch(r"\d{1,2}", figure)) and int(figure) <= 12
+    return bool(re.fullmatch(r"\d{1,2}", figure)) and int(figure) <= SMALL_COUNT_MAX
 
 
 def _dedupe(issues: list[Issue]) -> list[Issue]:
