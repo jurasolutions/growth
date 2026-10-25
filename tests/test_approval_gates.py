@@ -108,7 +108,7 @@ def test_g4a_approve_at_the_decide_by_answers_expired_one_second_before_records(
     subject, approval = requested(gate)
     aw.at(monkeypatch, approval.decide_by)
     assert gate.approve(approval).answer == "expired"
-    assert approvals.get(conn, approval.id).status == "expired"
+    assert aw.get(conn, approval.id).status == "expired"
     other, second = requested(gate)
     aw.at(monkeypatch, aw.later(second.decide_by, seconds=-1))
     assert gate.approve(second).answer == "recorded"
@@ -118,13 +118,13 @@ def test_g4b_an_approval_past_its_use_by_refuses_with_no_lapse_written_first(cla
     gate = claimed
     subject, approval = requested(gate)
     gate.approve(approval)
-    use_by = approvals.get(conn, approval.id).use_by
+    use_by = aw.get(conn, approval.id).use_by
     aw.at(monkeypatch, use_by)
     attempt(gate, subject)
     assert gate.went_out() == 0 and claims(conn) == 0
     other, second = requested(gate)
     gate.approve(second)
-    aw.at(monkeypatch, aw.later(approvals.get(conn, second.id).use_by, seconds=-1))
+    aw.at(monkeypatch, aw.later(aw.get(conn, second.id).use_by, seconds=-1))
     attempt(gate, other)
     assert gate.went_out() == 1
 
@@ -133,14 +133,14 @@ def test_g5_expire_due_writes_each_lapse_once_and_both_refuse(gate, conn, monkey
     waiting, unanswered = requested(gate)
     approved_subject, approved = requested(gate)
     gate.approve(approved)
-    use_by = approvals.get(conn, approved.id).use_by
+    use_by = aw.get(conn, approved.id).use_by
     latest = max(unanswered.decide_by, use_by or unanswered.decide_by)
     now = aw.at(monkeypatch, latest)
     approvals.expire_due(conn, now)
-    assert approvals.get(conn, unanswered.id).status == "expired"
+    assert aw.get(conn, unanswered.id).status == "expired"
     assert gate.hook_ran("on_expire", waiting) == 1
     if not gate.applied_on_decide:
-        lapsed = approvals.get(conn, approved.id)
+        lapsed = aw.get(conn, approved.id)
         assert lapsed.status == "expired" and lapsed.used_at is None
         assert gate.hook_ran("on_lapse", approved_subject) == 1
     attempt(gate, waiting)
@@ -148,9 +148,9 @@ def test_g5_expire_due_writes_each_lapse_once_and_both_refuse(gate, conn, monkey
         attempt(gate, approved_subject)
         assert claims(conn) == 0
     assert gate.went_out() == 0
-    before = [approvals.get(conn, a.id) for a in (unanswered, approved)]
+    before = [aw.get(conn, a.id) for a in (unanswered, approved)]
     assert approvals.expire_due(conn, now) == []
-    assert [approvals.get(conn, a.id) for a in (unanswered, approved)] == before
+    assert [aw.get(conn, a.id) for a in (unanswered, approved)] == before
     assert gate.hook_ran("on_expire", waiting) == 1
     if not gate.applied_on_decide:
         assert gate.hook_ran("on_lapse", approved_subject) == 1
@@ -160,7 +160,7 @@ def test_g6_a_request_superseded_before_its_decision_refuses(gate, conn):
     subject, approval = requested(gate)
     gate.change(subject)
     approvals.expire_due(conn, timeutil.now_sgt())
-    assert approvals.get(conn, approval.id).status == "superseded"
+    assert aw.get(conn, approval.id).status == "superseded"
     attempt(gate, subject)
     assert gate.approve(approval).answer == "superseded"
     assert gate.went_out() == 0 and claims(conn) == 0
@@ -171,7 +171,7 @@ def test_g7_an_approval_is_used_once(claimed, conn):
     subject, approval = requested(gate)
     gate.approve(approval)
     attempt(gate, subject)
-    used = approvals.get(conn, approval.id)
+    used = aw.get(conn, approval.id)
     assert gate.went_out() == 1 and used.used_at and used.used_by_run
     attempt(gate, subject)
     assert gate.went_out() == 1 and claims(conn) == 1
@@ -184,7 +184,7 @@ def test_g9_content_changed_after_approval_refuses_supersedes_and_raises_the_new
     gate.approve(approval)
     gate.change(subject)
     attempt(gate, subject)
-    assert approvals.get(conn, approval.id).status == "superseded"
+    assert aw.get(conn, approval.id).status == "superseded"
     [fresh] = [a for a in approvals.pending(conn) if a.subject == subject]
     assert fresh.supersedes == approval.number and fresh.content_hash != approval.content_hash
     assert gate.went_out() == 0 and claims(conn) == 0
@@ -202,16 +202,16 @@ def test_g10_the_right_content_for_the_wrong_subject_refuses(gate, conn):
 def test_g15_a_second_decision_answers_already_decided_and_changes_nothing(gate, conn):
     _, approval = requested(gate)
     gate.approve(approval)
-    first = approvals.get(conn, approval.id)
+    first = aw.get(conn, approval.id)
     # A kind applied on decide may already have claimed it (app-build).
     assert gate.approve(first).answer == ("already-used" if first.used_at else "already-decided")
-    assert approvals.get(conn, approval.id) == first
+    assert aw.get(conn, approval.id) == first
     _, other = requested(gate)
     gate.skip(other)
-    skipped = approvals.get(conn, other.id)
+    skipped = aw.get(conn, other.id)
     assert gate.approve(skipped).answer == "already-decided"
     assert gate.skip(skipped).answer == "already-decided"
-    assert approvals.get(conn, other.id) == skipped
+    assert aw.get(conn, other.id) == skipped
 
 
 def test_g17_a_skip_after_approval_wins_until_the_claim(claimed, conn):
@@ -229,10 +229,10 @@ def test_g18_a_skip_after_use_answers_already_used_and_changes_nothing(gate, con
     gate.approve(approval)
     if not gate.applied_on_decide:
         attempt(gate, subject)
-    used = approvals.get(conn, approval.id)
+    used = aw.get(conn, approval.id)
     answer = gate.skip(used)
     assert answer.answer == ("already-used" if used.used_at else "already-decided")
-    assert approvals.get(conn, approval.id) == used
+    assert aw.get(conn, approval.id) == used
 
 
 @pytest.mark.parametrize("brake", ["PAUSE file", "paused agent", "the kind's switch"])
@@ -249,7 +249,7 @@ def test_g19_a_kill_switch_refuses_without_claiming_until_it_clears(claimed, con
         gate.switch(True)
     attempt(gate, subject)
     assert gate.went_out() == 0 and claims(conn) == 0
-    assert approvals.get(conn, approval.id).used_at is None
+    assert aw.get(conn, approval.id).used_at is None
     if brake == "PAUSE file":
         paths.pause_file().unlink()
     elif brake == "paused agent":
@@ -275,7 +275,7 @@ def test_g22_a_failed_in_flight_write_rolls_the_claim_back(claimed, conn):
     gate.approve(approval)
     gate.fail_in_flight(True)
     attempt(gate, subject)
-    record = approvals.get(conn, approval.id)
+    record = aw.get(conn, approval.id)
     assert record.status == "approved" and record.used_at is None
     assert gate.went_out() == 0 and claims(conn) == 0
     gate.fail_in_flight(False)
@@ -293,7 +293,7 @@ def test_g25_a_gone_item_supersedes_at_the_next_claim_and_raises_nothing(gate, c
     gate.remove(subject)
     attempt(gate, subject)
     approvals.expire_due(conn, timeutil.now_sgt())
-    record = approvals.get(conn, approval.id)
+    record = aw.get(conn, approval.id)
     assert record.status == "superseded"
     assert [a for a in approvals.pending(conn) if a.subject == subject] == []
     assert gate.went_out() == 0 and claims(conn) == 0
@@ -324,7 +324,7 @@ def test_g29_every_transition_leaves_one_event_with_actor_origin_ref_hash_and_ti
         assert len(found) == count, kind
         assert len([e for e in aw.mirrored(kind) if e["kind"] == gate.kind]) == count, kind
         for event in found:
-            record = approvals.get(conn, event["approval"])
+            record = aw.get(conn, event["approval"])
             assert event["hash"] == record.content_hash
             assert event["at"] == (timeutil.stamp(later) if kind == "approval.expired" else now)
             if kind in ("approval.approved", "approval.skipped"):

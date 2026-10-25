@@ -28,13 +28,16 @@ NOW = "2026-11-10T10:02:15+08:00"
 TERMINAL_USER = "tingyu"
 
 
-def at(monkeypatch, moment: str) -> datetime:
-    """Freeze growth's clock at `moment` (an ISO timestamp)."""
+def at(monkeypatch, moment: str | None) -> datetime:
+    """Freeze growth's clock at `moment` (an ISO timestamp, such as a
+    record's deadline, which the test expects to be set)."""
+    assert moment is not None
     monkeypatch.setenv("JURA_GROWTH_NOW", moment)
     return timeutil.parse(moment)
 
 
-def later(moment: str, **delta) -> str:
+def later(moment: str | None, **delta) -> str:
+    assert moment is not None
     return timeutil.stamp(timeutil.parse(moment) + timedelta(**delta))
 
 
@@ -96,9 +99,7 @@ class World:
         self.approve_says: str | None = None
         self.fail_in_flight = False
         self.kind = FakeKind(self)
-        self.plugin = types.ModuleType("fake_plugin")
-        self.plugin.NAME = AGENT
-        self.plugin.approval_kinds = lambda: {KIND: self.kind}
+        self.plugin = types.SimpleNamespace(NAME=AGENT, approval_kinds=lambda: {KIND: self.kind}, __name__="fake_plugin")
         self._next = 0
 
     def item(self, text: str = "Quotes that write themselves") -> str:
@@ -199,4 +200,20 @@ def events(conn, kind: str) -> list[dict]:
 
 
 def record(conn, approval_id: str) -> dict:
-    return db.one(conn, "SELECT * FROM approvals WHERE id = ?", (approvals.parse_id(approval_id),))
+    row = db.one(conn, "SELECT * FROM approvals WHERE id = ?", (approvals.parse_id(approval_id),))
+    assert row is not None, approval_id
+    return row
+
+
+def get(conn, approval_id: str) -> approvals.Approval:
+    """The record, which the test expects to exist."""
+    found = approvals.get(conn, approval_id)
+    assert found is not None, approval_id
+    return found
+
+
+def request(conn, kind: str, subject: str, *, reason: str = "a test asked", run_id: int | None = None) -> approvals.Approval:
+    """A request the test expects to be raised (the item exists)."""
+    raised = approvals.request(conn, kind, subject, reason=reason, run_id=run_id)
+    assert raised is not None, subject
+    return raised

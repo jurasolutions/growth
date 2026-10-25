@@ -24,7 +24,7 @@ def world(monkeypatch, conn):
 def test_request_raises_one_pending_record_over_the_kinds_content(conn, world):
     subject = world.item("Hello")
     run_id = aw.run(conn)
-    approval = approvals.request(conn, aw.KIND, subject, reason="a test asked", run_id=run_id)
+    approval = aw.request(conn, aw.KIND, subject, run_id=run_id)
     expected = hashlib.sha256(world.kind.content(conn, subject)).hexdigest()
     assert approval.id == "A-0001"
     assert approval.status == "pending"
@@ -33,20 +33,20 @@ def test_request_raises_one_pending_record_over_the_kinds_content(conn, world):
     assert approval.requested_at == aw.NOW
     assert approval.decide_by == "2026-11-12T10:02:15+08:00"
     assert approval.raised_by_run == run_id
-    assert approvals.get(conn, "A-0001") == approval
+    assert aw.get(conn, "A-0001") == approval
     [event] = aw.events(conn, "approval.requested")
     assert event["approval"] == "A-0001" and event["hash"] == expected and event["at"] == aw.NOW
 
 
 def raise_one(conn, world, text="Hello", **kw):
     subject = world.item(text)
-    return subject, approvals.request(conn, aw.KIND, subject, reason="a test asked", run_id=None, **kw)
+    return subject, aw.request(conn, aw.KIND, subject, **kw)
 
 
 def test_request_twice_over_the_same_content_returns_the_same_record(conn, world):
     """G26: one live request per subject."""
     subject, first = raise_one(conn, world)
-    again = approvals.request(conn, aw.KIND, subject, reason="asked again", run_id=None)
+    again = aw.request(conn, aw.KIND, subject, reason="asked again")
     assert again == first
     assert len(aw.events(conn, "approval.requested")) == 1
 
@@ -64,9 +64,9 @@ def test_a_second_live_row_for_one_subject_fails_on_the_partial_unique_index(con
 def test_request_over_new_content_supersedes_the_live_record_and_raises_a_new_one(conn, world):
     subject, first = raise_one(conn, world, "Hello")
     world.items[subject] = "Hello again"
-    second = approvals.request(conn, aw.KIND, subject, reason="a test asked", run_id=None)
+    second = aw.request(conn, aw.KIND, subject)
     assert second.id == "A-0002" and second.status == "pending" and second.supersedes == first.number
-    old = approvals.get(conn, first.id)
+    old = aw.get(conn, first.id)
     assert old.status == "superseded" and old.close_reason == "the content changed" and old.closed_at == aw.NOW
     assert [e["approval"] for e in aw.events(conn, "approval.superseded")] == ["A-0001"]
 
@@ -75,8 +75,8 @@ def test_request_for_a_gone_item_supersedes_the_live_record_and_raises_nothing(c
     subject, first = raise_one(conn, world)
     del world.items[subject]
     assert approvals.request(conn, aw.KIND, subject, reason="a test asked", run_id=None) is None
-    assert approvals.get(conn, first.id).status == "superseded"
-    assert approvals.get(conn, "A-0002") is None
+    assert aw.get(conn, first.id).status == "superseded"
+    assert approvals.get(conn, "A-0002") is None  # nothing raised
 
 
 def test_request_for_a_kind_no_plugin_declares_raises_unknown_kind(conn, world):
@@ -86,9 +86,9 @@ def test_request_for_a_kind_no_plugin_declares_raises_unknown_kind(conn, world):
 
 def test_raised_by_lists_the_requests_a_run_raised(conn, world):
     run_id = aw.run(conn)
-    a = approvals.request(conn, aw.KIND, world.item("one"), reason="r", run_id=run_id)
+    a = aw.request(conn, aw.KIND, world.item("one"), run_id=run_id)
     raise_one(conn, world, "not this run")
-    b = approvals.request(conn, aw.KIND, world.item("two"), reason="r", run_id=run_id)
+    b = aw.request(conn, aw.KIND, world.item("two"), run_id=run_id)
     assert [x.id for x in approvals.raised_by(conn, run_id)] == [a.id, b.id]
 
 
@@ -102,8 +102,22 @@ def test_ids_are_never_reused_after_a_pending_row_is_deleted(conn, world):
 def test_parse_id_accepts_only_a_ids():
     assert approvals.parse_id("A-0412") == 412
     assert approvals.parse_id("a-0412") == 412
-    for text in ("P-0042", "publish_item:42", "42", "A-", "A-12x", ""):
+    for text in ("P-0042", "publish_item:42", "42", "A-", "A-12x", "", "A-٤١٢"):
         assert approvals.parse_id(text) is None
+
+
+@pytest.mark.parametrize("build", [
+    lambda: Origin("terminal", code="abcdef"),
+    lambda: Origin("terminal", user="tingyu"),
+    lambda: Origin("terminal", user="", code="abcdef"),
+    lambda: Origin("ssh", user="tingyu"),
+    lambda: Origin("claude"),
+    lambda: Origin("refused"),
+])
+def test_an_origin_is_valid_however_it_is_built(build):
+    """N5 (code review 04): a hand-built Origin can't skip the checks."""
+    with pytest.raises(ValueError):
+        build()
 
 
 # --- decide ------------------------------------------------------------------
@@ -147,7 +161,7 @@ def test_an_ssh_actor_that_is_not_the_control_user_is_refused_and_logged(conn, w
     _, approval = raise_one(conn, world)
     answer = aw.approve(conn, approval, origin=Origin.ssh(), actor="discord:999", source_ref=SSH_REF)
     assert answer.answer == "refused"
-    assert approvals.get(conn, approval.id).status == "pending"
+    assert aw.get(conn, approval.id).status == "pending"
     [event] = aw.events(conn, "approval.refused")
     assert event["actor"] == "discord:999" and event["origin"] == "ssh"
     assert world.ran("on_approve") == []
@@ -156,7 +170,7 @@ def test_an_ssh_actor_that_is_not_the_control_user_is_refused_and_logged(conn, w
 def test_an_ssh_decision_is_refused_when_no_control_user_is_configured(conn, world):
     _, approval = raise_one(conn, world)
     answer = aw.approve(conn, approval, origin=Origin.ssh(), actor="discord:111")
-    assert answer.answer == "refused" and approvals.get(conn, approval.id).status == "pending"
+    assert answer.answer == "refused" and aw.get(conn, approval.id).status == "pending"
 
 
 @pytest.mark.parametrize("origin", [Origin.refused("no terminal"), None])
@@ -166,7 +180,7 @@ def test_a_refused_origin_or_a_wrong_terminal_code_decides_nothing(conn, world, 
     for decision in (aw.approve, aw.skip):
         answer = decision(conn, approval, origin=origin)
         assert answer.answer == "refused"
-    assert approvals.get(conn, approval.id).status == "pending"
+    assert aw.get(conn, approval.id).status == "pending"
     assert world.calls == []
     assert len(aw.events(conn, "approval.refused")) == 2
 
@@ -175,7 +189,7 @@ def test_a_refused_origin_stays_refused_whatever_actor_it_claims(conn, world, co
     _, approval = raise_one(conn, world)
     answer = aw.approve(conn, approval, origin=Origin.refused("a claude ancestor"), actor="discord:111")
     assert answer.answer == "refused" and "a claude ancestor" in answer.text
-    assert approvals.get(conn, approval.id).status == "pending"
+    assert aw.get(conn, approval.id).status == "pending"
 
 
 def test_a_terminal_actor_that_is_not_the_terminal_user_is_refused(conn, world):
@@ -243,7 +257,7 @@ def test_a_claim_refused_inside_on_approve_answers_refused_and_records_nothing(c
     _, approval = raise_one(conn, world)
     answer = aw.approve(conn, approval, source_ref="m:d")
     assert answer.answer == "refused" and "fake-agent is paused" in answer.text
-    assert approvals.get(conn, approval.id).status == "pending"
+    assert aw.get(conn, approval.id).status == "pending"
     assert aw.events(conn, "approval.approved") == [] and aw.mirrored("approval.approved") == []
     assert db.scalar(conn, "SELECT COUNT(*) FROM approval_decisions") == 0
     [refused] = aw.events(conn, "approval.refused")
@@ -258,7 +272,7 @@ def test_another_exception_from_on_approve_is_a_programming_error_and_rolls_back
     _, approval = raise_one(conn, world)
     with pytest.raises(KeyError):
         aw.approve(conn, approval)
-    assert approvals.get(conn, approval.id).status == "pending" and aw.mirrored("approval.approved") == []
+    assert aw.get(conn, approval.id).status == "pending" and aw.mirrored("approval.approved") == []
 
 
 def test_a_revoke_keeps_answering_its_own_ref(conn, world, control_user):
@@ -268,7 +282,7 @@ def test_a_revoke_keeps_answering_its_own_ref(conn, world, control_user):
     aw.approve(conn, approval, origin=Origin.ssh(), actor="discord:111", source_ref="m1:d1")
     assert aw.skip(conn, approval, origin=Origin.ssh(), actor="discord:111", source_ref="m2:d2").answer == "recorded"
     assert aw.approve(conn, approval, origin=Origin.ssh(), actor="discord:111", source_ref="m1:d1").answer == "recorded"
-    assert approvals.get(conn, approval.id).status == "skipped"
+    assert aw.get(conn, approval.id).status == "skipped"
 
 
 def test_a_second_decision_answers_already_decided_and_changes_nothing(conn, world):
@@ -287,7 +301,7 @@ def test_a_skip_on_a_pending_request_runs_on_skip_once(conn, world):
     subject, approval = raise_one(conn, world)
     answer = aw.skip(conn, approval)
     assert answer.answer == "recorded"
-    assert approvals.get(conn, approval.id).status == "skipped"
+    assert aw.get(conn, approval.id).status == "skipped"
     assert world.ran("on_skip") == [("on_skip", subject)]
     [event] = aw.events(conn, "approval.skipped")
     assert event["actor"] == f"terminal:{aw.TERMINAL_USER}" and event["origin"] == "terminal"
@@ -323,8 +337,8 @@ def test_a_decision_on_changed_content_answers_superseded_and_raises_the_new_req
     world.items[subject] = "new text"
     answer = aw.approve(conn, approval)
     assert answer.answer == "superseded" and "A-0002" in answer.text
-    assert approvals.get(conn, approval.id).status == "superseded"
-    assert approvals.get(conn, "A-0002").status == "pending"
+    assert aw.get(conn, approval.id).status == "superseded"
+    assert aw.get(conn, "A-0002").status == "pending"
     assert world.ran("on_approve") == []
     assert aw.approve(conn, approval).answer == "superseded"
 
@@ -333,7 +347,7 @@ def test_approval_sets_the_use_by_from_the_decision_time(conn, world, monkeypatc
     _, approval = raise_one(conn, world)
     aw.at(monkeypatch, aw.later(aw.NOW, hours=5))
     aw.approve(conn, approval)
-    assert approvals.get(conn, approval.id).use_by == aw.later(aw.NOW, hours=5, days=3)
+    assert aw.get(conn, approval.id).use_by == aw.later(aw.NOW, hours=5, days=3)
 
 
 # --- on_approve and decision arguments (G37, ticket review T2) ----------------
@@ -358,7 +372,7 @@ def test_bad_args_from_on_approve_refuses_with_its_text_and_records_nothing(conn
     before = db.scalar(conn, "SELECT COUNT(*) FROM events")
     answer = aw.approve(conn, approval, source_ref="m:d")
     assert answer.answer == "refused" and answer.text == "say the days: promo_days=… post_days=…"
-    assert approvals.get(conn, approval.id).status == "pending"
+    assert aw.get(conn, approval.id).status == "pending"
     assert db.scalar(conn, "SELECT COUNT(*) FROM events") == before
     assert db.scalar(conn, "SELECT COUNT(*) FROM approval_decisions") == 0
     world.approve_raises = None
@@ -371,7 +385,7 @@ def test_a_missing_decision_arg_refuses_before_on_approve(conn, world, args):
     before = db.scalar(conn, "SELECT COUNT(*) FROM events")
     answer = aw.approve(conn, approval, args=args)
     assert answer.answer == "refused" and "post_days=" in answer.text
-    assert world.ran("on_approve") == [] and approvals.get(conn, approval.id).status == "pending"
+    assert world.ran("on_approve") == [] and aw.get(conn, approval.id).status == "pending"
     assert db.scalar(conn, "SELECT COUNT(*) FROM events") == before
 
 
@@ -390,7 +404,7 @@ def test_an_argument_the_kind_does_not_take_is_refused(conn, world):
 def approved_one(conn, world, text="Hello"):
     subject, approval = raise_one(conn, world, text)
     aw.approve(conn, approval)
-    return subject, approvals.get(conn, approval.id)
+    return subject, aw.get(conn, approval.id)
 
 
 def test_use_outside_a_transaction_is_a_programming_error(conn, world):
@@ -406,7 +420,7 @@ def test_use_refuses_with_its_reason_and_claims_nothing(conn, world, state):
     the gate matrix (G4a, G4b, G5, G6)."""
     subject = world.item()
     if state != "missing":
-        approval = approvals.request(conn, aw.KIND, subject, reason="r", run_id=None)
+        approval = aw.request(conn, aw.KIND, subject)
         if state == "skipped":
             aw.skip(conn, approval)
         if state == "used":
@@ -438,7 +452,7 @@ def test_a_refusal_the_caller_lets_escape_leaves_nothing_in_either_store(conn, w
     with pytest.raises(approvals.NotApproved):
         with db.transaction(conn):
             approvals.use(conn, aw.KIND, subject, run_id=None)
-    assert approvals.get(conn, approval.id).status == "approved"
+    assert aw.get(conn, approval.id).status == "approved"
     assert aw.mirrored("approval.superseded") == [] and len(aw.mirrored("approval.requested")) == 1
     assert aw.events(conn, "approval.superseded") == []
 
@@ -450,8 +464,8 @@ def test_ac_m4_2_a_changed_draft_supersedes_a_0412_and_raises_a_0413(conn, world
     world.items[subject] = "H2 body"
     refusal = world.act(conn, subject, run_id=None)
     assert refusal.reason == "superseded" and world.sent == []
-    assert approvals.get(conn, "A-0412").status == "superseded"
-    fresh = approvals.get(conn, "A-0413")
+    assert aw.get(conn, "A-0412").status == "superseded"
+    fresh = aw.get(conn, "A-0413")
     assert fresh.status == "pending" and fresh.content_hash == approvals.content_hash(world.kind.content(conn, subject))
 
 
@@ -536,8 +550,8 @@ def test_ac_m4_7_a_kind_whose_plugin_failed_to_import_is_refused_and_left_alone(
     finally:
         aw.REAL_PLUGINS.cache_clear()
         agents.BROKEN.pop("zz_broken_fake", None)
-    assert approvals.get(conn, waiting.id).status == "pending"
-    assert approvals.get(conn, approved.id).status == "approved" and approvals.get(conn, approved.id).used_at is None
+    assert aw.get(conn, waiting.id).status == "pending"
+    assert aw.get(conn, approved.id).status == "approved" and aw.get(conn, approved.id).used_at is None
     assert world.calls == [("on_approve", subject, {"promo_days": "sat,sun", "post_days": "any"}, "approved", True)]
 
 
@@ -552,9 +566,9 @@ def test_expire_due_supersedes_changed_and_gone_items_without_raising_new_reques
     del world.items[gone]
     result = approvals.expire_due(conn, aw.timeutil.now_sgt())
     assert sorted(x.id for x in result) == [a.id, b.id]
-    assert approvals.get(conn, a.id).close_reason == "the content changed"
-    assert approvals.get(conn, b.id).close_reason == "the item is gone"
-    assert approvals.get(conn, c.id).status == "pending"
+    assert aw.get(conn, a.id).close_reason == "the content changed"
+    assert aw.get(conn, b.id).close_reason == "the item is gone"
+    assert aw.get(conn, c.id).status == "pending"
     assert [x.id for x in approvals.pending(conn)] == [c.id]
 
 
@@ -570,7 +584,7 @@ def test_expire_due_logs_a_failing_hook_and_carries_on(conn, world, monkeypatch)
     monkeypatch.setattr(world.kind, "on_expire", on_expire)
     result = approvals.expire_due(conn, aw.timeutil.parse(aw.later(aw.NOW, days=5)))
     assert [x.id for x in result] == [b.id]
-    assert approvals.get(conn, a.id).status == "pending"
+    assert aw.get(conn, a.id).status == "pending"
     assert aw.events(conn, "approval.hook_error")[0]["approval"] == a.id
 
 
@@ -578,7 +592,7 @@ def test_expire_due_inside_a_callers_transaction_uses_a_savepoint(conn, world):
     _, a = raise_one(conn, world)
     with db.transaction(conn):
         changed = approvals.expire_due(conn, aw.timeutil.parse(aw.later(aw.NOW, days=5)))
-    assert [x.id for x in changed] == [a.id] and approvals.get(conn, a.id).status == "expired"
+    assert [x.id for x in changed] == [a.id] and aw.get(conn, a.id).status == "expired"
 
 
 # --- G36: each writer writes a due transition once ---------------------------
@@ -614,7 +628,7 @@ def test_g36_use_writes_a_due_lapse_once_in_the_callers_transaction(conn, world,
     now = aw.at(monkeypatch, approval.use_by)
     refusal = world.act(conn, subject)
     assert refusal.reason == "expired" and world.sent == []
-    lapsed = approvals.get(conn, approval.id)
+    lapsed = aw.get(conn, approval.id)
     assert lapsed.status == "expired" and lapsed.close_reason == "approved but not used in time" and lapsed.used_at is None
     assert refused_reason(conn, subject) == "expired"
     assert approvals.expire_due(conn, now) == []
@@ -668,7 +682,7 @@ def states(conn, world) -> dict[str, approvals.Approval]:
     approvals.expire_due(conn, aw.timeutil.now_sgt())
     _, expired = raise_one(conn, world, "expired")
     conn.execute("UPDATE approvals SET status = 'expired', closed_at = ?, close_reason = 'test' WHERE id = ?", (aw.NOW, expired.number))
-    return {name: approvals.get(conn, a.id) for name, a in {
+    return {name: aw.get(conn, a.id) for name, a in {
         "pending": pending, "approved": approved, "used": used, "skipped": skipped, "superseded": superseded, "expired": expired,
     }.items()}
 
@@ -750,7 +764,7 @@ def test_the_trigger_aborts_every_other_change(conn, world, state, change):
     record = states(conn, world)[state]
     with pytest.raises(Exception, match="approv"):
         conn.execute(f"UPDATE approvals SET {change} WHERE id = ?", (record.number,))
-    assert approvals.get(conn, record.id) == record
+    assert aw.get(conn, record.id) == record
 
 
 @pytest.mark.parametrize("state", ["pending", "approved", "skipped", "expired", "superseded"])

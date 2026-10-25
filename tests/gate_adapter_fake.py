@@ -26,7 +26,7 @@ class FakeAdapter:
         return self.world.item(self.world.items[subject])
 
     def raise_request(self, subject: str) -> approvals.Approval:
-        return approvals.request(self.conn, self.kind, subject, reason="a test asked", run_id=None)
+        return aw.request(self.conn, self.kind, subject)
 
     def approve(self, approval):
         return aw.approve(self.conn, approval)

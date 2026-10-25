@@ -17,20 +17,34 @@ from dataclasses import dataclass
 
 TERMINAL = "terminal"
 SSH = "ssh"
-REFUSED = "refused"
+NOT_HUMAN = "refused"
 
 
 @dataclass(frozen=True)
 class Origin:
+    """Built through `terminal()`, `ssh()` or `refused()`. Built directly,
+    it is checked just the same, so no `Origin` skips the rules."""
+
     kind: str
     user: str | None = None    # the macOS user, for a terminal
     code: str | None = None    # the six hex characters typed, for a terminal
     reason: str | None = None  # why it was refused
 
+    def __post_init__(self) -> None:
+        if self.kind == TERMINAL:
+            if not self.user or not self.code or self.reason:
+                raise ValueError("a terminal origin needs the user and the typed code")
+        elif self.kind == SSH:
+            if self.user or self.code or self.reason:
+                raise ValueError("an SSH origin carries nothing: the actor comes with the command")
+        elif self.kind == NOT_HUMAN:
+            if not self.reason or self.user or self.code:
+                raise ValueError("a refused origin needs the reason, and nothing else")
+        else:
+            raise ValueError(f"an origin is terminal, ssh or refused, not {self.kind!r}")
+
     @classmethod
     def terminal(cls, user: str, code: str) -> "Origin":
-        if not user or not code:
-            raise ValueError("a terminal origin needs the user and the typed code")
         return cls(TERMINAL, user=user, code=code)
 
     @classmethod
@@ -41,7 +55,7 @@ class Origin:
 
     @classmethod
     def refused(cls, reason: str) -> "Origin":
-        return cls(REFUSED, reason=reason or "not a human origin")
+        return cls(NOT_HUMAN, reason=reason or "not a human origin")
 
     @property
     def human(self) -> bool:

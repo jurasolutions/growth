@@ -119,7 +119,7 @@ class ApprovalKind(Protocol):
 class Approval:
     """One row of `approvals`. `id` is the A-nnnn Ting Yu types."""
 
-    number: int
+    number: int  # the row id; `id` below is A-nnnn, the `approval_id` decide() takes
     kind: str
     subject: str
     content_hash: str
@@ -233,12 +233,21 @@ def _hook(kind: ApprovalKind, name: str):
 # --- reading ----------------------------------------------------------------
 
 
+# A live request: pending, or approved and not yet claimed. The migration's
+# partial unique index allows one per (kind, subject).
+_LIVE = "status IN ('pending', 'approved') AND used_at IS NULL"
+
+
+def _one(conn: sqlite3.Connection, sql: str, params: tuple) -> Approval | None:
+    row = conn.execute(sql, params).fetchone()
+    return Approval.from_row(row) if row else None
+
+
 def get(conn: sqlite3.Connection, approval_id: str) -> Approval | None:
     number = parse_id(approval_id)
     if number is None:
         return None
-    row = conn.execute("SELECT * FROM approvals WHERE id = ?", (number,)).fetchone()
-    return Approval.from_row(row) if row else None
+    return _one(conn, "SELECT * FROM approvals WHERE id = ?", (number,))
 
 
 def pending(conn: sqlite3.Connection) -> list[Approval]:
@@ -255,18 +264,11 @@ def raised_by(conn: sqlite3.Connection, run_id: int) -> list[Approval]:
 
 
 def _live(conn: sqlite3.Connection, kind: str, subject: str) -> Approval | None:
-    row = conn.execute(
-        "SELECT * FROM approvals WHERE kind = ? AND subject = ? AND status IN ('pending', 'approved') AND used_at IS NULL",
-        (kind, subject),
-    ).fetchone()
-    return Approval.from_row(row) if row else None
+    return _one(conn, f"SELECT * FROM approvals WHERE kind = ? AND subject = ? AND {_LIVE}", (kind, subject))
 
 
 def _latest(conn: sqlite3.Connection, kind: str, subject: str) -> Approval | None:
-    row = conn.execute(
-        "SELECT * FROM approvals WHERE kind = ? AND subject = ? ORDER BY id DESC LIMIT 1", (kind, subject)
-    ).fetchone()
-    return Approval.from_row(row) if row else None
+    return _one(conn, "SELECT * FROM approvals WHERE kind = ? AND subject = ? ORDER BY id DESC LIMIT 1", (kind, subject))
 
 
 def _reload(conn: sqlite3.Connection, number: int) -> Approval:
@@ -471,7 +473,7 @@ def expire_due(conn: sqlite3.Connection, now: datetime | None = None) -> list[Ap
     registry = kinds()
     changed: list[Approval] = []
     rows = conn.execute(
-        "SELECT * FROM approvals WHERE status IN ('pending', 'approved') AND used_at IS NULL ORDER BY id"
+        f"SELECT * FROM approvals WHERE {_LIVE} ORDER BY id"
     ).fetchall()
     for approval in (Approval.from_row(r) for r in rows):
         registered = registry.get(approval.kind)
@@ -491,8 +493,7 @@ def expire_due(conn: sqlite3.Connection, now: datetime | None = None) -> list[Ap
 
 
 def _successor(conn, approval: Approval) -> Approval | None:
-    row = conn.execute("SELECT * FROM approvals WHERE supersedes = ? ORDER BY id DESC LIMIT 1", (approval.number,)).fetchone()
-    return Approval.from_row(row) if row else None
+    return _one(conn, "SELECT * FROM approvals WHERE supersedes = ? ORDER BY id DESC LIMIT 1", (approval.number,))
 
 
 def _refresh(conn, registered: _Registered, approval: Approval, now: datetime, *, raise_new: bool) -> Approval:
