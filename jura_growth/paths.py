@@ -103,6 +103,11 @@ def run_folders(job: str) -> list[Path]:
     return [work_dir(job), outputs_dir()]
 
 
+def is_within(path: str | os.PathLike[str], folder: str | os.PathLike[str]) -> bool:
+    """Whether `path` is `folder` or sits under it, after resolving both."""
+    return Path(path).resolve().is_relative_to(Path(folder).resolve())
+
+
 def guard(path: str | os.PathLike[str]) -> Path:
     """Return `path` resolved, or raise PathRefused.
 
@@ -122,7 +127,7 @@ def guard(path: str | os.PathLike[str]) -> Path:
     job = os.environ.get("JURA_GROWTH_JOB")
     if job:
         folders = [folder.resolve() for folder in run_folders(job)]
-        if not any(resolved == folder or folder in resolved.parents for folder in folders):
+        if not any(is_within(resolved, folder) for folder in folders):
             allowed = " or ".join(str(folder) for folder in folders)
             raise PathRefused(f"refused: a `{job}` run may only use files in {allowed}")
     return resolved
@@ -132,10 +137,9 @@ def writable(path: Path) -> Path:
     """Return `path`, creating its parent, unless it sits in a read-only folder."""
     resolved = Path(path).resolve()
     for name in READ_ONLY:
-        guarded = (JURA_ROOT / name).resolve()
-        if resolved == guarded or guarded in resolved.parents:
+        if is_within(resolved, JURA_ROOT / name):
             raise PermissionError(f"{name}/ is read-only; refusing to write {resolved}")
-    if inputs_dir().resolve() in resolved.parents:
+    if is_within(resolved, inputs_dir()):
         raise PermissionError(f"inputs/ is read-only; refusing to write {resolved}")
     resolved.parent.mkdir(parents=True, exist_ok=True)
     return resolved

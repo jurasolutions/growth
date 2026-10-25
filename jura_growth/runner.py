@@ -17,7 +17,6 @@ Three failed runs in a row pause the agent (pause.check_auto_pause).
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import shlex
@@ -148,22 +147,9 @@ def _abandon_stale(conn: sqlite3.Connection) -> None:
             started = timeutil.parse(row["started_at"])
         except ValueError:
             continue
-        if started > cutoff or _lock_held(row["job"]):
+        if started > cutoff or locks.is_held(row["job"]):
             continue
         log.finish_run(conn, row["id"], "failed", error="abandoned: the process stopped before finishing")
-
-
-def _lock_held(name: str) -> bool:
-    path = paths.data_dir() / "locks" / f"{name}.lock"
-    if not path.exists():
-        return False
-    with open(path, "a") as handle:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return True
-        fcntl.flock(handle, fcntl.LOCK_UN)
-    return False
 
 
 # --- command jobs ----------------------------------------------------------
@@ -252,12 +238,24 @@ def _preamble(name: str, spec: dict, run_id: int | None) -> str:
         f"- Job: `{name}` (agent `{spec['agent']}`), run {run_id}\n"
         f"- Now: {moment.strftime('%A')} {timeutil.stamp(moment)} SGT\n"
         f"- Scratch folder: `{work}`. It is the only place you can write files.\n"
-        "- Every side effect (database, Discord, files outside scratch, email) goes through "
-        "`jura-growth`. Run `jura-growth --help` and `jura-growth <group> --help` for the commands.\n"
+        f"{_commands_line(name)}"
         "- Jura Solutions only. Never read `taskwise-*` or ZenexFlow folders. No Notion, no Zapier.\n"
         "- `inputs/` and `design-system/` are read-only.\n"
         "- Finish with a one to three line summary that starts with `OK:` if the run did its job, "
         "`SKIP:` if there was nothing to do, or `FAIL:` if it could not.\n\n---\n\n"
+    )
+
+
+def _commands_line(name: str) -> str:
+    """The job's own `jura-growth` commands, the only ones this run may use
+    (headless.permissions), so the preamble never invites a refused call."""
+    commands = [c for c in headless.permissions(name).commands if c.split()[0] not in headless.NEVER]
+    if not commands:
+        return "- This job may run no jura-growth commands; anything you try is refused.\n"
+    listed = ", ".join(f"`jura-growth {command}`" for command in commands)
+    return (
+        "- Every side effect (database, files outside scratch, email) goes through this job's own commands, "
+        f"and any other command is refused: {listed}. Add `--help` to one of them for its options.\n"
     )
 
 

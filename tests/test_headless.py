@@ -317,6 +317,30 @@ def test_every_command_a_prompt_uses_is_declared(job):
     assert declared <= leaves, f"{job}: declares unknown commands {sorted(declared - leaves)}"
 
 
+def allowed_by(command, allowed):
+    """Whether a Claude Code allow rule matches `command` ("jura-growth scout add-lead --file x")."""
+    for rule in allowed:
+        if rule == f"Bash({command})":
+            return True
+        if rule.endswith(":*)"):
+            prefix = rule[len("Bash("):-len(":*)")]
+            if command == prefix or command.startswith(prefix + " "):
+                return True
+    return False
+
+
+@pytest.mark.parametrize("job", CLAUDE_JOBS)
+def test_every_command_the_preamble_names_is_in_the_jobs_allowlist(job):
+    preamble = runner._preamble(job, config.settings()["jobs"][job], 1)
+    allowed, _ = rules(job)
+    named = re.findall(r"`(jura-growth[^`]*)`", preamble)
+    assert named
+    refused = [command for command in named if not allowed_by(command, allowed)]
+    assert not refused, f"{job}: the preamble names {refused}"
+    for command in headless.permissions(job).commands:
+        assert f"`jura-growth {command}`" in preamble
+
+
 def outbox_files(tmp_path):
     folder = tmp_path / "data" / "discord-outbox"
     return sorted(folder.iterdir()) if folder.exists() else []
