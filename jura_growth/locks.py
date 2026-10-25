@@ -15,6 +15,9 @@ from typing import Iterator
 
 from jura_growth import paths
 
+# The skip reason when a job's lock is taken: its previous run hasn't finished.
+STILL_GOING = "previous run still going"
+
 
 def _path(name: str) -> Path:
     return paths.data_dir() / "locks" / f"{name}.lock"
