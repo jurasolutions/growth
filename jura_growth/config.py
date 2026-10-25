@@ -22,7 +22,7 @@ import urllib.parse
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import yaml
 
@@ -71,10 +71,10 @@ def reset_caches() -> None:
         forget()
 
 
-_reset_hooks: list = []
+_reset_hooks: list[Callable[[], None]] = []
 
 
-def on_reset(forget) -> None:
+def on_reset(forget: Callable[[], None]) -> None:
     """Call `forget()` from `reset_caches()`: for modules that learn values to mask (privacy)."""
     if forget not in _reset_hooks:
         _reset_hooks.append(forget)
@@ -180,8 +180,9 @@ def load_secrets_for_masking() -> None:
 
     `secret_values()` only knows the Keychain values this process has read
     itself. A message built from disk (a run summary, a transcript, another
-    process's output) can still carry one, so the one-pager, run updates and
-    approval cards call this once before they build anything. It runs the
+    process's output) can still carry one, so a builder of such a message
+    calls this first, through `privacy.load_for_masking()`: today
+    `discord.alert()`, the digest and `jura-growth discord post`. It runs the
     Keychain lookups once per process; later calls do nothing.
     """
     global _masking_loaded
@@ -245,10 +246,7 @@ def redact(value: Any) -> Any:
             value = value.replace(form, "[redacted]")
         for pattern in _SECRET_VALUES:
             value = pattern.sub("[redacted]", value)
-        pieces = _pieces_pattern(known)
-        if pieces is not None:
-            value = pieces.sub("[redacted]", value)
-        return value
+        return _mask_pieces(value, known)
     return value
 
 
@@ -269,23 +267,45 @@ def _encoded_forms(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(sorted((f for f in forms if len(f) >= MIN_SECRET_LENGTH), key=len, reverse=True))
 
 
-@lru_cache(maxsize=8)
-def _pieces_pattern(values: tuple[str, ...]) -> re.Pattern | None:
-    """What a cut leaves of a secret: its first or last characters, at least
-    MIN_SECRET_LENGTH of them, where something like `error[:500]` cut it short.
+def _mask_pieces(text: str, values: tuple[str, ...]) -> str:
+    """Mask any run of MIN_SECRET_LENGTH or more characters taken from a secret:
+    what a cut such as `error[:500]` leaves of one, at its start, its end or
+    from the middle. Each match grows to the longest run of the secret it is.
 
     For a URL (a webhook) only the last path segment, the token, counts: the
     start of the URL is the same for every webhook and every ordinary link.
     """
-    pieces = set()
-    for value in values:
-        token = value.rstrip("/").rsplit("/", 1)[-1] if "://" in value else value
-        for size in range(MIN_SECRET_LENGTH, len(token)):
-            pieces |= {token[:size], token[-size:]}
-    if not pieces:
-        return None
-    alternatives = "|".join(re.escape(p) for p in sorted(pieces, key=len, reverse=True))
-    return re.compile(f"(?:{alternatives})")
+    tokens, windows = _windows(values)
+    if windows is None:
+        return text
+    spans = []
+    for match in windows.finditer(text):
+        start, end = match.span()
+        if spans and start < spans[-1][1]:
+            continue
+        while end < len(text) and any(text[start : end + 1] in t for t in tokens):
+            end += 1
+        while start > 0 and any(text[start - 1 : end] in t for t in tokens):
+            start -= 1
+        if spans and start <= spans[-1][1]:
+            start = spans.pop()[0]
+        spans.append((start, end))
+    for start, end in reversed(spans):
+        text = text[:start] + "[redacted]" + text[end:]
+    return text
+
+
+@lru_cache(maxsize=8)
+def _windows(values: tuple[str, ...]) -> tuple[tuple[str, ...], re.Pattern | None]:
+    tokens = tuple(
+        token
+        for token in (v.rstrip("/").rsplit("/", 1)[-1] if "://" in v else v for v in values)
+        if len(token) >= MIN_SECRET_LENGTH
+    )
+    windows = {t[i : i + MIN_SECRET_LENGTH] for t in tokens for i in range(len(t) - MIN_SECRET_LENGTH + 1)}
+    if not windows:
+        return tokens, None
+    return tokens, re.compile("|".join(re.escape(w) for w in sorted(windows)))
 
 
 class _RedactingStream:

@@ -87,3 +87,12 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         "lines": lines,
         "brief": brief,
     }
+
+
+def privacy_terms(conn) -> dict:
+    """For `privacy`: Ting Yu's sender address, kept only in previews of Jura's own email."""
+    from jura_growth.agents.scout import settings
+
+    local = str(settings.get().get("from_local_part") or "tingyu").strip().lower()
+    domains = {"jurasolutions.sg", str(settings.get().get("sending_domain") or "").strip().lower()}
+    return {"owner_addresses": sorted(f"{local}@{d}" for d in domains if d)}

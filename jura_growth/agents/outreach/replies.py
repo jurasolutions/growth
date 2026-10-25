@@ -181,7 +181,8 @@ def _batch(conn, imap, numbers: list[bytes], known: dict, result: Result) -> Non
             if body_status == "OK":
                 for _, raw in _fetch_parts(body_data):
                     own = _own_text(email.message_from_bytes(raw))
-                    privacy.never_show(*own.splitlines())
+                    # Lines of four words or more: a sign-off ("Best regards") would blank later posts.
+                    privacy.never_show(*(line for line in own.splitlines() if len(line.split()) >= 4))
                     wants_out = bool(UNSUBSCRIBE_RE.search(own))
         _record(conn, contact, sender, received, key, wants_out, result)
 

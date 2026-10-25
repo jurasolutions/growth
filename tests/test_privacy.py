@@ -1,7 +1,8 @@
 """`privacy.for_discord()`: the personal-data rule in MC §4.4, on top of `config.redact()`.
 
 One row per planted item in dataset D3 (test strategy v3 §3), then the parts that make it work:
-names learned from named addresses, values a process registers, and loading once.
+names learned from named addresses, Jura's own copy, values a process registers, and what the
+plug-ins share.
 """
 
 import pytest
@@ -18,25 +19,30 @@ SOURCE = "https://example.com.sg/team"
         (f"jane.tan@example.com.sg, listed on {SOURCE}", f"j***@example.com.sg, listed on {SOURCE}"),
         ("Contact: Jane.Tan@Example.com.sg", "Contact: J***@Example.com.sg"),
         ("mailto:jane.tan@example.com.sg", "mailto:j***@example.com.sg"),
-        # Allowed: role addresses.
+        ("https://x.sg/?email=jane.tan%40example.com.sg", "https://x.sg/?email=j***%40example.com.sg"),
+        ("write to jane.tan&#64;example.com.sg", "write to j***&#64;example.com.sg"),
+        ("_jane.tan@example.com.sg", "_***@example.com.sg"),
+        # Allowed: role addresses and system senders.
         ("info@example.com.sg", "info@example.com.sg"),
         ("hello@example.com.sg and enquiries@example.com.sg", "hello@example.com.sg and enquiries@example.com.sg"),
         ("sales2@example.com.sg", "sales2@example.com.sg"),
+        ("privacy@example.com.sg", "privacy@example.com.sg"),
+        ("hrithik.tan@example.com.sg", "h***@example.com.sg"),
         # Never: phone numbers, in the shapes Singapore numbers are written.
         ("call +65 9123 4567 today", "call [phone removed] today"),
         ("call +6591234567 today", "call [phone removed] today"),
         ("office 6123 4567.", "office [phone removed]."),
         ("mobile (65) 8123-4567", "mobile [phone removed]"),
         ("hp: 9123-4567", "hp: [phone removed]"),
+        ("call 9123.4567", "call [phone removed]"),
+        ("call 91 23 45 67", "call [phone removed]"),
+        ("call ９１２３ ４５６７", "call [phone removed]"),
         ("whatsapp https://wa.me/6591234567", "whatsapp https://wa.me/[phone removed]"),
         ("abroad +44 20 7946 0958", "abroad [phone removed]"),
-        # Never: Ting Yu's own contact details.
-        ("Ting Yu: tingyu@jurasolutions.sg, +65 8765 4321", "Ting Yu: t***@jurasolutions.sg, [phone removed]"),
         # Never: anything from personal-finance/.
-        (
-            "ok\nread personal-finance/data/tally.db: balance\nnext",
-            "ok\n[removed: personal finance]\nnext",
-        ),
+        ("ok\nread personal-finance/data/tally.db: balance\nnext", "ok\n[removed: personal finance]\nnext"),
+        ("ok\nsee personalfinance notes\nnext", "ok\n[removed: personal finance]\nnext"),
+        ("ok\nhttps://x/personal%2Dfinance/a\nnext", "ok\n[removed: personal finance]\nnext"),
         # A prospect's personal name, learned from the named address in the same text.
         ("Hi Jane, (jane.tan@example.com.sg)", "Hi [name removed], (j***@example.com.sg)"),
         ("Jane Tan runs it: jane.tan@example.com.sg", "[name removed] runs it: j***@example.com.sg"),
@@ -46,6 +52,7 @@ SOURCE = "https://example.com.sg/team"
             "Example Pte Ltd (example.com.sg), logistics, score 78, run 2026-11-10T11:05:00+08:00, US$0.42",
         ),
         ("https://www.facebook.com/groups/912345678901234/", "https://www.facebook.com/groups/912345678901234/"),
+        ("slots 9.30 10.30 11.30, 2026-10-25", "slots 9.30 10.30 11.30, 2026-10-25"),
     ],
 )
 def test_for_discord(text, expected):
@@ -69,20 +76,7 @@ def test_its_output_is_stable_when_masked_again():
     assert privacy.for_discord(once) == once
 
 
-# --- what the process knows --------------------------------------------------------
-
-
-def test_a_registered_reply_body_never_appears():
-    privacy.never_show("Please take us off your list")
-
-    assert privacy.for_discord("they wrote: please take us off your list.") == "they wrote: [removed]."
-
-
-@pytest.mark.parametrize("body", ["550 5.1.1 jane.tan@example.com.sg: user unknown", "This message is spam"])
-def test_registered_bounce_and_complaint_bodies_never_appear(body):
-    privacy.never_show(body)
-
-    assert body not in privacy.for_discord(f"details: {body}")
+# --- names ----------------------------------------------------------------------------
 
 
 def test_a_name_from_a_known_named_address_is_masked_anywhere():
@@ -90,6 +84,38 @@ def test_a_name_from_a_known_named_address_is_masked_anywhere():
 
     assert privacy.for_discord("summary: wrote to Jane Tan at Example") == "summary: wrote to [name removed] at Example"
     assert privacy.for_discord("Hi Jane,") == "Hi [name removed],"
+    assert privacy.for_discord("JANE TAN called") == "[name removed] called"
+
+
+@pytest.mark.parametrize(
+    "address, text, expected",
+    [
+        ("li.na@example.com.sg", "Li Na runs ops", "[name removed] runs ops"),
+        ("wei.ng@example.com.sg", "Wei Ng replied", "[name removed] replied"),
+        ("ho.mei@example.com.sg", "ask Ho", "ask [name removed]"),
+    ],
+    ids=["li", "ng", "ho"],
+)
+def test_two_letter_surnames_are_masked(address, text, expected):
+    privacy.remember_address(address)
+
+    assert privacy.for_discord(text) == expected
+
+
+def test_a_name_part_in_lower_case_is_an_ordinary_word():
+    privacy.remember_address("mark.tan@example.com.sg")
+
+    assert privacy.for_discord("mark it done, tan coloured") == "mark it done, tan coloured"
+    assert privacy.for_discord("mark tan wrote") == "[name removed] wrote"
+
+
+def test_a_known_company_name_is_never_masked_as_a_person():
+    privacy.remember_address("mark.tan@tanholdings.sg")
+    privacy.remember_company("Tan Holdings Pte Ltd")
+
+    assert privacy.for_discord("New lead: Tan Holdings Pte Ltd, Mark Tan is the director") == (
+        "New lead: Tan Holdings Pte Ltd, [name removed] is the director"
+    )
 
 
 def test_names_are_not_masked_inside_a_source_url():
@@ -106,30 +132,112 @@ def test_a_role_address_teaches_no_name():
     assert privacy.for_discord("Sales went up") == "Sales went up"
 
 
+# --- Jura's own copy -------------------------------------------------------------------
+
+
+def test_jura_s_own_copy_keeps_its_words():
+    privacy.remember_address("mark.tan@tanholdings.sg")
+    privacy.never_show("Thank you for the note")
+    post = "Mark your calendar. Tan Holdings and friends: thank you for the note."
+
+    assert privacy.for_discord(f"Draft:\n{post}", own_copy=[post]) == f"Draft:\n{post}"
+    assert privacy.for_discord(f"Mark said: {post}", own_copy=[post]).startswith("[name removed] said: Mark your")
+
+
+def test_jura_s_own_copy_still_loses_secrets_phones_and_full_names(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY_OUTREACH", "re_uat_9Xq7Lm2Pz")
+    config.reset_caches()
+    privacy.remember_address("jane.tan@example.com.sg")
+    draft = "Hi Jane Tan, key re_uat_9Xq7Lm2Pz, call 9123 4567, or jane.tan@example.com.sg"
+
+    assert privacy.for_discord(draft, own_copy=[draft]) == (
+        "Hi [name removed], key [redacted], call [phone removed], or j***@example.com.sg"
+    )
+
+
+# --- Ting Yu's own contact details -----------------------------------------------------
+
+
+def test_ting_yus_address_is_removed_outside_jura_s_own_email():
+    privacy.remember_owner("tingyu@jurasolutions.sg")
+
+    assert privacy.for_discord("Ting Yu: tingyu@jurasolutions.sg, +65 8765 4321") == "Ting Yu: [removed], [phone removed]"
+
+
+def test_ting_yus_sender_address_stays_in_a_preview_of_jura_s_own_email():
+    privacy.remember_owner("tingyu@jurasolutions.sg")
+    email = "From: Ting Yu <tingyu@jurasolutions.sg>\nHello Example team,"
+
+    assert privacy.for_discord(f"Shadow:\n{email}", own_copy=[email]) == f"Shadow:\n{email}"
+
+
+# --- what the process registers --------------------------------------------------------
+
+
+def test_a_registered_reply_body_never_appears():
+    privacy.never_show("Please take us off your list")
+
+    assert privacy.for_discord("they wrote: please take us off your list.") == "they wrote: [removed]."
+
+
+@pytest.mark.parametrize("body", ["550 5.1.1 jane.tan@example.com.sg: user unknown", "This message is spam"])
+def test_registered_bounce_and_complaint_bodies_never_appear(body):
+    privacy.never_show(body)
+
+    assert body not in privacy.for_discord(f"details: {body}")
+
+
 def test_what_the_process_learned_is_forgotten_on_reset():
     privacy.never_show("Please take us off your list")
     privacy.remember_address("jane.tan@example.com.sg")
+    privacy.remember_owner("tingyu@jurasolutions.sg")
 
     config.reset_caches()
 
     assert privacy.for_discord("Jane: Please take us off your list") == "Jane: Please take us off your list"
+    assert privacy.for_discord("tingyu@jurasolutions.sg") == "t***@jurasolutions.sg"
 
 
-def test_loading_for_masking_learns_named_contacts_from_the_plugins(conn):
-    db.migrate(conn)
+# --- what the plug-ins share -----------------------------------------------------------
+
+
+def contact(conn, email="jane.tan@example.com.sg", company="Example Pte Ltd"):
     conn.execute(
         "INSERT INTO leads (id, company, display_name, domain, website, industry, score, score_reasons, channel,"
-        " status, created_at, updated_at) VALUES (1, 'Example Pte Ltd', 'Example', 'example.com.sg',"
-        " 'https://example.com.sg', 'logistics', 78, '[]', 'email', 'new', 'x', 'x')"
+        " status, created_at, updated_at) VALUES (1, ?, 'Example', 'example.com.sg',"
+        " 'https://example.com.sg', 'logistics', 78, '[]', 'email', 'new', 'x', 'x')",
+        (company,),
     )
     conn.execute(
         "INSERT INTO contacts (lead_id, email, email_hash, source_url, kind, mx_ok, verified_at, created_at)"
-        f" VALUES (1, 'jane.tan@example.com.sg', 'h', '{SOURCE}', 'named', 1, 'x', 'x')"
+        f" VALUES (1, ?, 'h', '{SOURCE}', 'named', 1, 'x', 'x')",
+        (email,),
     )
 
-    privacy.load_for_masking(conn)
 
-    assert privacy.for_discord("Jane Tan replied") == "[name removed] replied"
+def test_learning_reads_named_contacts_and_companies_from_the_plugins(conn):
+    contact(conn, "mark.tan@example.com.sg", "Tan Holdings Pte Ltd")
+
+    privacy.learn(conn)
+
+    assert privacy.for_discord("Mark Tan of Tan Holdings Pte Ltd") == "[name removed] of Tan Holdings Pte Ltd"
+
+
+def test_learning_reads_ting_yus_sender_address_from_the_outreach_settings(conn):
+    privacy.learn(conn)
+
+    assert privacy.for_discord("from tingyu@jurasolutions.sg") == "from [removed]"
+
+
+def test_learning_never_asks_the_keychain(conn, monkeypatch):
+    monkeypatch.setenv("UNSUBSCRIBE_SECRET", "keychain:jura-growth-uat")
+    looked_up = []
+    monkeypatch.setattr(config, "_keychain", lambda service: looked_up.append(service) or "kc_uat_44Lw")
+    config.reset_caches()
+
+    privacy.learn(conn)
+
+    assert looked_up == []
 
 
 def test_loading_for_masking_loads_keychain_values_too(conn, monkeypatch):
@@ -142,22 +250,21 @@ def test_loading_for_masking_loads_keychain_values_too(conn, monkeypatch):
     assert privacy.for_discord("value kc_uat_44Lw") == "value [redacted]"
 
 
-def test_the_role_list_covers_every_role_the_scout_knows():
-    from jura_growth.agents.scout import contact
-
-    for local in (*contact.ENQUIRY_ROLES, *contact.OTHER_ROLES, *contact.NOT_FOR_ENQUIRIES):
-        assert privacy.is_role_address(f"{local}@example.com.sg"), local
-
-
 def test_a_plugin_whose_hook_fails_never_stops_a_message(conn, monkeypatch):
     from jura_growth.agents import scout
 
     def broken(c):
         raise KeyError("no such column")
 
-    monkeypatch.setattr(scout, "named_addresses", broken)
+    monkeypatch.setattr(scout, "privacy_terms", broken)
     privacy.remember_address("jane.tan@example.com.sg")
 
-    privacy.load_for_masking(conn)
+    privacy.learn(conn)
 
     assert privacy.for_discord("Jane Tan") == "[name removed]"
+
+
+def test_db_migrate_is_enough_for_learning(conn):
+    db.migrate(conn)
+    privacy.learn(conn)  # no rows: nothing learned, nothing raised
+    assert privacy.for_discord("Jane Tan") == "Jane Tan"

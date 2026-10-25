@@ -48,7 +48,9 @@ MASKED_ADDRESS = "j***@example.com.sg"
 SOURCE_PAGE = "https://example.com.sg/about-us"
 PHONE = "+65 9123 4567"
 PERSON = "Jane Tan"  # recognised through the named contact: plant `NAMED_ADDRESS` as a contact too
-PERSONAL = (NAMED_ADDRESS, PHONE, PERSON)
+OWNER_ADDRESS = "tingyu@jurasolutions.sg"  # Ting Yu's sender address: only in Jura's own email
+FINANCE = "personal-finance/data/tally.db"
+PERSONAL = (NAMED_ADDRESS, PHONE, PERSON, OWNER_ADDRESS, FINANCE)
 # A reply's body is never stored, and no agent reads the mailbox: it exists only in the process
 # that checked for replies, which registers it (`privacy.never_show`). Plant it there.
 REPLY = "Please take us off your list"
@@ -62,8 +64,9 @@ class Planted:
     expected: tuple[str, ...] = field(default_factory=tuple)  # must reach the double, as written
 
     def text(self) -> str:
-        """One string holding every planted value, to put wherever a builder reads text."""
-        return " ".join([self.marker, *self.secrets, *self.personal])
+        """One string holding every planted value, one to a line (a line naming
+        personal-finance/ is dropped whole), to put wherever a builder reads text."""
+        return "\n".join([self.marker, *self.secrets, *self.personal])
 
 
 @pytest.fixture
@@ -133,7 +136,10 @@ def _outbox_texts(outbox) -> list[str]:
 
 
 def _secret_needles(value: str) -> set[str]:
-    """The value raw, URL-encoded, HTML- and JSON-escaped, and every 8-character piece of each."""
+    """The value raw, URL-encoded, HTML- and JSON-escaped, and every 8-character piece of each.
+
+    Deliberately not the same arguments as `config._encoded_forms`: this is the oracle, so it
+    spells each form the way a library would produce it, not the way the code under test does."""
     quoted = urllib.parse.quote(value, safe="")
     forms = {value, quoted, quoted.lower(), urllib.parse.quote_plus(value), html.escape(value), json.dumps(value)[1:-1]}
     needles = set(forms)
@@ -146,5 +152,5 @@ def _personal_patterns(value: str) -> list[re.Pattern]:
     patterns = [re.compile(rf"(?<!\w){re.escape(value)}(?!\w)", re.I)]
     digits = re.sub(r"\D", "", value)
     if len(digits) >= 8:  # a phone number, however it is spaced
-        patterns.append(re.compile(r"[\s()+-]*".join(digits[-8:])))
+        patterns.append(re.compile(r"[\s().+-]*".join(digits[-8:])))
     return patterns

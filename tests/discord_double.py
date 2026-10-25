@@ -157,8 +157,9 @@ class _HttpxFor:
 def _multipart_parts(body: bytes, content_type: str):
     boundary = content_type.split("boundary=", 1)[1].strip('"').encode()
     for chunk in body.split(b"--" + boundary):
-        chunk = chunk.strip(b"\r\n")
-        if not chunk or chunk == b"--":
+        # Each part sits between CRLFs that belong to the framing, not to the file.
+        chunk = chunk.removeprefix(b"\r\n").removesuffix(b"\r\n")
+        if not chunk or chunk.startswith(b"--"):
             continue
         head, _, data = chunk.partition(b"\r\n\r\n")
         headers = head.decode("utf-8", errors="replace")

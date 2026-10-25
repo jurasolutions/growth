@@ -62,15 +62,16 @@ def test_the_double_records_what_discord_would_receive(conn, discord_double):
     assert request.url.startswith("https://discord.invalid/api/webhooks/")
 
 
-def test_the_double_records_attachments(conn, discord_double, tmp_path):
-    image = tmp_path / "grid.png"
-    image.write_bytes(b"\x89PNG fake bytes")
+def test_the_double_records_attachments(conn, discord_double):
+    image = paths.outputs_dir() / "grid.png"
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.write_bytes(png())
 
     discord.post(conn, "alerts", "with a file", files=[image])
 
     [request] = discord_double.posts("alerts")
     assert request.content == "with a file"
-    assert request.files == [("grid.png", b"\x89PNG fake bytes")]
+    assert request.files == [("grid.png", png())]
 
 
 @pytest.mark.parametrize("mode", ["500", "429", "unreachable"])
@@ -210,3 +211,100 @@ def test_masking_a_webhook_url_leaves_other_urls_alone(monkeypatch):
 
     text = "see https://example.com/page and https://discord.invalid/api/webhooks/7/tok3nVALUEa"
     assert config.redact(text) == "see https://example.com/page and https://discord.invalid/api/webhooks/7/[redacted]"
+
+
+def test_a_piece_from_the_middle_of_a_secret_is_masked(secrets):
+    # Review 02, finding 8: "..uat_9Xq7Lm.." is 10 characters from the middle of the Resend key.
+    assert config.redact(f"seen ..{RESEND_KEY[3:13]}.. here") == "seen ..[redacted].. here"
+
+
+# --- the dedupe hash covers what the message says, not its masked form -----------
+
+
+def test_posts_to_different_named_addresses_are_not_deduplicated(conn, discord_double):
+    # Review 02, finding 3, and MC §4.4: the hash still covers the full address.
+    first = discord.post(conn, "outreach-sent", "Shadow draft to jane.tan@example.com.sg")
+    second = discord.post(conn, "outreach-sent", "Shadow draft to john.koh@example.com.sg")
+
+    assert first.delivered and second.delivered
+    assert discord_double.contents("outreach-sent") == [
+        "Shadow draft to j***@example.com.sg",
+        "Shadow draft to j***@example.com.sg",
+    ]
+
+
+# --- attachments ------------------------------------------------------------------
+
+
+def test_a_text_attachment_and_its_name_are_masked(conn, discord_double, secrets, tmp_path):
+    # Review 02, blocking finding 2.
+    config.secret("UNSUBSCRIBE_SECRET")
+    notes = tmp_path / "jane.tan@example.com.sg notes.txt"
+    notes.write_text(f"key {RESEND_KEY}\nkeychain {KEYCHAIN_VALUE}\ncall +65 9123 4567\n")
+
+    discord.post(conn, "alerts", "notes attached", files=[notes])
+
+    [request] = discord_double.posts("alerts")
+    [(name, body)] = request.files
+    assert name == "j***@example.com.sg notes.txt"
+    assert body.decode() == "key [redacted]\nkeychain [redacted]\ncall [phone removed]\n"
+
+
+def test_an_outbox_record_holds_masked_file_names(conn, secrets, tmp_path):
+    notes = tmp_path / "jane.tan@example.com.sg notes.txt"
+    notes.write_text("plain notes\n")
+
+    discord.post(conn, "alerts", "notes attached", files=[notes])
+
+    saved = outbox_text()
+    assert "jane.tan" not in saved and "j***@example.com.sg notes.txt" in saved
+
+
+def test_a_file_that_cannot_be_inspected_is_held_back(conn, discord_double, tmp_path):
+    pdf = tmp_path / "report.pdf"
+    pdf.write_bytes(b"%PDF-1.7\x00\x01\x02 binary")
+
+    discord.post(conn, "alerts", "with a pdf", files=[pdf])
+
+    [request] = discord_double.posts("alerts")
+    assert request.files == []
+    assert "report.pdf was not attached" in request.content
+
+
+def test_a_png_from_outside_the_engines_folders_is_held_back(conn, discord_double, tmp_path):
+    image = tmp_path / "elsewhere" / "grid.png"
+    image.parent.mkdir()
+    image.write_bytes(png())
+
+    discord.post(conn, "alerts", "with an image", files=[image])
+
+    [request] = discord_double.posts("alerts")
+    assert request.files == []
+    assert "grid.png was not attached" in request.content
+
+
+def test_an_engine_png_goes_out_without_its_text_chunks(conn, discord_double, secrets):
+    image = paths.outputs_dir() / "social" / "grid.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(png(text=f"Comment\x00{RESEND_KEY}".encode()))
+
+    discord.post(conn, "alerts", "with an image", files=[image])
+
+    [request] = discord_double.posts("alerts")
+    [(name, body)] = request.files
+    assert name == "grid.png"
+    assert body == png() and RESEND_KEY.encode() not in body
+
+
+def png(text: bytes | None = None) -> bytes:
+    """A one-pixel PNG, with a tEXt chunk if asked."""
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    header = chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0))
+    extra = chunk(b"tEXt", text) if text is not None else b""
+    pixels = chunk(b"IDAT", zlib.compress(b"\x00\x00"))
+    return b"\x89PNG\r\n\x1a\n" + header + extra + pixels + chunk(b"IEND", b"")

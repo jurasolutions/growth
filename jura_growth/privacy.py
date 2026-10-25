@@ -1,74 +1,84 @@
 """Personal data in Discord (mission control PRD §4.4).
 
-Discord is a third-party service outside Singapore, so every message passes
-through `for_discord()` before it is posted. `discord.post()` applies it to
-every message too, so a builder that forgets is still covered.
+Discord is a third-party service outside Singapore. `discord.post()` passes
+every message through `for_discord()`, so a builder that forgets is covered.
 
 - **Allowed:** company names, domains, industries, scores, public source URLs,
   role addresses (info@, hello@, enquiries@ ...), community groups, and the
   text of Jura's own posts and emails.
 - **Masked:** an address that names a person reads `j***@example.com.sg`. The
-  message builder puts its source page beside it, so Ting Yu can check it there.
+  builder puts its source page beside it, so Ting Yu can check it there.
 - **Never:** phone numbers, a prospect's personal name, the body of a reply,
   bounce or complaint, Ting Yu's own contact details, anything from
   `personal-finance/`.
 
 Secrets go first, through `config.redact()`.
 
-A name or a reply body can't be recognised by its shape, so the process tells
-this module what it knows:
+**Jura's own copy.** A builder names the parts of a message that are Jura's
+own outgoing text (an email draft, a social post) with `own_copy`. There the
+words stay as written: a single name-like word, a learned company name, a
+registered reply line and Ting Yu's sender address are left alone. Secrets,
+phone numbers, prospects' named addresses and a prospect's full name ("Jane
+Tan") are still masked.
+
+**What the process knows.** A name or a reply body can't be recognised by its
+shape, so the process says what it knows:
 
 - `remember_address(email)` learns the name in a named address (`jane.tan@`
-  gives Jane and Tan). Every address in the text being masked teaches the same.
-- `never_show(text)` registers a value read in memory, such as a reply's body,
-  that must never be posted.
-- `load_for_masking(conn)` is what the one-pager, run updates and approval cards
-  call once before they build anything: it loads the Keychain values
-  (`config.load_secrets_for_masking()`) and the named addresses the plug-ins
-  hold. A plug-in shares them through an optional hook,
-  `named_addresses(conn) -> list[str]`, found with `getattr` like `digest()`.
+  gives Jane and Tan). Every named address in the text being masked teaches the
+  same. A full name ("jane tan", any case) is masked everywhere; a single part
+  only when it is written as a name (Jane, JANE), not as a word (jane).
+- `remember_company(name)` keeps a company's name whole, so "Tan Holdings" is
+  never read as Mr Tan.
+- `remember_owner(email)` marks Ting Yu's own address: removed everywhere
+  except Jura's own copy, where his sender address belongs.
+- `never_show(text)` registers a value read in memory, such as a reply's body.
+- `learn(conn)` asks the plug-ins through an optional hook,
+  `privacy_terms(conn) -> {"named_addresses": [...], "companies": [...],
+  "owner_addresses": [...]}`. It reads the database only, never the Keychain,
+  so `discord.post()` calls it on every post.
+- `load_for_masking(conn)` is `learn(conn)` plus the Keychain values
+  (`config.load_secrets_for_masking()`), for builders whose text was written by
+  another process: today `discord.alert()`, the digest and `discord post`.
 
-`config.reset_caches()` forgets all of it.
+**Known limit.** A name that appears in no address the engine holds ("Jane
+Lim" behind `jl@`) can't be recognised. Builders keep such fields out of
+messages in the first place.
+
+`config.reset_caches()` forgets everything learned.
 """
 
 from __future__ import annotations
 
 import re
 import sqlite3
-from typing import Iterable
+from typing import Callable, Iterable
 
-from jura_growth import config
+from jura_growth import agents, config, role_addresses
 
-# Shared inboxes, not people. Covers every role the scout classifies
-# (tests/test_privacy.py checks that it does), plus system senders.
-ROLE_LOCAL_PARTS = frozenset(
-    """
-    info enquiry enquiries enquire inquiry inquiries sales hello contact admin
-    office general mail team reception service services support help booking bookings book
-    orders order sales.sg sg singapore accounts account billing cs customerservice
-    customer.service customercare care ask operations ops marketing projects quote quotes
-    quotation rental events catering reservations reservation studio clinic frontdesk
-    front.desk admissions enrol enroll hr careers jobs privacy dpo abuse noreply no-reply
-    donotreply postmaster webmaster mailer-daemon bounce bounces notifications
-    """.split()
-)
-
+# The at sign as written, URL-encoded, or as an HTML entity.
+AT = r"(?:@|%40|&#64;|&#x40;)"
 EMAIL_RE = re.compile(
-    r"(?<![\w.+%-])([A-Za-z0-9][\w.+%-]*)@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})"
+    rf"(?<![\w.+%-])([\w][\w.+%-]*?){AT}([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{{2,}})", re.I
 )
 URL_RE = re.compile(r"\b(?:https?://|www\.)\S+", re.I)
-# Singapore numbers (8 digits starting 3, 6, 8 or 9, with or without +65), then any
-# other number written with a + country code.
+# Singapore numbers: 8 digits starting 3, 6, 8 or 9 as 4-4 or 2-2-2-2 (one kind of
+# separator), with or without +65. Then any other number written with a + country code.
 PHONE_RE = re.compile(
-    r"(?<![\w+])(?:(?:\+65|\(\+?65\)|65)[\s-]?)?[3689]\d{3}[\s-]?\d{4}(?![\w])"
+    r"(?<![\w+.])(?:(?:\+?65|\(\+?65\))[\s.-]?)?"
+    r"(?:[3689]\d{3}[\s.-]?\d{4}|[3689]\d([\s.-])\d{2}\1\d{2}\1\d{2})(?![\w])"
     r"|(?<![\w+])\+\d{1,3}(?:[\s.-]?\(?\d{1,4}\)?){2,5}(?![\w])"
 )
-FINANCE_LINE_RE = re.compile(r"^.*personal[-_ ]finance.*$", re.I | re.M)
-# A name part as short as these would mask ordinary words.
-MIN_NAME_PART = 3
-# Shorter registered values (a reply line such as "Thanks") would mask ordinary words.
-MIN_NEVER = 8
-NOT_NAMES = frozenset("the and for you our not are was can has had all any new one two".split())
+FULL_WIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+FINANCE_LINE_RE = re.compile(r"^.*personal(?:[-_ ]|%2d)?finance.*$", re.I | re.M)
+# Short words that a name part never masks.
+NOT_NAMES = frozenset(
+    """
+    an as at be by do go he hi if in is it me my no of oh on or ok so to up us we
+    the and for you our not are was can has had all any new one two
+    """.split()
+)
+MIN_NAME_PART = 2
 
 NAME = "[name removed]"
 PHONE = "[phone removed]"
@@ -76,84 +86,172 @@ REMOVED = "[removed]"
 FINANCE = "[removed: personal finance]"
 
 _never: set[str] = set()
-_people: set[str] = set()  # name parts, lower-cased
+_name_groups: set[frozenset[str]] = set()  # the name parts of each named address learned
+_companies: set[str] = set()
+_owner: set[str] = set()  # Ting Yu's addresses, lower-cased
 
 
-def for_discord(text: str) -> str:
-    """`text` as it may appear in Discord: secrets masked, then personal data."""
+def for_discord(text: str, *, own_copy: Iterable[str] = ()) -> str:
+    """`text` as it may appear in Discord: secrets masked, then personal data.
+
+    `own_copy` names substrings of `text` that are Jura's own outgoing text."""
     text = config.redact(text)
-    for value in sorted(_never, key=len, reverse=True):
-        text = re.sub(re.escape(value), REMOVED, text, flags=re.I)
-    text = FINANCE_LINE_RE.sub(FINANCE, text)
-    names = set(_people)
+    own = [config.redact(c) for c in own_copy if c and c.strip()]
+    groups = set(_name_groups)
     for match in EMAIL_RE.finditer(text):
-        names |= _name_parts(match.group(0))
-    text = EMAIL_RE.sub(lambda m: masked_address(m.group(0)), text)
-    text = PHONE_RE.sub(lambda m: PHONE if _digits(m.group(0)) >= 8 else m.group(0), text)
-    return _outside_urls(text, lambda part: _mask_names(part, names))
+        address = _plain(match.group(0))
+        if address.lower() not in _owner:
+            parts = _name_parts(address)
+            if parts:
+                groups.add(frozenset(parts))
+    names = _NameMatcher(groups, _companies)
+    return "".join(_mask(part, is_own, names) for part, is_own in _split(text, own))
 
 
 def masked_address(email: str) -> str:
-    """A role address as it is; an address that names a person as `j***@domain`."""
-    if is_role_address(email):
+    """A role address as it is; an address that names a person as `j***@domain`
+    (keeping the at sign as it was written)."""
+    if is_role_address(_plain(email)):
         return email
-    local, _, domain = email.partition("@")
-    return f"{local[:1]}***@{domain}"
+    match = re.search(AT, email)
+    if not match:
+        return email
+    return f"{email[:1]}***{email[match.start():]}"
 
 
 def is_role_address(email: str) -> bool:
-    local = email.split("@", 1)[0].lower()
-    base = re.sub(r"[\d_.-]+$", "", local) or local
-    return local in ROLE_LOCAL_PARTS or base in ROLE_LOCAL_PARTS
+    return role_addresses.is_shared_inbox(email)
 
 
 def never_show(*values: str) -> None:
     """Values this process read that must never reach Discord, such as a reply's body."""
     cleaned = (v.strip().rstrip(".!?,;:").strip() for v in values if v)
-    _never.update(v for v in cleaned if len(v) >= MIN_NEVER)
+    _never.update(v for v in cleaned if len(v) >= 8)
 
 
 def remember_address(email: str) -> None:
-    """Learn the personal name in a named address, so it is masked wherever it appears."""
-    _people.update(_name_parts(email))
+    parts = _name_parts(email)
+    if parts:
+        _name_groups.add(frozenset(parts))
 
 
-def remember_people(conn: sqlite3.Connection | None) -> None:
-    """Learn the named addresses the plug-ins hold. Never fails: a plug-in error leaves what is known."""
-    if conn is None:
-        return
-    from jura_growth import agents
+def remember_company(name: str) -> None:
+    if name and len(name.strip()) >= 3:
+        _companies.add(name.strip())
 
+
+def remember_owner(email: str) -> None:
+    if email and "@" in email:
+        _owner.add(email.strip().lower())
+
+
+def learn(conn: sqlite3.Connection | None) -> None:
+    """What the plug-ins know: named contacts, companies and Ting Yu's addresses.
+    The database only, never the Keychain. A plug-in error leaves what is known."""
     for module in agents.plugins():
-        hook = getattr(module, "named_addresses", None)
+        hook = getattr(module, "privacy_terms", None)
         if not hook:
             continue
         try:
-            addresses: Iterable[str] = hook(conn) or []
+            terms = hook(conn) or {}
         except Exception:  # noqa: BLE001 - one plug-in never stops a message, as in the digest
             continue
-        for address in addresses:
+        for address in terms.get("named_addresses", ()):
             remember_address(address)
+        for name in terms.get("companies", ()):
+            remember_company(name)
+        for address in terms.get("owner_addresses", ()):
+            remember_owner(address)
 
 
 def load_for_masking(conn: sqlite3.Connection | None) -> None:
-    """Once before building a one-pager, a run update or an approval card."""
+    """For a builder whose text was written by another process."""
     config.load_secrets_for_masking()
-    remember_people(conn)
+    learn(conn)
 
 
 def reset() -> None:
     _never.clear()
-    _people.clear()
+    _name_groups.clear()
+    _companies.clear()
+    _owner.clear()
 
 
 config.on_reset(reset)
 
 
+# --- masking -------------------------------------------------------------------
+
+
+def _mask(text: str, own: bool, names: "_NameMatcher") -> str:
+    if not own:
+        for value in sorted(_never, key=len, reverse=True):
+            text = re.sub(re.escape(value), REMOVED, text, flags=re.I)
+    text = FINANCE_LINE_RE.sub(FINANCE, text)
+    text = EMAIL_RE.sub(lambda m: _address(m.group(0), own), text)
+    text = _mask_phones(text)
+    return _outside_urls(text, lambda part: names.mask(part, single_parts=not own))
+
+
+def _address(written: str, own: bool) -> str:
+    if _plain(written).lower() in _owner:
+        return written if own else REMOVED
+    return masked_address(written)
+
+
+def _mask_phones(text: str) -> str:
+    probe = text.translate(FULL_WIDTH_DIGITS)  # same length, so spans line up
+    out, last = [], 0
+    for match in PHONE_RE.finditer(probe):
+        if sum(c.isdigit() for c in match.group(0)) < 8:
+            continue
+        out += [text[last : match.start()], PHONE]
+        last = match.end()
+    out.append(text[last:])
+    return "".join(out)
+
+
+class _NameMatcher:
+    def __init__(self, groups: set[frozenset[str]], companies: set[str]):
+        parts = {p for group in groups for p in group}
+        self.full = self.single = self.companies = None
+        if parts:
+            word = "|".join(re.escape(p) for p in sorted(parts, key=len, reverse=True))
+            self.full = re.compile(rf"\b(?:{word})(?:[\s.-]+(?:{word}))+\b", re.I)
+            forms = sorted({f for p in parts for f in (p.title(), p.upper())}, key=len, reverse=True)
+            self.single = re.compile(rf"\b(?:{'|'.join(re.escape(f) for f in forms)})\b")
+        if companies:
+            alternatives = "|".join(re.escape(c) for c in sorted(companies, key=len, reverse=True))
+            self.companies = re.compile(rf"\b(?:{alternatives})\b", re.I)
+
+    def mask(self, text: str, *, single_parts: bool) -> str:
+        if self.full is None:
+            return text
+        if self.companies is None:
+            return self._mask(text, single_parts)
+        out, last = [], 0
+        for match in self.companies.finditer(text):
+            out += [self._mask(text[last : match.start()], single_parts), match.group(0)]
+            last = match.end()
+        out.append(self._mask(text[last:], single_parts))
+        return "".join(out)
+
+    def _mask(self, text: str, single_parts: bool) -> str:
+        if self.full is None or self.single is None:
+            return text
+        text = self.full.sub(NAME, text)
+        return self.single.sub(NAME, text) if single_parts else text
+
+
 # --- helpers -------------------------------------------------------------------
 
 
+def _plain(email: str) -> str:
+    return re.sub(AT, "@", email, count=1, flags=re.I)
+
+
 def _name_parts(email: str) -> set[str]:
+    email = _plain(email)
     if is_role_address(email):
         return set()
     local = email.split("@", 1)[0].lower()
@@ -161,21 +259,23 @@ def _name_parts(email: str) -> set[str]:
     return parts - NOT_NAMES
 
 
-def _mask_names(text: str, names: set[str]) -> str:
-    if not names:
-        return text
-    word = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
-    return re.sub(rf"\b(?:{word})(?:[\s.-]+(?:{word}))*\b", NAME, text, flags=re.I)
+def _split(text: str, own: list[str]) -> list[tuple[str, bool]]:
+    """`text` cut into (piece, is Jura's own copy) by where each own-copy string occurs."""
+    if not own:
+        return [(text, False)]
+    pattern = re.compile("|".join(re.escape(c) for c in sorted(set(own), key=len, reverse=True)))
+    out, last = [], 0
+    for match in pattern.finditer(text):
+        out += [(text[last : match.start()], False), (match.group(0), True)]
+        last = match.end()
+    out.append((text[last:], False))
+    return [(piece, is_own) for piece, is_own in out if piece]
 
 
-def _outside_urls(text: str, change) -> str:
+def _outside_urls(text: str, change: Callable[[str], str]) -> str:
     out, last = [], 0
     for match in URL_RE.finditer(text):
         out += [change(text[last : match.start()]), match.group(0)]
         last = match.end()
     out.append(change(text[last:]))
     return "".join(out)
-
-
-def _digits(text: str) -> int:
-    return sum(c.isdigit() for c in text)

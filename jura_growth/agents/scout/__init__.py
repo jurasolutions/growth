@@ -69,6 +69,16 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     return {"figures": {"leads_added": added, "leads_form_only": len(forms)}, "lines": lines, "brief": brief}
 
 
-def named_addresses(conn: sqlite3.Connection) -> list[str]:
-    """Contact addresses that name a person, so `privacy` keeps their names out of Discord."""
-    return [r["email"] for r in db.rows(conn, "SELECT email FROM contacts WHERE kind = 'named'")]
+
+def privacy_terms(conn: sqlite3.Connection | None) -> dict:
+    """For `privacy`: addresses that name a person, so their names stay out of
+    Discord, and company names, so they are never read as a person's name."""
+    if conn is None:
+        return {}
+    named = db.rows(conn, "SELECT email FROM contacts WHERE kind = 'named'")
+    companies = db.rows(conn, "SELECT company, display_name FROM leads")
+    return {
+        "named_addresses": [r["email"] for r in named],
+        # A one-word name ("Tan") would also protect a surname, so only longer ones count.
+        "companies": sorted({n for r in companies for n in (r["company"], r["display_name"]) if n and " " in n.strip()}),
+    }

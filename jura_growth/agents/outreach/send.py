@@ -399,6 +399,7 @@ def _send_one(conn, message: dict, lead: dict, row: dict, mode: str, client) -> 
             "outreach-sent",
             f"**SHADOW** (not sent) message {message['id']} to {domain} for {lead['company']} (lead {lead['id']})\n"
             f"Subject: {email.subject}\n\n{email.draft}",
+            own_copy=(email.subject, email.draft),
         )
         return f"SHADOW message {message['id']} to {domain}"
 
@@ -410,6 +411,7 @@ def _send_one(conn, message: dict, lead: dict, row: dict, mode: str, client) -> 
             "outreach-sent",
             f"**Sent** message {message['id']} to {domain} ({lead['company']}, lead {lead['id']})\n"
             f"Subject: {email.subject}\nFirst line: {first_line}",
+            own_copy=(email.subject, first_line),
         )
         return f"sent message {message['id']} to {domain}"
     if outcome == "pause":

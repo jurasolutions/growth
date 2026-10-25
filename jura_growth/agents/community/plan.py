@@ -673,7 +673,8 @@ def publish(conn: sqlite3.Connection, week: str | None = None) -> tuple[Path, di
             images.append(paths.guard(p["image_path"]))
     images = images[:10]
     message = discord_message(conn, week, target)
-    result = discord.post(conn, "community", message, files=images, username="Jura growth · community")
+    own = tuple(item["text"] for item in [*posts, *replies] if item["text"])  # Jura's own posts, as written
+    result = discord.post(conn, "community", message, files=images, username="Jura growth · community", own_copy=own)
     log.event(conn, "community.plan.published", {"week": week, "file": str(target), "posts": len(posts), "replies": len(replies)}, agent=NAME)
     return target, result, len(posts), len(replies)
 
