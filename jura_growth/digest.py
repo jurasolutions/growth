@@ -17,6 +17,13 @@ import sqlite3
 from jura_growth import agents, db, discord, holidays, log, pause, paths, privacy, timeutil
 
 
+def spend(conn: sqlite3.Connection, day: str) -> float:
+    """Headless Claude spend on one SGT day: the `cost_usd` recorded on runs
+    that started that day (every stamp is SGT). Recorded figures only: a run
+    still going has none yet, and nothing is projected."""
+    return db.scalar(conn, "SELECT round(sum(cost_usd), 2) FROM runs WHERE substr(started_at, 1, 10) = ?", (day,)) or 0.0
+
+
 def build(conn: sqlite3.Connection, day: str | None = None) -> dict:
     day = day or timeutil.today_str()
     runs = db.rows(
@@ -36,9 +43,7 @@ def build(conn: sqlite3.Connection, day: str | None = None) -> dict:
     paused = pause.flags(conn)
     if pause.pause_file_active():
         paused.insert(0, {"agent": "all", "reason": "PAUSE file present"})
-    cost = db.scalar(
-        conn, "SELECT round(sum(cost_usd), 2) FROM runs WHERE substr(started_at, 1, 10) = ?", (day,)
-    )
+    cost = spend(conn, day)
 
     figures: dict = {}
     lines: list[str] = []

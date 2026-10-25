@@ -1,0 +1,497 @@
+"""The one-pager's read model (MC §4.2, §5.3; ADR 0002).
+
+A `Source` (the database path, the data, outputs and PRD folders, the clock and
+the jobs) goes in; a `Snapshot` of plain data comes out. `health.strip()` and
+`one_pager` build text from the snapshot, never from the database.
+
+The read model never writes and never repairs:
+
+- growth.db is opened `mode=ro` with `PRAGMA query_only = ON`, read in one go and
+  closed before anything is rendered. A hot journal (`SQLITE_READONLY_ROLLBACK`)
+  or a lock is the `UNFINISHED_WRITE` state, a missing file `MISSING`, a missing
+  migration a name in `missing_migrations`. Rolling back the journal is left to
+  the next ordinary open (`/growth status`).
+- `approvals` rows are read with its own `SELECT`s. A request past its decide-by
+  or use-by counts as lapsed by the clock, without writing; the one-pager job
+  writes those transitions on its own connection before this runs (A17). No
+  approval function and no kind's `content()` is called: either may supersede.
+- No job lock is taken: a running run is judged by its row.
+
+Every string in a snapshot has been through `privacy.for_discord()`.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+import sqlite3
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import Any, Callable, Iterator, Mapping
+
+from jura_growth import agents, health, paths, privacy, schedule, slots
+from jura_growth.timeutil import SGT
+
+OK, MISSING, UNFINISHED_WRITE, UNREADABLE = "ok", "missing", "unfinished write", "unreadable"
+BUSY_TIMEOUT = 2  # seconds: scout-send writes every 10 minutes, so reads stay short
+_BUSY = {"SQLITE_READONLY_ROLLBACK", "SQLITE_BUSY", "SQLITE_LOCKED"}
+
+
+@dataclass(frozen=True)
+class Source:
+    db: Path
+    data: Path
+    outputs: Path
+    prd: Path
+    now: datetime
+    jobs: Mapping[str, Mapping[str, Any]]
+    installed: Callable[[str], bool] = schedule.installed
+    days: int = 14  # the grid's width, ending today
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    now: datetime
+    db_state: str
+    db_error: str | None = None  # the SQLite error name when growth.db couldn't be read
+    missing_migrations: tuple[str, ...] = ()
+    days: tuple[date, ...] = ()
+    slots: dict[tuple[str, date], list[slots.SlotStatus]] = field(default_factory=dict)  # empty without a runs table
+    installs: dict[str, str] = field(default_factory=dict)  # job: health.INSTALLED, OUT_OF_DATE or NOT_INSTALLED
+    approvals: tuple[Request, ...] | None = None  # None when the approvals table isn't there
+    last_one_pager: datetime | None = None  # the scheduled one before now: "since the last one-pager"
+    next_one_pager: datetime | None = None
+    pause_file: str | None = None  # its reason, when the PAUSE file is there
+    paused: tuple[tuple[str, str], ...] = ()  # (agent, reason)
+    failures: tuple[Failure, ...] = ()
+    undelivered: int = 0  # Discord posts not delivered since the last one-pager
+    outbox: int = 0  # outbox messages saved since the last one-pager
+    gaps: tuple[health.Gap, ...] = ()
+    plugin_lines: tuple[str, ...] = ()  # plug-ins' own "Needs you" lines (their health(conn) hook)
+    broken: tuple[str, ...] = ()  # plug-ins that failed to load
+    yesterday: Yesterday | None = None
+    spend_today: float = 0.0
+
+
+@dataclass(frozen=True)
+class Failure:
+    """A failed run: the latest finished run of its job, or one in the last 24 hours."""
+
+    job: str
+    at: datetime
+    error: str | None
+
+
+@dataclass(frozen=True)
+class Yesterday:
+    """The digest's figure lines for yesterday (`digest.build()`), and its spend."""
+
+    day: str
+    lines: tuple[str, ...]
+    spend: float
+
+
+# What a request means now, judged by the clock (MC §4.2): stored statuses
+# don't change until something writes them, so a pending request past its
+# decide-by already reads as lapsed here.
+WAITING, LAPSED, APPROVED, LAPSED_UNUSED, USED, SKIPPED, SUPERSEDED = (
+    "waiting", "lapsed", "approved", "lapsed unused", "used", "skipped", "superseded",
+)
+
+
+@dataclass(frozen=True)
+class Request:
+    """One approval request as the one-pager needs it."""
+
+    id: str  # A-nnnn
+    kind: str
+    state: str
+    requested_at: datetime
+    decide_by: datetime
+    use_by: datetime | None
+    decided_at: datetime | None
+    decided_origin: str | None  # "terminal" or "ssh"
+    posted: bool
+    close_reason: str | None
+
+
+# The one-pager job's own schedule (ticket 09 adds the job); until then, its planned 08:00.
+ONE_PAGER_JOB, ONE_PAGER_DEFAULT = "one-pager", {"daily": "08:00"}
+
+
+def open_read_only(path: Path) -> sqlite3.Connection:
+    """growth.db for reading only. The first query raises on a hot journal."""
+    conn = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True, timeout=BUSY_TIMEOUT)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only = ON")
+    return conn
+
+
+def read(source: Source) -> Snapshot:
+    """Everything the one-pager shows, read once. Never raises for the
+    database's state: that is `db_state`."""
+    now = source.now.astimezone(SGT)
+    days = tuple(now.date() - timedelta(days=n) for n in reversed(range(source.days)))
+    last, following = one_pager_around(now, source.jobs)
+    conn, state, error = _connect(Path(source.db))
+    try:
+        privacy.load_for_masking(conn)  # the rows and files were written by other processes
+        base: dict[str, Any] = {
+            "days": days,
+            "installs": health.install_states(source.jobs, source.installed),
+            "last_one_pager": last,
+            "next_one_pager": following,
+            "pause_file": _pause_file(),
+            "gaps": tuple(health.setup_gaps()),
+            "broken": tuple(_clean(f"{name} ({problem[:120]})") for name, problem in agents.BROKEN.items()),
+            "outbox": _outbox(Path(source.data) / "discord-outbox", last),
+        }
+        if conn is None:
+            return Snapshot(now, state, error, **base)
+        try:
+            facts = _from_db(conn, source, now, days, base["installs"], last)
+        except sqlite3.Error as failure:
+            return Snapshot(now, _state_of(failure), _error_name(failure), **base)
+        return Snapshot(now, OK, **base, **facts)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _connect(path: Path) -> tuple[sqlite3.Connection | None, str, str | None]:
+    """The read-only connection, already past its first query, or why not."""
+    if not path.exists():
+        return None, MISSING, None
+    try:
+        conn = open_read_only(path)
+    except sqlite3.Error as error:
+        return None, _state_of(error), _error_name(error)
+    try:
+        conn.execute("SELECT count(*) FROM sqlite_master").fetchone()  # a hot journal or a lock shows here
+    except sqlite3.Error as error:
+        conn.close()
+        return None, _state_of(error), _error_name(error)
+    return conn, OK, None
+
+
+def _state_of(error: sqlite3.Error) -> str:
+    return UNFINISHED_WRITE if _error_name(error) in _BUSY or "locked" in str(error) else UNREADABLE
+
+
+def _error_name(error: sqlite3.Error) -> str:
+    return getattr(error, "sqlite_errorname", None) or type(error).__name__
+
+
+def _pause_file() -> str | None:
+    path = paths.pause_file()
+    if not path.exists():
+        return None
+    try:
+        reason = path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        reason = ""
+    return _clean(reason[:200]) or "PAUSE file present"
+
+
+def _outbox(folder: Path, since: datetime) -> int:
+    """Messages saved to the Discord outbox since the last one-pager."""
+    after = since.isoformat(timespec="seconds")
+    count = 0
+    try:
+        files = sorted(folder.glob("*.jsonl"))
+    except OSError:
+        return 0
+    for path in files:
+        if path.stem < since.date().isoformat():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for raw in text.splitlines():
+            try:
+                line = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(line, dict) and str(line.get("ts", "")) > after:
+                count += 1
+    return count
+
+
+def _tables(conn: sqlite3.Connection) -> set[str]:
+    return {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+
+
+def _missing_migrations(conn: sqlite3.Connection, tables: set[str]) -> tuple[str, ...]:
+    from jura_growth import db  # the migration list only; never db's connections
+
+    done = {row[0] for row in conn.execute("SELECT id FROM schema_migrations")} if "schema_migrations" in tables else set()
+    expected = [f"{owner}/{file.name}" for owner, folder in db.migration_sets() for file in sorted(folder.glob("*.sql"))]
+    return tuple(m for m in expected if m not in done)
+
+
+def _from_db(
+    conn: sqlite3.Connection, source: Source, now: datetime, days: tuple[date, ...], installs: dict[str, str], last: datetime
+) -> dict:
+    """Every fact the database holds, each table only if it is there. A
+    lock or a hot journal raises out of here (the snapshot's `db_state`)."""
+    tables = _tables(conn)
+    since = last.isoformat(timespec="seconds")
+    facts: dict[str, Any] = {"missing_migrations": _missing_migrations(conn, tables)}
+    if "runs" in tables:
+        records = _records(conn, tables, Path(source.data) / "runs", set(source.jobs), days[0])
+        loaded = {job for job, state in installs.items() if state != health.NOT_INSTALLED}
+        found = slots.classify(source.jobs, records, now, days, installed=loaded)
+        facts["slots"] = {key: [_clean_slot(slot) for slot in states] for key, states in found.items()}
+        facts["failures"] = _failures(conn, now)
+        facts["yesterday"], facts["spend_today"] = _yesterday(conn, now)
+    if "pause_flags" in tables:
+        rows = conn.execute("SELECT agent, reason FROM pause_flags WHERE paused = 1 ORDER BY agent").fetchall()
+        facts["paused"] = tuple((_clean(row["agent"]), _clean(row["reason"] or "paused")) for row in rows)
+    if "discord_posts" in tables:
+        facts["undelivered"] = conn.execute("SELECT count(*) FROM discord_posts WHERE delivered = 0 AND ts > ?", (since,)).fetchone()[0]
+    if "approvals" in tables:
+        facts["approvals"] = _requests(conn, now, last_one_pager=last)
+    facts["plugin_lines"] = _plugin_lines(conn)
+    return facts
+
+
+def _failures(conn: sqlite3.Connection, now: datetime) -> tuple[Failure, ...]:
+    day_ago = (now - timedelta(days=1)).isoformat(timespec="seconds")
+    rows = conn.execute(
+        "SELECT job, started_at, error FROM runs WHERE status = 'failed' AND ("
+        " id IN (SELECT max(id) FROM runs WHERE status IN ('ok', 'failed') GROUP BY job) OR started_at >= ?)"
+        " ORDER BY started_at, id",
+        (day_ago,),
+    ).fetchall()
+    return tuple(Failure(_clean(row["job"]), _at(row["started_at"]), _clean((row["error"] or "")[:300]) or None) for row in rows)
+
+
+def _yesterday(conn: sqlite3.Connection, now: datetime) -> tuple[Yesterday | None, float]:
+    from jura_growth import digest  # build() and spend() only read
+
+    day = (now.date() - timedelta(days=1)).isoformat()
+    today = digest.spend(conn, now.date().isoformat())
+    try:
+        summary = digest.build(conn, day)
+    except sqlite3.Error as error:
+        if _state_of(error) == UNFINISHED_WRITE:
+            raise
+        return None, today  # a core table the digest reads isn't there yet
+    return Yesterday(day, tuple(_clean(line) for line in summary["lines"]), float(summary["claude_cost_usd"] or 0.0)), today
+
+
+def _plugin_lines(conn: sqlite3.Connection) -> tuple[str, ...]:
+    """Each plug-in's `health(conn)` lines, given the read-only connection."""
+    lines: list[str] = []
+    for module in agents.plugins():
+        hook = getattr(module, "health", None)
+        if not callable(hook):
+            continue
+        try:
+            lines += [_clean(str(line)) for line in hook(conn) or () if line]
+        except Exception as error:  # noqa: BLE001 - one plug-in never breaks the one-pager
+            lines.append(_clean(f"{getattr(module, 'NAME', 'a plug-in')}: its health check failed ({type(error).__name__})"))
+    return tuple(lines)
+
+
+def one_pager_around(now: datetime, jobs: Mapping[str, Mapping[str, Any]]) -> tuple[datetime, datetime]:
+    """The scheduled one-pagers just before and just after `now`. An
+    on-request one-pager reports since the last scheduled one, like the next
+    scheduled one will."""
+    shape = dict((jobs.get(ONE_PAGER_JOB) or {}).get("schedule") or ONE_PAGER_DEFAULT)
+    times = sorted(
+        datetime(day.year, day.month, day.day, hour, minute, tzinfo=SGT)
+        for offset in range(-8, 9)
+        for day in [now.date() + timedelta(days=offset)]
+        for weekday, hour, minute in schedule.sgt_slots(shape)
+        if weekday is None or weekday == schedule.launchd_weekday(day)
+    )
+    before = [at for at in times if at < now]
+    after = [at for at in times if at > now]
+    return (before[-1] if before else now - timedelta(days=1)), (after[0] if after else now + timedelta(days=1))
+
+
+# --- approval requests ----------------------------------------------------------------
+
+
+def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: datetime) -> tuple[Request, ...]:
+    """Live requests, and those decided or closed since the last one-pager.
+    Its own SELECT: approvals.py may supersede on a read, which is a write."""
+    since = last_one_pager.isoformat(timespec="seconds")
+    rows = conn.execute(
+        "SELECT id, kind, status, requested_at, decide_by, use_by, decided_at, decided_origin, used_at, posted_at, close_reason"
+        " FROM approvals WHERE (status IN ('pending', 'approved') AND used_at IS NULL) OR decided_at > ? OR closed_at > ?"
+        " ORDER BY requested_at, id",
+        (since, since),
+    ).fetchall()
+    return tuple(_request(row, now) for row in rows)
+
+
+def _request(row: sqlite3.Row, now: datetime) -> Request:
+    decide_by, use_by = _at(row["decide_by"]), _at(row["use_by"])
+    status = row["status"]
+    if status == "pending":
+        state = WAITING if now < decide_by else LAPSED
+    elif status == "approved" and row["used_at"]:
+        state = USED
+    elif status == "approved":
+        state = APPROVED if use_by is None or now < use_by else LAPSED_UNUSED
+    elif status == "expired":
+        state = LAPSED_UNUSED if row["decided_at"] else LAPSED  # expired after a yes, or unanswered
+    else:
+        state = SKIPPED if status == "skipped" else SUPERSEDED
+    return Request(
+        id=f"A-{row['id']:04d}",
+        kind=_clean(row["kind"]),
+        state=state,
+        requested_at=_at(row["requested_at"]),
+        decide_by=decide_by,
+        use_by=use_by,
+        decided_at=_at(row["decided_at"]),
+        decided_origin=row["decided_origin"],
+        posted=row["posted_at"] is not None,
+        close_reason=_clean(row["close_reason"]),
+    )
+
+
+def _at(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    moment = datetime.fromisoformat(value)
+    return (moment if moment.tzinfo else moment.replace(tzinfo=SGT)).astimezone(SGT)
+
+
+# --- records for the slot classifier (MC §4.5) -------------------------------------
+
+TRACES = (slots.SKIPPED, slots.QUIET)  # the record kinds the mirror holds
+
+
+def _records(conn: sqlite3.Connection, tables: set[str], mirror: Path, jobs: set[str], first: date) -> list[slots.Record]:
+    """Each record once: those on the days shown, plus the latest before them
+    for each job. Without that earlier record the classifier would call a job
+    installed before the window "not installed" (code review 07, S-5).
+
+    Runs, and the skip rows of jobs that aren't quiet, come from `runs`;
+    `run.skipped` and `run.quiet` from `events` and the JSONL mirror, which
+    hold the same record twice (the PAUSE-file and lock skips reach only the
+    mirror). The dedupe key is `Record.key` (MC §4.5)."""
+    start = _stamp(first)
+    found: dict[tuple, slots.Record] = {}
+
+    def add(make: Callable[[Any], slots.Record], row: Any) -> None:
+        record = _record(make, row)
+        if record is not None:
+            found.setdefault(record.key, record)
+
+    run_columns = "SELECT job, started_at, status, summary FROM runs"
+    for row in conn.execute(f"{run_columns} WHERE started_at >= ?", (start,)):
+        add(slots.Record.from_run, row)
+    for row in conn.execute(f"{run_columns} WHERE id IN (SELECT max(id) FROM runs WHERE started_at < ? GROUP BY job)", (start,)):
+        add(slots.Record.from_run, row)
+    if "events" in tables:
+        kinds = ",".join("?" * len(TRACES))
+        event_columns = f"SELECT kind, ts, payload_json FROM events WHERE kind IN ({kinds})"
+        for row in conn.execute(f"{event_columns} AND ts >= ?", (*TRACES, start)):
+            add(slots.Record.from_event, row)
+        latest = f"SELECT max(id) FROM events WHERE kind IN ({kinds}) AND ts < ? GROUP BY json_extract(payload_json, '$.job')"
+        for row in conn.execute(f"{event_columns} AND id IN ({latest})", (*TRACES, *TRACES, start)):
+            add(slots.Record.from_event, row)
+    for line in _mirror_since(mirror, first):
+        add(slots.Record.from_event, line)
+
+    covered = {record.job for record in found.values() if record.at < _midnight(first)}
+    for line in _mirror_before(mirror, first, jobs - covered):
+        add(slots.Record.from_event, line)
+    return list(found.values())
+
+
+def _record(make: Callable[[Any], slots.Record], row: Any) -> slots.Record | None:
+    try:
+        record = make(row)
+        record.at  # noqa: B018 - a stamp that doesn't parse is dropped here, not in the classifier
+        return record
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _mirror_files(folder: Path) -> list[tuple[date, Path]]:
+    found = []
+    try:
+        for path in folder.glob("*.jsonl"):
+            try:
+                found.append((date.fromisoformat(path.stem), path))
+            except ValueError:
+                continue
+    except OSError:
+        return []
+    return sorted(found)
+
+
+def _lines(path: Path) -> Iterator[dict]:
+    """The trace lines of one mirror file. A line cut short by a crash, or
+    anything else that isn't a trace, is skipped."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    for raw in text.splitlines():
+        try:
+            line = json.loads(raw)
+        except ValueError:
+            continue
+        if (
+            isinstance(line, dict)
+            and line.get("kind") in TRACES
+            and isinstance(line.get("payload"), dict)
+            and isinstance(line.get("ts"), str)
+        ):
+            yield line
+
+
+def _mirror_since(folder: Path, first: date) -> Iterator[dict]:
+    """Trace lines in the files from `first` on. A line lands in a later
+    day's file when its transaction commits after midnight, never an earlier one."""
+    for day, path in _mirror_files(folder):
+        if day >= first:
+            yield from _lines(path)
+
+
+def _mirror_before(folder: Path, first: date, wanted: set[str]) -> Iterator[dict]:
+    """The latest trace before `first` for each job in `wanted`, reading
+    older files newest first and stopping once every job has one."""
+    wanted = set(wanted)
+    for day, path in reversed(_mirror_files(folder)):
+        if not wanted:
+            return
+        if day >= first:
+            continue
+        latest: dict[str, dict] = {}
+        for line in _lines(path):
+            job = line["payload"].get("job")
+            if job in wanted and (job not in latest or line["ts"] > latest[job]["ts"]):
+                latest[job] = line
+        yield from latest.values()
+        wanted -= set(latest)
+
+
+def _midnight(day: date) -> datetime:
+    return datetime(day.year, day.month, day.day, tzinfo=SGT)
+
+
+def _stamp(day: date) -> str:
+    return _midnight(day).isoformat(timespec="seconds")
+
+
+# --- redaction ------------------------------------------------------------------------
+
+
+def _clean(text: str | None) -> str | None:
+    return privacy.for_discord(text) if text else text
+
+
+def _clean_slot(slot: slots.SlotStatus) -> slots.SlotStatus:
+    """A slot as the one-pager may show it: its reason masked, and without
+    the raw records behind it."""
+    return dataclasses.replace(slot, reason=_clean(slot.reason), records=())

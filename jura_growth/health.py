@@ -16,10 +16,12 @@ Plug-ins add their own gaps and lines through two optional hooks, documented in
 
 from __future__ import annotations
 
+import plistlib
 import re
 from dataclasses import dataclass
+from typing import Any, Callable, Mapping
 
-from jura_growth import agents, config, discord
+from jura_growth import agents, config, discord, schedule
 
 _SETTING = re.compile(r"[A-Z][A-Z0-9_]*")
 DISCORD = "Discord"
@@ -64,6 +66,32 @@ def _plugin_checks(module) -> list[Gap]:
     except Exception:  # noqa: BLE001 - a broken check is a gap, never a crash or a leaked error
         name = re.sub(r"[^A-Z0-9]+", "_", str(getattr(module, "NAME", "plugin")).upper()).strip("_") or "PLUGIN"
         return [Gap(f"{name}_SETUP_CHECK")]
+
+
+INSTALLED, OUT_OF_DATE, NOT_INSTALLED = "installed", "out of date", "not installed"
+
+
+def install_states(jobs: Mapping[str, Mapping[str, Any]], installed: Callable[[str], bool]) -> dict[str, str]:
+    """Each job's install state. `installed(job)` says whether launchd has it
+    loaded (`schedule.installed`, or a test's fake). A loaded job whose plist in
+    `~/Library/LaunchAgents` differs from what the schedule would generate now
+    is out of date. Nothing is rendered or written (round 2 decisions §2)."""
+    states = {}
+    for job, spec in jobs.items():
+        try:
+            loaded = bool(installed(job))
+        except Exception:  # noqa: BLE001 - launchctl missing or refusing: say not installed
+            loaded = False
+        if not loaded:
+            states[job] = NOT_INSTALLED
+            continue
+        try:
+            with open(schedule.launch_agents_dir() / f"{schedule.label(job)}.plist", "rb") as handle:
+                current = plistlib.load(handle) == schedule.plist(job, dict(spec))
+        except Exception:  # noqa: BLE001 - missing or unreadable: it can't be the current one
+            current = False
+        states[job] = INSTALLED if current else OUT_OF_DATE
+    return states
 
 
 def setup_gaps() -> list[Gap]:
