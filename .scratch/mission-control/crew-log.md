@@ -1,0 +1,260 @@
+# crew-log — mission-control
+
+## 2026-10-24T22:05+08:00 skill-scout
+status:    done
+persona:   skill-scout
+ticket:    -
+artifacts: scout/markdown-it-py.md, scout/jinja2.md, scout/pytest-playwright.md, scout/baseline-and-rejected.md
+decisions: markdown-it-py 4.2.0 recommend with conditions (Medium; MarkdownIt("js-default") only); Jinja2 3.1.6 don't recommend (High floor, repo already escapes with html.escape); pytest-playwright 0.10.0 don't recommend (High; reuse render.py headless Chrome); stdlib baseline for serving, templating, email isolation (sandbox CSP + iframe), tests
+questions: allow Google Fonts in the shell CSP? rec yes, never on the email route; add markdown-it-py as the one new runtime dependency? rec yes, with the card's conditions
+evidence:  scan.mjs -> markdown-it-py Medium, mdurl Low, Jinja2/MarkupSafe/playwright High; wheels sha256 match PyPI; OSV clean for pinned versions; Chrome probe -> sandbox CSP blocks script; foreign Host -> 421
+
+## 2026-10-24T22:35+08:00 conductor (G0, interview round 1)
+status:    done
+persona:   conductor / business-analyst
+ticket:    -
+artifacts: CONTEXT.md (Agent, Job, Slot, Run, Quiet run, Slot status, Artifact, Transcript, Mission control, Health strip)
+decisions: G0: size M, route M (user confirmed)
+decisions: Q1 live local server via a `jura-growth` command, reads growth.db fresh on every load
+decisions: Q2 view-only in v1; show the CLI command to copy where an action applies
+decisions: Q3 127.0.0.1 only; no login
+decisions: Q4 slot status vocabulary as in CONTEXT.md; scout-send collapsed to one row per day; record a quiet-run trace so ran-with-nothing-due differs from missed
+decisions: Q5 home = today board + 14-day job-by-day grid; drill to day, then run; full DB history; "transcript pruned" after 30 days
+decisions: Q6 run pages show status, error, duration, cost, denials, events, readable transcript, and every artifact type; plus cross-run Emails, Posts and PRDs lists; HTML email bodies sandboxed
+decisions: Q7 health strip as listed, sharing logic with `jura-growth status`
+questions: round 2 pending (lifecycle, refresh, fonts, markdown dependency, transcript redaction, width)
+evidence:  -
+
+## 2026-10-24T22:57+0800 conductor (note)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: -
+decisions: conductor headings before this entry carry estimated times, some ahead of the real clock; from here on they come from the system clock
+questions: -
+evidence:  date -> 2026-10-24T22:57+0800
+
+## 2026-10-25T01:43+0800 tech-lead (interview round 2, delegated by Ting Yu)
+status:    done
+persona:   tech-lead
+ticket:    -
+artifacts: reviews/round-2-decisions.md
+decisions: Q8 on demand only in v1, fixed port in settings.yaml; always-on can follow as one ticket. Q9 meta refresh 60s (script-src 'none' stays). Q10 Google Fonts in shell CSP only. Q11 markdown-it-py==4.2.0 js-default, redact before parsing. Q12 reuse ticket 01 config.redact()/secret_values(). Q13 desktop layout, works at 360px
+decisions: PRD carries one runner write (run.quiet event); classifier reads the JSONL mirror for PAUSE and lock skips; branch only after blocker fixes 01, 03, 08 merge
+questions: -
+evidence:  code read db.py:20-28, runner.py:79-83,111-114, schedule.py; mode=ro vs hot journal per SQLite docs, untested -> PRD test must cover the stale-journal case
+
+## 2026-10-25T15:00+0800 conductor (G1)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: -
+decisions: G1 opened by Ting Yu: requirements ready, write the PRD, tech lead's round 2 decisions stand (Q8 on demand only in v1)
+questions: -
+evidence:  -
+
+## 2026-10-25T15:05+0800 business-analyst (spec draft)
+status:    needs-human
+persona:   business-analyst
+ticket:    -
+artifacts: jurasolutions/prd/pending/prd-jura-mission-control-2026-10-25.md; .scratch/mission-control/spec.md (pointer); CONTEXT.md (Install state, Setup gap; "not installed" widened per C3; health strip items aligned)
+decisions: PRD in foundation-PRD format; 13 success criteria each traced to Q1-Q13 or C1-C6; constraints C1-C6 carried in full (§4.2-4.8); 3 tracer blocks: slots end to end, runs and artifacts, health strip
+decisions: dependency state recorded: 03 and 08 merged on crew/growth-blocker-fixes, 01 in fix round 1, none on main, so mission control stays blocked per C5
+questions: PRD §6, each with a recommendation: port (8765, no fallback); scout-send day cell (worst status wins); new slot status "due" for a past slot whose window is still open; health-strip windows; "Posts" = social_posts + community_posts; email-to-run link via leads.run_id / sent_at window, no migration; slots of an unloaded job that has history; Keychain resolved once at server start
+evidence:  grep sections -> Problem..Sign-off present, closing line last; python check -> 13/13 criteria traced, 19/19 stories with actor, benefit, trace; git status -> only .scratch/mission-control/ and CONTEXT.md touched in repo
+
+## 2026-10-25T16:56+0800 qa-lead (test strategy)
+status:    done
+persona:   qa-lead
+ticket:    -
+artifacts: reviews/test-strategy.md
+decisions: 13 criteria -> 62 coverage rows + 7 runner rows, six test datasets, 11 judgement-free exit criteria, manual checks U1-U6; seams S1-S8 from round-2 C6 / PRD 4.8 (technical.md pending); hot-journal fixture must prove it's hot; browser tests assert the page loaded; redaction swept per route raw, escaped and URL-encoded; Chrome-missing skips count as not run
+questions: Ting Yu's everyday browser? rec: if not Chrome, run U6 in it and accept the Safari gap at G4
+evidence:  uv run pytest -rs on crew/growth-blocker-fixes -> 693 passed, 0 skipped
+
+## 2026-10-25T17:03+0800 conductor (scope change from Ting Yu)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: reviews/technical.md (tech lead, written against the local-page PRD; its B1-B4 are moot under the new scope)
+decisions: Ting Yu: all communication between the automation and him goes through the Discord app
+decisions: mission control is Discord only: a one-pager posted to Discord, plus scout, social, community and app-factory posting a status update to Discord on every run; the local web page is dropped (round 1 Q1-Q3, Q5 and round 2 Q8-Q13 superseded where they assume a local page)
+decisions: inbound (Ting Yu -> automation) reuses Discord Dispatch rather than a Jura bot
+decisions: social and community posting goes out fully automatically through the Chrome extension (Claude in Chrome) on Ting Yu's logged-in accounts; Ting Yu was told Meta and LinkedIn terms prohibit unapproved automation and that account restriction is a risk he accepts
+decisions: functional review of the local-page PRD stopped as obsolete; PRD to be rewritten; browser posting gets its own PRD; a read-only spike checks whether a scheduled claude -p run can drive Claude in Chrome
+questions: -
+evidence:  -
+
+## 2026-10-25T17:05+0800 conductor (approvals correction from Ting Yu)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: -
+decisions: supersedes "fully automatic" posting: every social post, community post and community group join is sent to Discord and happens through Chrome only after Ting Yu approves that item
+decisions: app factory sends the app idea to Discord; only on approval is it developed and pushed to the landing page (where it is pushed is an open question; rec a branch/dev preview, production as a separate approval)
+decisions: outreach email sending needs no approval (unchanged)
+decisions: both PRD drafters told; mission-control PRD owns the general Discord approval mechanism via Dispatch, browser-publishing PRD references it
+questions: -
+evidence:  -
+
+## 2026-10-25T17:06+0800 conductor (email approval correction from Ting Yu)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: -
+decisions: supersedes "emails need no approval": outreach emails also wait for Ting Yu's approval in Discord; send-due sends only approved, unexpired emails, with all code caps still applying; supersedes scout PRD §1, SC2, §5.3 automatic sending
+questions: -
+evidence:  -
+
+## 2026-10-25T17:13+0800 business-analyst (PRD rewrite, Discord scope)
+status:    needs-human
+persona:   business-analyst
+ticket:    -
+artifacts: jurasolutions/prd/pending/prd-jura-mission-control-2026-10-25.md (rewritten in place); CONTEXT.md (Mission control and Health strip redefined; One-pager, Run update, Approval request, Approval kind, Gated action, Control command added)
+decisions: local page dropped; kept classifier, quiet-run trace (B3, N2-N4), read-only read model, redaction plus Keychain masking (B2), names-only setup gaps
+decisions: approvals are core: A-nnnn record bound to a content hash, used once in the gated action's own transaction, per-kind expiry, append-only events; plug-ins declare kinds; headless runs can never decide
+decisions: Ting Yu addition logged: social posts, community posts, group joins and app builds need approval; browser-publishing PRD registers its three kinds against §5.4
+decisions: Ting Yu correction logged: outreach emails need approval too; scout PRD §1, SC2, §5.3 superseded; shadow needs none; live mode refuses until the gate ships; unapproved email cancelled at 16:30 next business day
+decisions: inbound only through `jura-growth remote` allowlist; Dispatch dependencies D1-D8 listed, not designed
+questions: 21 in PRD §6, each with a recommendation. Key ones: Q12 app builds go to landing-page `dev` preview, production a second approval, and who promotes (Dispatch v1 excludes it); Q14 SSH forced-command transport to the Mac; Q8 Terminal fallback for approvals (yes)
+evidence:  grep "^## " -> sections 1-7 present, closing line last; python check -> 26 stories with actor and benefit, 14 criteria, each traced (TY/Q/C/brief/Dispatch); git status -> only .scratch/ and CONTEXT.md in repo
+
+## 2026-10-25T17:24+0800 functional-lead (both PRDs)
+status:    needs-human
+persona:   functional-lead
+ticket:    -
+artifacts: reviews/functional.md (rewritten), uat.md (rewritten, both PRDs)
+decisions: 5 blocking, 17 should-fix, 11 notes. B1 approved emails expire behind warm-up caps (split decide-by/use-by, throttle requests to send capacity); B2 the two PRDs disagree on the approval contract; B3 per-app release can't be gated on a shared dev branch; B4 approved app builds have no builder before Dispatch D6; B5 nothing confirms community open days from Discord, so no post is ever claimable
+decisions: approval load at current caps: 19-37 decisions per business day, up to 44 Mondays, 4-6 weekend days; workable with buttons, not typed commands
+questions: B1 split expiry and throttle? rec yes; S7 mask named recipients, no personal names in email bodies? rec yes; S17 hold live outreach until Dispatch buttons? rec yes; BP Q10 group identity: Ting Yu decides explicitly
+evidence:  33 findings; UAT 25 steps; recommended answers to MC Q1-21 and BP Q1-13 in functional.md
+
+## 2026-10-25T17:24+0800 qa-lead (test strategy v2, both PRDs)
+status:    needs-human
+persona:   qa-lead
+ticket:    -
+artifacts: reviews/test-strategy-v2.md
+decisions: one strategy for both PRDs; 20-case approval-gate matrix across all 7 kinds; headless self-approval tested at 5 layers; network guard; Discord double on .invalid URLs; fake claude binary for the publish job; real Chrome only on localhost fixture pages as Ting Yu's manual rehearsal; exit criteria per block; suite floor 975
+questions: Q1 tech lead re-reviews seams for Discord scope (rec yes); Q2 Ting Yu types A-nnnn ids; Q3 skip after an approval allowed until used; Q8 publish checks Chrome before claiming; Q4-Q16 in §12
+evidence:  uv run pytest -rs @9c2611b -> 975 passed, 0 skipped
+
+## 2026-10-25T17:54+0800 tech-lead (technical review v2, both PRDs) and conductor (Ting Yu's answers)
+status:    needs-human
+persona:   tech-lead / conductor
+ticket:    -
+artifacts: reviews/technical-v2.md
+decisions: tech lead B1 approvals.use is a claim inside BEGIN IMMEDIATE before the outward effect; B2 decisions need a human origin (TTY + typed code, or sshd parent; never a claude ancestor); B3 transport SSH forced command; B4 approval state only in approvals, A-ids only, revoke until claim; B5 email requests only for emails due today within remaining quota, separate decide-by and use-by; B6 one-pager in NEVER refuses the 08:00 job; B7 group-rules approval vs ticket 07 typed days; B8 Chrome scope only via ClaudeInChromeDomain rules, --chrome limited by caps.BROWSER_JOBS; build order MC-01..MC-11b, BP-01..BP-06; ADRs 0001-0005
+decisions: Ting Yu: community group posts as the Jura Facebook Page where groups allow Pages; skip groups that only allow personal profiles
+decisions: Ting Yu: Dispatch reaches the Mac by SSH forced command (Remote Login + Tailscale); Dispatch never runs on the Mac
+decisions: Ting Yu: outreach stays in shadow mode until Dispatch Approve/Skip buttons work
+decisions: Ting Yu: the posting job drives a dedicated Chrome profile signed into only the Jura social accounts, extension enabled only there
+questions: -
+evidence:  tech lead: pytest @dacf740 -> 975 passed; probe may_use one-pager in NEVER -> refused (B6)
+
+## 2026-10-25T18:07+0800 business-analyst (PRD revision for G2: reviews v2 and Ting Yu's answers)
+status:    needs-human
+persona:   business-analyst
+ticket:    -
+artifacts: jurasolutions/prd/pending/prd-jura-mission-control-2026-10-25.md; jurasolutions/prd/pending/prd-jura-browser-publishing-2026-10-25.md; CONTEXT.md; docs/adr/0001-0005 (proposed)
+decisions: one approval contract, MC §4.6 A1-A17 (A-nnnn only, claim before effect in BEGIN IMMEDIATE, human origin, revoke until claimed, decide-by/use-by, email requests due today within quota, shadow/draft raise nothing); BP §4.2 references it
+decisions: TY1-TY4 recorded as decisions (Page in groups, SSH over Tailscale, shadow until buttons, dedicated Chrome profile); all 13 blocking findings and QA Q1-Q16 traced (MC §5.14, BP §5.14)
+decisions: review splits settled: email use-by 3 business days (T) with A14; cards edited in place (F-S8, edits don't notify); group-rules typed days (T-B7, ticket 07); app-release claimed in apps release-plan, before the hand merge
+decisions: BP-03 also blocked by MC-11a so publish resolve is reachable from Discord when unknown items first appear
+questions: MC Q1 email decision times (rec yes: decide-by next business day 16:30, use-by 3rd business day); Q2 personal-data rule, no names in email bodies (rec yes); Q3 typed code in Terminal, no approvals from Claude sessions (rec yes); Q4 protect Pages previews with Cloudflare Access (rec yes); BP Q1 weekend posts (rec keep while only Facebook is in browser mode)
+evidence:  grep "^## " -> sections 1-7 in both, closing line last; OQ count MC 4, BP 1; 80 + 36 ACs in Given/When/Then form; traceability grep -> 14/14 finding rows; git status -> only .scratch/, CONTEXT.md, docs/adr/ untracked
+
+## 2026-10-25T18:43+0800 conductor (G2)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: both PRDs: Status and Signed off by lines updated
+decisions: G2 opened by Ting Yu: both PRDs signed off with every recommendation (MC1 decide by 16:30 next business day, use by 16:30 third business day; MC2 no personal names in email bodies, named recipients masked; MC3 six-character code for Terminal approvals, none from Claude sessions; MC4 Cloudflare Access on previews; BP1 weekend posts kept)
+decisions: route now L: tickets by the project manager, test strategy v3 by the QA lead, then tech-lead ticket review, then G3; build branches only after the blocker fixes reach main
+questions: -
+evidence:  -
+
+## 2026-10-25T18:54+0800 qa-lead (test strategy v3, both signed-off PRDs)
+status:    done
+persona:   qa-lead
+ticket:    -
+artifacts: .scratch/mission-control/reviews/test-strategy-v3.md
+decisions: one row per AC (80 MC, 36 BP) with level, seam, data and ticket; 15 supporting rows from constraints (X1-X15)
+decisions: gate matrix keyed to MC §4.6 A1-A17: G1-G36 (G4a/G4b two clocks, G17 skip wins until claimed, G12 consistency check, G21-G24 claim before effect, G13 layer 5 real-process origin tests)
+decisions: seams agreed with technical-v2; added S13 real origin and S14 bin/growth-remote; fake origin in-process only (env/flag fake is critical)
+decisions: exit criteria E1-E14 at every gate plus a per-ticket table MC-01..MC-11b, BP-01..BP-06; suite floor 987; E14 keeps live outreach off until U17
+questions: tech lead Q1 precheck writes run.quiet (rec yes), Q6 approvals.dispatch_builds flag (rec yes), Q7 landing-page path override (rec yes); PM Q2 network guard in MC-01, Q3 trace cross-ticket rows at the later ticket, Q4 AC-M12.2 in MC-06, Q5 digest counts in BP-02; functional lead Q8 refresh uat.md. None need Ting Yu
+evidence:  uv run pytest -rs @1662793 -> 987 passed, 0 skipped; git status --short unchanged before/after
+evidence:  python AC check -> MC 80/80, BP 36/36 rows, sets equal to the PRDs; 37 matrix rows (G1-G36 with G4a/G4b)
+
+## 2026-10-25T18:55+0800 project-manager (tickets, both PRDs)
+status:    needs-human
+persona:   project-manager
+ticket:    -
+artifacts: mission-control/issues/01-16; browser-publishing/issues/01-06; both reviews/status.md; superseded-in-part notes in prd/pending scout, app-factory, growth-foundation, social-content, community-scout; jurasolutions/CLAUDE.md folder map (prd/skipped/)
+decisions: tickets 01-12 = MC-01..MC-11b, BP 01-06 = BP-01..BP-06, PRD edges unchanged; cross-folder edges as mission-control#NN
+decisions: 4 ready-for-human MC tickets (13 Discord channels + U1-U5, 14 SSH/Tailscale + U7, 15 buttons then live outreach, 16 previews + first app build)
+decisions: every PRD AC copied verbatim by script (80 MC, 36 BP, none unplaced); split ACs say which ticket checks the rest
+decisions: four order-independent pairs (03/04, 05/11, 08/10, 09/11): the second to land carries the shared test, so no new edges
+decisions: foundation PRD noted too (MC §4.9 names it)
+questions: G3 approve breakdown after QA v3 and tech-lead ticket review? rec yes; start BP-01 before main? rec yes; BP-04 weekend posts? rec keep weekends on
+evidence:  render.py -> 80/80 MC, 36/36 BP ACs placed; grep -> 22 tickets with Status, Blocked by, Pointers; git status -> only .scratch/, CONTEXT.md, docs/adr/ untracked, no code diff
+
+## 2026-10-25T19:08+0800 tech-lead (ticket review, both features)
+status:    needs-human
+persona:   tech-lead
+ticket:    -
+artifacts: .scratch/mission-control/reviews/tickets-technical.md
+decisions: changes needed, then approve. Split 04 -> 04a core + 04b Terminal decisions and cards; split 10 -> 10 build + 10b release; split bp#02 -> 02a social + 02b community (each was over one context window)
+decisions: add on_approve(conn, subject, args) to ApprovalKind in 04a; group-rules and app-build apply on decide, and 05 and 10 would otherwise collide in approvals.py
+decisions: 01 runner hook: plug-in after_run runs before finish_run and may return an Outcome; a core run_update notification on every path but the PAUSE file (lock skip with conn=None); quiet claude jobs get a run id
+decisions: the four either-order pairs become edges (03<-04a, 05<-11, 10<-08, 09<-11) with one test owner each; critical path unchanged; plus bp#03<-mc#08 (setup gaps), bp#05<-bp#06 (one pages-not-allowed owner)
+decisions: QA Q1 precheck returns agents.NothingToDo -> run.quiet; Q6 approvals.dispatch_builds (04b owns the approvals: block, adds post_buttons for components); Q7 existing paths.site_repo()/JURA_SITE_REPO; Q2 guard in 01; Q3 by edges; Q4 06; Q5 bp#02a/02b/06
+questions: G3: build both features on one integration branch crew/mission-control (ticket branches -NN and -bpNN), choosing at G4 whether to ship one PR or two? rec yes
+evidence:  uv run pytest -rs @0ad538e -> 987 passed in 22.32s; git status --short unchanged before/after
+evidence:  grep -> no jura_growth.agents. import in core; NEVER matched on split()[0]; CONTEXT.md, docs/adr/, both feature folders untracked
+
+## 2026-10-25T19:08+0800 conductor (ticket review)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: reviews/tickets-technical.md
+decisions: tech lead: changes needed then approve (splits 04a/04b, 10/10b, bp 02a/02b; on_approve hook; either-order pairs become edges; new edges bp#03<-mc#08, bp#05<-bp#06); sent to the project manager to apply before G3
+decisions: first commit on crew/mission-control must add CONTEXT.md, docs/adr/, .scratch/mission-control/ and .scratch/browser-publishing/ before any worktree
+questions: one integration branch crew/mission-control for both features? -> put to Ting Yu at G3 (rec yes)
+evidence:  tech lead: pytest @0ad538e -> 987 passed
+
+## 2026-10-25T19:16+0800 project-manager (tickets revised for the tech lead's ticket review)
+status:    needs-human
+persona:   project-manager
+ticket:    -
+artifacts: mission-control/issues/01-16 plus 04b, 10b (18); browser-publishing/issues/01-06 plus 02b (7); both reviews/status.md
+decisions: tickets-technical T1-T12 and N1-N10 applied, apart from T11's commit, which is the conductor's
+decisions: splits: 04 into 04a core (keeps 04-) and 04b Terminal decisions and cards; 10 into 10 build and 10b release; bp 02 into 02a social and 02b community
+decisions: on_approve and BadArgs in 04a; 01's hook runs before finish_run and may return an Outcome; core notification on every path except PAUSE; NothingToDo -> run.quiet
+decisions: either-order pairs are now edges: 03<-04, 05<-11, 10<-08, 09<-11; each shared test has one owner; also bp03<-mc08, bp05<-bp06, bp06<-bp02b, 12<-10b, 13<-04b
+decisions: each AC copied word for word exactly once; other tickets cite it by id and name its owner
+questions: G3 approve? rec yes; one integration branch crew/mission-control for both features (T11)? rec yes
+evidence:  render.py -> 80/80 MC, 36/36 BP placed, 0 duplicates, exit 0 both
+evidence:  grep -> no v2, 975 or "second to land" left
+evidence:  git status -> no code diff
+
+## 2026-10-25T19:22+0800 conductor (G3)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: issues/ (25 tickets: mc 18, bp 7)
+decisions: G3 opened by Ting Yu: breakdown approved as revised; both features build on one integration branch crew/mission-control (one PR or two decided at G4)
+decisions: build waits for PR #1 to merge into main; first commit on crew/mission-control adds CONTEXT.md, docs/adr/ and both feature folders
+questions: -
+evidence:  -
+
+## 2026-10-25T19:23+0800 business-analyst (clarification after sign-off, G3 follow-up)
+status:    done
+persona:   business-analyst
+ticket:    -
+artifacts: jurasolutions/prd/pending/prd-jura-mission-control-2026-10-25.md (header line, §4.6 code block and note, §5.3 runner and agents/__init__.py rows)
+decisions: §4.6 gains the optional on_approve(conn, subject, args) -> str | None kind hook. decide() calls it inside its BEGIN IMMEDIATE after writing approved. BadArgs means refused and nothing is recorded. group-rules and app-build apply their change there. Per tickets-technical T2; contract unchanged
+decisions: §5.3 gains agents.NothingToDo(str). A precheck that returns it writes run.quiet {job, started_at, reason} and no run row. Publish's auth skip stays a plain skip. Per T3
+decisions: both marked "clarified after sign-off, 2026-10-25" in the header line and at each spot; sign-off line and closing line left as they were
+questions: -
+evidence:  grep -> on_approve 5, NothingToDo 3, "Clarified after sign-off, 2026-10-25" 3; tail -1 -> closing line intact; Signed off by line unchanged
