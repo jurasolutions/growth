@@ -185,10 +185,26 @@ def db_path() -> None:
     click.echo(paths.db_path())
 
 
+def _approval_upkeep(conn, *, post: bool) -> None:
+    """Write the lapses that are due (MC §4.6 A17) and, with `post`, post and
+    edit approval cards (A12). Never stops the job that calls it."""
+    steps = [("expire_due", lambda: approvals.expire_due(conn))]
+    if post:
+        steps.append(("post_unposted", lambda: approvals.post_unposted(conn)))
+    for name, step in steps:
+        try:
+            step()
+        except Exception as error:  # noqa: BLE001
+            log.event(conn, "approval.upkeep_error", {"step": name, "error": f"{type(error).__name__}: {error}"}, level="error")
+
+
 @cli.command()
 def backup() -> str:
-    """Back up growth.db (kept 14 days) and prune old transcripts."""
+    """Back up growth.db (kept 14 days) and prune old transcripts; write due approval lapses."""
     with db.session() as conn:
+        # Edits too: a card should say it lapsed. Only the heartbeat and the
+        # raising commands are needed to post (A12); this one catches up.
+        _approval_upkeep(conn, post=True)
         target = backup_mod.backup(conn)
     click.echo(f"backup written: {target}")
     return f"backup written: {target.name}"
@@ -358,8 +374,10 @@ def schedule_uninstall(jobs) -> None:
 
 @cli.command()
 def heartbeat() -> str:
-    """Post a heartbeat to #daily-digest (proves the scheduler is alive)."""
+    """Post a heartbeat to #daily-digest (proves the scheduler is alive), write
+    due approval lapses, and post or edit approval cards."""
     with db.session() as conn:
+        _approval_upkeep(conn, post=True)
         installed = sum(1 for name in runner.jobs() if schedule_mod.installed(name))
         text = f"Heartbeat {timeutil.stamp()}: the scheduler is running ({installed} of {len(runner.jobs())} jobs loaded)."
         result = discord.post(conn, "daily-digest", text, username="Jura growth · heartbeat", dedupe=False)
