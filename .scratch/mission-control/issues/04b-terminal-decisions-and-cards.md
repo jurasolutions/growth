@@ -70,3 +70,11 @@ Every criterion above passes, `security-review` has run on `origin.py`, `uv run 
 - `.scratch/mission-control/uat.md` Part A (the seed scenarios)
 - `docs/adr/0004-…` (referenced; accepted in 11); `CONTEXT.md` (Human origin, Decision)
 - Code: `jura_growth/cli.py`, `discord.py`, `headless.py`, `config/settings.yaml`
+
+## Comments
+
+### 2026-10-25T21:10+0800 conductor: from the ticket 04 fix round
+
+- approvals.get() and approvals.pending() stay plain reads (no content judgement); 04b's cards and Terminal listing must not treat them as a check that an item is still valid (code-review-04 N2).
+- X3's settings half belongs to this ticket (code-review-04 N4).
+- posted_at and message_id can be set once on any unused record, so post only pending cards and record the message id when posting.

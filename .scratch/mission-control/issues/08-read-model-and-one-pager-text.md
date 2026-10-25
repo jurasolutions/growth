@@ -56,3 +56,9 @@ Every criterion above passes, the structure greps in test strategy v3 §11.1 ret
 - `.scratch/mission-control/reviews/test-strategy-v3.md`: §4.1 (AC-M1.1 to AC-M1.4, AC-M11.2, AC-M13.x), §4.3 (X15), §3 (D1, D4, D5, D6), §11.1, §11.2 row MC-08
 - `docs/adr/0002-…`; `CONTEXT.md` (One-pager, Health strip, Setup gap, Install state)
 - Code: `jura_growth/db.py`, `digest.py`, `cli.py` (`status`), `discord.py` (`split`), `agents/__init__.py`
+
+## Comments
+
+### 2026-10-25T20:11+0800 conductor: from the ticket 07 review (S-5)
+
+The slot classifier treats records dated before the first day shown only as proof a job is installed. The read model must pass at least one record older than the window for each job (its most recent earlier run, skip or quiet trace), or a job that ran before the window will show its first slots as "not installed". See reviews/code-review-07.md S-5.

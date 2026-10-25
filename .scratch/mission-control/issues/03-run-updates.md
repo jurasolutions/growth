@@ -55,3 +55,11 @@ Every criterion above passes, `uv run pytest` passes, and the report is in. Ting
 - `.scratch/mission-control/reviews/test-strategy-v3.md`: §4.1 (AC-M3.1 to AC-M3.7), §3 (H hostile text), §11.2 row MC-03
 - `CONTEXT.md` (Run update, Channel)
 - Code: `jura_growth/run_update.py` (from 01), `discord.py`, `agents/*/__init__.py`, `tests/test_discord_down.py`
+
+## Comments
+
+### 2026-10-25T19:46+0800 conductor: from the ticket 01 review
+
+- A NothingToDo precheck hands run_update `Outcome("ok", reason)`, but a quiet nothing-to-do run has no summary (runner.py:110 vs :143). Decide what the run update says for it.
+- Exception paths in the runner skip run_update (existing behaviour). Decide whether a crashed run still posts a run update.
+See reviews/code-review-01.md, Spec should-fix.

@@ -294,3 +294,125 @@ questions: -
 evidence:  render.py to a temp folder -> MC 80/80, BP 36/36 placed once, exit 0
 evidence:  cmp -> exactly the 7 named tickets differ
 evidence:  git diff --stat -> 7 issue files, 11+/3-, no code
+
+## 2026-10-25T19:46+0800 reviewer (01) via conductor
+status:    done
+persona:   reviewer
+ticket:    01
+artifacts: reviews/code-review-01.md
+decisions: approve; should fix (Standards) README NEVER list and hooks, "notification" naming, duplicated test helpers -> sent back as fix round 1, conductor verifies; Spec notes (NothingToDo summary, exception paths skip run_update) added to issues/03 Comments
+questions: -
+evidence:  worktree pytest -> 1042 passed, 0 skipped; live data and outputs unchanged; live send-due and requeue-shadow refuse before Resend
+
+## 2026-10-25T19:51+0800 conductor (merge mc 01)
+status:    done
+persona:   conductor
+ticket:    01
+artifacts: crew/mission-control at 8bff848 (merge of 01)
+decisions: fix round verified by the conductor (README, _run_update rename, shared helpers); merged
+questions: -
+evidence:  merged branch uv run pytest -> 1042 passed
+
+## 2026-10-25T20:00+0800 reviewer (02, round 1) via conductor
+status:    done
+persona:   reviewer
+ticket:    02
+artifacts: reviews/code-review-02.md
+decisions: changes-requested; B1 post() never learns named contacts (names leak in existing posts); B2 attachment bytes, file names and outbox paths unmasked; 9 should-fix
+decisions: conductor ruling: Ting Yu sender address stays only in previews of Jura own outgoing email; his address and phone removed everywhere else; sent back as fix round 1 with rebase onto 8bff848
+questions: -
+evidence:  02 worktree pytest -> 1053 passed; trial merge onto 8bff848 -> README conflict only, 1108 passed; bypass script reproduces B1 and B2
+
+## 2026-10-25T20:11+0800 reviewer (07, round 1) via conductor
+status:    done
+persona:   reviewer
+ticket:    07
+artifacts: reviews/code-review-07.md
+decisions: approve; 9 should-fix incl. sqlite3.Row crash, day_cell KeyError on abandoned, S-1 holiday skip hides a miss, S-2 running quiet run reads missed
+decisions: conductor accepts S-1 and S-2 as refinements of PRD 4.5 (within intent); sent back as fix round 1; S-5 added to issues/08 Comments
+questions: -
+evidence:  worktree pytest -> 1159 passed; probes reproduce
+
+## 2026-10-25T20:19+0800 conductor (merge mc 07)
+status:    done
+persona:   conductor
+ticket:    07
+artifacts: merge of 07 (7db030f c8328cb 89aef7f)
+decisions: fix round verified by the conductor (runner/schedule/locks changes are constant moves only); merged; worktree removed
+questions: -
+evidence:  merged branch pytest -> see commit log
+
+## 2026-10-25T20:19+0800 reviewer (02, round 2) via conductor
+status:    done
+persona:   reviewer
+ticket:    02
+artifacts: reviews/code-review-02.md (round 2)
+decisions: changes-requested on one blocker the fix introduced: own_copy disables single-name masking, so "Hi Jane," reached #outreach-sent; round-1 blockers fixed; S1 PNG ancillary chunks, S2 Ting Yu masked in own copy, nits
+decisions: conductor: two rounds done but the fix is mechanical, so one final fix round (rebase onto 0981aa4) with conductor verification instead of escalating
+questions: -
+evidence:  1140 passed; merge-tree clean; bypass script and scratch send path reproduce
+
+## 2026-10-25T20:25+0800 conductor (merge mc 02)
+status:    done
+persona:   conductor
+ticket:    02
+artifacts: merge of 02 (rebased on 0981aa4; through b6678a1)
+decisions: fix round 2 verified by the conductor (learned names masked in own copy; PNG pixels only; learn(None) attaches growth.db with mode=ro); merged; worktree removed
+questions: -
+evidence:  merged branch pytest -> see next entry
+
+## 2026-10-25T20:25+0800 conductor (wave 2)
+status:    done
+persona:   conductor
+ticket:    04
+artifacts: -
+decisions: crew/mission-control at 2ce000d with 01, 02, 07 merged (1346 passed); mc 04 (approvals core) dispatched
+questions: -
+evidence:  uv run pytest -> 1346 passed
+
+## 2026-10-25T20:58+0800 reviewer (04, round 1) via conductor
+status:    done
+persona:   reviewer
+ticket:    04
+artifacts: reviews/code-review-04.md
+decisions: changes-requested; B1 a rolled-back claim still writes approval.used to the JSONL mirror; should fix S1 duplicate --ref, S2 non-BadArgs from on_approve escapes decide(), S3 trigger blocks posted_at on decided records, S4 matrix gaps G29 G32 G36 G5 G15, README row, _atomic into db.py
+decisions: every brief attack held (reuse, race, content change, expiry, revoke, paused claim, env/TTY spoof, frozen clock); migration on a main-built db identical; sent back as fix round 1
+questions: -
+evidence:  worktree pytest -> 1454 passed; probe04.py reproduces B1, S1-S3
+
+## 2026-10-25T21:10+0800 developer (04, fix round 1) via conductor
+status:    done
+persona:   developer
+ticket:    04
+artifacts: 84e6dc3 95b5aa4 f78b8eb 0e3a098 bbb6557
+decisions: B1 fixed at the root: log.event mirror line waits for db.transaction commit (db.after_commit); S1-S3, S4 gaps, README, ADR 0004 note; notes N2 and N4 added to issues/04b Comments
+questions: -
+evidence:  pytest -> 1499 passed; probe04 P1-P5, P8 fixed, P6 accepted in ADR 0004 -> sent to the reviewer for round 2
+
+## 2026-10-25T21:18+0800 conductor (merge mc 04)
+status:    done
+persona:   conductor
+ticket:    04
+artifacts: merge of 04 (2b06e4e .. d6cf244)
+decisions: review round 2 approved; fix round 2 verified by the conductor with probe04r2 (Q1 immediate, Q2 no raise after commit, Q3 use() in a raw BEGIN refused); merged
+questions: -
+evidence:  merged branch pytest -> see commit
+
+## 2026-10-25T21:18+0800 conductor (wave 3)
+status:    done
+persona:   conductor
+ticket:    03, 04b, 08
+artifacts: -
+decisions: crew/mission-control at 8e3d9b4 (01, 02, 04, 07 merged; 1503 passed); mc 03, 04b and 08 dispatched in parallel
+questions: -
+evidence:  merged branch pytest -> 1503 passed
+
+## 2026-10-26T01:11+0800 reviewer (03, round 1) via conductor
+status:    done
+persona:   reviewer
+ticket:    03
+artifacts: reviews/code-review-03.md
+decisions: approve; gap: a precheck that raises leaves no run row, no #alerts post and no update; should-fix FINANCE_LINE_RE, clickable masked links, repeated claude error, scout digest duplicate, CONTEXT.md wording, AC-M3.5/3.6 test gaps
+decisions: conductor ruling (Ting Yu: all communication via Discord, updates whenever agents run): a crash before recording counts as a failed run (run row, #alerts, auto-pause, run update); small runner.py change allowed in 03; sent back as fix round 1
+questions: -
+evidence:  1533 passed; probes mask names, emails, phone, secrets, mentions
