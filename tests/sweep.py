@@ -18,11 +18,14 @@ from __future__ import annotations
 import html
 import json
 import re
+import subprocess
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from jura_growth import paths
+import pytest
+
+from jura_growth import config, paths
 
 MARKER = "sweep-marker-7c1f"
 
@@ -61,6 +64,26 @@ class Planted:
     def text(self) -> str:
         """One string holding every planted value, to put wherever a builder reads text."""
         return " ".join([self.marker, *self.secrets, *self.personal])
+
+
+@pytest.fixture
+def d2_secrets(tmp_path, monkeypatch):
+    """The D2 env file and the Keychain double (test strategy v3 §2): `keychain:jura-growth-uat`
+    resolves to `KEYCHAIN_VALUE`, and a real `security` call fails the test. Import it next to
+    `discord_double` to use it."""
+    env = tmp_path / "uat.env"
+    env.write_text(ENV_FILE)
+    env.chmod(0o600)
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(env))
+    monkeypatch.setattr(config, "_keychain", KEYCHAIN.get)
+    real_run = subprocess.run
+
+    def run(args, *rest, **kwargs):
+        assert not (isinstance(args, (list, tuple)) and args and args[0] == "security"), "the real Keychain was asked"
+        return real_run(args, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    config.reset_caches()
 
 
 def planted(*, secrets: bool = True, personal: bool = True) -> Planted:

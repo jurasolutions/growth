@@ -5,16 +5,13 @@ contact, then each existing builder posts through the Discord double. Later tick
 same `assert_clean` over the messages they add.
 """
 
-import subprocess
-
 import pytest
 from click.testing import CliRunner
 
 from discord_double import discord_double  # noqa: F401 - a fixture
 from jura_growth import config, db, digest, runner, timeutil
 from jura_growth.cli import cli
-from sweep import (
-    KEYCHAIN,
+from sweep import (  # noqa: F401 - d2_secrets is a fixture
     MARKER,
     MASKED_ADDRESS,
     NAMED_ADDRESS,
@@ -22,29 +19,15 @@ from sweep import (
     SOURCE_PAGE,
     Planted,
     assert_clean,
+    d2_secrets,
     outbox_dir,
     planted,
 )
 
 
 @pytest.fixture(autouse=True)
-def d2_secrets(tmp_path, monkeypatch):
-    """The D2 env file and the Keychain double. A real `security` call fails the test."""
-    env = tmp_path / "uat.env"
-    from sweep import ENV_FILE
-
-    env.write_text(ENV_FILE)
-    env.chmod(0o600)
-    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(env))
-    monkeypatch.setattr(config, "_keychain", KEYCHAIN.get)
-    real_run = subprocess.run
-
-    def run(args, *rest, **kwargs):
-        assert not (isinstance(args, (list, tuple)) and args and args[0] == "security"), "the real Keychain was asked"
-        return real_run(args, *rest, **kwargs)
-
-    monkeypatch.setattr(subprocess, "run", run)
-    config.reset_caches()
+def _secrets(d2_secrets):
+    """Every test here runs with the D2 env file and the Keychain double."""
 
 
 @pytest.fixture
