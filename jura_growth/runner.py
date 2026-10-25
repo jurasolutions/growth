@@ -80,7 +80,7 @@ def run(name: str, *, ignore_schedule: bool = False) -> Outcome:
         if not acquired:
             log.mirror({"ts": timeutil.stamp(), "agent": agent, "level": "info", "kind": "run.skipped", "payload": {"job": name, "reason": "previous run still going"}})
             outcome = Outcome("skipped", "previous run still going")
-            _notify(None, name, spec, None, outcome)  # never opens growth.db
+            _run_update(None, name, spec, None, outcome)  # never opens growth.db
             return outcome
 
         conn = db.connect()
@@ -107,14 +107,14 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
         reason = precheck(name, conn) if precheck else None
     if isinstance(reason, agents.NothingToDo):
         log.event(conn, "run.quiet", {"job": name, "started_at": started_at, "reason": str(reason)}, agent=agent)
-        return _notify(conn, name, spec, None, Outcome("ok", str(reason)))
+        return _run_update(conn, name, spec, None, Outcome("ok", str(reason)))
     if reason:
         skip_id = None
         if quiet:
             log.event(conn, "run.skipped", {"job": name, "reason": reason}, agent=agent)
         else:
             skip_id = log.skip_run(conn, agent, name, reason)
-        return _notify(conn, name, spec, skip_id, Outcome("skipped", reason))
+        return _run_update(conn, name, spec, skip_id, Outcome("skipped", reason))
 
     _abandon_stale(conn)
     run_id = None if quiet else log.start_run(conn, agent, name)
@@ -144,7 +144,7 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
             # Nothing happened: no run row, but a trace, so the slot reads
             # as run rather than slept through (ADR 0001).
             log.event(conn, "run.quiet", {"job": name, "started_at": started_at}, agent=agent)
-            return _notify(conn, name, spec, None, outcome)
+            return _run_update(conn, name, spec, None, outcome)
         run_id = log.start_run(conn, agent, name, started_at=started_at)
     log.finish_run(conn, run_id, outcome.status, summary=outcome.summary, error=outcome.error, cost_usd=outcome.cost_usd)
 
@@ -153,11 +153,11 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
             discord.alert(conn, f"`{name}` failed: {outcome.error[:500]}", agent=agent)
         finally:
             pause.check_auto_pause(conn, agent)  # whatever happened to the alert
-    return _notify(conn, name, spec, run_id, outcome)
+    return _run_update(conn, name, spec, run_id, outcome)
 
 
-def _notify(conn: sqlite3.Connection | None, name: str, spec: dict, run_id: int | None, outcome: Outcome) -> Outcome:
-    """The core run-update notification, once per run (run_update.py).
+def _run_update(conn: sqlite3.Connection | None, name: str, spec: dict, run_id: int | None, outcome: Outcome) -> Outcome:
+    """Hand the run to `run_update.after_run`, once per run.
     Its errors are logged and the run's outcome is returned unchanged."""
     try:
         run_update.after_run(conn, name, spec, run_id, outcome)
