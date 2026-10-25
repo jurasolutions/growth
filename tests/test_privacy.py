@@ -147,3 +147,17 @@ def test_the_role_list_covers_every_role_the_scout_knows():
 
     for local in (*contact.ENQUIRY_ROLES, *contact.OTHER_ROLES, *contact.NOT_FOR_ENQUIRIES):
         assert privacy.is_role_address(f"{local}@example.com.sg"), local
+
+
+def test_a_plugin_whose_hook_fails_never_stops_a_message(conn, monkeypatch):
+    from jura_growth.agents import scout
+
+    def broken(c):
+        raise KeyError("no such column")
+
+    monkeypatch.setattr(scout, "named_addresses", broken)
+    privacy.remember_address("jane.tan@example.com.sg")
+
+    privacy.load_for_masking(conn)
+
+    assert privacy.for_discord("Jane Tan") == "[name removed]"

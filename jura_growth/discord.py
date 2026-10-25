@@ -26,7 +26,7 @@ from pathlib import Path
 
 import httpx
 
-from jura_growth import config, log, paths, timeutil
+from jura_growth import config, log, paths, privacy, timeutil
 
 MAX_CONTENT = 2000
 MAX_FILES = 10
@@ -100,10 +100,11 @@ def post(
     if len(files) > MAX_FILES:
         raise ValueError(f"Discord takes at most {MAX_FILES} files per message")
 
-    # The last line of defence, before the hash so dedupe sees what is sent. Only the
-    # values already loaded: no Keychain lookup here (MC §4.3).
-    content = config.redact(content)
-    username = config.redact(username) if username else username
+    # The last line of defence, before the hash so dedupe sees what is sent: secrets
+    # (config.redact) and personal data (MC §4.4). Only the values already loaded, so
+    # no Keychain lookup here (MC §4.3).
+    content = privacy.for_discord(content)
+    username = privacy.for_discord(username) if username else username
     digest = content_hash(content, files)
     if dedupe and conn is not None and _posted_today(conn, channel, digest):
         return PostResult(channel, delivered=False, reason="already posted today")
@@ -137,7 +138,11 @@ def post(
 
 
 def alert(conn: sqlite3.Connection | None, text: str, *, agent: str | None = None) -> PostResult:
-    """Post to #alerts and log a warning event. Alerts are never deduplicated."""
+    """Post to #alerts and log a warning event. Alerts are never deduplicated.
+
+    An alert can carry text from anywhere (another process's error or output),
+    so the masking values are loaded first, as for the other message builders."""
+    privacy.load_for_masking(conn)
     who = agent or log.current_agent() or "growth"
     log.event(conn, "alert", {"text": text}, level="warning", agent=who)
     return post(conn, "alerts", f"**{who}**: {text}", username=f"Jura growth · {who}", dedupe=False)

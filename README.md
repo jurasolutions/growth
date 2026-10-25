@@ -125,6 +125,11 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
   inside a run only the job's `work/` folder and `outputs/growth/` are accepted.
 - Configured secret values (secret-named settings and `keychain:` references) are masked in
   everything `jura-growth` prints.
+- Every Discord message goes through `privacy.for_discord()` inside `discord.post()`: secrets
+  first, then the personal-data rule (mission control PRD §4.4). A named address reads
+  `j***@example.com.sg`; phone numbers, prospects' names, reply bodies and anything about
+  `personal-finance/` never appear. Builders that post text from disk call
+  `privacy.load_for_masking(conn)` first, so Keychain values and named contacts are known.
 - `--strict-mcp-config` and `--setting-sources project`: no MCP servers (no Notion, no Zapier)
   and none of the user-level settings, plug-ins or hooks.
 - `--max-budget-usd` per run (US$3 by default, US$5 for scout research).
@@ -162,6 +167,7 @@ imports it by name. The module may define:
 | `after_run(conn, job, run_id, outcome)` | Called after the job body of a run that started, before its run row is finished. Return a `runner.Outcome` to replace the outcome (the row, `#alerts` and auto-pause all see it), or `None` to keep it. An exception is logged as `run.after_run_error` and the outcome stands |
 | `run_update(conn, run)` | The "Produced:" lines of the agent's run update, or `None` to post nothing (ticket MC-03) |
 | `approval_kinds()` | The approval kinds the agent owns (ticket MC-04) |
+| `named_addresses(conn)` | Addresses the agent holds that name a person, so their names stay out of Discord |
 
 Every hook except `NAME` is optional and found with `getattr`. Its prompt goes in
 `prompts/<job>.md`, its settings in `config/<name>.yaml`, and its hard limits in `caps.py`.
@@ -191,3 +197,8 @@ A second audit hook, the network guard, refuses and fails the test for every DNS
 Unix sockets, `127.0.0.0/8`, `::1`, `localhost` and `*.localhost` are allowed. A test that
 provokes either guard on purpose takes the `write_guard` or `network_guard` fixture and calls its
 `take()`, so its own refusals don't fail it. Like the write guard, it doesn't see subprocesses.
+
+A test that posts to Discord uses the Discord double (`tests/discord_double.py`): every webhook
+points at `discord.invalid` and each request is recorded. A test that builds a Discord message
+plants the secrets and personal data in `tests/sweep.py` where its builder reads, then calls
+`assert_clean(double, outbox, planted)` from its own file.

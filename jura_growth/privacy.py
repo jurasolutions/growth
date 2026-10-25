@@ -130,7 +130,7 @@ def remember_people(conn: sqlite3.Connection | None) -> None:
             continue
         try:
             addresses: Iterable[str] = hook(conn) or []
-        except (sqlite3.Error, RuntimeError, ValueError):
+        except Exception:  # noqa: BLE001 - one plug-in never stops a message, as in the digest
             continue
         for address in addresses:
             remember_address(address)

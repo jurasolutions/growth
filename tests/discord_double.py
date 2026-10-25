@@ -79,10 +79,8 @@ class DiscordDouble:
             monkeypatch.setenv(discord.env_name(channel), url)
             self.urls[channel] = url
             self._channel_by_id[str(n)] = channel
-        real_client = httpx.Client
-        monkeypatch.setattr(
-            discord.httpx, "Client", lambda *a, **k: real_client(transport=httpx.MockTransport(self._handle))
-        )
+        # Only discord.py's own httpx: other doubles (Resend, D1, page fetches) keep theirs.
+        monkeypatch.setattr(discord, "httpx", _HttpxFor(self._handle))
         monkeypatch.setattr(discord.time, "sleep", lambda seconds: None)
         config.reset_caches()
 
@@ -140,6 +138,20 @@ class DiscordDouble:
         recorded.flags = payload.get("flags")
         recorded.allowed_mentions = payload.get("allowed_mentions")
         recorded.components = payload.get("components")
+
+
+class _HttpxFor:
+    """`httpx` as discord.py sees it: the real module, except that every Client it makes
+    talks to the double."""
+
+    def __init__(self, handler):
+        self._handler = handler
+
+    def Client(self, *args, **kwargs):  # noqa: N802 - stands in for httpx.Client
+        return httpx.Client(transport=httpx.MockTransport(self._handler))
+
+    def __getattr__(self, name):
+        return getattr(httpx, name)
 
 
 def _multipart_parts(body: bytes, content_type: str):

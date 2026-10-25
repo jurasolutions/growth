@@ -1,0 +1,183 @@
+"""The sweep over the posts that exist before mission control (AC-M11.1, AC-M12.1).
+
+Datasets D2 and D3 are planted in a run's error, a run summary, an agent's text and a lead's
+contact, then each existing builder posts through the Discord double. Later tickets run the
+same `assert_clean` over the messages they add.
+"""
+
+import subprocess
+
+import pytest
+from click.testing import CliRunner
+
+from discord_double import discord_double  # noqa: F401 - a fixture
+from jura_growth import config, db, digest, runner, timeutil
+from jura_growth.cli import cli
+from sweep import (
+    KEYCHAIN,
+    MARKER,
+    MASKED_ADDRESS,
+    NAMED_ADDRESS,
+    RESEND_KEY,
+    SOURCE_PAGE,
+    Planted,
+    assert_clean,
+    outbox_dir,
+    planted,
+)
+
+
+@pytest.fixture(autouse=True)
+def d2_secrets(tmp_path, monkeypatch):
+    """The D2 env file and the Keychain double. A real `security` call fails the test."""
+    env = tmp_path / "uat.env"
+    from sweep import ENV_FILE
+
+    env.write_text(ENV_FILE)
+    env.chmod(0o600)
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(env))
+    monkeypatch.setattr(config, "_keychain", KEYCHAIN.get)
+    real_run = subprocess.run
+
+    def run(args, *rest, **kwargs):
+        assert not (isinstance(args, (list, tuple)) and args and args[0] == "security"), "the real Keychain was asked"
+        return real_run(args, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    config.reset_caches()
+
+
+@pytest.fixture
+def failing_job(monkeypatch):
+    """A command job, `boomer`, whose error carries everything planted."""
+    base = config.settings()
+    patched = dict(base)
+    patched["jobs"] = {
+        **base["jobs"],
+        "boomer": {"agent": "boomer", "kind": "command", "command": ["status"], "schedule": {"daily": "06:00"}},
+    }
+    monkeypatch.setattr(config, "settings", lambda: patched)
+    return "boomer"
+
+
+def contact_lead(conn, *, industry: str = "logistics") -> int:
+    conn.execute(
+        "INSERT INTO leads (id, company, display_name, domain, website, industry, score, score_reasons, channel,"
+        " status, created_at, updated_at) VALUES (233, 'Example Pte Ltd', 'Example', 'example.com.sg',"
+        " 'https://example.com.sg', ?, 78, '[\"runs dispatch by hand\"]', 'email', 'new', ?, ?)",
+        (industry, timeutil.stamp(), timeutil.stamp()),
+    )
+    conn.execute(
+        "INSERT INTO contacts (lead_id, email, email_hash, source_url, kind, mx_ok, verified_at, created_at)"
+        " VALUES (233, ?, 'h', ?, 'named', 1, ?, ?)",
+        (NAMED_ADDRESS, SOURCE_PAGE, timeutil.stamp(), timeutil.stamp()),
+    )
+    return 233
+
+
+# --- the sweep proves itself ------------------------------------------------------
+
+
+def test_the_sweep_fails_when_nothing_reached_the_double(discord_double):
+    with pytest.raises(AssertionError, match="never received the marker"):
+        assert_clean(discord_double, outbox_dir(), planted())
+
+
+def test_the_sweep_finds_a_planted_secret_that_got_through(conn, discord_double, monkeypatch):
+    monkeypatch.setattr(config, "redact", lambda value: value)  # what a broken redact() would let out
+
+    from jura_growth import discord
+
+    discord.post(conn, "alerts", f"{MARKER} key {RESEND_KEY[:9]}")
+    with pytest.raises(AssertionError, match="a piece of a planted secret"):
+        assert_clean(discord_double, outbox_dir(), Planted(secrets=(RESEND_KEY,)))
+
+
+def test_the_sweep_finds_a_phone_number_however_it_is_spaced(conn, discord_double, monkeypatch):
+    from jura_growth import discord, privacy
+
+    monkeypatch.setattr(privacy, "for_discord", lambda text: text)
+    discord.post(conn, "alerts", f"{MARKER} call 9123-4567")
+    with pytest.raises(AssertionError, match="planted personal data"):
+        assert_clean(discord_double, outbox_dir(), Planted(personal=("+65 9123 4567",)))
+
+
+# --- existing posts ---------------------------------------------------------------
+
+
+def test_a_failed_run_alert_is_clean(failing_job, discord_double, monkeypatch):
+    with db.session() as c:
+        contact_lead(c)
+    # The error is cut at 500 characters by the runner: the cut falls inside the Resend key.
+    head = f"{MARKER} {planted(secrets=False).text()} kc_uat_44Lw pw&<\"Zq81xT9 "
+    message = head + "x" * (500 - len("RuntimeError: ") - len(head) - 9) + " " + RESEND_KEY + " tail"
+
+    def boom(*args, **kwargs):
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(runner, "_run_command", boom)
+    assert runner.run(failing_job).status == "failed"
+
+    assert discord_double.posts("alerts")
+    assert_clean(discord_double, outbox_dir(), planted())
+
+
+def test_an_alert_that_cannot_be_delivered_leaves_a_clean_outbox(conn, discord_double):
+    from jura_growth import discord
+
+    contact_lead(conn)
+    discord_double.mode = "unreachable"
+    result = discord.alert(conn, f"summary: {planted().text()}", agent="scout")
+
+    assert not result.delivered
+    assert outbox_dir().exists()
+    assert_clean(discord_double, outbox_dir(), planted())
+
+
+def test_the_daily_digest_is_clean(conn, discord_double):
+    contact_lead(conn)
+    stamp = timeutil.stamp()
+    # Raw SQL, so log.finish_run's own redaction doesn't hide what the digest must mask.
+    conn.execute(
+        "INSERT INTO runs (agent, job, started_at, finished_at, status, summary, error) VALUES"
+        " ('scout', 'scout-research', ?, ?, 'failed', ?, ?)",
+        (stamp, stamp, planted().text(), planted().text()),
+    )
+
+    digest.run(conn)
+
+    assert discord_double.posts("daily-digest")
+    assert_clean(discord_double, outbox_dir(), planted())
+
+
+def test_an_agents_post_from_the_cli_is_clean(conn, discord_double):
+    contact_lead(conn)
+    conn.commit()
+
+    result = CliRunner().invoke(cli, ["discord", "post", "community", f"transcript says: {planted().text()}"])
+
+    assert result.exit_code == 0, result.output
+    assert_clean(discord_double, outbox_dir(), planted())
+
+
+def test_a_new_lead_shows_a_named_address_masked_with_its_source_page(conn, discord_double):
+    from jura_growth.agents.scout import leads
+
+    lead = contact_lead(conn, industry=f"logistics {MARKER}")
+
+    leads._post_lead(conn, lead)
+
+    [content] = discord_double.contents("scout-leads")
+    assert f"{MASKED_ADDRESS} (named address), listed on {SOURCE_PAGE}" in content
+    assert_clean(discord_double, outbox_dir(), Planted(personal=(NAMED_ADDRESS,), expected=(MASKED_ADDRESS, SOURCE_PAGE)))
+
+
+def test_a_post_masks_personal_data_even_when_its_builder_forgot(conn, discord_double):
+    from jura_growth import discord, privacy
+
+    privacy.remember_address(NAMED_ADDRESS)
+    discord.post(conn, "outreach-sent", f"SHADOW draft: Hi Jane,\n{planted(secrets=False).text()}")
+
+    assert "Hi [name removed]," in discord_double.contents("outreach-sent")[0]
+    assert_clean(discord_double, outbox_dir(), planted(secrets=False))
+
