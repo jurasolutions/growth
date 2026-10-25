@@ -4,6 +4,18 @@ Every event goes to the `events` table and, as one JSON line, to
 `data/growth/runs/YYYY-MM-DD.jsonl` (the SGT day). The JSONL file is a plain
 mirror that survives a broken database.
 
+Outside a transaction both are written at once. Inside `db.transaction()` the
+row is part of the transaction and the mirror line is written after the
+commit, never after a rollback, because the mirror is append-only and must not
+record work that didn't happen. The cost is a gap: a crash between the commit
+and the mirror write loses that transaction's lines while `events` keeps its
+rows. That is the right way round, since `growth.db` is the log of record, and
+readers that need every record (the slot classifier, `slots.py`) take them from
+both stores and count a record found in both once. A mirror write that fails
+after the commit is reported on stderr and never raised. Lines can land out of
+order, or in the next day's file for a commit after midnight, so a reader of
+the mirror sorts by `ts`.
+
 A command started inside a scheduled run picks the run up from
 `JURA_GROWTH_RUN_ID`, so what a headless Claude session does through
 `jura-growth` is filed under that run.

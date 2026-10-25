@@ -18,3 +18,10 @@ trigger refuses the transitions A7 doesn't allow, but no trigger can tell who wr
 runs reach the database only through `jura-growth` commands (`Bash(jura-growth …)` rules); an
 interactive session on the Mac is outside these guards, so don't open `growth.db` for writing from
 one.
+
+The audit trail has a known gap too. A decision's `approval.*` events are rows in `growth.db`,
+committed with the decision, and lines in the JSONL mirror, written only after that commit, so a
+decision or claim that rolls back leaves no trace in either. A crash between the commit and the
+mirror write loses those lines while the rows stay. We accept that: `growth.db` is the log of
+record, and the opposite order would leave the append-only mirror holding a decision or a claim
+that never happened (`jura_growth/log.py`).
