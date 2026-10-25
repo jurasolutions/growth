@@ -17,6 +17,7 @@ See docs/social.md.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -74,6 +75,22 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         lines.append(f"Social: no draft today ({no_draft['reason']})")
         brief.append("no social draft today")
     return {"figures": figures, "lines": lines, "brief": brief}
+
+
+RUN_UPDATE_DISCORD_CHANNEL = "social-drafts"
+
+
+def run_update(conn: sqlite3.Connection, run) -> list[str]:
+    """The "Produced:" items of a social run: its drafts and their images."""
+    from jura_growth import db
+    from jura_growth.run_update import count
+
+    rows = db.rows(conn, "SELECT image_paths FROM social_posts WHERE run_id = ?", (run.id,))
+    images = sum(len(json.loads(r["image_paths"] or "[]")) for r in rows)
+    produced = [count(len(rows), "draft")] if rows else []
+    if images:
+        produced.append(count(images, "image"))
+    return produced
 
 
 def permissions(job: str):

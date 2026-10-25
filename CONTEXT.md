@@ -77,8 +77,8 @@ _Avoid_: status bar, alerts panel
 
 **Run update**:
 The one Discord message an agent's run posts to its own Discord channel when it finishes, skips or
-fails: status, timing, cost, a one-line summary, what it produced and the approval requests it
-raised. A PAUSE-file skip posts none; publish posts one only when it claimed a publish item.
+fails: status, timing, cost, its summary as a short quote (at most 300 characters), a failed run's
+error in one line, what it produced and the approval requests it raised. A PAUSE-file skip posts none; publish posts one only when it claimed a publish item.
 _Avoid_: notification, log line
 
 **Setup gap**:

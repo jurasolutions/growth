@@ -79,6 +79,12 @@ def test_its_output_is_stable_when_masked_again():
     assert privacy.for_discord(once) == once
 
 
+def test_a_line_holding_the_finance_placeholder_is_still_dropped_whole():
+    # Code review 03, S-Sec1: the placeholder never shelters the rest of its line.
+    line = "[removed: personal finance] DBS 1234-5678-9012-3456 balance and [removed: personal finance]/data/tally.db"
+    assert privacy.for_discord(f"ok\n{line}\nnext") == "ok\n[removed: personal finance]\nnext"
+
+
 # --- names ----------------------------------------------------------------------------
 
 

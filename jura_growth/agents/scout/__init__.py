@@ -60,13 +60,31 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     forms = [r for r in rows if r["channel"] == "form"]
     lines, brief = [], []
     if added:
-        by_email = sum(1 for r in rows if r["channel"] == "email")
-        lines.append(f"Scout: {added} new lead{'s' if added != 1 else ''} ({by_email} with an address, {len(forms)} form only)")
+        lines.append(f"Scout: {_new_leads(rows)}")
         brief.append(f"{added} new lead{'s' if added != 1 else ''}")
     if forms:
         listed = ", ".join(f"{r['company']} ({r['form_url']})" for r in forms[:10])
         lines.append(f"Form-only leads to contact by hand if you want to: {listed}")
     return {"figures": {"leads_added": added, "leads_form_only": len(forms)}, "lines": lines, "brief": brief}
+
+
+RUN_UPDATE_DISCORD_CHANNEL = "scout-leads"
+
+
+def run_update(conn: sqlite3.Connection, run) -> list[str]:
+    """The "Produced:" items of a research run: the leads it recorded, by
+    how they can be reached."""
+    rows = db.rows(conn, "SELECT channel FROM leads WHERE run_id = ?", (run.id,))
+    return [_new_leads(rows)] if rows else []
+
+
+def _new_leads(rows: list) -> str:
+    """`3 new leads (2 with an address, 1 form only)`, for the digest and the run update."""
+    from jura_growth.run_update import count
+
+    by_email = sum(1 for r in rows if r["channel"] == "email")
+    forms = sum(1 for r in rows if r["channel"] == "form")
+    return f"{count(len(rows), 'new lead')} ({by_email} with an address, {forms} form only)"
 
 
 def privacy_terms(conn: sqlite3.Connection | None) -> dict:

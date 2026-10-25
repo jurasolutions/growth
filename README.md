@@ -172,7 +172,8 @@ imports it by name. The module may define:
 | `precheck(job, conn)` | A reason to skip a scheduled run before it starts, or `None`. Return `agents.NothingToDo("nothing due")` instead of a plain string when the run simply has nothing to do: the runner writes a `run.quiet` event with that reason and no run row (ADR 0001) |
 | `permissions(job)` | For a `claude` job the agent runs: `headless.Permissions` with the `jura-growth` commands its prompt uses (and any extra Claude Code deny rules), or `None`. A job with no declaration may run no commands |
 | `after_run(conn, job, run_id, outcome)` | Called after the job body of a run that started, before its run row is finished. Return a `runner.Outcome` to replace the outcome (the row, `#alerts` and auto-pause all see it), or `None` to keep it. An exception is logged as `run.after_run_error` and the outcome stands |
-| `run_update(conn, run)` | The "Produced:" lines of the agent's run update, or `None` to post nothing (ticket MC-03) |
+| `RUN_UPDATE_DISCORD_CHANNEL` | The Discord channel the agent's run updates go to, for example `social-drafts` |
+| `run_update(conn, run)` | The "Produced:" items of the agent's run update (`["3 drafts", "3 images"]`; `[]` reads "nothing"), or `None` to post no update for this run. `run` is a `run_update.Run`. Asked only when there is a database connection; an exception is logged as `run.after_run_error` and the update posts without the line |
 | `approval_kinds()` | `{name: approvals.ApprovalKind}`, the approval kinds the agent owns (below). A kind that two plug-ins declare, or whose plug-in failed to load, fails closed |
 | `privacy_terms(conn)` | `{"named_addresses": [], "companies": [], "owner_addresses": [], "kept_names": []}`: addresses that name a person (their names stay out of Discord), company names (never read as a person's name), Ting Yu's own addresses (removed outside Jura's own email) and names that are not a prospect's (Ting Yu's) |
 
@@ -182,7 +183,14 @@ Every hook except `NAME` is optional and found with `getattr`. Its prompt goes i
 A quiet command job (`quiet: true`, such as `scout-send`) that finds nothing to do also leaves a
 `run.quiet` event instead of a run row. `quiet` has no effect on a `claude` job, which always gets
 its run row before Claude starts. Every run except a PAUSE-file skip ends with one call to
-`run_update.after_run`, the core run update; the lock skip passes no database connection.
+`run_update.after_run`, the core run update; the lock skip passes no database connection. A
+precheck that raises (a typo in an agent's config) is a failed run, with its row, `#alerts`, auto-pause
+and run update. A job with `run_update: true` in `config/settings.yaml` (scout-research, social,
+community and app-factory) posts one run update to its agent's `RUN_UPDATE_DISCORD_CHANNEL`: status,
+start, length, cost and run id, the error in one line for a failed run, the summary as a quote of at
+most `caps.RUN_UPDATE_TEXT_CHARS` characters (without the lines the error already shows),
+"Produced:" and the approval requests the run raised. A skip posts its reason, and a quiet run
+"nothing to do". Any other exception out of the runner (a database or programming error) posts none.
 
 ### Approval kinds
 

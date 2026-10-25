@@ -31,6 +31,9 @@ NO_REPEAT_DAYS = 14
 APP_PRDS_PER_DAY = 1
 APP_PRDS_WAITING_MAX = 7
 
+# Run updates (MC §4.3): model-written text in one update, in characters.
+RUN_UPDATE_TEXT_CHARS = 300
+
 # Approvals (MC §5.7). Settings may shorten a deadline, never lengthen one.
 # No request waits longer than the ceiling, whatever its kind asks for.
 APPROVAL_DEADLINE_MAX_DAYS = 14
