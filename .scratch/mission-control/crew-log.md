@@ -258,3 +258,25 @@ decisions: §5.3 gains agents.NothingToDo(str). A precheck that returns it write
 decisions: both marked "clarified after sign-off, 2026-10-25" in the header line and at each spot; sign-off line and closing line left as they were
 questions: -
 evidence:  grep -> on_approve 5, NothingToDo 3, "Clarified after sign-off, 2026-10-25" 3; tail -1 -> closing line intact; Signed off by line unchanged
+
+## 2026-10-25T19:27+0800 conductor (build start)
+status:    done
+persona:   conductor
+ticket:    01, 02
+artifacts: crew/mission-control at 1acc1eb (tickets, CONTEXT.md, docs/adr, both feature folders)
+decisions: PR #1 merged by Ting Yu (855e48c); live growth.db backed up to data/growth/backups/manual-before-blocker-fixes-*, then jura-growth status run once: stale journal rolled back, core/0002, community/0002 and outreach/0002 applied, integrity ok
+decisions: wave 1 dispatched: mc 01 (runner and guards) and mc 02 (redaction) in parallel worktrees
+questions: -
+evidence:  sqlite3 mode=ro integrity_check -> ok; growth.db-journal gone
+
+## 2026-10-25T19:29+0800 qa-lead (test strategy v3, ticket ids after the G3 ticket review)
+status:    done
+persona:   qa-lead
+ticket:    -
+artifacts: .scratch/mission-control/reviews/test-strategy-v3.md
+decisions: Ticket columns, §7 and §11.2 follow the issue files: MC-04a/04b, MC-10/10b, BP-02a/02b, MC-11a = issues/11, MC-11b = issues/12, Ting Yu's mission-control#13-#16; "lands second" notes retired (T4 owners)
+decisions: X11 now tests approvals.post_buttons; discord_buttons stays the live-outreach switch (AC-M8.11, E14)
+decisions: Q1-Q7 marked settled from tickets-technical.md (NothingToDo -> run.quiet, network guard in MC-01, dispatch_builds, paths.site_repo, AC-M12.2 in MC-06, digest in BP-02a); on_approve kinds scoped in §5.2 and new case G37; E6 checks setup-guide drafts at ticket gates (N4)
+questions: PM Q9: add the sweep line to MC-05, MC-09, MC-10b, BP-02a, BP-02b, BP-03, and X2 to MC-05 (rec yes); PM Q10: add R2 and R3 to BP-03 and AC-P11.1's join identity to BP-06 (rec yes); functional lead Q8 still open
+evidence:  python check -> MC 80/80, BP 36/36 rows, sets equal to the PRDs; 38 matrix rows (G1-G37 with G4a/G4b)
+evidence:  python check -> 21 ticket ids used, all with an issue file; bare MC-04/BP-02 only in the §0 split note; 25 issue files covered
