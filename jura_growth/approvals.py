@@ -19,15 +19,13 @@ import json
 import re
 import sqlite3
 import sys
-from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass, fields
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterator, Protocol
+from typing import Protocol
 
 from jura_growth import agents, caps, config, db, log, pause, timeutil
-from jura_growth.origin import SSH, TERMINAL, Origin
+from jura_growth.origin import TERMINAL, Origin
 
 PENDING, APPROVED, SKIPPED, EXPIRED, SUPERSEDED = "pending", "approved", "skipped", "expired", "superseded"
 
@@ -175,7 +173,7 @@ class Answer:
 
 # --- ids and hashes ---------------------------------------------------------
 
-_ID = re.compile(r"[Aa]-(\d+)")
+_ID = re.compile(r"[Aa]-([0-9]+)")
 
 
 def format_id(number: int) -> str:
@@ -276,36 +274,20 @@ def _reload(conn: sqlite3.Connection, number: int) -> Approval:
 
 
 # --- the audit trail (A16) --------------------------------------------------
-
-# Inside a decision, events wait here until its transaction is about to
-# commit, so a decision that `on_approve` refuses leaves no event behind,
-# not even in the JSONL mirror.
-_held: ContextVar[list[tuple] | None] = ContextVar("approval_events", default=None)
-
-
-@contextmanager
-def _holding_events() -> Iterator[list[tuple]]:
-    held: list[tuple] = []
-    token = _held.set(held)
-    try:
-        yield held
-    finally:
-        _held.reset(token)
-
-
-def _release(held: list[tuple]) -> None:
-    while held:
-        conn, kind, payload, kwargs = held.pop(0)
-        log.event(conn, kind, payload, **kwargs)
+#
+# Every event here is written inside a db.transaction(), so its row and its
+# JSONL mirror line exist only once that transaction commits: a claim or a
+# decision that rolls back leaves no trace in either store (code review 04).
 
 
 def _audit(
     conn: sqlite3.Connection,
     event: str,
-    approval: Approval,
+    approval: Approval | None,
     agent: str | None,
     *,
-    actor: str,
+    actor: str | None,
+    shown: str | None = None,
     origin: str | None = None,
     ref: str | None = None,
     at: str | None = None,
@@ -313,22 +295,18 @@ def _audit(
     **extra,
 ) -> None:
     payload = {
-        "approval": approval.id,
-        "kind": approval.kind,
-        "subject": approval.subject,
-        "hash": approval.content_hash,
+        "approval": approval.id if approval else shown,
+        "kind": approval.kind if approval else None,
+        "subject": approval.subject if approval else None,
+        "hash": approval.content_hash if approval else None,
         "actor": actor,
         "origin": origin,
         "ref": ref,
         "at": at or timeutil.stamp(),
         **extra,
     }
-    kwargs = {"level": "warning" if event == "approval.refused" else "info", "agent": agent, "run_id": run_id}
-    held = _held.get()
-    if held is None:
-        log.event(conn, event, payload, **kwargs)
-    else:
-        held.append((conn, event, payload, kwargs))
+    level = "warning" if event == "approval.refused" else "info"
+    log.event(conn, event, payload, level=level, agent=agent, run_id=run_id)
 
 
 # --- raising ----------------------------------------------------------------
@@ -483,23 +461,6 @@ def use(conn: sqlite3.Connection, kind: str, subject: str, *, run_id: int | None
     return used
 
 
-@contextmanager
-def _atomic(conn: sqlite3.Connection) -> Iterator[None]:
-    """Its own `BEGIN IMMEDIATE`, or a savepoint inside the caller's."""
-    if not conn.in_transaction:
-        with db.transaction(conn):
-            yield
-        return
-    conn.execute("SAVEPOINT approval_step")
-    try:
-        yield
-    except BaseException:
-        conn.execute("ROLLBACK TO approval_step")
-        conn.execute("RELEASE approval_step")
-        raise
-    conn.execute("RELEASE approval_step")
-
-
 def expire_due(conn: sqlite3.Connection, now: datetime | None = None) -> list[Approval]:
     """Write every lapse that is due (A17) and supersede live records whose
     content changed or is gone, without raising new ones (ticket review N6).
@@ -517,7 +478,7 @@ def expire_due(conn: sqlite3.Connection, now: datetime | None = None) -> list[Ap
         if registered is None:
             continue
         try:
-            with _atomic(conn):
+            with db.atomic(conn):
                 current = _reload(conn, approval.number)
                 after = _refresh(conn, registered, current, now, raise_new=False) if current.live else current
         except Exception as error:  # noqa: BLE001
@@ -594,18 +555,8 @@ def _attribution(origin: Origin, actor: str | None) -> tuple[str | None, str | N
 
 def _refuse(conn, shown: str, approval: Approval | None, agent: str | None, *, actor, origin, ref, why) -> Answer:
     """A refused decision is logged (G12), though nothing about the record changes."""
-    payload = {
-        "approval": shown,
-        "kind": approval.kind if approval else None,
-        "subject": approval.subject if approval else None,
-        "hash": approval.content_hash if approval else None,
-        "actor": actor,
-        "origin": getattr(origin, "kind", None),
-        "ref": ref,
-        "at": timeutil.stamp(),
-        "why": why,
-    }
-    log.event(conn, "approval.refused", payload, level="warning", agent=agent)
+    _audit(conn, "approval.refused", approval, agent, actor=actor, shown=shown,
+           origin=getattr(origin, "kind", None), ref=ref, why=why)
     return Answer(REFUSED, f"refused: {why}.", approval)
 
 
@@ -651,22 +602,39 @@ def decide(
         return _refuse(conn, shown, found, None, actor=actor, origin=origin, ref=source_ref, why=why or "not a human origin")
     if number is None or get(conn, shown) is None:
         return Answer(UNKNOWN_ID, f"There is no approval request {shown}.")
-    if source_ref:
-        first = db.one(
-            conn, "SELECT answer, text FROM approval_decisions WHERE approval_id = ? AND source_ref = ?", (number, source_ref)
-        )
-        if first:
-            return Answer(first["answer"], first["text"], get(conn, shown))
+    first = _first_answer(conn, number, source_ref)
+    if first is not None:
+        return first
     try:
-        with db.transaction(conn), _holding_events() as held:
-            answer = _decide_locked(conn, number, decision, decided_by, origin, source_ref, args)
-            _release(held)
-            return answer
+        with db.transaction(conn):
+            return _decide_locked(conn, number, decision, decided_by, origin, source_ref, args)
     except BadArgs as refusal:
         return Answer(REFUSED, str(refusal), get(conn, shown))
+    except NotApproved as refusal:
+        # A kind applied on decide claims inside on_approve (app-build), and
+        # the claim refused: the decision rolled back, and it answers.
+        found = get(conn, shown)
+        registered = _kind(found.kind) if found else None
+        return _refuse(conn, shown, found, registered.agent if registered else None,
+                       actor=decided_by, origin=origin, ref=source_ref, why=refusal.text)
+
+
+def _first_answer(conn, number: int, source_ref: str | None) -> Answer | None:
+    """The answer already recorded for this delivery, if it came before (A9)."""
+    if not source_ref:
+        return None
+    first = db.one(
+        conn, "SELECT answer, text FROM approval_decisions WHERE approval_id = ? AND source_ref = ?", (number, source_ref)
+    )
+    return Answer(first["answer"], first["text"], _reload(conn, number)) if first else None
 
 
 def _decide_locked(conn, number: int, decision: str, decided_by: str, origin: Origin, source_ref, args) -> Answer:
+    # Again under the lock: a retry of the same delivery may have waited
+    # here while the first copy was being decided.
+    first = _first_answer(conn, number, source_ref)
+    if first is not None:
+        return first
     approval = _reload(conn, number)
     registered = _kind(approval.kind)
     if registered is None:

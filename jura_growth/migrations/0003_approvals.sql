@@ -28,9 +28,10 @@ CREATE TABLE approvals (
   posted_at TEXT,                 -- the card in #approvals (ticket 04b)
   message_id TEXT,
   CHECK (status NOT IN ('approved', 'skipped') OR (decided_at IS NOT NULL AND decided_by IS NOT NULL AND decided_origin IS NOT NULL)),
-  CHECK (status <> 'pending' OR (decided_at IS NULL AND used_at IS NULL AND closed_at IS NULL)),
+  CHECK (status <> 'pending' OR (decided_at IS NULL AND decided_by IS NULL AND decided_origin IS NULL AND decision_ref IS NULL
+                                 AND use_by IS NULL AND used_at IS NULL AND used_by_run IS NULL)),
   CHECK (used_at IS NULL OR status = 'approved'),
-  CHECK (status NOT IN ('expired', 'superseded') OR closed_at IS NOT NULL)
+  CHECK ((status IN ('expired', 'superseded')) = (closed_at IS NOT NULL))
 );
 
 -- One live request (pending, or approved and not yet claimed) per subject.
@@ -39,7 +40,13 @@ CREATE UNIQUE INDEX approvals_one_live ON approvals (kind, subject)
 CREATE INDEX approvals_status_deadline ON approvals (status, decide_by);
 CREATE INDEX approvals_raised_by_run ON approvals (raised_by_run);
 
--- A7: the transitions a record may make. Everything else aborts.
+-- A7: the transitions a record may make. Everything else aborts:
+--   pending  -> approved or skipped (a decision), expired or superseded
+--   approved -> skipped (a revoke), expired or superseded, while unused
+--   approved -> used, once: used_at (and used_by_run) set by the claim
+-- A used, skipped, expired or superseded record never changes, except that
+-- a card not yet marked posted can be marked once on a record that isn't
+-- used (ticket 04b's sweep may post after a decision or a lapse).
 CREATE TRIGGER approvals_transitions BEFORE UPDATE ON approvals
 BEGIN
   SELECT RAISE(ABORT, 'a used approval never changes')
@@ -49,18 +56,35 @@ BEGIN
        OR NEW.content_hash IS NOT OLD.content_hash OR NEW.reason IS NOT OLD.reason
        OR NEW.raised_by_run IS NOT OLD.raised_by_run OR NEW.supersedes IS NOT OLD.supersedes
        OR NEW.requested_at IS NOT OLD.requested_at OR NEW.decide_by IS NOT OLD.decide_by;
-  SELECT RAISE(ABORT, 'a skipped, expired or superseded approval never changes')
-    WHERE OLD.status IN ('skipped', 'expired', 'superseded');
+  SELECT RAISE(ABORT, 'an approval card is marked posted once')
+    WHERE (OLD.posted_at IS NOT NULL AND NEW.posted_at IS NOT OLD.posted_at)
+       OR (OLD.message_id IS NOT NULL AND NEW.message_id IS NOT OLD.message_id);
   SELECT RAISE(ABORT, 'an approval never returns to pending')
     WHERE OLD.status <> 'pending' AND NEW.status = 'pending';
+  SELECT RAISE(ABORT, 'a skipped, expired or superseded approval never changes')
+    WHERE OLD.status IN ('skipped', 'expired', 'superseded')
+      AND (NEW.status IS NOT OLD.status OR NEW.decided_at IS NOT OLD.decided_at
+        OR NEW.decided_by IS NOT OLD.decided_by OR NEW.decided_origin IS NOT OLD.decided_origin
+        OR NEW.decision_ref IS NOT OLD.decision_ref OR NEW.use_by IS NOT OLD.use_by
+        OR NEW.used_at IS NOT OLD.used_at OR NEW.used_by_run IS NOT OLD.used_by_run
+        OR NEW.closed_at IS NOT OLD.closed_at OR NEW.close_reason IS NOT OLD.close_reason);
   SELECT RAISE(ABORT, 'only an approved request can be used, once')
     WHERE NEW.used_at IS NOT NULL AND (OLD.status <> 'approved' OR NEW.status <> 'approved');
+  SELECT RAISE(ABORT, 'an approval''s used_by_run is set only by its claim')
+    WHERE NEW.used_by_run IS NOT OLD.used_by_run AND NEW.used_at IS NULL;
+  SELECT RAISE(ABORT, 'an approval''s decision is written only by a decision')
+    WHERE NEW.status NOT IN ('approved', 'skipped')
+      AND (NEW.decided_at IS NOT OLD.decided_at OR NEW.decided_by IS NOT OLD.decided_by
+        OR NEW.decided_origin IS NOT OLD.decided_origin OR NEW.decision_ref IS NOT OLD.decision_ref);
   SELECT RAISE(ABORT, 'an approved request''s decision never changes while it stays approved')
     WHERE OLD.status = 'approved' AND NEW.status = 'approved'
       AND (NEW.decided_at IS NOT OLD.decided_at OR NEW.decided_by IS NOT OLD.decided_by
-        OR NEW.decided_origin IS NOT OLD.decided_origin OR NEW.decision_ref IS NOT OLD.decision_ref
-        OR NEW.use_by IS NOT OLD.use_by OR NEW.posted_at IS NOT OLD.posted_at
-        OR NEW.message_id IS NOT OLD.message_id);
+        OR NEW.decided_origin IS NOT OLD.decided_origin OR NEW.decision_ref IS NOT OLD.decision_ref);
+  SELECT RAISE(ABORT, 'an approval''s use-by is set only by its approval')
+    WHERE NEW.use_by IS NOT OLD.use_by AND NOT (OLD.status = 'pending' AND NEW.status = 'approved');
+  SELECT RAISE(ABORT, 'an approval is closed only when it expires or is superseded')
+    WHERE (NEW.closed_at IS NOT OLD.closed_at OR NEW.close_reason IS NOT OLD.close_reason)
+      AND NOT (OLD.status IN ('pending', 'approved') AND NEW.status IN ('expired', 'superseded'));
 END;
 
 CREATE TRIGGER approvals_keep_decided BEFORE DELETE ON approvals

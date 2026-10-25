@@ -15,7 +15,7 @@ import sqlite3
 import types
 from datetime import datetime, timedelta
 
-from jura_growth import agents, approvals, db, log, timeutil
+from jura_growth import agents, approvals, db, log, paths, timeutil
 from jura_growth.origin import Origin
 
 # The real discovery, kept before any test patches `agents.plugins`.
@@ -173,6 +173,25 @@ def skip(conn, approval, *, origin=None, actor=None, source_ref=None):
 
 def run(conn) -> int:
     return log.start_run(conn, AGENT, "fake-job")
+
+
+def mirrored(kind: str) -> list[dict]:
+    """The payloads of every `kind` line in the JSONL mirror."""
+    folder = paths.data_dir() / "runs"
+    found = []
+    for path in sorted(folder.glob("*.jsonl")) if folder.exists() else []:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            entry = json.loads(line)
+            if entry["kind"] == kind:
+                found.append(entry["payload"])
+    return found
+
+
+def claims(conn) -> int:
+    """`approval.used` events, which the database and the mirror must agree on."""
+    in_db = len(events(conn, "approval.used"))
+    assert len(mirrored("approval.used")) == in_db, "the mirror and growth.db disagree about claims"
+    return in_db
 
 
 def events(conn, kind: str) -> list[dict]:

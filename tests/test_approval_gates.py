@@ -77,7 +77,7 @@ def attempt(gate, subject):
 
 
 def claims(conn) -> int:
-    return len(aw.events(conn, "approval.used"))
+    return aw.claims(conn)
 
 
 def requested(gate) -> tuple[str, approvals.Approval]:
@@ -270,7 +270,7 @@ def test_g22_a_failed_in_flight_write_rolls_the_claim_back(claimed, conn):
     assert gate.went_out() == 0 and claims(conn) == 0
     gate.fail_in_flight(False)
     attempt(gate, subject)
-    assert gate.went_out() == 1
+    assert gate.went_out() == 1 and claims(conn) == 1
 
 
 @pytest.mark.parametrize("approved", [False, True], ids=["pending", "approved"])

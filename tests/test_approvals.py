@@ -3,6 +3,7 @@ get and raised_by against a temp growth.db and the fake kind (MC §4.6 A1 to
 A17, ADR 0003). The cases every kind runs are in test_approval_gates.py."""
 
 import hashlib
+import time
 
 import pytest
 
@@ -193,6 +194,73 @@ def test_the_same_ref_twice_records_once_and_returns_the_first_answer(conn, worl
     assert db.scalar(conn, "SELECT COUNT(*) FROM approval_decisions") == 1
 
 
+def test_the_same_ref_arriving_while_the_first_is_deciding_gets_the_first_answer(conn, world, control_user, monkeypatch):
+    """G16 with two connections (code review 04, S1): Dispatch's retry lands
+    while the first delivery holds the lock, and must not read as a failure."""
+    import threading
+
+    _, approval = raise_one(conn, world)
+    inside, release = threading.Event(), threading.Event()
+    recorded = world.kind.on_approve
+
+    def slow_on_approve(c, subject, args):
+        inside.set()
+        release.wait(timeout=30)
+        return recorded(c, subject, args)
+
+    monkeypatch.setattr(world.kind, "on_approve", slow_on_approve)
+    answers = {}
+
+    def deliver(name):
+        own = db.connect(migrate_now=False)
+        try:
+            answers[name] = aw.approve(own, approval, origin=Origin.ssh(), actor="discord:111", source_ref=SSH_REF)
+        finally:
+            own.close()
+
+    first = threading.Thread(target=deliver, args=("first",))
+    first.start()
+    assert inside.wait(timeout=30)
+    second = threading.Thread(target=deliver, args=("second",))
+    second.start()
+    time.sleep(0.5)  # the second has read no ref yet and waits on BEGIN IMMEDIATE
+    release.set()
+    first.join(timeout=60)
+    second.join(timeout=60)
+    assert answers["first"].answer == answers["second"].answer == "recorded"
+    assert answers["second"].text == answers["first"].text
+    assert len(world.ran("on_approve")) == 1
+
+
+def test_a_claim_refused_inside_on_approve_answers_refused_and_records_nothing(conn, world, monkeypatch):
+    """G37 (code review 04, S2): app-build's on_approve claims through use(),
+    which refuses while app-factory is paused. decide() still answers."""
+
+    def claiming_on_approve(c, subject, args):
+        raise approvals.NotApproved("paused", "fake-agent is paused (by hand)")
+
+    monkeypatch.setattr(world.kind, "on_approve", claiming_on_approve)
+    _, approval = raise_one(conn, world)
+    answer = aw.approve(conn, approval, source_ref="m:d")
+    assert answer.answer == "refused" and "fake-agent is paused" in answer.text
+    assert approvals.get(conn, approval.id).status == "pending"
+    assert aw.events(conn, "approval.approved") == [] and aw.mirrored("approval.approved") == []
+    assert db.scalar(conn, "SELECT COUNT(*) FROM approval_decisions") == 0
+    [refused] = aw.events(conn, "approval.refused")
+    assert refused["approval"] == approval.id
+
+
+def test_another_exception_from_on_approve_is_a_programming_error_and_rolls_back(conn, world, monkeypatch):
+    def broken(c, subject, args):
+        raise KeyError("bug")
+
+    monkeypatch.setattr(world.kind, "on_approve", broken)
+    _, approval = raise_one(conn, world)
+    with pytest.raises(KeyError):
+        aw.approve(conn, approval)
+    assert approvals.get(conn, approval.id).status == "pending" and aw.mirrored("approval.approved") == []
+
+
 def test_a_revoke_keeps_answering_its_own_ref(conn, world, control_user):
     """Approve under one ref, skip under another: a late repeat of the first
     delivery still gets its own first answer, not already-decided."""
@@ -360,6 +428,19 @@ def test_a_claim_sets_used_at_and_used_by_run_and_logs_one_used_event(conn, worl
     [event] = aw.events(conn, "approval.used")
     assert event["approval"] == approval.id and event["actor"] == f"run:{run_id}" and event["hash"] == approval.content_hash
     assert world.sent == [{"subject": subject, "used_at": aw.NOW, "used_by_run": run_id}]
+
+
+def test_a_refusal_the_caller_lets_escape_leaves_nothing_in_either_store(conn, world):
+    """B1 (code review 04): when the caller's transaction rolls back, the
+    supersede and the new request use() wrote go from the mirror too."""
+    subject, approval = approved_one(conn, world, "H1")
+    world.items[subject] = "H2"
+    with pytest.raises(approvals.NotApproved):
+        with db.transaction(conn):
+            approvals.use(conn, aw.KIND, subject, run_id=None)
+    assert approvals.get(conn, approval.id).status == "approved"
+    assert aw.mirrored("approval.superseded") == [] and len(aw.mirrored("approval.requested")) == 1
+    assert aw.events(conn, "approval.superseded") == []
 
 
 def test_ac_m4_2_a_changed_draft_supersedes_a_0412_and_raises_a_0413(conn, world):
@@ -554,6 +635,13 @@ ALLOWED = [
     ("approved", f"status = 'expired', {CLOSED}"),
     ("approved", f"status = 'superseded', {CLOSED}"),
     ("approved", "used_at = '2026-11-10T10:05:00+08:00'"),
+    ("approved", "used_at = '2026-11-10T10:05:00+08:00', used_by_run = NULL"),
+    # S3 (code review 04): a card can be marked posted once on any record
+    # that isn't used, so 04b's sweep can post a card decided before it ran.
+    ("approved", "posted_at = '2026-11-10T10:03:00+08:00', message_id = '991'"),
+    ("skipped", "posted_at = '2026-11-10T10:03:00+08:00', message_id = '991'"),
+    ("expired", "posted_at = '2026-11-10T10:03:00+08:00', message_id = '991'"),
+    ("superseded", "posted_at = '2026-11-10T10:03:00+08:00'"),
 ]
 
 REFUSED = [
@@ -575,7 +663,28 @@ REFUSED = [
     ("used", "posted_at = '2026-11-10T10:03:00+08:00'"),
     ("used", f"status = 'skipped', {DECIDED}"),
     ("used", f"status = 'expired', {CLOSED}"),
-    ("skipped", "message_id = '991'"),
+    ("used", f"status = 'superseded', {CLOSED}"),
+    ("used", "message_id = '991'"),
+    # closed to closed
+    ("skipped", f"status = 'expired', {CLOSED}"),
+    ("skipped", f"status = 'superseded', {CLOSED}"),
+    ("expired", f"status = 'superseded', close_reason = 'other'"),
+    ("expired", f"status = 'skipped', {DECIDED}"),
+    ("superseded", f"status = 'skipped', {DECIDED}"),
+    ("superseded", "status = 'expired'"),
+    ("skipped", "decided_by = 'discord:999'"),
+    ("expired", "close_reason = 'rewritten'"),
+    # N1 (code review 04): fields a transition doesn't own
+    ("approved", "used_by_run = 1"),
+    ("approved", f"{CLOSED}"),
+    ("pending", "use_by = '2026-11-11T10:00:00+08:00'"),
+    ("pending", "decided_by = 'discord:111'"),
+    ("pending", f"status = 'expired', {CLOSED}, decided_by = 'discord:111'"),
+    ("pending", f"status = 'superseded', {CLOSED}, use_by = '2026-11-11T10:00:00+08:00'"),
+    ("pending", "closed_at = '2026-11-10T10:03:00+08:00'"),
+    ("approved", f"status = 'expired', {CLOSED}, decided_by = 'discord:999'"),
+    ("approved", f"status = 'superseded', {CLOSED}, use_by = NULL"),
+    ("approved", f"status = 'skipped', {DECIDED}, {CLOSED}"),
 ]
 
 
@@ -591,6 +700,15 @@ def test_the_trigger_aborts_every_other_change(conn, world, state, change):
     with pytest.raises(Exception, match="approv"):
         conn.execute(f"UPDATE approvals SET {change} WHERE id = ?", (record.number,))
     assert approvals.get(conn, record.id) == record
+
+
+@pytest.mark.parametrize("state", ["pending", "approved", "skipped", "expired", "superseded"])
+def test_a_card_is_marked_posted_once(conn, world, state):
+    record = states(conn, world)[state]
+    conn.execute("UPDATE approvals SET posted_at = ?, message_id = '991' WHERE id = ?", (aw.NOW, record.number))
+    for change in ("posted_at = '2026-11-10T11:00:00+08:00'", "message_id = '992'", "posted_at = NULL"):
+        with pytest.raises(Exception, match="posted"):
+            conn.execute(f"UPDATE approvals SET {change} WHERE id = ?", (record.number,))
 
 
 @pytest.mark.parametrize("state", ["approved", "used", "skipped", "expired", "superseded"])
