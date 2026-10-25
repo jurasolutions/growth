@@ -128,8 +128,8 @@ buttons and labels. No exclamation marks, no emoji, no buzzwords (leverage, seam
 empower, robust, AI-powered…), no manufactured urgency, no question marks in headings or buttons,
 at most one em dash per 60 words, no "this, not that" constructions. **No figures** except
 interface quantities ("up to 3 files", "under 1 MB"), dates, and a statutory rate with its
-official source. Never claim the tool saves time or money ("saves you hours", "in seconds"). Never
-mention Jura client counts or results.
+official source. A number word from two up ("twelve") is a figure too. Never claim the tool saves
+time or money ("saves you hours", "in seconds"). Never mention Jura client counts or results.
 
 ## 4. Check, then file
 
