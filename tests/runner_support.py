@@ -9,18 +9,18 @@ from jura_growth import config, paths
 FAKE_CLAUDE_JOB = {"agent": "fake-agent", "kind": "claude", "prompt": "fake.md", "tools": ["WebSearch"], "schedule": {"daily": "06:00"}}
 
 
-def fake_claude(tmp_path, result_text, *, is_error=False):
+def fake_claude(tmp_path, result_text, *, is_error=False, cost=0.12):
     """A stand-in `claude` binary. It saves its stdin to `stdin.txt` and the
     `JURA_GROWTH_RUN_ID` it was given to `run-id.txt` in `tmp_path`, and
-    prints a stream-json transcript ending in `result_text`."""
+    prints a stream-json transcript ending in `result_text`, which cost `cost`."""
     script = tmp_path / "fake-claude"
-    record = {"type": "result", "subtype": "success", "is_error": is_error, "result": result_text, "total_cost_usd": 0.12}
+    record = {"type": "result", "subtype": "success", "is_error": is_error, "result": result_text, "total_cost_usd": cost}
     script.write_text(
         "#!/bin/sh\n"
         f"cat > {tmp_path}/stdin.txt\n"
         f'printf "%s" "$JURA_GROWTH_RUN_ID" > {tmp_path}/run-id.txt\n'
         f"echo '{{\"type\": \"system\", \"argv\": \"'\"$*\"'\"}}'\n"
-        f"echo '{json.dumps(record)}'\n"
+        f"printf '%s\\n' '{json.dumps(record)}'\n"  # printf, not echo: sh's echo would expand the \n in a summary
     )
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     return script

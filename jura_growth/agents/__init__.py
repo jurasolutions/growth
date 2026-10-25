@@ -45,9 +45,15 @@ core. A plug-in module may define any of:
         the original outcome stands. `run_id` is None for a quiet command job
         that has no row yet.
 
-    run_update(conn, run) -> list[str] | None
-        The "Produced:" lines of this agent's run update (ticket MC-03); None
-        posts nothing.
+    RUN_UPDATE_CHANNEL: str
+        The Discord channel this agent's run updates go to (ticket MC-03),
+        for a job with `run_update: true` in `config/settings.yaml`.
+
+    run_update(conn, run: run_update.Run) -> list[str] | None
+        The "Produced:" items of this agent's run update (`["3 drafts"]`;
+        an empty list reads "nothing"); None posts no update for this run.
+        Asked only when the run has a database connection. An exception is
+        logged as `run.after_run_error` and the update posts without it.
 
     approval_kinds() -> dict[str, approvals.ApprovalKind]
         The approval kinds this agent owns, by name (MC §4.6, ADR 0003). A

@@ -112,6 +112,29 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     return {"figures": figures, "lines": lines, "brief": brief}
 
 
+RUN_UPDATE_CHANNEL = "community"
+
+
+def run_update(conn: sqlite3.Connection, run) -> list[str]:
+    """The "Produced:" items of a community run: groups it added to the
+    register, and the posts and reply ideas it planned."""
+    from jura_growth.run_update import count
+
+    groups = db.scalar(conn, "SELECT count(*) FROM community_groups WHERE run_id = ?", (run.id,)) or 0
+    planned = dict(
+        (r["kind"], r["n"])
+        for r in db.rows(conn, "SELECT kind, count(*) AS n FROM community_posts WHERE run_id = ? GROUP BY kind", (run.id,))
+    )
+    produced = []
+    if groups:
+        produced.append(count(groups, "new group"))
+    if planned.get("post"):
+        produced.append(count(planned["post"], "planned post"))
+    if planned.get("reply_idea"):
+        produced.append(count(planned["reply_idea"], "reply idea"))
+    return produced
+
+
 # --- commands ----------------------------------------------------------------
 
 

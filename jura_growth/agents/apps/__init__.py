@@ -92,6 +92,17 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     return {"figures": figures, "lines": [f"App factory: {note}; {waiting} app PRDs waiting."], "brief": [brief]}
 
 
+RUN_UPDATE_CHANNEL = "app-factory"
+
+
+def run_update(conn: sqlite3.Connection, run) -> list[str]:
+    """The "Produced:" items of a factory run: the app PRDs it filed, by id."""
+    from jura_growth.run_update import count
+
+    ids = [r["app_id"] for r in db.rows(conn, "SELECT app_id FROM app_prds WHERE run_id = ? ORDER BY id", (run.id,))]
+    return [f"{count(len(ids), 'app PRD')} ({', '.join(ids)})"] if ids else []
+
+
 # --- commands ----------------------------------------------------------------
 
 

@@ -69,6 +69,22 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     return {"figures": {"leads_added": added, "leads_form_only": len(forms)}, "lines": lines, "brief": brief}
 
 
+RUN_UPDATE_CHANNEL = "scout-leads"
+
+
+def run_update(conn: sqlite3.Connection, run) -> list[str]:
+    """The "Produced:" items of a research run: the leads it recorded, by
+    how they can be reached."""
+    from jura_growth.run_update import count
+
+    rows = db.rows(conn, "SELECT channel FROM leads WHERE run_id = ?", (run.id,))
+    if not rows:
+        return []
+    by_email = sum(1 for r in rows if r["channel"] == "email")
+    forms = sum(1 for r in rows if r["channel"] == "form")
+    return [f"{count(len(rows), 'new lead')} ({by_email} with an address, {forms} form only)"]
+
+
 def privacy_terms(conn: sqlite3.Connection | None) -> dict:
     """For `privacy`: addresses that name a person, so their names stay out of
     Discord, and company names, so they are never read as a person's name."""

@@ -50,6 +50,7 @@ jobs:
     prompt: app-factory.md
     tools: [WebSearch, WebFetch]
     schedule: {daily: "06:30"}
+    run_update: true # one message per run in #app-factory
 
   social:
     agent: social
@@ -57,6 +58,7 @@ jobs:
     prompt: social.md
     tools: [WebSearch, WebFetch]
     schedule: {daily: "07:00"}
+    run_update: true # one message per run in #social-drafts
 
   scout-research:
     agent: scout
@@ -65,6 +67,7 @@ jobs:
     tools: [WebSearch, WebFetch]
     max_budget_usd: 5.00
     schedule: {business_days: "09:00"}
+    run_update: true # one message per run in #scout-leads
 
   scout-send:
     agent: outreach
@@ -93,6 +96,7 @@ jobs:
     # No WebFetch denials here: the community plug-in denies every domain in
     # config/community.yaml blocked_fetch_domains, and every subdomain of it.
     schedule: {weekly: {day: mon, time: "07:30"}}
+    run_update: true # one message per run in #community
 
   backup:
     agent: backup
