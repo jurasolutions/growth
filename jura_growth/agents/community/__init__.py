@@ -51,15 +51,21 @@ def channels() -> dict[str, brand_check.Channel]:
 def permissions(job: str):
     """The `jura-growth` commands `prompts/community.md` uses. Joining a
     group, confirming its rules and recording posts or removals (`set`,
-    `posted`, `removed`) are Ting Yu's steps."""
+    `posted`, `removed`) are Ting Yu's steps.
+
+    The run may not fetch any blocked domain or its subdomains
+    (`groups.fetch_denials()`)."""
     if job != "community":
         return None
     from jura_growth.headless import Permissions
 
-    return Permissions(commands=(
-        "community context", "community add-group", "community summary",
-        "community plan-add", "community publish-plan", "social render", "check",
-    ))
+    return Permissions(
+        commands=(
+            "community context", "community add-group", "community summary",
+            "community plan-add", "community publish-plan", "social render", "check",
+        ),
+        disallowed_tools=groups_mod.fetch_denials(),
+    )
 
 
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
@@ -401,7 +407,10 @@ def register_summary(counts: dict, new: list[dict]) -> str:
 @click.argument("run_id", type=int)
 @click.option("--json", "as_json", is_flag=True)
 def audit_run_cmd(run_id, as_json) -> None:
-    """Scan a run's transcript for any fetch of facebook.com or fb.com domains."""
+    """Scan a run's transcript for any fetch of a blocked domain or its subdomains.
+
+    The blocked domains are Facebook's own plus blocked_fetch_domains in
+    config/community.yaml."""
     report = audit(run_id)
     with db.session() as conn:
         log.event(conn, "community.audit", {k: v for k, v in report.items() if k != "calls"}, agent=NAME,

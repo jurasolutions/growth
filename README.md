@@ -112,8 +112,10 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
   `data/growth/work/<job>/`, plus the job's own tools (web search and fetch).
 - Refused: reading any secret file under `jurasolutions/` (`.env*`, `*.env`, `.dev.vars*`, kept
   in `paths.SECRET_FILE_PATTERNS`), every other
-  `jura-growth` command (`run`, `resume`, `schedule` and `discord` always), and anything the job
-  lists in `disallowed_tools` (the community job can't fetch facebook.com).
+  `jura-growth` command (`run`, `resume`, `schedule` and `discord` always), anything the job
+  lists in `disallowed_tools`, and the plug-in's own `disallowed_tools` from `permissions(job)`
+  (the community job can't fetch any domain in `config/community.yaml` `blocked_fetch_domains`,
+  or any subdomain of one).
 - The code enforces the same command list again: with `JURA_GROWTH_JOB` set, any other command
   exits with status 2 and a `refused:` line (`jura_growth/headless.py`). A command job may run
   only its own command. Commands you run in Terminal are unaffected.
