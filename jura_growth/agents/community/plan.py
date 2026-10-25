@@ -613,7 +613,9 @@ def render(conn: sqlite3.Connection, week: str) -> str:
             "",
             f"- [{box}] Post item {p['id']} on {day:%a %d %b} in [{p['group_name']}]({p['group_url']})"
             + (f" · posted {p['posted_url']}" if p["posted_url"] else ""),
-            f"- Rules reminder: {p['promo_rules'] or 'unknown'} ({confirmed}). Planned as: {rules.summary()}."
+            f"- Rules reminder: {p['promo_rules'] or 'unknown'} ({confirmed}"
+            + (f"; {rules_mod.TIMING_HINT}" if rules.mentions_timing else "")
+            + f"). Planned as: {rules.summary()}."
             + (f" Why this day fits: {qa['rules_ok']}" if qa.get("rules_ok") else ""),
             f"- Image: {p['image_path'] or 'none'}",
             "",

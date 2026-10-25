@@ -1,16 +1,17 @@
 """Reading a group's promotion rules well enough to plan around them.
 
-Rules that name no day parse into bans or permissions: "no self-promo", "no
-links", "self-promotion is welcome". Rules the parser can't read are still
-"known": a plan item for that group must then say in `rules_ok` why its day and
-content fit the rules.
+No group is plannable until Ting Yu has said which days are open, with
+`jura-growth community set <id> promo_days=... post_days=...` (`confirm_days`),
+whatever its rules text says. Code never reads days out of English rules: day,
+frequency and holiday rules are too easy to invert or miss, and a forbidden day
+can get Ting Yu removed from the group. `mentions_timing` only flags rules that
+seem to talk about timing, as a hint to read them carefully; it never opens a day.
 
-Rules that name a day ("promo Saturdays only", "no posts on Sundays") are never
-read into days by code: English day rules are too easy to invert, and a
-forbidden day can get Ting Yu removed from the group. They come back unparsed,
-and no day is open for the group until Ting Yu confirms the days himself with
-`jura-growth community set <id> promo_days=... post_days=...` (`confirm_days`).
-A links ban stated beside the days is still kept.
+Rules that name no day still parse into bans or permissions: "no self-promo",
+"no links", "self-promotion is welcome". A links ban stated beside a day rule is
+kept too, because confirming days doesn't confirm links. Rules the parser can't
+read are still "known": a plan item for that group must then say in `rules_ok`
+why its day and content fit the rules.
 
 Empty rules, or "unknown" / "not stated", mean unknown: the post carries no
 link (community scout PRD §5.2).
@@ -36,6 +37,16 @@ DAY_RE = re.compile(rf"\b{DAY}\b", re.I)
 RANGE_RE = re.compile(rf"\b(?P<a>{DAY})\s*(?:-|–|—|to|through|thru|till|until)\s*(?P<b>{DAY})\b", re.I)
 GROUPS_RE = re.compile(r"\b(?P<g>weekends?|weekdays?|every day|everyday|daily|any day)\b", re.I)
 ANY_DAY_RE = re.compile(rf"{RANGE_RE.pattern}|{DAY_RE.pattern}|{GROUPS_RE.pattern}", re.I)
+# Deliberately loose, because it only drives a hint: day names inside hashtags
+# (#FridayPromo), wknd/wkend, weeknights, "week days", frequency and holidays.
+TIMING_RE = re.compile(
+    rf"(?:mon|tues|wednes|thurs|fri|satur|sun)day|{ANY_DAY_RE.pattern}"
+    r"|\bw(?:ee)?ke?nds?\b|\bweek\s*(?:days?|nights?|ends?)\b"
+    r"|\b(?:once|twice|\d+\s*(?:x|times))\s+(?:a|per|each|every)\b|\b(?:weekly|fortnightly|monthly)\b"
+    r"|\bmonths?\b|\bholidays?\b|\bthreads?\b|\b\d{1,2}(?:st|nd|rd|th)\b",
+    re.I,
+)
+TIMING_HINT = "the rules mention timing, so check the day against them"
 ALL_DAYS = frozenset(range(7))
 
 UNKNOWN_RE = re.compile(
@@ -59,6 +70,7 @@ LINK_NEG_RE = re.compile(rf"{NEG_RE.pattern}|\bnot\b", re.I)
 CLAUSE_BREAK_RE = re.compile(r"[,:;()–—]|\s-\s|\b(?:but|and)\b", re.I)
 ALLOWED_RE = re.compile(r"\b(?:allowed|welcome[ds]?|ok|okay|permitted|fine|encouraged|can|may)\b", re.I)
 CONFIRM_HINT = "jura-growth community set <id> promo_days=... post_days=..."
+UNCONFIRMED = f"no post until Ting Yu confirms the open days ({CONFIRM_HINT})"
 
 
 @dataclass
@@ -71,7 +83,7 @@ class Rules:
     no_promo: bool = False
     no_links: bool = False
     promo_allowed: bool = False  # rules say promotion is fine
-    names_days: bool = False  # the text names a day: no day is open until Ting Yu confirms them
+    mentions_timing: bool = False  # a hint for whoever reads the rules; never opens a day
     days_confirmed: bool = False  # promo_days and post_days come from Ting Yu (`confirm_days`)
     notes: list[str] = field(default_factory=list)
 
@@ -84,15 +96,15 @@ class Rules:
             "no_promo": self.no_promo,
             "no_links": self.no_links,
             "promo_allowed": self.promo_allowed,
-            "names_days": self.names_days,
+            "mentions_timing": self.mentions_timing,
             "days_confirmed": self.days_confirmed,
         }
 
     def summary(self) -> str:
+        if not self.days_confirmed:
+            return UNCONFIRMED
         if not self.known:
             return "rules unknown: value post, no link"
-        if self.names_days and not self.days_confirmed:
-            return f"rules name days: no post until Ting Yu confirms the days ({CONFIRM_HINT})"
         if not self.parsed:
             return "rules could not be read in code; state why the day and post fit them (rules_ok)"
         parts = []
@@ -188,7 +200,7 @@ def parse(text: str | None) -> Rules:
     raw = (text or "").strip()
     if not raw or UNKNOWN_RE.match(raw):
         return Rules(raw, known=False, parsed=True)
-    rules = Rules(raw, known=True, parsed=False)
+    rules = Rules(raw, known=True, parsed=False, mentions_timing=bool(TIMING_RE.search(raw)))
     for clause in re.split(r"[.;\n]+|\s\|\s", raw):
         clause = clause.strip()
         if not clause:
@@ -197,7 +209,7 @@ def parse(text: str | None) -> Rules:
         link = bool(LINK_RE.search(clause))
         negative = bool(NEG_RE.search(clause))
         if days_in(clause):
-            rules.names_days = True  # Ting Yu confirms the days
+            rules.parsed = True  # read by Ting Yu instead: his confirmed days replace it
             if link and _bans_links_on_every_day(clause):
                 rules.no_links = True
             continue
@@ -212,20 +224,17 @@ def parse(text: str | None) -> Rules:
             rules.parsed = True
         elif link and not promo and ALLOWED_RE.search(clause):
             rules.parsed = True
-    if rules.names_days:
-        rules.parsed = False
     return rules
 
 
 def confirm_days(rules: Rules, promo_days: str | None, post_days: str | None) -> Rules:
-    """`rules` with the days Ting Yu confirmed (stored `days_text` values), which replace
-    anything the text seems to say. Both must be set, or the days stay unconfirmed."""
+    """`rules` with the days Ting Yu confirmed (stored `days_text` values), the only days
+    that count. Both must be set, or the group has no open day."""
     if promo_days is None or post_days is None:
         return rules
     promo, posts = read_days(promo_days), read_days(post_days)
     return replace(
         rules,
-        parsed=True,
         days_confirmed=True,
         promo_days=promo or None,
         post_days=posts,
@@ -236,8 +245,8 @@ def confirm_days(rules: Rules, promo_days: str | None, post_days: str | None) ->
 
 def day_problem(rules: Rules, weekday: int, *, promotional: bool) -> str | None:
     """Why a post on `weekday` breaks the rules, or None."""
-    if rules.names_days and not rules.days_confirmed:
-        return f"its rules name days and Ting Yu hasn't confirmed which are open ({CONFIRM_HINT})"
+    if not rules.days_confirmed:
+        return f"Ting Yu hasn't confirmed which days are open for this group ({CONFIRM_HINT})"
     if rules.post_days is not None and weekday not in rules.post_days:
         return f"the group allows {_posts_only_on(rules.post_days)}"
     if promotional and rules.promo_days is not None and weekday not in rules.promo_days:

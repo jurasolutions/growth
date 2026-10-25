@@ -217,15 +217,13 @@ def set_fields(conn: sqlite3.Connection, group_id: int, pairs: list[str]) -> dic
 
 
 def _check_days_confirmed(group: dict) -> None:
-    """Confirming rules that name days means saying which days are open. A later
-    change of rules text clears the days, and the group has no open day until Ting
-    Yu sets them again."""
-    if not rules_mod.parse(group["promo_rules"]).names_days:
-        return
+    """Confirming a group's rules means saying which days are open, for every group:
+    code never reads days out of the rules text. A later change of rules text clears
+    the days, and the group has no open day until Ting Yu sets them again."""
     missing = [key for key, column in DAY_COLUMNS.items() if group.get(column) is None]
     if missing:
         raise GroupError(
-            f"the rules name days (\"{group['promo_rules']}\"), so say which days are open as well: "
+            f"say which days are open for these rules (\"{group['promo_rules'] or 'unknown'}\") as well: "
             "promo_days=... post_days=..., each any, none, or days like sat,sun or mon-fri "
             f"(missing: {', '.join(missing)})"
         )
