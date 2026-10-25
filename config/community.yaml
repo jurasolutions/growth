@@ -28,5 +28,6 @@ post_as: Ting Yu personally, mentioning Jura Solutions in the closing line
 # this list; settings.yaml has no second list). A URL on them can't be a source
 # URL, and `community audit-run` checks a run's transcript for them. The code
 # always adds Facebook's own domains (groups.BLOCKED_DEFAULT), so removing one
-# here doesn't unblock it.
+# here doesn't unblock it. Write bare domains only (example.com, not
+# https://example.com/ or example.com:443): anything else stops the job.
 blocked_fetch_domains: [facebook.com, fb.com, fb.me, fb.watch, fbcdn.net, facebook.net, messenger.com]

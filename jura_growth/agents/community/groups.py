@@ -31,16 +31,42 @@ def settings() -> dict:
     return config.agent_config("community")
 
 
+class BlockedDomainError(ValueError):
+    """A blocked_fetch_domains entry that isn't a bare domain. It would make
+    deny rules that match no host, so nothing that reads the list carries on."""
+
+
+BARE_DOMAIN_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$")
+
+
 def blocked_domains() -> tuple[str, ...]:
     """The one list of domains the community run may not fetch: Facebook's
     own, plus any in community.yaml. Each covers its subdomains too (the job's
-    WebFetch denials, `is_blocked`, `community audit-run`). A configured entry
-    is read as a bare lowercase domain, so " *.Example.COM. " is example.com."""
-    configured = [
-        str(entry).strip().lower().removeprefix("*.").strip(".")
-        for entry in settings().get("blocked_fetch_domains") or ()
-    ]
-    return tuple(dict.fromkeys([*BLOCKED_DEFAULT, *(d for d in configured if d)]))
+    WebFetch denials, `is_blocked`, `community audit-run`).
+
+    A configured entry must be a bare domain. Case, surrounding spaces, a
+    leading "*." and a trailing dot are tidied (" *.Example.COM. " is
+    example.com); a URL, path, port or anything else raises BlockedDomainError."""
+    configured = []
+    for entry in settings().get("blocked_fetch_domains") or ():
+        domain = str(entry).strip().lower().removeprefix("*.").rstrip(".")
+        if not BARE_DOMAIN_RE.match(domain):
+            raise BlockedDomainError(
+                f"config/community.yaml blocked_fetch_domains: {entry!r} is not a bare domain; "
+                "write it as a host name only, like example.com (it covers every subdomain)"
+            )
+        configured.append(domain)
+    return tuple(dict.fromkeys([*BLOCKED_DEFAULT, *configured]))
+
+
+def fetch_denials() -> tuple[str, ...]:
+    """Claude Code deny rules for every blocked domain. Claude Code matches
+    `WebFetch(domain:x)` by exact host and `WebFetch(domain:*.x)` by subdomain
+    only (2.1.310, checked with a headless probe), so each domain gets both."""
+    return tuple(
+        rule for domain in blocked_domains()
+        for rule in (f"WebFetch(domain:{domain})", f"WebFetch(domain:*.{domain})")
+    )
 
 
 def host(url: str) -> str:

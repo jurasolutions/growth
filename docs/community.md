@@ -10,7 +10,9 @@ facebook.com either. The domains it may not fetch have one list, `blocked_fetch_
 `config/community.yaml` (Facebook's own domains are always on it). The community plug-in turns
 each domain into two Claude Code rules for this job, `WebFetch(domain:facebook.com)` for the
 domain and `WebFetch(domain:*.facebook.com)` for every subdomain, so adding a domain to the list
-blocks it with no edit to `config/settings.yaml`. `add-group` refuses source URLs on those domains,
+blocks it with no edit to `config/settings.yaml`. Each entry must be a bare domain: a URL, path or
+port would make rules that match nothing, so the job refuses to start and the run fails with an
+alert instead. `add-group` refuses source URLs on those domains,
 and `community audit-run` proves the run fetched none of them from its transcript.
 
 ## How a Monday goes
