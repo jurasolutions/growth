@@ -24,7 +24,9 @@ The rules:
   outbox: the record waits, and the one-pager lists it as unposted.
 - A preview with more than ten files is refused before anything is posted,
   rather than dropping one (AC-M5.5).
-- Cards mention nobody and go through `discord.post()`'s masking.
+- Cards mention nobody and go through `discord.post()`'s masking, with the
+  Keychain values loaded first (`privacy.load_for_masking`), because a
+  preview carries text another process wrote.
 - One sweep at a time, through the `approval-cards` lock; a second sweep that
   finds it held does nothing, and the next one catches up.
 
@@ -36,7 +38,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from jura_growth import approvals, db, discord, locks, log, timeutil
+from jura_growth import approvals, db, discord, locks, log, privacy, timeutil
 
 CHANNEL = "approvals"
 USERNAME = "Jura growth · approvals"
@@ -125,6 +127,9 @@ def sweep(conn: sqlite3.Connection) -> int:
             return 0
         if not discord.webhook(CHANNEL):
             return 0
+        # A preview carries text another process wrote (a draft, a PRD), so
+        # every Keychain value is masked too, as for alerts and the digest.
+        privacy.load_for_masking(conn)
         posted = _post_unposted(conn)
         _edit_changed(conn)
         return posted
