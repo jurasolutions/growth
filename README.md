@@ -112,7 +112,9 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
   `data/growth/work/<job>/`, plus the job's own tools (web search and fetch).
 - Refused: reading any secret file under `jurasolutions/` (`.env*`, `*.env`, `.dev.vars*`, kept
   in `paths.SECRET_FILE_PATTERNS`), every other
-  `jura-growth` command (`run`, `resume`, `schedule` and `discord` always), anything the job
+  `jura-growth` command (`run`, `resume`, `schedule`, `discord`, `approve`, `skip`, `approvals`
+  and `remote` always, kept in `headless.NEVER`: deciding an approval and sending a control
+  command are a human's), anything the job
   lists in `disallowed_tools`, and the plug-in's own `disallowed_tools` from `permissions(job)`
   (the community job can't fetch any domain in `config/community.yaml` `blocked_fetch_domains`,
   or any subdomain of one).
@@ -155,11 +157,19 @@ imports it by name. The module may define:
 | `register(cli)` | Add a click command group |
 | `channels()` | `{name: brand_check.Channel}` with the agent's rule-10 checks |
 | `digest(conn, day)` | `{"figures": {}, "lines": [], "brief": []}` for the digest and morning brief |
-| `precheck(job, conn)` | A reason to skip a scheduled run before it starts, or `None` |
+| `precheck(job, conn)` | A reason to skip a scheduled run before it starts, or `None`. Return `agents.NothingToDo("nothing due")` instead of a plain string when the run simply has nothing to do: the runner writes a `run.quiet` event with that reason and no run row (ADR 0001) |
 | `permissions(job)` | For a `claude` job the agent runs: `headless.Permissions` with the `jura-growth` commands its prompt uses (and any extra Claude Code deny rules), or `None`. A job with no declaration may run no commands |
+| `after_run(conn, job, run_id, outcome)` | Called after the job body of a run that started, before its run row is finished. Return a `runner.Outcome` to replace the outcome (the row, `#alerts` and auto-pause all see it), or `None` to keep it. An exception is logged as `run.after_run_error` and the outcome stands |
+| `run_update(conn, run)` | The "Produced:" lines of the agent's run update, or `None` to post nothing (ticket MC-03) |
+| `approval_kinds()` | The approval kinds the agent owns (ticket MC-04) |
 
-Its prompt goes in `prompts/<job>.md`, its settings in `config/<name>.yaml`, and its hard limits
-in `caps.py`.
+Every hook except `NAME` is optional and found with `getattr`. Its prompt goes in
+`prompts/<job>.md`, its settings in `config/<name>.yaml`, and its hard limits in `caps.py`.
+
+A quiet command job (`quiet: true`, such as `scout-send`) that finds nothing to do also leaves a
+`run.quiet` event instead of a run row. `quiet` has no effect on a `claude` job, which always gets
+its run row before Claude starts. Every run except a PAUSE-file skip ends with one call to
+`run_update.after_run`, the core run update; the lock skip passes no database connection.
 
 ## Tests
 
@@ -175,3 +185,9 @@ opening a file for writing, creating, removing, renaming or truncating it, chang
 times, and opening a SQLite file there at all. It doesn't see writes made by subprocesses, or
 operations relative to an open folder (`dir_fd`, as inside `shutil.rmtree`), and it allows
 `__pycache__/` and `.pytest_cache/`.
+
+A second audit hook, the network guard, refuses and fails the test for every DNS lookup
+(`socket.getaddrinfo`) and connection (`socket.connect`) the test process makes outside loopback.
+Unix sockets, `127.0.0.0/8`, `::1`, `localhost` and `*.localhost` are allowed. A test that
+provokes either guard on purpose takes the `write_guard` or `network_guard` fixture and calls its
+`take()`, so its own refusals don't fail it. Like the write guard, it doesn't see subprocesses.
