@@ -36,9 +36,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from jura_growth import agents, config, db, discord, headless, holidays, locks, log, pause, paths, run_update, timeutil
-
-BUSINESS_DAY_KINDS = ("business_days", "business_days_every")
+from jura_growth import agents, config, db, discord, headless, holidays, locks, log, pause, paths, run_update, schedule, timeutil
 
 
 class JobError(RuntimeError):
@@ -78,8 +76,8 @@ def run(name: str, *, ignore_schedule: bool = False) -> Outcome:
 
     with _lock(name) as acquired:
         if not acquired:
-            log.mirror({"ts": timeutil.stamp(), "agent": agent, "level": "info", "kind": "run.skipped", "payload": {"job": name, "reason": "previous run still going"}})
-            outcome = Outcome("skipped", "previous run still going")
+            log.mirror({"ts": timeutil.stamp(), "agent": agent, "level": "info", "kind": "run.skipped", "payload": {"job": name, "reason": locks.STILL_GOING}})
+            outcome = Outcome("skipped", locks.STILL_GOING)
             _run_update(None, name, spec, None, outcome)  # never opens growth.db
             return outcome
 
@@ -183,8 +181,7 @@ def _hook_failed(conn: sqlite3.Connection | None, hook: str, job: str, agent: st
 
 
 def _schedule_reason(spec: dict) -> str | None:
-    kinds = set(spec.get("schedule", {}))
-    if kinds & set(BUSINESS_DAY_KINDS):
+    if schedule.business_days_only(spec.get("schedule", {})):
         today = timeutil.today()
         if not holidays.is_business_day(today):
             name = holidays.holiday(today)

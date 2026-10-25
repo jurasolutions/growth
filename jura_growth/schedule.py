@@ -20,13 +20,26 @@ from __future__ import annotations
 import os
 import plistlib
 import subprocess
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from jura_growth import config, paths, timeutil
 
 LABEL_PREFIX = "sg.jurasolutions.growth."
 WEEKDAYS = {"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6}
+# Schedule shapes whose job skips weekends and public holidays in code.
+BUSINESS_DAY_KINDS = ("business_days", "business_days_every")
+
+
+def business_days_only(schedule: dict) -> bool:
+    """True when the job skips a whole day that isn't a business day, as the
+    runner does if any of its schedule shapes is a business-day one."""
+    return bool(set(schedule) & set(BUSINESS_DAY_KINDS))
+
+
+def launchd_weekday(day: date) -> int:
+    """launchd's weekday numbering: 0 is Sunday."""
+    return (day.weekday() + 1) % 7
 
 
 def label(job: str) -> str:
@@ -81,7 +94,7 @@ def to_local(slot: tuple[int | None, int, int]) -> dict:
     base = datetime(2026, 10, 25 + (weekday or 0), hour, minute) + shift
     entry = {"Hour": base.hour, "Minute": base.minute}
     if weekday is not None:
-        entry["Weekday"] = (base.weekday() + 1) % 7
+        entry["Weekday"] = launchd_weekday(base)
     return entry
 
 
