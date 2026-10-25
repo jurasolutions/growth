@@ -195,7 +195,10 @@ def groups_cmd(fit, joined, channel, as_json) -> None:
 @click.argument("group_id", type=int)
 @click.argument("pairs", nargs=-1, required=True)
 def set_cmd(group_id, pairs) -> None:
-    """Update a group: joined=yes rules="..." [fit=...] [notes=...] [rules_confirmed=yes]."""
+    """Update a group: joined=yes rules="..." rules_confirmed=yes promo_days=... post_days=... [fit=...] [notes=...].
+
+    Confirming rules needs both day keys: each any, none, or days like sat,sun
+    or mon-fri. New rules text clears the confirmed days."""
     with db.session() as conn:
         try:
             group = groups_mod.set_fields(conn, group_id, list(pairs))
@@ -401,7 +404,10 @@ def register_summary(counts: dict, new: list[dict]) -> str:
             "",
             "No group is marked joined and good fit yet, so there is no posting plan this week. Join the good-fit "
             "groups you want (as yourself), read their rules inside, then run:",
-            "`jura-growth community set <id> joined=yes rules=\"<the rules as the group states them>\" rules_confirmed=yes`",
+            "`jura-growth community set <id> joined=yes rules=\"<the rules as the group states them>\" rules_confirmed=yes "
+            "promo_days=<days> post_days=<days>`",
+            "Each `<days>` is any, none, or days like sat,sun or mon-fri: promo_days for promotional posts, "
+            "post_days for every post.",
         ]
     return "\n".join(lines)
 

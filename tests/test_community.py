@@ -1,6 +1,8 @@
 """The community scout plug-in (community scout PRD, blocks 1 and 2)."""
 
 import json
+import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -361,6 +363,24 @@ def test_summary_posts_to_community_and_says_nobody_joined(conn):
     assert result.exit_code == 0
     [message] = outbox("community")
     assert "1 groups in the register" in message["content"] and "no posting plan this week" in message["content"]
+
+
+def test_the_summary_hint_is_a_command_community_set_accepts(conn):
+    """Ting Yu copies this line from #community into Terminal, so it must pass `community set`'s checks."""
+    _, group_id, _ = groups_mod.add(conn, group("SG SME owners", "sgsme"))
+    summary = invoke("community", "summary", "--no-post").output
+    [hint] = re.findall(r"`(jura-growth community set [^`]*)`", summary)
+    filled = re.sub(r"<[^>]*>", "any", hint.replace("<id>", str(group_id)))
+    result = invoke(*shlex.split(filled)[1:])
+    assert result.exit_code == 0, result.output
+    row = groups_mod.get(conn, group_id)
+    assert row["joined"] == 1 and row["rules_confirmed"] == 1
+    assert (row["promo_days_confirmed"], row["post_days_confirmed"]) == ("any", "any")
+
+
+def test_set_help_names_the_day_keys():
+    help_text = invoke("community", "set", "--help").output
+    assert "promo_days=" in help_text and "post_days=" in help_text
 
 
 # --- the weekly plan (block 2) ---------------------------------------------
