@@ -2,6 +2,7 @@ import ipaddress
 import os
 import shutil
 import sys
+import urllib.parse
 
 import pytest
 
@@ -50,6 +51,10 @@ class WriteGuard:
             value = os.fsdecode(value)
         if not isinstance(value, (str, os.PathLike)) or str(value) in ("", ":memory:"):
             return None
+        if isinstance(value, str) and value.startswith("file:"):  # a SQLite URI: judge the file it names
+            value = urllib.parse.unquote(urllib.parse.urlsplit(value).path)
+            if value in ("", ":memory:"):
+                return None
         target = os.path.realpath(value)
         if not any(target == root or target.startswith(root + os.sep) for root in self.roots):
             return None
