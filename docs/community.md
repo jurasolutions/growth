@@ -32,6 +32,10 @@ transcript.
 - Join the good-fit groups you want, as yourself (see "Open questions"). Read each group's real
   rules inside, then:
   `jura-growth community set <id> joined=yes rules="<the rules as stated>" rules_confirmed=yes`
+  If the rules name a day, say which days are open in the same command:
+  `promo_days=<days> post_days=<days>`, each `any` (no day limit), `none`, or days like
+  `sat,sun` or `mon-fri`. For "No promotion on weekends", that is `promo_days=mon-fri
+  post_days=any`. Until you do, the plan has no open day for that group.
 - Post the plan's items yourself, then tick `- [x]` in the checklist or run
   `jura-growth community posted <item-id> [url]`.
 - If an admin removes a post or warns you: `jura-growth community removed <group-id>`. The group
@@ -44,7 +48,7 @@ transcript.
 | `community context --json` | Records checklist ticks, then the week, limits, register, plannable groups with parsed rules and open days, this week's plan, recent texts, live tools |
 | `community add-group --file <json>` | One group, a list, or `{"groups": [...]}`. Validates, dedupes by URL (and name), rejects Facebook source URLs |
 | `community groups [--fit] [--joined] [--channel] [--json]` | The register |
-| `community set <id> key=value ...` | `joined=yes`, `rules="..."`, `rules_confirmed=yes`, `fit=...`, `fit_reason=...`, `notes=...` (also audience, size_hint, active_hint, name) |
+| `community set <id> key=value ...` | `joined=yes`, `rules="..."`, `rules_confirmed=yes`, `promo_days=...`, `post_days=...`, `fit=...`, `fit_reason=...`, `notes=...` (also audience, size_hint, active_hint, name). New rules text clears the confirmed days |
 | `community plan-add --file <json>` | Weekly plan items, checked in code, then brand-gated |
 | `community publish-plan [--week]` | Writes the checklist and posts it to `#community` |
 | `community posted <item-id> [url]` | Records a post (or a used reply idea) |
@@ -89,15 +93,15 @@ Structural problems reject the whole plan and store nothing, without touching th
   post per group per week.
 - **Rotation:** no group within 14 days of its last suggested or posted item
   (`caps.NO_REPEAT_DAYS`; config may lengthen it).
-- **Days:** the day is in the plan week and not past. Rules are parsed into days
-  (`agents/community/rules.py`): "promo Saturdays only", "self-promotion on Fridays", "ads on
-  weekends", "no promotion except the Sunday thread" limit promotional posts; "posts Mon to Fri
-  only" limits every post; "no self-promo" and "no links" are bans. A rule that bans days leaves
-  the others open: "no promotion on weekends" means promotion Monday to Friday. A post is
-  promotional when it mentions Jura or carries a link. Rules the parser can't read need a
-  `rules_ok` statement, and so does a clause that mixes a permission and a ban ("promo on
-  Fridays, no DMs", "no links on weekends unless approved"): the code doesn't guess which days
-  are which.
+- **Days:** the day is in the plan week and not past. Day rules are Ting Yu's to confirm: rules
+  text that names a day ("promo Saturdays only", "no posts on Sundays") is never read into days
+  by code, because English day rules are too easy to invert. Such a group has no open day, in
+  `context`'s `days_open` or in a plan, until Ting Yu sets `promo_days` and `post_days`; then
+  only those days count, and the checklist's "Planned as" line shows them. `promo_days` limits
+  promotional posts and `post_days` limits every post. A post is promotional when it mentions
+  Jura or carries a link. Rules with no day still parse in code (`agents/community/rules.py`):
+  "no self-promo" and "no links" are bans, and a links ban stated beside the days ("promo
+  Saturdays only, no links") is kept. Rules the parser can't read need a `rules_ok` statement.
 - **Words:** posts 60–150, reply ideas 10–120.
 - **Distinct texts:** no sentence of four or more words shared with another group's post this
   week or any post from the last 28 days, and word-trigram overlap at most 0.25.
@@ -137,9 +141,9 @@ recorded on the next run; republishing a week keeps its ticks.
 - **Open question 2:** 3 groups a week to start (`groups_per_week: 3`, the hard cap).
 - **Links need confirmed rules.** Rules found by web search are recorded as stated, but a link
   goes in only after Ting Yu has read the group's real rules and set `rules_confirmed=yes`.
-  Researched rules still limit the days.
-- **Promotion days apply to promotional posts.** "Promo Saturdays only" doesn't stop a plain
-  value post on a Tuesday; it does stop the Jura closing line on a Tuesday.
+  Researched rules that name a day open no day until he confirms the days.
+- **Promotion days apply to promotional posts.** `promo_days=sat` doesn't stop a plain value
+  post on a Tuesday; it does stop the Jura closing line on a Tuesday.
 - **Source URLs must be real pages.** A search results page is not a source; the run cites the
   article or directory page it saw the group on.
 - **Images** come from the social agent's `jura-growth social render` if that command exists at

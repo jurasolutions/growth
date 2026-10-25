@@ -153,7 +153,7 @@ def groups_cmd(fit, joined, channel, as_json) -> None:
     if as_json:
         for r in rows:
             r["source_urls"] = json.loads(r.pop("source_urls_json") or "[]")
-            r["rules_parsed"] = rules_mod.parse(r["promo_rules"]).as_dict()
+            r["rules_parsed"] = groups_mod.rules_for(r).as_dict()
         click.echo(json.dumps(rows, indent=2, ensure_ascii=False))
         return
     if not rows:
@@ -164,7 +164,7 @@ def groups_cmd(fit, joined, channel, as_json) -> None:
         click.echo(f"{r['id']:>4}  {r['name']}  [{r['channel']}, {r['fit']}" + (f", {flags}" if flags else "") + "]")
         click.echo(f"      {r['url']}")
         click.echo(f"      audience: {r['audience'] or '-'}; size: {r['size_hint'] or '-'}; activity: {r['active_hint'] or '-'}")
-        click.echo(f"      rules: {r['promo_rules'] or '-'}  ->  {rules_mod.parse(r['promo_rules']).summary()}")
+        click.echo(f"      rules: {r['promo_rules'] or '-'}  ->  {groups_mod.rules_for(r).summary()}")
         click.echo(f"      fit: {r['fit_reason']}")
         click.echo(f"      utm_campaign: {r['slug']}; sources: {', '.join(json.loads(r['source_urls_json'] or '[]'))}")
 
@@ -182,7 +182,7 @@ def set_cmd(group_id, pairs) -> None:
     click.echo(
         f"group {group['id']} {group['name']}: fit {group['fit']}, joined {'yes' if group['joined'] else 'no'}, "
         f"rules confirmed {'yes' if group['rules_confirmed'] else 'no'}; rules: {group['promo_rules'] or '-'} "
-        f"({rules_mod.parse(group['promo_rules']).summary()})"
+        f"({groups_mod.rules_for(group).summary()})"
     )
 
 

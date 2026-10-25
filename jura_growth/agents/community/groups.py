@@ -159,7 +159,11 @@ def add(conn: sqlite3.Connection, record: dict) -> tuple[str, int | None, list[s
     return "added", cursor.lastrowid, []
 
 
-SETTABLE = {"joined", "rules", "promo_rules", "rules_confirmed", "fit", "fit_reason", "notes", "audience", "size_hint", "active_hint", "name"}
+SETTABLE = {
+    "joined", "rules", "promo_rules", "rules_confirmed", "promo_days", "post_days",
+    "fit", "fit_reason", "notes", "audience", "size_hint", "active_hint", "name",
+}
+DAY_COLUMNS = {"promo_days": "promo_days_confirmed", "post_days": "post_days_confirmed"}
 YES = {"yes", "y", "true", "1", "on"}
 NO = {"no", "n", "false", "0", "off"}
 
@@ -190,15 +194,41 @@ def set_fields(conn: sqlite3.Connection, group_id: int, pairs: list[str]) -> dic
             updates["fit"] = value.lower()
         elif key in ("rules", "promo_rules"):
             updates["promo_rules"] = value
+        elif key in DAY_COLUMNS:
+            try:
+                updates[DAY_COLUMNS[key]] = rules_mod.days_text(rules_mod.read_days(value))
+            except ValueError as error:
+                raise GroupError(f"{key}: {error}") from None
         else:
             updates[key] = value
     if not updates:
         raise GroupError("nothing to set")
+    if "promo_rules" in updates and updates["promo_rules"] != group["promo_rules"]:
+        # days confirmed for the old text don't carry over to new text
+        for column in DAY_COLUMNS.values():
+            updates.setdefault(column, None)
+    if updates.get("rules_confirmed") == 1:
+        _check_days_confirmed({**group, **updates})
     updates["updated_at"] = timeutil.stamp()
     assignments = ", ".join(f"{k} = ?" for k in updates)
     conn.execute(f"UPDATE community_groups SET {assignments} WHERE id = ?", (*updates.values(), group_id))
     log.event(conn, "community.group.set", {"id": group_id, **{k: v for k, v in updates.items() if k != "updated_at"}}, agent=NAME)
     return get(conn, group_id)
+
+
+def _check_days_confirmed(group: dict) -> None:
+    """Confirming rules that name days means saying which days are open. A later
+    change of rules text clears the days, and the group has no open day until Ting
+    Yu sets them again."""
+    if not rules_mod.parse(group["promo_rules"]).names_days:
+        return
+    missing = [key for key, column in DAY_COLUMNS.items() if group.get(column) is None]
+    if missing:
+        raise GroupError(
+            f"the rules name days (\"{group['promo_rules']}\"), so say which days are open as well: "
+            "promo_days=... post_days=..., each any, none, or days like sat,sun or mon-fri "
+            f"(missing: {', '.join(missing)})"
+        )
 
 
 def remove(conn: sqlite3.Connection, group_id: int, reason: str) -> dict:
@@ -245,4 +275,8 @@ def counts(conn: sqlite3.Connection) -> dict:
 
 
 def rules_for(group: dict) -> rules_mod.Rules:
-    return rules_mod.parse(group.get("promo_rules"))
+    """The group's rules, with the days Ting Yu confirmed. Plans, `context` and the
+    checklist read rules only through this."""
+    return rules_mod.confirm_days(
+        rules_mod.parse(group.get("promo_rules")), group.get("promo_days_confirmed"), group.get("post_days_confirmed")
+    )
