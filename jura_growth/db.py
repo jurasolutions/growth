@@ -8,9 +8,10 @@ stays in rollback mode and every connection is short-lived.
 from __future__ import annotations
 
 import sqlite3
+import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from jura_growth import agents, paths, timeutil
 
@@ -38,16 +39,74 @@ def session(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+# Work that must happen only once a transaction commits (the JSONL mirror
+# lines of its events), by connection. Dropped on rollback.
+_after_commit: dict[int, list[Callable[[], None]]] = {}
+
+
 @contextmanager
 def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """`BEGIN IMMEDIATE`, committed when the block ends and rolled back if
+    it raises. Anything registered with `after_commit()` runs after the
+    commit, and never after a rollback. Once the work is committed the block
+    never raises for it: a callback that fails is reported on stderr and the
+    rest still run."""
     conn.execute("BEGIN IMMEDIATE")
+    key = id(conn)
+    _after_commit[key] = []
     try:
         yield conn
     except BaseException:
+        _after_commit.pop(key, None)
         conn.execute("ROLLBACK")
         raise
-    else:
+    try:
         conn.execute("COMMIT")
+    finally:
+        waiting = _after_commit.pop(key, [])
+    for run in waiting:
+        try:
+            run()
+        except Exception as error:  # noqa: BLE001
+            print(f"warning: committed, but an after-commit step failed: {type(error).__name__}: {error}", file=sys.stderr)
+
+
+def in_transaction(conn: sqlite3.Connection) -> bool:
+    """True only inside a `transaction()` on `conn`, not a raw `BEGIN`, which
+    would write its events' mirror lines before it knows it will commit."""
+    return conn.in_transaction and id(conn) in _after_commit
+
+
+@contextmanager
+def atomic(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """One step that succeeds or fails whole: its own `transaction()`, or a
+    savepoint inside the caller's, so a failing step rolls back alone."""
+    if not conn.in_transaction:
+        with transaction(conn):
+            yield conn
+        return
+    if not in_transaction(conn):
+        raise RuntimeError("db.atomic() runs inside db.transaction(conn), not a raw BEGIN")
+    waiting = _after_commit[id(conn)]
+    mark = len(waiting)
+    conn.execute("SAVEPOINT atomic_step")
+    try:
+        yield conn
+    except BaseException:
+        conn.execute("ROLLBACK TO atomic_step")
+        conn.execute("RELEASE atomic_step")
+        del waiting[mark:]
+        raise
+    conn.execute("RELEASE atomic_step")
+
+
+def after_commit(conn: sqlite3.Connection, run: Callable[[], None]) -> bool:
+    """Run `run` once the `transaction()` open on `conn` commits. Returns
+    False, and does nothing, when no `transaction()` is open on it."""
+    if not in_transaction(conn):
+        return False
+    _after_commit[id(conn)].append(run)
+    return True
 
 
 def migration_sets() -> list[tuple[str, Path]]:

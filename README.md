@@ -173,7 +173,7 @@ imports it by name. The module may define:
 | `permissions(job)` | For a `claude` job the agent runs: `headless.Permissions` with the `jura-growth` commands its prompt uses (and any extra Claude Code deny rules), or `None`. A job with no declaration may run no commands |
 | `after_run(conn, job, run_id, outcome)` | Called after the job body of a run that started, before its run row is finished. Return a `runner.Outcome` to replace the outcome (the row, `#alerts` and auto-pause all see it), or `None` to keep it. An exception is logged as `run.after_run_error` and the outcome stands |
 | `run_update(conn, run)` | The "Produced:" lines of the agent's run update, or `None` to post nothing (ticket MC-03) |
-| `approval_kinds()` | The approval kinds the agent owns (ticket MC-04) |
+| `approval_kinds()` | `{name: approvals.ApprovalKind}`, the approval kinds the agent owns (below). A kind that two plug-ins declare, or whose plug-in failed to load, fails closed |
 | `privacy_terms(conn)` | `{"named_addresses": [], "companies": [], "owner_addresses": [], "kept_names": []}`: addresses that name a person (their names stay out of Discord), company names (never read as a person's name), Ting Yu's own addresses (removed outside Jura's own email) and names that are not a prospect's (Ting Yu's) |
 
 Every hook except `NAME` is optional and found with `getattr`. Its prompt goes in
@@ -183,6 +183,31 @@ A quiet command job (`quiet: true`, such as `scout-send`) that finds nothing to 
 `run.quiet` event instead of a run row. `quiet` has no effect on a `claude` job, which always gets
 its run row before Claude starts. Every run except a PAUSE-file skip ends with one call to
 `run_update.after_run`, the core run update; the lock skip passes no database connection.
+
+### Approval kinds
+
+Every outward action (an email, a post, a group join, an app build or release) is a gated action:
+it claims a matching approval with `approvals.use(conn, kind, subject, run_id=…)` inside its own
+`db.transaction(conn)`, writes its in-flight marker in the same transaction, and makes the outward
+call only after the commit (ADR 0003). `use()` raises `approvals.NotApproved` unless the request is
+approved, before its use-by, unused and matching what the kind computes now, and while neither the
+PAUSE file, the agent's pause flag nor the kind's own switch stops it. Catch it inside the `with`
+block so the lapse or supersede it wrote is kept. A gated command raises its request with
+`approvals.request(conn, kind, subject, reason=…, run_id=…)`; it never passes a hash.
+
+A kind is an object with:
+
+| Member | Purpose |
+|---|---|
+| `name` | The kind's name, the key in `approval_kinds()` |
+| `content(conn, subject)` | The canonical bytes of what would go out now (UTF-8, NFC-normalised, JSON with sorted keys), or `None` when the item is gone |
+| `preview(conn, subject)` | An `approvals.Preview`: title, text as it will go out, reason, at most ten files |
+| `deadlines(conn, subject, now)` | An `approvals.Deadlines`: asked at request time for the decide-by and at approval time for the use-by (`None` for a kind applied on decide). `caps.APPROVAL_DEADLINE_MAX_DAYS` caps both |
+| `decision_args` | Optional. The `key=value` arguments an approve must carry, such as `("promo_days", "post_days")` |
+| `args_help` | Optional. The refusal text when one of them is missing |
+| `on_approve(conn, subject, args)` | Optional. Applies the change inside the decision's transaction, after `approved` is written. Raise `approvals.BadArgs(text)` to refuse with that text; a `NotApproved` from a claim inside it also refuses. A returned string is appended to the answer |
+| `switched_off(conn, subject)` | Optional. The kind's own switch (outreach in shadow mode, a platform in draft): a reason makes `use()` refuse without claiming |
+| `on_skip`, `on_expire`, `on_lapse` | Optional, `(conn, subject)`. What a skip, an unanswered decide-by and an unclaimed use-by do to the item |
 
 ## Tests
 

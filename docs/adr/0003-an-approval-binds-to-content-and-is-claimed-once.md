@@ -1,6 +1,6 @@
 # An approval binds to content and is claimed once, before the effect
 
-Status: proposed (2026-10-25). Accepted in ticket MC-04 of `prd-jura-mission-control-2026-10-25.md`.
+Status: accepted (2026-10-25, ticket MC-04a of `prd-jura-mission-control-2026-10-25.md`).
 
 Every outward action (an email, a post, a group join, an app build or release) needs an approval
 record whose content hash matches what will go out now, as computed by the kind's own `content()`.

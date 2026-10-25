@@ -50,6 +50,87 @@ def test_events_are_append_only(conn):
         conn.execute("UPDATE events SET kind = 'x'")
 
 
+def mirrored_kinds() -> list[str]:
+    folder = paths.data_dir() / "runs"
+    return [json.loads(line)["kind"] for path in sorted(folder.glob("*.jsonl")) for line in path.read_text().splitlines()]
+
+
+def test_an_event_in_a_rolled_back_transaction_leaves_no_mirror_line(conn):
+    """The mirror is append-only, so it waits for the commit: an event that
+    the database rolls back never reaches it either."""
+    with pytest.raises(RuntimeError):
+        with db.transaction(conn):
+            log.event(conn, "test.rolled_back", {})
+            raise RuntimeError("the caller's write failed")
+    with db.transaction(conn):
+        log.event(conn, "test.committed", {})
+        assert "test.committed" not in mirrored_kinds()
+    assert "test.rolled_back" not in mirrored_kinds() and mirrored_kinds().count("test.committed") == 1
+    assert db.scalar(conn, "SELECT COUNT(*) FROM events WHERE kind = 'test.rolled_back'") == 0
+
+
+def test_a_rolled_back_savepoint_drops_only_its_own_mirror_lines(conn):
+    with db.transaction(conn):
+        log.event(conn, "test.outer", {})
+        with pytest.raises(RuntimeError):
+            with db.atomic(conn):
+                log.event(conn, "test.inner", {})
+                raise RuntimeError("one step failed")
+        with db.atomic(conn):
+            log.event(conn, "test.kept", {})
+    assert [k for k in mirrored_kinds() if k.startswith("test.")] == ["test.outer", "test.kept"]
+    assert db.scalar(conn, "SELECT COUNT(*) FROM events WHERE kind = 'test.inner'") == 0
+
+
+def test_a_mirror_write_that_fails_after_the_commit_never_raises_and_the_rest_are_written(conn, monkeypatch, capsys):
+    """R2-S1 (code review 04): the work is committed, so the caller sees no
+    error; the failed line is reported and every later line still goes."""
+    real = log.mirror
+    failures = iter([True])
+
+    def flaky(record):
+        if next(failures, False):
+            raise OSError("OneDrive held the file")
+        real(record)
+
+    monkeypatch.setattr(log, "mirror", flaky)
+    with db.transaction(conn):
+        log.event(conn, "test.first", {})
+        log.event(conn, "test.second", {})
+    assert db.scalar(conn, "SELECT COUNT(*) FROM events WHERE kind IN ('test.first', 'test.second')") == 2
+    assert "test.first" not in mirrored_kinds() and mirrored_kinds().count("test.second") == 1
+    assert "OneDrive held the file" in capsys.readouterr().err
+
+
+def test_in_transaction_is_true_only_inside_db_transaction(conn):
+    assert not db.in_transaction(conn)
+    with db.transaction(conn):
+        assert db.in_transaction(conn)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        assert conn.in_transaction and not db.in_transaction(conn)
+    finally:
+        conn.execute("ROLLBACK")
+
+
+def test_atomic_inside_a_raw_begin_is_refused(conn):
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        with pytest.raises(RuntimeError, match="raw BEGIN"):
+            with db.atomic(conn):
+                pass
+    finally:
+        conn.execute("ROLLBACK")
+
+
+def test_atomic_outside_a_transaction_is_its_own_transaction(conn):
+    with pytest.raises(RuntimeError):
+        with db.atomic(conn):
+            log.event(conn, "test.alone", {})
+            raise RuntimeError("failed")
+    assert not conn.in_transaction and "test.alone" not in mirrored_kinds()
+
+
 def test_log_test_writes_both_stores(isolated):
     result = invoke("log", "test")
     assert result.exit_code == 0
