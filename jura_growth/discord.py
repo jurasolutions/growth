@@ -54,6 +54,11 @@ def webhook(channel: str) -> str | None:
     return config.secret(env_name(channel))
 
 
+def webhook_set(channel: str) -> bool:
+    """Whether the channel has a webhook, without reading it (setup gaps)."""
+    return os.environ.get("JURA_GROWTH_DISCORD") != "off" and config.is_set(env_name(channel))
+
+
 def content_hash(content: str, files: list[tuple[str, bytes]]) -> str:
     digest = hashlib.sha256(content.encode("utf-8"))
     for name, body in files:

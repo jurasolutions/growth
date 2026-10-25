@@ -128,6 +128,16 @@ def secret(name: str) -> str | None:
     return value
 
 
+def is_set(name: str) -> bool:
+    """Whether a setting has a value in the environment or `.env`, without
+    reading it: a `keychain:` reference counts as set and the Keychain is
+    never asked (setup gaps are names and booleans only, MC §4.3)."""
+    value = os.environ.get(name)
+    if value is None:
+        value = _env_file().get(name)
+    return bool(value and value.strip())
+
+
 def require(name: str) -> str:
     value = secret(name)
     if not value:

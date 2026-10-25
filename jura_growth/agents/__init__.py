@@ -7,6 +7,11 @@ core. A plug-in module may define any of:
     NAME: str
         The agent name used for pause flags, runs and Discord usernames.
 
+    REQUIRED_SETTINGS: tuple[str, ...]
+        The `.env` settings the agent needs, by name. Each one not set is a
+        setup gap in `jura-growth status` and the one-pager (`health.py`).
+        The shorthand for a `setup_gaps()` that only checks names.
+
     MIGRATIONS: pathlib.Path
         A folder of `NNNN_name.sql` files, applied in order after the core
         schema and recorded as `<NAME>/<file>` in `schema_migrations`.
@@ -61,6 +66,19 @@ core. A plug-in module may define any of:
         `approvals.use()`; the agent's pause flag stops the claim. A kind
         two plug-ins declare, or one whose plug-in failed to load, fails
         closed.
+
+    setup_gaps() -> list[health.Gap]
+        The agent's setup checks, in place of `REQUIRED_SETTINGS`: names and
+        booleans only (`health.Gap("PUBLISH_AUTH", ok=False)`), never a
+        value, prefix, length or Keychain service. Read by
+        `health.setup_gaps()`, so by `jura-growth status` and the health
+        strip alike. An exception shows as one gap, `<NAME>_SETUP_CHECK`.
+
+    health(conn) -> list[str]
+        Extra "Needs you" lines for the one-pager (for example a build
+        handoff waiting for a builder). `conn` is the read model's read-only
+        connection (`mission.py`, ADR 0002), so a write raises; an
+        exception shows as one line saying the check failed.
 
 The optional hooks are found with `getattr`, like `digest()`, so a plug-in
 that defines none of them still loads.

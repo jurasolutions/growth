@@ -14,6 +14,14 @@ from pathlib import Path
 from jura_growth import db
 
 NAME = "outreach"
+# Setup gaps (health.setup_gaps): what live sending and the suppression sync need.
+REQUIRED_SETTINGS = (
+    "RESEND_API_KEY_OUTREACH",
+    "UNSUBSCRIBE_SECRET",
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "D1_DATABASE_ID",
+)
 MIGRATIONS = Path(__file__).parent / "migrations"
 
 

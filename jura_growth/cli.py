@@ -24,6 +24,7 @@ from jura_growth import (
     digest as digest_mod,
     discord,
     headless,
+    health,
     holidays,
     log,
     pause as pause_mod,
@@ -281,6 +282,8 @@ def status() -> None:
     click.echo("")
     configured = [c for c in discord.channels() if discord.webhook(c)]
     click.echo(f"discord    {len(configured)} of {len(discord.channels())} channel webhooks set")
+    for gap in health.setup_gaps():  # the same list as the one-pager's health strip
+        click.echo(f"setup gap  {gap.line}")
     loaded = ", ".join(m.NAME for m in agents.plugins() if getattr(m, "NAME", None)) or "none"
     click.echo(f"agents     {loaded}")
     for name, error in agents.BROKEN.items():
