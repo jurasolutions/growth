@@ -306,3 +306,18 @@ artifacts: merge of 09 (d9f0066 5f41e18 06e26e6 55ba563)
 decisions: verified by the conductor; merged; worktree removed
 questions: -
 evidence:  merged branch uv run pytest -> see commit
+
+## 2026-10-25T18:07+0800 release-manager
+status:    needs-human
+persona:   release-manager
+ticket:    -
+artifacts: reviews/release.md, pr-body.md (both uncommitted; commit command in release.md)
+decisions: no version bump: 0.1.0 never bumped, no tags, nothing reads it; release notes in the PR body (no CHANGELOG)
+decisions: merge with a merge commit, so rollback is git revert -m 1 <merge sha>
+decisions: no down migrations: both additive and ignored by main (final review); manual down SQL written anyway
+questions: G4: open a PR, merge locally, keep the branch, or discard? -> recommend open a PR (commands in release.md)
+questions: waive the missing quality gate, and the conductor-verified final rounds of 04 and 07 (last written verdict changes-requested; final review approves)? -> recommend waive
+questions: 3 frozen-clock social drafts dated 2026-10-26 still in live growth.db (infra A6) -> recommend delete them before installing launchd jobs, or accept one skipped Monday
+evidence:  uv run --frozen pytest at db218a0, temp data/outputs -> 987 passed in 21.82s
+evidence:  git ls-remote origin -> main 6eabfe7 = merge-base; branch not on the remote
+evidence:  git diff main... blocked-path and secret greps -> only fake fixtures; gh auth status -> not logged in
