@@ -207,8 +207,13 @@ def fake_d1(monkeypatch, rows_or_handler) -> list:
     return calls
 
 
-def live_ready(monkeypatch, *, d1_rows=()) -> list:
+def live_ready(monkeypatch, *, d1_rows=(), approval_gate=True) -> list:
+    """Every live-mode pre-condition holds. With `approval_gate`, the
+    approval gate counts as installed, standing in for MC-06, so the
+    send-path tests keep exercising live sending."""
     configure(monkeypatch, mode="live", legal_review_done=True, sending_domain="hello.jurasolutions.sg")
+    if approval_gate:
+        monkeypatch.setattr(send, "approval_gate_problem", lambda: None)
     monkeypatch.setenv("RESEND_API_KEY_OUTREACH", "re_test_key_not_real_123456")
     monkeypatch.setenv("UNSUBSCRIBE_SECRET", "test-secret")
     d1_env(monkeypatch)

@@ -67,10 +67,26 @@ def from_address() -> str:
     return formataddr((settings.SENDER_NAME, f"{local}@{sending_domain()}"))
 
 
+def approval_gate_problem() -> str | None:
+    """Why the approval gate stops live sending, or None.
+
+    Until ticket MC-06 installs the `outreach-email` approvals, no email has
+    a way to be approved, so live sending may not start at all. MC-06
+    replaces this with "approval buttons not set up".
+    """
+    return (
+        "approval gate not installed: every live email needs Ting Yu's approval first, "
+        "and that arrives with the mission-control outreach gate (MC-06)"
+    )
+
+
 def live_problems() -> list[str]:
     """Every reason live sending may not start. Empty means ready."""
     cfg = settings.get()
     problems = []
+    gate = approval_gate_problem()
+    if gate:
+        problems.append(gate)
     mode = settings.mode()
     if mode != "live":
         problems.append(f"mode is {mode!r} in config/scout.yaml (live sending needs `mode: live`)")
