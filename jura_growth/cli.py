@@ -11,6 +11,7 @@ import json
 import sys
 import traceback
 from pathlib import Path
+from typing import Callable
 
 import click
 
@@ -188,7 +189,7 @@ def db_path() -> None:
 def _approval_upkeep(conn, *, post: bool) -> None:
     """Write the lapses that are due (MC §4.6 A17) and, with `post`, post and
     edit approval cards (A12). Never stops the job that calls it."""
-    steps = [("expire_due", lambda: approvals.expire_due(conn))]
+    steps: list[tuple[str, Callable[[], object]]] = [("expire_due", lambda: approvals.expire_due(conn))]
     if post:
         steps.append(("post_unposted", lambda: approvals.post_unposted(conn)))
     for name, step in steps:

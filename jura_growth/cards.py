@@ -93,7 +93,7 @@ def header(conn: sqlite3.Connection, approval: approvals.Approval) -> str:
 
 
 def answer_line(approval: approvals.Approval, kind: approvals.ApprovalKind) -> str:
-    wanted = tuple(getattr(kind, "decision_args", ()) or ())
+    wanted: tuple[str, ...] = tuple(getattr(kind, "decision_args", None) or ())
     if wanted:
         typed = " ".join(f"{name}=…" for name in wanted)
         return f"Answer: /growth approve {approval.id} {typed}, or /growth skip {approval.id}"
