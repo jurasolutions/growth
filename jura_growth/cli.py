@@ -16,6 +16,8 @@ import click
 
 from jura_growth import (
     agents,
+    approvals,
+    approvals_cli,
     backup as backup_mod,
     brand_check,
     config,
@@ -406,6 +408,11 @@ def suppression_check(email) -> None:
         reason = suppression.is_suppressed(conn, email)
     click.echo(f"suppressed: {reason}" if reason else "not suppressed")
     sys.exit(1 if reason else 0)
+
+
+# --- approvals, approve, skip (ticket 04b) -----------------------------------
+
+approvals_cli.register(cli)
 
 
 # --- agent plug-ins --------------------------------------------------------
