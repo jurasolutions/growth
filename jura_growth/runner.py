@@ -20,7 +20,8 @@ returns `agents.NothingToDo`, leaves a `run.quiet` event instead of a run row
 outcome, before the row is finished. Every path except the PAUSE file ends
 with one call to `run_update.after_run`; the lock skip passes `conn=None`.
 Neither hook can change a run by raising: the error is logged as
-`run.after_run_error`.
+`run.after_run_error`. A precheck that raises is a failed run, recorded,
+alerted and counted toward auto-pause like any other (code review 03).
 """
 
 from __future__ import annotations
@@ -100,9 +101,13 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
     reason = pause.is_paused(conn, agent)
     if not reason and not ignore_schedule:
         reason = _schedule_reason(spec)
+    crashed = None
     if not reason:
         precheck = getattr(module, "precheck", None)
-        reason = precheck(name, conn) if precheck else None
+        try:
+            reason = precheck(name, conn) if precheck else None
+        except Exception as error:  # noqa: BLE001 - a broken precheck (a config typo) is a failed run
+            crashed = Outcome("failed", error=f"precheck failed: {type(error).__name__}: {error}")
     if isinstance(reason, agents.NothingToDo):
         log.event(conn, "run.quiet", {"job": name, "started_at": started_at, "reason": str(reason)}, agent=agent)
         return _run_update(conn, name, spec, None, Outcome("ok", str(reason)))
@@ -117,7 +122,9 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
     _abandon_stale(conn)
     run_id = None if quiet else log.start_run(conn, agent, name)
     try:
-        if spec["kind"] == "command":
+        if crashed:
+            outcome = crashed  # recorded like any failed run, with its row, alert and run update
+        elif spec["kind"] == "command":
             outcome = _run_command(spec, agent, run_id, name)
         elif spec["kind"] == "claude":
             outcome = _run_claude(name, spec, agent, run_id)
@@ -128,7 +135,7 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
 
     # The plug-in's last word on a run that started (the publish audit can
     # fail it), before the row, the alert and auto-pause see the outcome.
-    hook = getattr(module, "after_run", None)
+    hook = None if crashed else getattr(module, "after_run", None)
     if hook:
         try:
             final = hook(conn, name, run_id, outcome)

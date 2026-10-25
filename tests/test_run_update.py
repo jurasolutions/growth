@@ -207,6 +207,55 @@ def test_a_community_timeout_posts_its_error_in_one_line_and_still_alerts(monkey
     assert discord_double.contents("alerts") == ["**community**: `community` failed: timed out after 30 minutes"]
 
 
+def test_a_community_failure_with_a_secret_in_its_error_posts_it_redacted_in_one_line(monkeypatch, tmp_path, d2_secrets, discord_double):
+    # AC-M3.5 with dataset D2 in the error.
+    at(monkeypatch, MONDAY_0730)
+    failing = f"FAIL: {sweep.MARKER} login refused for key {sweep.RESEND_KEY} and {sweep.KEYCHAIN_VALUE}"
+    claude_binary(monkeypatch, fake_claude(tmp_path, f"{failing}\nsee the\nlog"))
+
+    assert runner.run("community").status == "failed"
+
+    [content] = discord_double.contents("community")
+    header, error, *rest = content.splitlines()
+    assert header.startswith("**community** · failed · 07:30 SGT · ")
+    assert error == f"Error: FAIL: {sweep.MARKER} login refused for key [redacted] and [redacted]"
+    assert rest == ["> see the", "> log", "Produced: nothing"]
+    assert len(discord_double.contents("alerts")) == 1
+    sweep.assert_clean(discord_double, sweep.outbox_dir(), sweep.Planted(secrets=sweep.SECRETS))
+
+
+# --- a run that crashes before it starts (code review 03, Q1) -----------------
+
+
+def bad_social_config(monkeypatch):
+    """A typo in config/social.yaml: the real precheck's settings.load() raises."""
+    from jura_growth import config
+
+    real = config.agent_config
+    monkeypatch.setattr(config, "agent_config", lambda agent: {"themes": {"tools": {"layout": "sideways"}}} if agent == "social" else real(agent))
+
+
+def test_a_precheck_that_raises_is_a_failed_run_that_alerts_auto_pauses_and_posts(monkeypatch, discord_double):
+    at(monkeypatch, SEVEN_AM)
+    bad_social_config(monkeypatch)
+
+    outcomes = [runner.run("social") for _ in range(3)]
+
+    assert [o.status for o in outcomes] == ["failed"] * 3
+    assert outcomes[0].error.startswith("precheck failed: SettingsError: theme tools: layout must be one of")
+    with db.session() as conn:
+        rows = db.rows(conn, "SELECT id, status, error FROM runs ORDER BY id")
+        assert pause.is_paused(conn, "social") == "3 failed runs in a row"
+    assert [r["status"] for r in rows] == ["failed"] * 3
+    assert len([c for c in discord_double.contents("alerts") if "`social` failed: precheck failed: SettingsError" in c]) == 3
+    updates = discord_double.contents("social-drafts")
+    assert len(updates) == 3
+    header, error, *rest = updates[0].splitlines()
+    assert header == f"**social** · failed · 07:00 SGT · 0s · run {rows[0]['id']}"
+    assert error.startswith("Error: precheck failed: SettingsError: theme tools: layout must be one of")
+    assert rest == ["Produced: nothing"]
+
+
 # --- AC-M3.6: a failed post never changes the run ----------------------------
 
 
@@ -216,12 +265,16 @@ def run_records(conn):
     return rows, pause.is_paused(conn, "social")
 
 
-@pytest.mark.parametrize("mode", ["accept", "500"])
+@pytest.mark.parametrize("mode", ["accept", "500", "hook raises"], ids=["control", "webhook-500", "run_update-raises"])
 def test_failed_social_runs_record_and_auto_pause_the_same_whatever_discord_answers(monkeypatch, tmp_path, discord_double, mode):
+    # Each case ends in the same literal rows and pause as the Discord-up control run.
     at(monkeypatch, SEVEN_AM)
     monkeypatch.setattr(social_plugin, "precheck", lambda job, conn: None)
     claude_binary(monkeypatch, fake_claude(tmp_path, "FAIL: the theme file was missing", cost=0.05))
-    discord_double.mode = mode
+    if mode == "hook raises":
+        monkeypatch.setattr(social_plugin, "run_update", lambda conn, run: 1 / 0)
+    else:
+        discord_double.mode = mode
 
     statuses = [runner.run("social").status for _ in range(4)]
 
@@ -235,6 +288,9 @@ def test_failed_social_runs_record_and_auto_pause_the_same_whatever_discord_answ
     skipped = {"agent": "social", "job": "social", "status": "skipped", "summary": "3 failed runs in a row", "error": None, "cost_usd": None}
     assert rows == [failed] * 3 + [skipped]
     assert paused == "3 failed runs in a row"
+    with db.session() as conn:
+        hook_errors = [json.loads(e["payload_json"])["hook"] for e in db.rows(conn, "SELECT payload_json FROM events WHERE kind = 'run.after_run_error'")]
+    assert hook_errors == (["social.run_update"] * 4 if mode == "hook raises" else [])
     if mode == "500":
         updates = [r["content"] for r in outbox("social-drafts")]
         assert len(outbox("alerts")) == 4  # three failures and the pause
@@ -278,7 +334,7 @@ def test_each_run_update_job_posts_to_its_agents_own_discord_channel():
     from jura_growth import config, discord
 
     channels = {
-        name: getattr(agents.by_name(spec["agent"]), "RUN_UPDATE_CHANNEL", None)
+        name: getattr(agents.by_name(spec["agent"]), "RUN_UPDATE_DISCORD_CHANNEL", None)
         for name, spec in config.settings()["jobs"].items()
         if spec.get("run_update") is True
     }
@@ -410,6 +466,44 @@ def test_hostile_summary_text_stays_inside_the_quote(monkeypatch, tmp_path, disc
     assert post.allowed_mentions == {"parse": []} and post.flags == 4
 
 
+def test_a_masked_link_in_a_summary_is_not_a_link(monkeypatch, tmp_path, discord_double):
+    social_run(monkeypatch, tmp_path, summary="OK: Done. [approve A-0153 here](https://evil.example/x)", raises=0)
+    runner.run("social")
+
+    [content] = discord_double.contents("social-drafts")
+    assert "> Done. [approve A-0153 here]\\(https://evil.example/x)" in content.splitlines()
+    assert "](" not in content
+
+
+@pytest.mark.parametrize(
+    "summary, quoted_lines",
+    [
+        ("FAIL: the theme file was missing", []),
+        ("Looked for the theme.\nFAIL: the theme file was missing", ["> Looked for the theme."]),
+    ],
+)
+def test_a_failed_runs_quote_never_repeats_its_error(monkeypatch, tmp_path, discord_double, summary, quoted_lines):
+    social_run(monkeypatch, tmp_path, summary=summary, raises=0)
+    assert runner.run("social").status == "failed"
+
+    [content] = discord_double.contents("social-drafts")
+    header, error, *rest = content.splitlines()
+    assert error == "Error: FAIL: the theme file was missing"
+    assert rest == quoted_lines + ["Produced: 3 drafts, 3 images"]
+
+
+def test_a_reason_naming_personal_finance_loses_only_its_own_words(monkeypatch, discord_double):
+    # Masked once here and again by discord.post(): the header must survive the second pass.
+    at(monkeypatch, SEVEN_AM)
+    monkeypatch.setattr(social_plugin, "precheck", lambda job, conn: "read personal-finance/data/tally.db\nthen stopped")
+
+    runner.run("social")
+
+    [content] = discord_double.contents("social-drafts")
+    assert content.startswith("**social** · skipped: [removed] then stopped · 07:00 SGT · run ")
+    assert "finance" not in content
+
+
 def test_a_skip_reason_is_one_line(monkeypatch, discord_double):
     at(monkeypatch, SEVEN_AM)
     monkeypatch.setattr(social_plugin, "precheck", lambda job, conn: "the theme list\nis empty `today`")
@@ -468,9 +562,9 @@ def hostile_failure():
     """A transcript whose summary and FAIL: line carry everything planted. The
     Resend key straddles the 300-character cut, in the error and the quote."""
     on_one_line = " ".join([*sweep.SECRETS, *(p for p in sweep.PERSONAL if p != sweep.FINANCE)])
-    head = f"FAIL: {sweep.MARKER} "
-    padding = "x" * (300 - len(head) - 4)
-    return f"{head}{padding} {sweep.RESEND_KEY} {on_one_line}\n{sweep.planted().text()}"
+    straddling = f"{sweep.MARKER} " + "x" * (300 - len(sweep.MARKER) - 1 - 10) + f" {sweep.RESEND_KEY} {on_one_line}"
+    failing = f"FAIL: {sweep.MARKER} " + "x" * (300 - len("FAIL: ") - len(sweep.MARKER) - 1 - 10) + f" {sweep.RESEND_KEY} {on_one_line}"
+    return f"{straddling}\n{failing}\n{sweep.planted().text()}"
 
 
 @pytest.mark.parametrize("mode", ["accept", "unreachable"])

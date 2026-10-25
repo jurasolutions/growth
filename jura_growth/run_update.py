@@ -8,7 +8,7 @@ skip, with `conn=None`, so the database is never opened. The runner wraps the
 call, so an error here is logged and never changes the run.
 
 A job asks for run updates with `run_update: true` in `config/settings.yaml`.
-The message goes to the agent plug-in's `RUN_UPDATE_CHANNEL`:
+The message goes to the agent plug-in's `RUN_UPDATE_DISCORD_CHANNEL`:
 
     **social** · ok · 07:00 SGT · 4m 12s · US$0.41 · run 1287
     > Drafted LinkedIn, Facebook and Instagram for "PayNow QR for small shops".
@@ -23,9 +23,11 @@ The message goes to the agent plug-in's `RUN_UPDATE_CHANNEL`:
 - A quiet run (a precheck's `NothingToDo`, or a quiet job with nothing to
   do) has no run row and reads "nothing to do", with the precheck's reason.
   It is told apart by its path (status ok, no run id), not by its summary.
-- A run that raises out of the runner (a database or programming error)
-  never reaches this module, so it posts no update; the runner records
-  what it can and launchd's log keeps the traceback.
+- A precheck that raises (a typo in an agent's config) is a failed run:
+  the runner records its row, alerts, counts it toward auto-pause and posts
+  its update. Anything else that raises out of the runner (a database or
+  programming error) never reaches this module, so it posts no update, and
+  launchd's log keeps the traceback.
 
 The plug-in's `run_update(conn, run) -> list[str] | None` gives the
 "Produced:" items for a run with a connection; None posts nothing. If it
@@ -34,8 +36,10 @@ without that line.
 
 Model-written text (summaries, and errors, which can quote a summary's
 `FAIL:` line) is untrusted: it is masked through `privacy.for_discord()`
-first, then cut to 300 characters and escaped, so it can't close the quote
-or open a code block. Posts keep `allowed_mentions` empty and embeds off.
+first, then cut to `caps.RUN_UPDATE_TEXT_CHARS` and escaped, so it can't
+leave the quote, open a code block, make a masked link or ping anyone. A
+failed run's quote leaves out the lines its error line already shows. Posts
+keep `allowed_mentions` empty and embeds off.
 """
 
 from __future__ import annotations
@@ -45,12 +49,12 @@ import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from jura_growth import agents, approvals, discord, log, privacy, timeutil
+from jura_growth import agents, approvals, caps, discord, log, privacy, timeutil
 
 if TYPE_CHECKING:
     from jura_growth.runner import Outcome
 
-LIMIT = 300  # characters of model-written text in one update (MC §4.3)
+LIMIT = caps.RUN_UPDATE_TEXT_CHARS
 _STATUS_PREFIX = re.compile(r"^\s*[*_`>]*\s*(?:OK|SKIP|FAIL):\s*", re.I)
 
 
@@ -70,9 +74,9 @@ class Run:
     finished_at: str | None
 
 
-def count(number: int, noun: str, plural: str | None = None) -> str:
+def count(number: int, noun: str) -> str:
     """`3 drafts`, `1 image`: for plug-ins writing their "Produced:" items."""
-    return f"{number} {noun if number == 1 else plural or noun + 's'}"
+    return f"{number} {noun if number == 1 else noun + 's'}"
 
 
 def after_run(conn: sqlite3.Connection | None, job: str, spec: dict, run_id: int | None, outcome: Outcome) -> None:
@@ -81,9 +85,9 @@ def after_run(conn: sqlite3.Connection | None, job: str, spec: dict, run_id: int
         return
     agent = spec["agent"]
     module = agents.by_name(agent)
-    channel = getattr(module, "RUN_UPDATE_CHANNEL", None)
-    if not channel:
-        raise LookupError(f"job {job} has run_update on, but agent {agent} names no RUN_UPDATE_CHANNEL")
+    discord_channel = getattr(module, "RUN_UPDATE_DISCORD_CHANNEL", None)
+    if not discord_channel:
+        raise LookupError(f"job {job} has run_update on, but agent {agent} names no RUN_UPDATE_DISCORD_CHANNEL")
     run = _run(conn, job, agent, run_id, outcome)
     produced: list[str] | None = []  # None: the plug-in couldn't say
     if conn is not None:
@@ -106,7 +110,7 @@ def after_run(conn: sqlite3.Connection | None, job: str, spec: dict, run_id: int
                 if produced is None:
                     return  # the plug-in asks for no update for this run
     text = build(run, produced, approvals.raised_by(conn, run_id) if conn is not None and run_id is not None else [])
-    discord.post(conn, channel, text, username=f"Jura growth · {job}", dedupe=False, suppress_embeds=True)
+    discord.post(conn, discord_channel, text, username=f"Jura growth · {job}", dedupe=False, suppress_embeds=True)
 
 
 def _run(conn: sqlite3.Connection | None, job: str, agent: str, run_id: int | None, outcome: Outcome) -> Run:
@@ -133,9 +137,10 @@ def build(run: Run, produced: list[str] | None, raised: list[approvals.Approval]
     if run.cost_usd is not None:
         parts.append(f"US${run.cost_usd:.2f}")
     lines = [_header(run, " · ".join(parts), None)]
-    if run.status == "failed" and run.error:
-        lines.append(f"Error: {_line(run.error)}")
-    lines += _quote(run.summary)
+    error = run.error if run.status == "failed" else ""
+    if error:
+        lines.append(f"Error: {_line(error)}")
+    lines += _quote(run.summary, besides=error)
     if produced is not None:
         lines.append(f"Produced: {', '.join(produced) if produced else 'nothing'}")
     if raised:
@@ -178,12 +183,17 @@ def _plural(kind: str) -> str:
 
 
 def _clean(text: str) -> str:
-    """Masked first, so a cut never leaves part of a secret behind."""
-    return privacy.for_discord(text or "").strip()
+    """Masked first, so a cut never leaves part of a secret behind.
+
+    A finance line's placeholder becomes a plain "[removed]": this text goes
+    into a line of the update, and `discord.post()` masks again, which would
+    drop that whole line (the header, for a skip) for the placeholder's words."""
+    return privacy.for_discord(text or "").replace(privacy.FINANCE, privacy.REMOVED).strip()
 
 
 def _escape(text: str) -> str:
     text = text.replace("\\", "\\\\").replace("`", "\\`")
+    text = text.replace("](", "]\\(")  # no masked links: [approve here](https://...) stays plain text
     text = re.sub(r"@(everyone|here)", "@​\\1", text)
     return text.replace("<@", "<@​")
 
@@ -200,9 +210,12 @@ def _line(text: str) -> str:
     return _cut(_escape(" ".join(_clean(text).split())))
 
 
-def _quote(summary: str) -> list[str]:
-    """The summary as a quote block of at most `LIMIT` characters."""
-    text = _STATUS_PREFIX.sub("", _clean(summary), count=1)
+def _quote(summary: str, *, besides: str = "") -> list[str]:
+    """The summary as a quote block of at most `LIMIT` characters, without
+    the lines that only repeat `besides` (a failed run's error line)."""
+    shown = " ".join(_clean(besides).split())
+    kept = [line for line in _clean(summary).splitlines() if not shown or " ".join(line.split()) != shown]
+    text = _STATUS_PREFIX.sub("", "\n".join(kept).strip(), count=1)
     lines = [line.strip() for line in _escape(text).splitlines() if line.strip()]
     text = _cut("\n".join(lines))
     lines = [line for line in text.splitlines() if line.strip()]

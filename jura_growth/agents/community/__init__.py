@@ -112,7 +112,7 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     return {"figures": figures, "lines": lines, "brief": brief}
 
 
-RUN_UPDATE_CHANNEL = "community"
+RUN_UPDATE_DISCORD_CHANNEL = "community"
 
 
 def run_update(conn: sqlite3.Connection, run) -> list[str]:
