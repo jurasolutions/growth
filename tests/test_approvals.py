@@ -824,7 +824,8 @@ def test_a_database_at_mains_schema_migrates_through_0003_with_no_row_changed(tm
     conn.execute("INSERT INTO pause_flags (agent, paused, reason, set_at) VALUES ('social', 1, 'by hand', ?)", (aw.NOW,))
     tables = [r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
     before = {t: db.rows(conn, f"SELECT * FROM {t}") for t in tables}
-    assert db.migrate(conn) == ["core/0003_approvals.sql"]
+    # 0004 (ticket 04b) adds the approval_cards table and changes no row either.
+    assert db.migrate(conn) == ["core/0003_approvals.sql", "core/0004_approval_cards.sql"]
     assert {t: db.rows(conn, f"SELECT * FROM {t} WHERE rowid IN (SELECT rowid FROM {t})") for t in tables if t != "schema_migrations"} == {
         t: rows for t, rows in before.items() if t != "schema_migrations"
     }

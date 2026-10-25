@@ -688,3 +688,37 @@ def _decide_locked(conn, number: int, decision: str, decided_by: str, origin: Or
          json.dumps(args, sort_keys=True), RECORDED, text),
     )
     return Answer(RECORDED, text, _reload(conn, number))
+
+
+# --- cards in #approvals (A12, ticket 04b) -----------------------------------
+
+
+def post_unposted(conn: sqlite3.Connection) -> int:
+    """Post every pending request's card that isn't posted yet, and edit the
+    first line of every card whose record was decided, lapsed, superseded or
+    used since (A12). Call it after the transaction that raised or changed
+    the records has committed. Returns the number of cards posted. The rules
+    are in `cards.py`."""
+    from jura_growth import cards
+
+    return cards.sweep(conn)
+
+
+def raises_requests(command):
+    """Decorate a raising command's callback (A11): when it ends, however it
+    ends, its cards are posted (A12). A sweep that fails is reported on
+    stderr and never changes what the command returns or raises."""
+    import functools
+
+    @functools.wraps(command)
+    def run(*args, **kwargs):
+        try:
+            return command(*args, **kwargs)
+        finally:
+            try:
+                with db.session() as conn:
+                    post_unposted(conn)
+            except Exception as error:  # noqa: BLE001
+                print(f"warning: approval cards not posted: {type(error).__name__}: {error}", file=sys.stderr)
+
+    return run
