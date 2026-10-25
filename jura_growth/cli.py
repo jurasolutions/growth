@@ -27,6 +27,8 @@ from jura_growth import (
     health,
     holidays,
     log,
+    mission,
+    one_pager as one_pager_mod,
     pause as pause_mod,
     paths,
     privacy,
@@ -366,6 +368,19 @@ def heartbeat() -> str:
         result = discord.post(conn, "daily-digest", text, username="Jura growth · heartbeat", dedupe=False)
     click.echo(text if result.delivered else f"{text} (not posted: {result.reason})")
     return "heartbeat posted" if result.delivered else f"heartbeat not posted: {result.reason}"
+
+
+@cli.command("one-pager")
+@click.option("--no-post", is_flag=True, help="Print the one-pager instead of posting it.")
+def one_pager_cmd(no_post) -> None:
+    """Build the one-pager from growth.db, read-only, and print it."""
+    if not no_post:
+        raise click.UsageError("posting the one-pager to #mission-control isn't built yet; use --no-post to print it")
+    pieces = one_pager_mod.messages(mission.read(mission.Source.here()))
+    for index, piece in enumerate(pieces):
+        if index:
+            click.echo(f"\n(message {index + 1} of {len(pieces)})\n")
+        click.echo(piece)
 
 
 @cli.command()

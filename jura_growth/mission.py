@@ -49,6 +49,21 @@ class Source:
     installed: Callable[[str], bool] = schedule.installed
     days: int = 14  # the grid's width, ending today
 
+    @classmethod
+    def here(cls, *, installed: Callable[[str], bool] = schedule.installed) -> Source:
+        """This engine's own folders, jobs and clock."""
+        from jura_growth import config, timeutil
+
+        return cls(
+            db=paths.db_path(),
+            data=paths.data_dir(),
+            outputs=paths.outputs_dir(),
+            prd=paths.prd_dir(),
+            now=timeutil.now_sgt(),
+            jobs=config.settings()["jobs"],
+            installed=installed,
+        )
+
 
 @dataclass(frozen=True)
 class Snapshot:
@@ -290,7 +305,8 @@ def _plugin_lines(conn: sqlite3.Connection) -> tuple[str, ...]:
         if not callable(hook):
             continue
         try:
-            lines += [_clean(str(line)) for line in hook(conn) or () if line]
+            found: Any = hook(conn)
+            lines += [_clean(str(line)) for line in found or () if line]
         except Exception as error:  # noqa: BLE001 - one plug-in never breaks the one-pager
             lines.append(_clean(f"{getattr(module, 'NAME', 'a plug-in')}: its health check failed ({type(error).__name__})"))
     return tuple(lines)
@@ -330,7 +346,7 @@ def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: dateti
 
 
 def _request(row: sqlite3.Row, now: datetime) -> Request:
-    decide_by, use_by = _at(row["decide_by"]), _at(row["use_by"])
+    decide_by, use_by = _at(row["decide_by"]), _at_or_none(row["use_by"])
     status = row["status"]
     if status == "pending":
         state = WAITING if now < decide_by else LAPSED
@@ -349,16 +365,18 @@ def _request(row: sqlite3.Row, now: datetime) -> Request:
         requested_at=_at(row["requested_at"]),
         decide_by=decide_by,
         use_by=use_by,
-        decided_at=_at(row["decided_at"]),
+        decided_at=_at_or_none(row["decided_at"]),
         decided_origin=row["decided_origin"],
         posted=row["posted_at"] is not None,
-        close_reason=_clean(row["close_reason"]),
+        close_reason=_clean_or_none(row["close_reason"]),
     )
 
 
-def _at(value: str | None) -> datetime | None:
-    if not value:
-        return None
+def _at_or_none(value: str | None) -> datetime | None:
+    return _at(value) if value else None
+
+
+def _at(value: str) -> datetime:
     moment = datetime.fromisoformat(value)
     return (moment if moment.tzinfo else moment.replace(tzinfo=SGT)).astimezone(SGT)
 
@@ -487,11 +505,15 @@ def _stamp(day: date) -> str:
 # --- redaction ------------------------------------------------------------------------
 
 
-def _clean(text: str | None) -> str | None:
+def _clean(text: str) -> str:
     return privacy.for_discord(text) if text else text
+
+
+def _clean_or_none(text: str | None) -> str | None:
+    return _clean(text) if text else None
 
 
 def _clean_slot(slot: slots.SlotStatus) -> slots.SlotStatus:
     """A slot as the one-pager may show it: its reason masked, and without
     the raw records behind it."""
-    return dataclasses.replace(slot, reason=_clean(slot.reason), records=())
+    return dataclasses.replace(slot, reason=_clean_or_none(slot.reason), records=())

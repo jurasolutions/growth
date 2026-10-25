@@ -358,3 +358,22 @@ def test_spend_is_recorded_cost_either_side_of_sgt_midnight_and_yesterday_is_the
     assert (snapshot.yesterday.day, snapshot.yesterday.spend, snapshot.spend_today) == ("2026-11-09", 0.75, 1.0)
     assert snapshot.yesterday.lines == tuple(digest.build(conn, "2026-11-09")["lines"])
     assert digest.spend(conn, "2026-11-09") == 0.75
+
+
+# --- the whole path, with the writers patched to fail (AC-M13.2) ---------------------
+
+
+def test_the_whole_one_pager_on_the_fortnight_never_reaches_a_writer_or_a_lock(d1, no_writes):
+    from jura_growth import one_pager
+
+    world.approval(d1, 101, "outreach-email", posted_at=None)
+    d1.execute("INSERT INTO pause_flags VALUES ('outreach', 1, 'paused by hand', '2026-11-09T10:00:00+08:00')")
+    migrations = d1.execute("SELECT id, applied_at FROM schema_migrations ORDER BY id").fetchall()
+    paths.pause_file().write_text("holiday")
+    no_writes()
+    folders = world.watched()
+    before = world.stat_snapshot(*folders)
+    text = one_pager.text(mission.read(world.source("2026-11-10T11:05:00+08:00")))
+    assert world.stat_snapshot(*folders) == before
+    assert "A-0101" in text and "The PAUSE file is in place" in text
+    assert d1.execute("SELECT id, applied_at FROM schema_migrations ORDER BY id").fetchall() == migrations
