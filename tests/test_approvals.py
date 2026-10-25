@@ -581,6 +581,57 @@ def test_expire_due_inside_a_callers_transaction_uses_a_savepoint(conn, world):
     assert [x.id for x in changed] == [a.id] and approvals.get(conn, a.id).status == "expired"
 
 
+# --- G36: each writer writes a due transition once ---------------------------
+
+
+def expired_events(conn, approval) -> int:
+    in_db = [e for e in aw.events(conn, "approval.expired") if e["approval"] == approval.id]
+    assert len([e for e in aw.mirrored("approval.expired") if e["approval"] == approval.id]) == len(in_db)
+    return len(in_db)
+
+
+def refused_reason(conn, subject) -> str:
+    with db.transaction(conn):
+        try:
+            approvals.use(conn, aw.KIND, subject, run_id=None)
+        except approvals.NotApproved as refusal:
+            return refusal.reason
+    return "claimed"
+
+
+def test_g36_decide_writes_a_due_expiry_once_and_the_others_find_it_written(conn, world, monkeypatch):
+    subject, approval = raise_one(conn, world)
+    now = aw.at(monkeypatch, approval.decide_by)
+    assert aw.approve(conn, approval).answer == "expired"
+    assert refused_reason(conn, subject) == "expired"
+    assert approvals.expire_due(conn, now) == []
+    assert aw.skip(conn, approval).answer == "expired"
+    assert expired_events(conn, approval) == 1 and len(world.ran("on_expire", subject)) == 1
+
+
+def test_g36_use_writes_a_due_lapse_once_in_the_callers_transaction(conn, world, monkeypatch):
+    subject, approval = approved_one(conn, world)
+    now = aw.at(monkeypatch, approval.use_by)
+    refusal = world.act(conn, subject)
+    assert refusal.reason == "expired" and world.sent == []
+    lapsed = approvals.get(conn, approval.id)
+    assert lapsed.status == "expired" and lapsed.close_reason == "approved but not used in time" and lapsed.used_at is None
+    assert refused_reason(conn, subject) == "expired"
+    assert approvals.expire_due(conn, now) == []
+    assert aw.skip(conn, approval).answer == "expired"
+    assert expired_events(conn, approval) == 1 and len(world.ran("on_lapse", subject)) == 1
+
+
+def test_g36_expire_due_writes_a_due_expiry_once_and_the_others_find_it_written(conn, world, monkeypatch):
+    subject, approval = raise_one(conn, world)
+    now = aw.at(monkeypatch, approval.decide_by)
+    assert [a.id for a in approvals.expire_due(conn, now)] == [approval.id]
+    assert approvals.expire_due(conn, now) == []
+    assert aw.approve(conn, approval).answer == "expired"
+    assert refused_reason(conn, subject) == "expired"
+    assert expired_events(conn, approval) == 1 and len(world.ran("on_expire", subject)) == 1
+
+
 def test_no_deadline_runs_past_the_hard_ceiling(conn, world, monkeypatch):
     """X3, the core half: whatever a kind asks for, caps.py has the last word."""
     from jura_growth import caps

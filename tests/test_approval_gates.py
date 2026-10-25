@@ -148,8 +148,12 @@ def test_g5_expire_due_writes_each_lapse_once_and_both_refuse(gate, conn, monkey
         attempt(gate, approved_subject)
         assert claims(conn) == 0
     assert gate.went_out() == 0
+    before = [approvals.get(conn, a.id) for a in (unanswered, approved)]
     assert approvals.expire_due(conn, now) == []
+    assert [approvals.get(conn, a.id) for a in (unanswered, approved)] == before
     assert gate.hook_ran("on_expire", waiting) == 1
+    if not gate.applied_on_decide:
+        assert gate.hook_ran("on_lapse", approved_subject) == 1
 
 
 def test_g6_a_request_superseded_before_its_decision_refuses(gate, conn):
@@ -195,13 +199,19 @@ def test_g10_the_right_content_for_the_wrong_subject_refuses(gate, conn):
     assert gate.went_out() == before
 
 
-def test_g15_a_second_decision_answers_already_decided(gate, conn):
+def test_g15_a_second_decision_answers_already_decided_and_changes_nothing(gate, conn):
     _, approval = requested(gate)
     gate.approve(approval)
-    assert gate.approve(approval).answer in ("already-decided", "already-used")
+    first = approvals.get(conn, approval.id)
+    # A kind applied on decide may already have claimed it (app-build).
+    assert gate.approve(first).answer == ("already-used" if first.used_at else "already-decided")
+    assert approvals.get(conn, approval.id) == first
     _, other = requested(gate)
     gate.skip(other)
-    assert gate.approve(other).answer == "already-decided"
+    skipped = approvals.get(conn, other.id)
+    assert gate.approve(skipped).answer == "already-decided"
+    assert gate.skip(skipped).answer == "already-decided"
+    assert approvals.get(conn, other.id) == skipped
 
 
 def test_g17_a_skip_after_approval_wins_until_the_claim(claimed, conn):
@@ -289,7 +299,8 @@ def test_g25_a_gone_item_supersedes_at_the_next_claim_and_raises_nothing(gate, c
     assert gate.went_out() == 0 and claims(conn) == 0
 
 
-def test_g29_every_transition_leaves_one_event_with_actor_origin_ref_hash_and_time(gate, conn):
+def test_g29_every_transition_leaves_one_event_with_actor_origin_ref_hash_and_time(gate, conn, monkeypatch):
+    now = timeutil.stamp(timeutil.now_sgt())
     subject, approval = requested(gate)
     gate.approve(approval)
     if not gate.applied_on_decide:
@@ -299,12 +310,25 @@ def test_g29_every_transition_leaves_one_event_with_actor_origin_ref_hash_and_ti
     changed, superseded = requested(gate)
     gate.change(changed)
     approvals.expire_due(conn, timeutil.now_sgt())
-    kinds = {"approval.requested": 3, "approval.approved": 1, "approval.used": 1, "approval.skipped": 1, "approval.superseded": 1}
+    _, unanswered = requested(gate)
+    later = aw.at(monkeypatch, unanswered.decide_by)
+    approvals.expire_due(conn, later)
+    counts = {
+        "approval.requested": 4, "approval.approved": 1, "approval.used": 1,
+        "approval.skipped": 1, "approval.superseded": 1, "approval.expired": 1,
+    }
     if gate.applied_on_decide:
-        kinds.pop("approval.used")  # app-build's claim is in its own tests
-    for kind, count in kinds.items():
+        counts.pop("approval.used")  # app-build's claim is in its own tests
+    for kind, count in counts.items():
         found = [e for e in aw.events(conn, kind) if e["kind"] == gate.kind]
         assert len(found) == count, kind
+        assert len([e for e in aw.mirrored(kind) if e["kind"] == gate.kind]) == count, kind
         for event in found:
-            assert {"approval", "actor", "origin", "ref", "hash", "at"} <= set(event)
-            assert event["hash"] and event["at"] and event["actor"]
+            record = approvals.get(conn, event["approval"])
+            assert event["hash"] == record.content_hash
+            assert event["at"] == (timeutil.stamp(later) if kind == "approval.expired" else now)
+            if kind in ("approval.approved", "approval.skipped"):
+                assert event["actor"] == record.decided_by and event["actor"].startswith("terminal:")
+                assert event["origin"] == "terminal" and event["ref"] == record.decision_ref
+            else:
+                assert event["actor"] and event["origin"] is None and event["ref"] is None
