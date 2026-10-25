@@ -79,6 +79,17 @@ def test_its_output_is_stable_when_masked_again():
     assert privacy.for_discord(once) == once
 
 
+def test_a_removed_finance_line_put_into_another_line_keeps_that_line():
+    # A builder masks a reason first, then puts it into its own line, and post() masks again
+    # (ticket 03): the placeholder must not drop the line it now sits in.
+    reason = privacy.for_discord("read personal-finance/data/tally.db")
+    line = f"**social** · skipped: {reason} · 07:00 SGT"
+
+    assert privacy.for_discord(line) == line
+    assert privacy.for_discord(f"{line} and personal-finance/x") == privacy.FINANCE
+    assert privacy.for_discord("[removed: personal-finance/data/tally.db") == privacy.FINANCE  # only the placeholder is spared
+
+
 # --- names ----------------------------------------------------------------------------
 
 
