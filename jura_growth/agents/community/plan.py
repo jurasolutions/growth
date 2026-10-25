@@ -20,7 +20,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from jura_growth import brand_check, caps, db, discord, gate, log, paths, timeutil
+from jura_growth import brand_check, caps, db, discord, gate, images, log, paths, timeutil
 from jura_growth.agents.community import groups as groups_mod
 from jura_growth.agents.community import rules as rules_mod
 
@@ -635,9 +635,6 @@ def render(conn: sqlite3.Connection, week: str) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-
-
 def image_problem(path: str) -> str | None:
     """Why `path` can't be a post's image, or None. Only a PNG that
     `paths.guard()` accepts (in a run, one from its own folders) is attached."""
@@ -647,9 +644,8 @@ def image_problem(path: str) -> str | None:
         return f"image {path}: {error}"
     if not resolved.is_file():
         return f"image {path} doesn't exist"
-    with open(resolved, "rb") as handle:
-        if handle.read(len(PNG_SIGNATURE)) != PNG_SIGNATURE:
-            return f"image {path} is not a PNG"
+    if images.png_size(resolved) is None:
+        return f"image {path} is not a PNG"
     return None
 
 
