@@ -1,7 +1,6 @@
 import json
 import os
 import plistlib
-import stat
 from datetime import date
 from pathlib import Path
 
@@ -26,6 +25,8 @@ from jura_growth import (
     timeutil,
 )
 from jura_growth.cli import cli
+
+from runner_support import fake_claude, settings_with
 
 
 def invoke(*args, input=None):
@@ -196,33 +197,9 @@ def test_paused_agent_is_skipped(isolated):
     assert runner.run("heartbeat").status == "skipped"
 
 
-def _fake_claude(tmp_path, result_text, *, is_error=False):
-    script = tmp_path / "fake-claude"
-    record = {"type": "result", "subtype": "success", "is_error": is_error, "result": result_text, "total_cost_usd": 0.12}
-    script.write_text(
-        "#!/bin/sh\n"
-        f"cat > {tmp_path}/stdin.txt\n"
-        f"echo '{{\"type\": \"system\", \"argv\": \"'\"$*\"'\"}}'\n"
-        f"echo '{json.dumps(record)}'\n"
-    )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    return script
-
-
-def _settings_with(monkeypatch, **claude):
-    base = config.settings()
-    patched = dict(base)
-    patched["claude"] = {**base["claude"], **claude}
-    patched["jobs"] = {
-        **base["jobs"],
-        "fake": {"agent": "fake-agent", "kind": "claude", "prompt": "fake.md", "tools": ["WebSearch"], "schedule": {"daily": "06:00"}},
-    }
-    monkeypatch.setattr(config, "settings", lambda: patched)
-
-
 def test_claude_job_runs_headless_with_allowlist(isolated, monkeypatch, tmp_path):
-    fake = _fake_claude(tmp_path, "OK: wrote one thing")
-    _settings_with(monkeypatch, binary=str(fake))
+    fake = fake_claude(tmp_path, "OK: wrote one thing")
+    settings_with(monkeypatch, binary=str(fake))
     prompt = paths.prompts_dir() / "fake.md"
     prompt.write_text("Do the fake job.")
     try:
@@ -235,7 +212,7 @@ def test_claude_job_runs_headless_with_allowlist(isolated, monkeypatch, tmp_path
 
 
 def test_claude_command_is_locked_down(monkeypatch):
-    _settings_with(monkeypatch)
+    settings_with(monkeypatch)
     prompt = paths.prompts_dir() / "fake.md"
     prompt.write_text("x")
     try:
@@ -251,8 +228,8 @@ def test_claude_command_is_locked_down(monkeypatch):
 
 
 def test_claude_fail_summary_marks_run_failed(isolated, monkeypatch, tmp_path):
-    fake = _fake_claude(tmp_path, "FAIL: no ICP file")
-    _settings_with(monkeypatch, binary=str(fake))
+    fake = fake_claude(tmp_path, "FAIL: no ICP file")
+    settings_with(monkeypatch, binary=str(fake))
     prompt = paths.prompts_dir() / "fake.md"
     prompt.write_text("x")
     try:

@@ -25,6 +25,10 @@ core. A plug-in module may define any of:
     precheck(job: str, conn) -> str | None
         Called before a scheduled job starts. Return a reason to skip the run
         (for example "7 app PRDs already waiting"), or None to go ahead.
+        Return a `NothingToDo` (for example `NothingToDo("nothing due")`)
+        when the run simply has nothing to do: the runner then writes a
+        `run.quiet` event with that reason and no run row, whatever the job's
+        `quiet` flag (ADR 0001). A plain string is a skip Ting Yu should see.
 
     permissions(job: str) -> headless.Permissions | None
         For a `claude` job this agent runs: the `jura-growth` commands its
@@ -32,6 +36,24 @@ core. A plug-in module may define any of:
         The run may use those commands and no others, in Claude Code's own
         rules and again in code (see `jura_growth/headless.py`). Return None
         for jobs the agent doesn't run.
+
+    after_run(conn, job: str, run_id: int | None, outcome) -> runner.Outcome | None
+        Called after the job body of a run that actually started, before its
+        run row is finished. Return an `Outcome` to replace the run's final
+        outcome (the run row, the #alerts post and auto-pause all see it), or
+        None to keep it. An exception is logged as `run.after_run_error` and
+        the original outcome stands. `run_id` is None for a quiet command job
+        that has no row yet.
+
+    run_update(conn, run) -> list[str] | None
+        The "Produced:" lines of this agent's run update (ticket MC-03); None
+        posts nothing.
+
+    approval_kinds() -> list
+        The approval kinds this agent owns (ticket MC-04).
+
+The optional hooks are found with `getattr`, like `digest()`, so a plug-in
+that defines none of them still loads.
 """
 
 from __future__ import annotations
@@ -41,6 +63,11 @@ import pkgutil
 import sys
 from functools import lru_cache
 from types import ModuleType
+
+
+class NothingToDo(str):
+    """What a precheck returns for a run that found nothing to do. The
+    runner records it as a quiet run; any other string is a skip."""
 
 
 BROKEN: dict[str, str] = {}

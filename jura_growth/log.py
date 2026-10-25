@@ -58,10 +58,12 @@ def mirror(record: dict[str, Any]) -> None:
         handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
 
 
-def start_run(conn: sqlite3.Connection, agent: str, job: str) -> int:
+def start_run(conn: sqlite3.Connection, agent: str, job: str, *, started_at: str | None = None) -> int:
+    """Open a run row. `started_at` is the run's real start when the row is
+    written after the work (a quiet run that turned out to do something)."""
     cursor = conn.execute(
         "INSERT INTO runs (agent, job, started_at, status) VALUES (?, ?, ?, 'running')",
-        (agent, job, timeutil.stamp()),
+        (agent, job, started_at or timeutil.stamp()),
     )
     run_id = cursor.lastrowid
     event(conn, "run.start", {"job": job}, agent=agent, run_id=run_id)

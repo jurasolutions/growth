@@ -39,8 +39,10 @@ import click
 from jura_growth import agents, config, log, paths, timeutil
 
 # Commands no run may use, whatever a plug-in declares: starting, resuming or
-# scheduling jobs, and posting or uploading to Discord directly.
-NEVER = ("run", "resume", "schedule", "discord")
+# scheduling jobs, posting or uploading to Discord directly, and deciding an
+# approval or sending a control command, which only a human may do. Not
+# `one-pager`: that is a scheduled job's own command.
+NEVER = ("run", "resume", "schedule", "discord", "approve", "skip", "approvals", "remote")
 
 
 @dataclass(frozen=True)
@@ -122,7 +124,8 @@ def claude_rules(job: str) -> tuple[list[str], list[str]]:
         allowed += [f"Bash(jura-growth {command})", f"Bash(jura-growth {command}:*)"]
 
     disallowed = secret_read_rules()
-    disallowed += [f"Bash(jura-growth {name}:*)" for name in NEVER]
+    for name in NEVER:  # bare too, for the ones not written yet
+        disallowed += [f"Bash(jura-growth {name})", f"Bash(jura-growth {name}:*)"]
     for name, _ in leaves(cli):
         if name in commands:
             continue

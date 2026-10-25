@@ -13,6 +13,14 @@ No MCP servers, no user settings, a per-run spending ceiling, and the full
 stream-json transcript kept for audit.
 
 Three failed runs in a row pause the agent (pause.check_auto_pause).
+
+A quiet command job that finds nothing to do, and any job whose precheck
+returns `agents.NothingToDo`, leaves a `run.quiet` event instead of a run row
+(ADR 0001). After the job body the agent's `after_run` hook may replace the
+outcome, before the row is finished. Every path except the PAUSE file ends
+with one call to `run_update.after_run`; the lock skip passes `conn=None`.
+Neither hook can change a run by raising: the error is logged as
+`run.after_run_error`.
 """
 
 from __future__ import annotations
@@ -28,7 +36,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from jura_growth import agents, config, db, discord, headless, holidays, locks, log, pause, paths, timeutil
+from jura_growth import agents, config, db, discord, headless, holidays, locks, log, pause, paths, run_update, timeutil
 
 BUSINESS_DAY_KINDS = ("business_days", "business_days_every")
 
@@ -71,7 +79,9 @@ def run(name: str, *, ignore_schedule: bool = False) -> Outcome:
     with _lock(name) as acquired:
         if not acquired:
             log.mirror({"ts": timeutil.stamp(), "agent": agent, "level": "info", "kind": "run.skipped", "payload": {"job": name, "reason": "previous run still going"}})
-            return Outcome("skipped", "previous run still going")
+            outcome = Outcome("skipped", "previous run still going")
+            _run_update(None, name, spec, None, outcome)  # never opens growth.db
+            return outcome
 
         conn = db.connect()
         try:
@@ -82,21 +92,29 @@ def run(name: str, *, ignore_schedule: bool = False) -> Outcome:
 
 def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule: bool) -> Outcome:
     agent = spec["agent"]
-    quiet = bool(spec.get("quiet"))
+    # `quiet` means something only for a command job. A claude job spends
+    # money and needs a run id (environment, transcript, `used_by_run`), so it
+    # always gets its run row before Claude starts.
+    quiet = bool(spec.get("quiet")) and spec["kind"] == "command"
+    started_at = timeutil.stamp()
+    module = agents.by_name(agent)
 
     reason = pause.is_paused(conn, agent)
     if not reason and not ignore_schedule:
         reason = _schedule_reason(spec)
     if not reason:
-        module = agents.by_name(agent)
-        precheck = getattr(module, "precheck", None) if module else None
+        precheck = getattr(module, "precheck", None)
         reason = precheck(name, conn) if precheck else None
+    if isinstance(reason, agents.NothingToDo):
+        log.event(conn, "run.quiet", {"job": name, "started_at": started_at, "reason": str(reason)}, agent=agent)
+        return _run_update(conn, name, spec, None, Outcome("ok", str(reason)))
     if reason:
+        skip_id = None
         if quiet:
             log.event(conn, "run.skipped", {"job": name, "reason": reason}, agent=agent)
         else:
-            log.skip_run(conn, agent, name, reason)
-        return Outcome("skipped", reason)
+            skip_id = log.skip_run(conn, agent, name, reason)
+        return _run_update(conn, name, spec, skip_id, Outcome("skipped", reason))
 
     _abandon_stale(conn)
     run_id = None if quiet else log.start_run(conn, agent, name)
@@ -110,10 +128,24 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
     except Exception as error:  # noqa: BLE001 - every failure is recorded
         outcome = Outcome("failed", error=f"{type(error).__name__}: {error}")
 
+    # The plug-in's last word on a run that started (the publish audit can
+    # fail it), before the row, the alert and auto-pause see the outcome.
+    hook = getattr(module, "after_run", None)
+    if hook:
+        try:
+            final = hook(conn, name, run_id, outcome)
+            if isinstance(final, Outcome):
+                outcome = final
+        except Exception as error:  # noqa: BLE001 - the original outcome stands
+            _hook_failed(conn, f"{agent}.after_run", name, agent, run_id, error)
+
     if quiet and run_id is None:
         if outcome.status == "ok" and not outcome.summary:
-            return outcome  # nothing happened; no run row
-        run_id = log.start_run(conn, agent, name)
+            # Nothing happened: no run row, but a trace, so the slot reads
+            # as run rather than slept through (ADR 0001).
+            log.event(conn, "run.quiet", {"job": name, "started_at": started_at}, agent=agent)
+            return _run_update(conn, name, spec, None, outcome)
+        run_id = log.start_run(conn, agent, name, started_at=started_at)
     log.finish_run(conn, run_id, outcome.status, summary=outcome.summary, error=outcome.error, cost_usd=outcome.cost_usd)
 
     if outcome.status == "failed":
@@ -121,7 +153,33 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
             discord.alert(conn, f"`{name}` failed: {outcome.error[:500]}", agent=agent)
         finally:
             pause.check_auto_pause(conn, agent)  # whatever happened to the alert
+    return _run_update(conn, name, spec, run_id, outcome)
+
+
+def _run_update(conn: sqlite3.Connection | None, name: str, spec: dict, run_id: int | None, outcome: Outcome) -> Outcome:
+    """Hand the run to `run_update.after_run`, once per run.
+    Its errors are logged and the run's outcome is returned unchanged."""
+    try:
+        run_update.after_run(conn, name, spec, run_id, outcome)
+    except Exception as error:  # noqa: BLE001
+        _hook_failed(conn, "run_update.after_run", name, spec["agent"], run_id, error)
     return outcome
+
+
+def _hook_failed(conn: sqlite3.Connection | None, hook: str, job: str, agent: str, run_id: int | None, error: Exception) -> None:
+    """Record a hook's exception as `run.after_run_error`. Never raises: a
+    hook can't change a run's outcome by failing."""
+    try:
+        log.event(
+            conn,
+            "run.after_run_error",
+            {"job": job, "hook": hook, "error": f"{type(error).__name__}: {error}"[:500]},
+            level="error",
+            agent=agent,
+            run_id=run_id,
+        )
+    except Exception:  # noqa: BLE001 - not even the log may break the run
+        pass
 
 
 def _schedule_reason(spec: dict) -> str | None:
