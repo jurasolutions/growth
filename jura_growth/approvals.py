@@ -434,7 +434,9 @@ def use(conn: sqlite3.Connection, kind: str, subject: str, *, run_id: int | None
     switch stops it. A lapse or supersede it finds is written in the same
     transaction: catch `NotApproved` inside the `with` block to keep it.
     """
-    if not conn.in_transaction:
+    if not db.in_transaction(conn):
+        # Not a raw BEGIN either: only db.transaction() keeps a rolled-back
+        # claim out of the JSONL mirror (code review 04, R2-S2).
         raise RuntimeError("approvals.use() runs inside the caller's db.transaction(conn)")
     registered = _kind(kind)
     if registered is None:

@@ -444,6 +444,19 @@ def test_a_claim_sets_used_at_and_used_by_run_and_logs_one_used_event(conn, worl
     assert world.sent == [{"subject": subject, "used_at": aw.NOW, "used_by_run": run_id}]
 
 
+def test_use_inside_a_raw_begin_is_refused_and_claims_nothing(conn, world):
+    """R2-S2 (code review 04): only db.transaction() holds mirror lines
+    until the commit, so a raw BEGIN would bring the B1 leak back."""
+    subject, approval = approved_one(conn, world)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        with pytest.raises(RuntimeError, match="db.transaction"):
+            approvals.use(conn, aw.KIND, subject, run_id=None)
+    finally:
+        conn.execute("ROLLBACK")
+    assert aw.get(conn, approval.id).used_at is None and aw.claims(conn) == 0
+
+
 def test_a_refusal_the_caller_lets_escape_leaves_nothing_in_either_store(conn, world):
     """B1 (code review 04): when the caller's transaction rolls back, the
     supersede and the new request use() wrote go from the mirror too."""

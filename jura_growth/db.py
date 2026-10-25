@@ -8,6 +8,7 @@ stays in rollback mode and every connection is short-lived.
 from __future__ import annotations
 
 import sqlite3
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
@@ -47,7 +48,9 @@ _after_commit: dict[int, list[Callable[[], None]]] = {}
 def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     """`BEGIN IMMEDIATE`, committed when the block ends and rolled back if
     it raises. Anything registered with `after_commit()` runs after the
-    commit, and never after a rollback."""
+    commit, and never after a rollback. Once the work is committed the block
+    never raises for it: a callback that fails is reported on stderr and the
+    rest still run."""
     conn.execute("BEGIN IMMEDIATE")
     key = id(conn)
     _after_commit[key] = []
@@ -62,7 +65,16 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     finally:
         waiting = _after_commit.pop(key, [])
     for run in waiting:
-        run()
+        try:
+            run()
+        except Exception as error:  # noqa: BLE001
+            print(f"warning: committed, but an after-commit step failed: {type(error).__name__}: {error}", file=sys.stderr)
+
+
+def in_transaction(conn: sqlite3.Connection) -> bool:
+    """True only inside a `transaction()` on `conn`, not a raw `BEGIN`, which
+    would write its events' mirror lines before it knows it will commit."""
+    return conn.in_transaction and id(conn) in _after_commit
 
 
 @contextmanager
@@ -73,16 +85,17 @@ def atomic(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
         with transaction(conn):
             yield conn
         return
-    waiting = _after_commit.get(id(conn))
-    mark = len(waiting) if waiting is not None else 0
+    if not in_transaction(conn):
+        raise RuntimeError("db.atomic() runs inside db.transaction(conn), not a raw BEGIN")
+    waiting = _after_commit[id(conn)]
+    mark = len(waiting)
     conn.execute("SAVEPOINT atomic_step")
     try:
         yield conn
     except BaseException:
         conn.execute("ROLLBACK TO atomic_step")
         conn.execute("RELEASE atomic_step")
-        if waiting is not None:
-            del waiting[mark:]
+        del waiting[mark:]
         raise
     conn.execute("RELEASE atomic_step")
 
@@ -90,10 +103,9 @@ def atomic(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
 def after_commit(conn: sqlite3.Connection, run: Callable[[], None]) -> bool:
     """Run `run` once the `transaction()` open on `conn` commits. Returns
     False, and does nothing, when no `transaction()` is open on it."""
-    waiting = _after_commit.get(id(conn))
-    if waiting is None or not conn.in_transaction:
+    if not in_transaction(conn):
         return False
-    waiting.append(run)
+    _after_commit[id(conn)].append(run)
     return True
 
 
