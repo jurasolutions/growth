@@ -6,9 +6,12 @@ value-first posts that Ting Yu posts himself. Built against
 
 **Nothing is posted by code.** Meta removed the Groups API's publishing permission in April 2024,
 and driving an account with browser automation breaks Meta's terms. The run never fetches
-facebook.com either: `config/settings.yaml` denies WebFetch on Facebook's domains for this job,
-`add-group` refuses Facebook source URLs, and `community audit-run` proves it from the run's
-transcript.
+facebook.com either. The domains it may not fetch have one list, `blocked_fetch_domains` in
+`config/community.yaml` (Facebook's own domains are always on it). The community plug-in turns
+each domain into two Claude Code rules for this job, `WebFetch(domain:facebook.com)` for the
+domain and `WebFetch(domain:*.facebook.com)` for every subdomain, so adding a domain to the list
+blocks it with no edit to `config/settings.yaml`. `add-group` refuses source URLs on those domains,
+and `community audit-run` proves the run fetched none of them from its transcript.
 
 ## How a Monday goes
 

@@ -32,8 +32,15 @@ def settings() -> dict:
 
 
 def blocked_domains() -> tuple[str, ...]:
-    configured = settings().get("blocked_fetch_domains") or ()
-    return tuple(dict.fromkeys([*BLOCKED_DEFAULT, *configured]))
+    """The one list of domains the community run may not fetch: Facebook's
+    own, plus any in community.yaml. Each covers its subdomains too (the job's
+    WebFetch denials, `is_blocked`, `community audit-run`). A configured entry
+    is read as a bare lowercase domain, so " *.Example.COM. " is example.com."""
+    configured = [
+        str(entry).strip().lower().removeprefix("*.").strip(".")
+        for entry in settings().get("blocked_fetch_domains") or ()
+    ]
+    return tuple(dict.fromkeys([*BLOCKED_DEFAULT, *(d for d in configured if d)]))
 
 
 def host(url: str) -> str:

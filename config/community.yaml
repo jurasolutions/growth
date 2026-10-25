@@ -23,6 +23,10 @@ utm_source: facebook_group
 # personally, mentioning Jura Solutions in the closing line.
 post_as: Ting Yu personally, mentioning Jura Solutions in the closing line
 
-# The run never fetches these (settings.yaml denies WebFetch on them too), and
-# they can't be a source URL. `community audit-run` checks a run's transcript.
+# The one list of domains the run may not fetch. The community job's Claude
+# Code rules deny WebFetch on each domain and every subdomain of it (built from
+# this list; settings.yaml has no second list). A URL on them can't be a source
+# URL, and `community audit-run` checks a run's transcript for them. The code
+# always adds Facebook's own domains (groups.BLOCKED_DEFAULT), so removing one
+# here doesn't unblock it.
 blocked_fetch_domains: [facebook.com, fb.com, fb.me, fb.watch, fbcdn.net, facebook.net, messenger.com]
