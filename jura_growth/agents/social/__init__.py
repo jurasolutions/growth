@@ -76,6 +76,16 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     return {"figures": figures, "lines": lines, "brief": brief}
 
 
+def permissions(job: str):
+    """The `jura-growth` commands `prompts/social.md` uses. Skipping and
+    marking drafts published are Ting Yu's steps."""
+    if job != "social":
+        return None
+    from jura_growth.headless import Permissions
+
+    return Permissions(commands=("social today", "social submit", "social no-draft", "social history", "check"))
+
+
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     if job != "social":
         return None

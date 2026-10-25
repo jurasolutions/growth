@@ -245,7 +245,7 @@ def test_claude_command_is_locked_down(monkeypatch):
     joined = " ".join(argv)
     for flag in ("--permission-mode dontAsk", "--strict-mcp-config", "--setting-sources project", "--max-budget-usd"):
         assert flag in joined
-    assert "Bash(jura-growth:*)" in argv
+    assert "Bash(jura-growth:*)" not in argv  # only the job's own commands (test_headless.py)
     assert "Bash(jura-growth resume:*)" in argv  # disallowed
     assert not any(a == "Bash" or a.startswith("Bash(*") for a in argv)
 

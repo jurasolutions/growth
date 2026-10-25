@@ -29,13 +29,12 @@ import json
 import os
 import re
 import shutil
-import struct
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from jura_growth import paths
+from jura_growth import images, paths
 from jura_growth.agents.social import toolbox
 from jura_growth.agents.social.settings import LAYOUTS, Settings, load
 
@@ -292,11 +291,10 @@ def chrome_path(settings: Settings | None = None) -> Path | None:
 
 def png_size(path: Path) -> tuple[int, int]:
     """(width, height) from the PNG's IHDR chunk."""
-    with open(path, "rb") as handle:
-        head = handle.read(24)
-    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+    size = images.png_size(path)
+    if size is None:
         raise RenderError(f"{path} is not a PNG")
-    return struct.unpack(">II", head[16:24])
+    return size
 
 
 def _chrome(args: list[str], settings: Settings, *, offline: bool) -> subprocess.CompletedProcess:

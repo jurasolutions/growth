@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import traceback
 from pathlib import Path
 
 import click
@@ -22,6 +23,7 @@ from jura_growth import (
     db,
     digest as digest_mod,
     discord,
+    headless,
     holidays,
     log,
     pause as pause_mod,
@@ -33,7 +35,16 @@ from jura_growth import (
 )
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+class _Cli(click.Group):
+    """Everything a command prints, errors included, has secret values masked
+    (`config.redacted_output`), however it is invoked."""
+
+    def main(self, *args, **kwargs):
+        with config.redacted_output():
+            return super().main(*args, **kwargs)
+
+
+@click.group(cls=_Cli, context_settings={"help_option_names": ["-h", "--help"]})
 def cli() -> None:
     """Jura growth engine."""
     config.reset_caches()
@@ -44,7 +55,12 @@ def cli() -> None:
 
 
 def main() -> None:
-    cli(prog_name="jura-growth")
+    with config.redacted_output():
+        try:
+            cli(prog_name="jura-growth")
+        except Exception:  # noqa: BLE001 - print the traceback with secrets masked
+            traceback.print_exc()
+            sys.exit(1)
 
 
 # --- check -----------------------------------------------------------------
@@ -396,3 +412,5 @@ for _module in agents.plugins():
     _register = getattr(_module, "register", None)
     if _register:
         _register(cli)
+
+headless.install(cli)

@@ -6,8 +6,9 @@ a slow run and its next slot never overlap, then the job itself.
 
 A `command` job calls a `jura-growth` command in-process. A `claude` job runs
 headless Claude Code (`claude -p`) with the job's prompt file and a tight tool
-allowlist: read anything under jurasolutions/, run `jura-growth`, write only
-in the job's scratch folder, plus the job's own tools (web search and fetch).
+allowlist: read anything under jurasolutions/ except secret files, run the
+job's own `jura-growth` commands (headless.py), write only in the job's
+scratch folder, plus the job's own tools (web search and fetch).
 No MCP servers, no user settings, a per-run spending ceiling, and the full
 stream-json transcript kept for audit.
 
@@ -28,7 +29,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from jura_growth import agents, config, db, discord, holidays, locks, log, pause, paths, timeutil
+from jura_growth import agents, config, db, discord, headless, holidays, locks, log, pause, paths, timeutil
 
 BUSINESS_DAY_KINDS = ("business_days", "business_days_every")
 
@@ -211,17 +212,16 @@ def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
         raise JobError(f"prompt file missing: {prompt_file}")
     work = paths.writable(paths.work_dir(name) / ".keep").parent
 
+    # Only the job's own jura-growth commands, and no secret files (headless.py).
+    commands_allowed, commands_disallowed = headless.claude_rules(name)
     allowed = [
-        "Bash(jura-growth:*)",
+        *commands_allowed,
         f"Write(/{work}/**)",
         f"Edit(/{work}/**)",
         *spec.get("tools", []),
     ]
     disallowed = [
-        f"Read(/{paths.env_file()})",
-        "Bash(jura-growth run:*)",
-        "Bash(jura-growth resume:*)",
-        "Bash(jura-growth schedule:*)",
+        *commands_disallowed,
         *spec.get("disallowed_tools", []),
     ]
     budget = spec.get("max_budget_usd", settings.get("max_budget_usd", 3.0))

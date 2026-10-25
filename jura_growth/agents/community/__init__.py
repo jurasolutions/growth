@@ -48,6 +48,20 @@ def channels() -> dict[str, brand_check.Channel]:
     }
 
 
+def permissions(job: str):
+    """The `jura-growth` commands `prompts/community.md` uses. Joining a
+    group, confirming its rules and recording posts or removals (`set`,
+    `posted`, `removed`) are Ting Yu's steps."""
+    if job != "community":
+        return None
+    from jura_growth.headless import Permissions
+
+    return Permissions(commands=(
+        "community context", "community add-group", "community summary",
+        "community plan-add", "community publish-plan", "social render", "check",
+    ))
+
+
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     return None  # the register part runs every Monday, even with nothing joined
 
