@@ -37,6 +37,9 @@ SOURCE = "https://example.com.sg/team"
         ("call 9123.4567", "call [phone removed]"),
         ("call 91 23 45 67", "call [phone removed]"),
         ("call ９１２３ ４５６７", "call [phone removed]"),
+        ("call 9123 45 67", "call [phone removed]"),
+        ("call 9123–4567", "call [phone removed]"),
+        ("call 9 1 2 3 4 5 6 7", "call [phone removed]"),
         ("whatsapp https://wa.me/6591234567", "whatsapp https://wa.me/[phone removed]"),
         ("abroad +44 20 7946 0958", "abroad [phone removed]"),
         # Never: anything from personal-finance/.
@@ -135,13 +138,32 @@ def test_a_role_address_teaches_no_name():
 # --- Jura's own copy -------------------------------------------------------------------
 
 
-def test_jura_s_own_copy_keeps_its_words():
-    privacy.remember_address("mark.tan@tanholdings.sg")
+def test_jura_s_own_copy_keeps_its_wording():
+    privacy.remember_company("Tan Holdings Pte Ltd")
     privacy.never_show("Thank you for the note")
-    post = "Mark your calendar. Tan Holdings and friends: thank you for the note."
+    post = "Your calendar, Tan Holdings Pte Ltd: thank you for the note."
 
     assert privacy.for_discord(f"Draft:\n{post}", own_copy=[post]) == f"Draft:\n{post}"
-    assert privacy.for_discord(f"Mark said: {post}", own_copy=[post]).startswith("[name removed] said: Mark your")
+
+
+def test_jura_s_own_copy_still_loses_a_learned_first_name():
+    # Review 02 round 2, blocking: "Hi Jane," went out in a shadow preview.
+    privacy.remember_address("jane.tan@example.com.sg")
+    draft = "Hi Jane,\n\nI read on the Example site..."
+
+    assert privacy.for_discord(draft, own_copy=[draft]) == "Hi [name removed],\n\nI read on the Example site..."
+
+
+@pytest.mark.parametrize("own", [True, False], ids=["own-copy", "other-text"])
+def test_ting_yus_name_is_never_masked_as_a_prospect(own):
+    # Review 02 round 2, S2: contacts ting.lim@ and yu.hui@ must not cost Ting Yu his name.
+    privacy.remember_address("ting.lim@example.com.sg")
+    privacy.remember_address("yu.hui@example.com.sg")
+    privacy.remember_name("Ting Yu")
+    text = "Thanks for reading. Ting Yu, Jura Solutions"
+
+    assert privacy.for_discord(text, own_copy=[text] if own else []) == text
+    assert privacy.for_discord("Ting Lim and Yu Hui replied") == "[name removed] and [name removed] replied"
 
 
 def test_jura_s_own_copy_still_loses_secrets_phones_and_full_names(monkeypatch):
@@ -178,6 +200,7 @@ def test_a_registered_reply_body_never_appears():
     privacy.never_show("Please take us off your list")
 
     assert privacy.for_discord("they wrote: please take us off your list.") == "they wrote: [removed]."
+    assert privacy.for_discord("they wrote: PLEASE  take us off\nyour list") == "they wrote: [removed]"
 
 
 @pytest.mark.parametrize("body", ["550 5.1.1 jane.tan@example.com.sg: user unknown", "This message is spam"])
@@ -227,6 +250,30 @@ def test_learning_reads_ting_yus_sender_address_from_the_outreach_settings(conn)
     privacy.learn(conn)
 
     assert privacy.for_discord("from tingyu@jurasolutions.sg") == "from [removed]"
+
+
+def test_learning_keeps_ting_yus_signature_name(conn):
+    contact(conn, "yu.hui@example.com.sg")
+
+    privacy.learn(conn)
+
+    assert privacy.for_discord("Ting Yu, Jura Solutions; Yu Hui replied") == "Ting Yu, Jura Solutions; [name removed] replied"
+
+
+def test_learning_without_a_connection_reads_the_database_itself(conn):
+    # Review 02 round 2, N2: MC-03's lock-skip run update posts with conn=None.
+    contact(conn)
+    conn.commit()
+
+    privacy.learn(None)
+
+    assert privacy.for_discord("Jane Tan said no") == "[name removed] said no"
+
+
+def test_learning_without_a_connection_or_a_database_is_quiet():
+    privacy.learn(None)  # no growth.db yet
+
+    assert privacy.for_discord("Jane Tan") == "Jane Tan"
 
 
 def test_learning_never_asks_the_keychain(conn, monkeypatch):

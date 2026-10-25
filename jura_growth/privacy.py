@@ -15,11 +15,11 @@ every message through `for_discord()`, so a builder that forgets is covered.
 Secrets go first, through `config.redact()`.
 
 **Jura's own copy.** A builder names the parts of a message that are Jura's
-own outgoing text (an email draft, a social post) with `own_copy`. There the
-words stay as written: a single name-like word, a learned company name, a
-registered reply line and Ting Yu's sender address are left alone. Secrets,
-phone numbers, prospects' named addresses and a prospect's full name ("Jane
-Tan") are still masked.
+own outgoing text (an email draft, a social post) with `own_copy`. There a
+registered reply line and Ting Yu's sender address are left as written.
+Secrets, phone numbers, prospects' named addresses and every learned name
+(so "Hi Jane," too) are still masked: until MC-06 drops drafts that name a
+person, a preview may read "[name removed]" where a word looked like a name.
 
 **What the process knows.** A name or a reply body can't be recognised by its
 shape, so the process says what it knows:
@@ -29,14 +29,16 @@ shape, so the process says what it knows:
   same. A full name ("jane tan", any case) is masked everywhere; a single part
   only when it is written as a name (Jane, JANE), not as a word (jane).
 - `remember_company(name)` keeps a company's name whole, so "Tan Holdings" is
-  never read as Mr Tan.
+  never read as Mr Tan. `remember_name(name)` does the same for a name that is
+  not a prospect's: Ting Yu's own, which signs Jura's emails and posts.
 - `remember_owner(email)` marks Ting Yu's own address: removed everywhere
   except Jura's own copy, where his sender address belongs.
 - `never_show(text)` registers a value read in memory, such as a reply's body.
 - `learn(conn)` asks the plug-ins through an optional hook,
   `privacy_terms(conn) -> {"named_addresses": [...], "companies": [...],
-  "owner_addresses": [...]}`. It reads the database only, never the Keychain,
-  so `discord.post()` calls it on every post.
+  "owner_addresses": [...], "kept_names": [...]}`. It reads the database only,
+  never the Keychain, so `discord.post()` calls it on every post. Without a
+  connection it opens `growth.db` read-only itself, if there is one.
 - `load_for_masking(conn)` is `learn(conn)` plus the Keychain values
   (`config.load_secrets_for_masking()`), for builders whose text was written by
   another process: today `discord.alert()`, the digest and `discord post`.
@@ -54,7 +56,7 @@ import re
 import sqlite3
 from typing import Callable, Iterable
 
-from jura_growth import agents, config, role_addresses
+from jura_growth import agents, config, paths, role_addresses
 
 # The at sign as written, URL-encoded, or as an HTML entity.
 AT = r"(?:@|%40|&#64;|&#x40;)"
@@ -62,12 +64,15 @@ EMAIL_RE = re.compile(
     rf"(?<![\w.+%-])([\w][\w.+%-]*?){AT}([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{{2,}})", re.I
 )
 URL_RE = re.compile(r"\b(?:https?://|www\.)\S+", re.I)
-# Singapore numbers: 8 digits starting 3, 6, 8 or 9 as 4-4 or 2-2-2-2 (one kind of
-# separator), with or without +65. Then any other number written with a + country code.
+# Singapore numbers: 8 digits starting 3, 6, 8 or 9, written 4-4, 4-2-2, 2-2-2-2 (one kind
+# of separator) or digit by digit, with or without +65. Then any other number written with a
+# + country code. Separators: space, dot, hyphen and the dashes.
+SEP = r"[\s.\-\u2010-\u2015]"
 PHONE_RE = re.compile(
-    r"(?<![\w+.])(?:(?:\+?65|\(\+?65\))[\s.-]?)?"
-    r"(?:[3689]\d{3}[\s.-]?\d{4}|[3689]\d([\s.-])\d{2}\1\d{2}\1\d{2})(?![\w])"
-    r"|(?<![\w+])\+\d{1,3}(?:[\s.-]?\(?\d{1,4}\)?){2,5}(?![\w])"
+    rf"(?<![\w+.])(?:(?:\+?65|\(\+?65\)){SEP}?)?"
+    rf"(?:[3689]\d{{3}}{SEP}?\d{{4}}|[3689]\d{{3}}({SEP})\d{{2}}\1\d{{2}}"
+    rf"|[3689]\d({SEP})\d{{2}}\2\d{{2}}\2\d{{2}}|[3689](?: \d){{7}})(?![\w])"
+    rf"|(?<![\w+])\+\d{{1,3}}(?:{SEP}?\(?\d{{1,4}}\)?){{2,5}}(?![\w])"
 )
 FULL_WIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
 FINANCE_LINE_RE = re.compile(r"^.*personal(?:[-_ ]|%2d)?finance.*$", re.I | re.M)
@@ -87,7 +92,8 @@ FINANCE = "[removed: personal finance]"
 
 _never: set[str] = set()
 _name_groups: set[frozenset[str]] = set()  # the name parts of each named address learned
-_companies: set[str] = set()
+_companies: set[str] = set()  # kept whole: never read as a person's name
+_kept_names: set[str] = set()  # names that are not a prospect's (Ting Yu's own)
 _owner: set[str] = set()  # Ting Yu's addresses, lower-cased
 
 
@@ -104,7 +110,7 @@ def for_discord(text: str, *, own_copy: Iterable[str] = ()) -> str:
             parts = _name_parts(address)
             if parts:
                 groups.add(frozenset(parts))
-    names = _NameMatcher(groups, _companies)
+    names = _NameMatcher(groups, _companies | _kept_names)
     return "".join(_mask(part, is_own, names) for part, is_own in _split(text, own))
 
 
@@ -140,6 +146,12 @@ def remember_company(name: str) -> None:
         _companies.add(name.strip())
 
 
+def remember_name(name: str) -> None:
+    """A name that is not a prospect's, kept whole wherever it appears."""
+    if name and len(name.strip()) >= 2:
+        _kept_names.add(name.strip())
+
+
 def remember_owner(email: str) -> None:
     if email and "@" in email:
         _owner.add(email.strip().lower())
@@ -147,7 +159,40 @@ def remember_owner(email: str) -> None:
 
 def learn(conn: sqlite3.Connection | None) -> None:
     """What the plug-ins know: named contacts, companies and Ting Yu's addresses.
-    The database only, never the Keychain. A plug-in error leaves what is known."""
+    The database only, never the Keychain. A plug-in error leaves what is known.
+
+    Without a connection (a lock-skip run update posts with none), it opens
+    `growth.db` read-only for the plug-ins, and does without when it can't."""
+    if conn is None:
+        ro = _read_only()
+        if ro is not None:
+            try:
+                _learn(ro)
+            finally:
+                ro.close()
+            return
+    _learn(conn)
+
+
+def _read_only() -> sqlite3.Connection | None:
+    path = paths.db_path()
+    if not path.exists():
+        return None
+    # Attached with mode=ro: SQLite can then neither write nor roll back a stale
+    # journal, so this never repairs growth.db (ADR 0002). Unqualified table names
+    # find the attached database, so the plug-ins' queries work unchanged.
+    conn = sqlite3.connect(":memory:", uri=True, timeout=1)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("ATTACH DATABASE ? AS growth", (f"{path.resolve().as_uri()}?mode=ro",))
+        conn.execute("SELECT 1 FROM growth.sqlite_master LIMIT 1")
+    except sqlite3.Error:
+        conn.close()
+        return None
+    return conn
+
+
+def _learn(conn: sqlite3.Connection | None) -> None:
     for module in agents.plugins():
         hook = getattr(module, "privacy_terms", None)
         if not hook:
@@ -162,6 +207,8 @@ def learn(conn: sqlite3.Connection | None) -> None:
             remember_company(name)
         for address in terms.get("owner_addresses", ()):
             remember_owner(address)
+        for name in terms.get("kept_names", ()):
+            remember_name(name)
 
 
 def load_for_masking(conn: sqlite3.Connection | None) -> None:
@@ -174,6 +221,7 @@ def reset() -> None:
     _never.clear()
     _name_groups.clear()
     _companies.clear()
+    _kept_names.clear()
     _owner.clear()
 
 
@@ -186,11 +234,13 @@ config.on_reset(reset)
 def _mask(text: str, own: bool, names: "_NameMatcher") -> str:
     if not own:
         for value in sorted(_never, key=len, reverse=True):
-            text = re.sub(re.escape(value), REMOVED, text, flags=re.I)
+            # Any spacing: two spaces or a line break between the words still matches.
+            words = r"\s+".join(re.escape(w) for w in value.split())
+            text = re.sub(words, REMOVED, text, flags=re.I)
     text = FINANCE_LINE_RE.sub(FINANCE, text)
     text = EMAIL_RE.sub(lambda m: _address(m.group(0), own), text)
     text = _mask_phones(text)
-    return _outside_urls(text, lambda part: names.mask(part, single_parts=not own))
+    return _outside_urls(text, names.mask)
 
 
 def _address(written: str, own: bool) -> str:
@@ -224,23 +274,22 @@ class _NameMatcher:
             alternatives = "|".join(re.escape(c) for c in sorted(companies, key=len, reverse=True))
             self.companies = re.compile(rf"\b(?:{alternatives})\b", re.I)
 
-    def mask(self, text: str, *, single_parts: bool) -> str:
+    def mask(self, text: str) -> str:
         if self.full is None:
             return text
         if self.companies is None:
-            return self._mask(text, single_parts)
+            return self._mask(text)
         out, last = [], 0
         for match in self.companies.finditer(text):
-            out += [self._mask(text[last : match.start()], single_parts), match.group(0)]
+            out += [self._mask(text[last : match.start()]), match.group(0)]
             last = match.end()
-        out.append(self._mask(text[last:], single_parts))
+        out.append(self._mask(text[last:]))
         return "".join(out)
 
-    def _mask(self, text: str, single_parts: bool) -> str:
+    def _mask(self, text: str) -> str:
         if self.full is None or self.single is None:
             return text
-        text = self.full.sub(NAME, text)
-        return self.single.sub(NAME, text) if single_parts else text
+        return self.single.sub(NAME, self.full.sub(NAME, text))
 
 
 # --- helpers -------------------------------------------------------------------

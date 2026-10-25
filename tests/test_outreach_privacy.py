@@ -61,3 +61,25 @@ def test_a_shadow_preview_that_names_the_contact_is_clean(conn, monkeypatch, dis
     assert "[name removed] mentioned the paper orders." in content
     assert "We've made a free delivery order maker" in content  # Jura's own words, as written
     assert_clean(discord_double, outbox_dir(), Planted(marker="**SHADOW** (not sent)", personal=("Jane Tan", named["email"])))
+
+
+def test_a_shadow_preview_that_greets_the_contact_by_first_name_is_clean(conn, monkeypatch, discord_double):
+    # Review 02 round 2, blocking: the real queue and send path posted "Hi Jane,".
+    from jura_growth.agents.outreach import queue as queue_mod
+    from jura_growth.agents.outreach import send
+    from test_scout_support import MONDAY_10AM, body_for, seed
+
+    at(monkeypatch, MONDAY_10AM)
+    named = {"email": "jane.tan@alderlogistics.sg", "source_url": "https://www.alderlogistics.sg/contact", "enquiry_contact": True}
+    seeded = seed(conn, 1, queue=False, contact=named)
+    body = body_for("Alder Logistics").replace("Hi there,", "Hi Jane,")
+    queued = queue_mod.queue(
+        conn, seeded["lead_id"], {"subject": "A free delivery order maker for Alder Logistics", "body": body, "tool": "delivery-order-maker"}
+    )
+    assert queued.status == "queued", queued.reasons
+
+    assert send.send_due(conn).summary.startswith("SHADOW message")
+
+    [content] = discord_double.contents("outreach-sent")
+    assert "Hi [name removed]," in content
+    assert_clean(discord_double, outbox_dir(), Planted(marker="**SHADOW** (not sent)", personal=("Jane", named["email"])))

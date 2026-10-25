@@ -69,7 +69,6 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     return {"figures": {"leads_added": added, "leads_form_only": len(forms)}, "lines": lines, "brief": brief}
 
 
-
 def privacy_terms(conn: sqlite3.Connection | None) -> dict:
     """For `privacy`: addresses that name a person, so their names stay out of
     Discord, and company names, so they are never read as a person's name."""

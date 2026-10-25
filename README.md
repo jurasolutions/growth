@@ -132,10 +132,11 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
   `personal-finance/` never appear. `post()` reads the named contacts from the database on every
   post (never the Keychain). Builders whose text was written by another process (alerts, the
   digest, `discord post`) call `privacy.load_for_masking(conn)` first, which adds Keychain values.
-  Jura's own outgoing text is passed as `own_copy` and stays as written, apart from secrets, phone
-  numbers and prospects' addresses and full names. Only text files and PNGs from the data or
-  outputs folder are attached, PNGs without their text chunks; anything else is held back with a
-  note in the message.
+  Jura's own outgoing text is passed as `own_copy`: there registered reply lines and Ting Yu's
+  sender address stay as written, while secrets, phone numbers, prospects' addresses and learned
+  names are still masked. Ting Yu's own name and multi-word company names are never masked. Only
+  text files and PNGs from the data or outputs folder are attached, PNGs with only the chunks
+  their pixels need; anything else is held back with a note in the message.
 - `--strict-mcp-config` and `--setting-sources project`: no MCP servers (no Notion, no Zapier)
   and none of the user-level settings, plug-ins or hooks.
 - `--max-budget-usd` per run (US$3 by default, US$5 for scout research).
@@ -173,7 +174,7 @@ imports it by name. The module may define:
 | `after_run(conn, job, run_id, outcome)` | Called after the job body of a run that started, before its run row is finished. Return a `runner.Outcome` to replace the outcome (the row, `#alerts` and auto-pause all see it), or `None` to keep it. An exception is logged as `run.after_run_error` and the outcome stands |
 | `run_update(conn, run)` | The "Produced:" lines of the agent's run update, or `None` to post nothing (ticket MC-03) |
 | `approval_kinds()` | The approval kinds the agent owns (ticket MC-04) |
-| `privacy_terms(conn)` | `{"named_addresses": [], "companies": [], "owner_addresses": []}`: addresses that name a person (their names stay out of Discord), company names (never read as a person's name), and Ting Yu's own addresses (removed outside Jura's own email) |
+| `privacy_terms(conn)` | `{"named_addresses": [], "companies": [], "owner_addresses": [], "kept_names": []}`: addresses that name a person (their names stay out of Discord), company names (never read as a person's name), Ting Yu's own addresses (removed outside Jura's own email) and names that are not a prospect's (Ting Yu's) |
 
 Every hook except `NAME` is optional and found with `getattr`. Its prompt goes in
 `prompts/<job>.md`, its settings in `config/<name>.yaml`, and its hard limits in `caps.py`.
