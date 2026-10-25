@@ -14,6 +14,7 @@ from jura_growth.agents.community import rules as rules_mod
 from jura_growth.cli import cli
 
 MONDAY = "2026-10-26"  # 2026-W44
+MON_TO_FRI = ["mon", "tue", "wed", "thu", "fri"]
 
 
 def invoke(*args):
@@ -98,9 +99,11 @@ REPLY_QUOTE = (
 @pytest.fixture
 def three(conn):
     """Three joined, good-fit test groups with different rules."""
-    fnb = joined(conn, group("SG F&B owners", "sgfnb", rules="Promo posts on Saturdays only."), "rules_confirmed=yes")
-    reno = joined(conn, group("Singapore renovation contractors", "sgreno", rules="Be respectful to every member."), "rules_confirmed=yes")
-    home = joined(conn, group("SG home business network", "sghome"))
+    fnb = joined(conn, group("SG F&B owners", "sgfnb", rules="Promo posts on Saturdays only."),
+                 "rules_confirmed=yes", "promo_days=sat", "post_days=any")
+    reno = joined(conn, group("Singapore renovation contractors", "sgreno", rules="Be respectful to every member."),
+                  "rules_confirmed=yes", "promo_days=any", "post_days=any")
+    home = joined(conn, group("SG home business network", "sghome"), "promo_days=any", "post_days=any")
     return fnb, reno, home
 
 
@@ -129,38 +132,142 @@ def outbox(channel):
 
 
 # --- rules parsing ---------------------------------------------------------
+#
+# Ting Yu decided (code review 07) that a group's open days are always his to
+# set: no group is plannable until `community set <id> promo_days=...
+# post_days=...`, whatever its rules text says. Code only flags rules that
+# mention timing, as a hint to read them carefully; the hint never opens a day.
+
+PHRASINGS = [line for line in (Path(__file__).parent / "community_rule_phrasings.txt").read_text().splitlines() if line.strip()]
+
+
+@pytest.mark.parametrize("text", PHRASINGS)
+def test_no_rules_text_opens_a_day_until_ting_yu_confirms_the_days(text):
+    """Every phrasing from the three code review 07 rounds and their probes."""
+    group = {"promo_rules": text, "promo_days_confirmed": None, "post_days_confirmed": None}
+    rules = groups_mod.rules_for(group)
+    assert not rules.days_confirmed
+    assert "promo_days" in rules.summary() and "post_days" in rules.summary()
+    for weekday in range(7):
+        assert rules_mod.day_problem(rules, weekday, promotional=False)
+        assert rules_mod.day_problem(rules, weekday, promotional=True)
 
 
 @pytest.mark.parametrize(
-    "text, known, parsed, promo_days, post_days, no_promo, no_links",
+    "text, known, parsed, no_promo, no_links",
     [
-        ("promo Saturdays only", True, True, ["sat"], None, False, False),
-        ("Self-promotion is allowed only on Fridays.", True, True, ["fri"], None, False, False),
-        ("Promotional posts on weekends", True, True, ["sat", "sun"], None, False, False),
-        ("No self-promo except the Sunday promo thread", True, True, ["sun"], None, False, False),
-        ("Ads on Tue and Thu", True, True, ["tue", "thu"], None, False, False),
-        ("No promotion. No links.", True, True, None, None, True, True),
-        ("Posts Mon to Fri only", True, True, None, ["mon", "tue", "wed", "thu", "fri"], False, False),
-        ("Be kind and respectful", True, False, None, None, False, False),
-        ("not stated in public sources", False, True, None, None, False, False),
-        ("", False, True, None, None, False, False),
+        ("No promotion. No links.", True, True, True, True),
+        ("You cannot share links.", True, True, False, True),
+        ("Promotion is allowed, but you must not spam.", True, True, True, False),
+        ("Self-promotion is welcome", True, True, False, False),
+        ("Be kind and respectful", True, False, False, False),
+        ("not stated in public sources", False, True, False, False),
+        ("", False, True, False, False),
     ],
 )
-def test_rules_parse_into_days(text, known, parsed, promo_days, post_days, no_promo, no_links):
+def test_rules_with_no_day_parse_as_before(text, known, parsed, no_promo, no_links):
     rules = rules_mod.parse(text)
     assert (rules.known, rules.parsed) == (known, parsed)
-    assert rules_mod.day_names(rules.promo_days) == promo_days
-    assert rules_mod.day_names(rules.post_days) == post_days
     assert (rules.no_promo, rules.no_links) == (no_promo, no_links)
+    assert not rules.mentions_timing and rules.promo_days is None and rules.post_days is None
 
 
-def test_day_problem_applies_promotion_days_to_promotional_posts_only():
-    rules = rules_mod.parse("promo Saturdays only")
-    assert rules_mod.day_problem(rules, 1, promotional=True)  # Tuesday with a closing line
-    assert rules_mod.day_problem(rules, 1, promotional=False) is None
-    assert rules_mod.day_problem(rules, 5, promotional=True) is None
-    weekdays = rules_mod.parse("Posts Mon to Fri only")
-    assert rules_mod.day_problem(weekdays, 6, promotional=False)
+@pytest.mark.parametrize(
+    "text",
+    [
+        "promo Saturdays only",
+        "No posts on Sundays.",
+        # code review 07 round 3: R3-B1, days the strict day words miss
+        "Self-promo is welcome on #SelfPromoSaturday.",
+        "Promotion allowed in the #FridayPromo thread only.",
+        "Promo allowed on wknds only.",
+        "Self-promotion ok on wkends.",
+        "Promo is fine on weeknights only.",
+        "Ads welcome on week days.",
+        # R3-S1: frequency and holiday rules
+        "Promotion allowed once a week.",
+        "Self-promo allowed on the 1st of every month.",
+        "Promo allowed on public holidays only.",
+    ],
+)
+def test_rules_that_mention_timing_are_flagged(text):
+    assert rules_mod.parse(text).mentions_timing
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Promotion only on Saturdays, no links.",
+        "Promo on Saturdays, no links.",
+        "No links, promo on Fridays.",
+        "Never post links, promo thread on Sundays.",
+    ],
+)
+def test_a_links_ban_beside_a_day_rule_is_kept(text):
+    """Confirming days doesn't confirm links: the closing line's link stays refused."""
+    assert rules_mod.parse(text).no_links
+
+
+@pytest.mark.parametrize("text", ["No links on weekends.", "Members can't post links on weekends."])
+def test_a_links_ban_on_some_days_is_left_to_the_confirmed_days(text):
+    assert not rules_mod.parse(text).no_links
+
+
+@pytest.mark.parametrize(
+    "value, days",
+    [
+        ("any", None),
+        ("none", frozenset()),
+        ("mon-fri", frozenset(range(5))),
+        ("Mon to Fri", frozenset(range(5))),
+        ("weekdays", frozenset(range(5))),
+        ("sat,sun", frozenset({5, 6})),
+        ("Saturday and Sunday", frozenset({5, 6})),
+        ("fri", frozenset({4})),
+    ],
+)
+def test_read_days(value, days):
+    assert rules_mod.read_days(value) == days
+
+
+@pytest.mark.parametrize("value", ["", "funday", "fri and public holidays", "not sunday", "wknds"])
+def test_read_days_refuses_anything_else(value):
+    with pytest.raises(ValueError):
+        rules_mod.read_days(value)
+
+
+def test_confirmed_days_are_the_only_days_that_count():
+    rules = rules_mod.confirm_days(rules_mod.parse("No promotion on weekends."), "mon-fri", "any")
+    assert rules.parsed and rules.days_confirmed
+    assert rules_mod.day_names(rules.promo_days) == MON_TO_FRI and rules.post_days is None
+    assert rules_mod.day_problem(rules, 5, promotional=True)  # Saturday with a closing line
+    assert rules_mod.day_problem(rules, 5, promotional=False) is None  # a value post is fine
+    assert rules_mod.day_problem(rules, 0, promotional=True) is None
+    assert rules.summary() == "promotion only on mon, tue, wed, thu, fri"
+
+    sunday = rules_mod.confirm_days(rules_mod.parse("No posts on Sundays."), "any", "mon-sat")
+    assert rules_mod.day_problem(sunday, 6, promotional=False)
+    assert rules_mod.day_problem(sunday, 2, promotional=False) is None
+    assert sunday.summary() == "posts only on mon, tue, wed, thu, fri, sat"
+
+    unreadable = rules_mod.confirm_days(rules_mod.parse("Be kind and respectful"), "any", "any")
+    assert unreadable.days_confirmed and not unreadable.parsed  # the plan still needs rules_ok
+
+
+def test_confirmed_promotion_days_lift_a_blanket_ban_and_none_means_no_promotion():
+    thread = rules_mod.confirm_days(rules_mod.parse("No promotion. Promo thread on Sundays."), "sun", "any")
+    assert not thread.no_promo and rules_mod.day_names(thread.promo_days) == ["sun"]
+    never = rules_mod.confirm_days(rules_mod.parse("Promo on Fridays, no DMs."), "none", "any")
+    assert never.no_promo and never.summary() == "no promotion"
+    quiet = rules_mod.confirm_days(rules_mod.parse("No posts on weekdays. No posts on weekends."), "none", "none")
+    assert quiet.summary() == "no posts on any day; no promotion"
+    assert rules_mod.day_problem(quiet, 2, promotional=False) == "the group allows no posts on any day"
+
+
+def test_days_count_only_when_both_are_confirmed():
+    half = rules_mod.confirm_days(rules_mod.parse("No promotion on weekends."), "mon-fri", None)
+    assert not half.days_confirmed
+    assert rules_mod.day_problem(half, 0, promotional=False)
 
 
 # --- the register (block 1) ------------------------------------------------
@@ -212,12 +319,40 @@ def test_add_group_command_takes_a_batch(tmp_path):
 
 def test_set_uses_the_prd_syntax(conn):
     _, group_id, _ = groups_mod.add(conn, group("SG SME owners", "sgsme", fit="possible"))
-    result = invoke("community", "set", str(group_id), "joined=yes", "rules=promo Saturdays only", "fit=good fit", "notes=Joined 26 Oct", "rules_confirmed=yes")
+    result = invoke("community", "set", str(group_id), "joined=yes", "rules=promo Saturdays only", "fit=good fit", "notes=Joined 26 Oct",
+                    "rules_confirmed=yes", "promo_days=sat", "post_days=any")
     assert result.exit_code == 0, result.output
+    assert "promotion only on sat" in result.output
     row = groups_mod.get(conn, group_id)
     assert row["joined"] == 1 and row["rules_confirmed"] == 1 and row["fit"] == "good fit"
     assert row["promo_rules"] == "promo Saturdays only" and row["notes"] == "Joined 26 Oct"
+    assert (row["promo_days_confirmed"], row["post_days_confirmed"]) == ("sat", "any")
     assert invoke("community", "set", str(group_id), "joined=maybe").exit_code != 0
+
+
+@pytest.mark.parametrize("rules", ["No promotion on weekends.", "Be kind and respectful.", "not stated in public sources"])
+def test_confirming_rules_needs_the_open_days_for_every_group(conn, rules):
+    _, group_id, _ = groups_mod.add(conn, group("SG cafe owners", "sgcafe", rules=rules))
+    refused = invoke("community", "set", str(group_id), "joined=yes", "rules_confirmed=yes")
+    assert refused.exit_code != 0
+    assert "promo_days=" in refused.output and "post_days=" in refused.output
+    assert groups_mod.get(conn, group_id)["rules_confirmed"] == 0
+    assert invoke("community", "set", str(group_id), "rules_confirmed=yes", "promo_days=any").exit_code != 0
+    assert invoke("community", "set", str(group_id), "promo_days=funday").exit_code != 0
+
+    done = invoke("community", "set", str(group_id), "rules_confirmed=yes", "promo_days=Mon to Fri", "post_days=any")
+    assert done.exit_code == 0, done.output
+    assert groups_mod.get(conn, group_id)["promo_days_confirmed"] == "mon,tue,wed,thu,fri"
+
+
+def test_new_rules_text_clears_the_confirmed_days(conn):
+    _, group_id, _ = groups_mod.add(conn, group("SG cafe owners", "sgcafe", rules="No promotion on weekends."))
+    groups_mod.set_fields(conn, group_id, ["rules_confirmed=yes", "promo_days=mon-fri", "post_days=any"])
+    row = groups_mod.set_fields(conn, group_id, ["rules=Promo on Saturdays only."])
+    assert row["promo_days_confirmed"] is None and row["post_days_confirmed"] is None
+    assert not groups_mod.rules_for(row).days_confirmed
+    kept = groups_mod.set_fields(conn, group_id, ["rules=Promo on Fridays only.", "promo_days=fri", "post_days=any"])
+    assert kept["promo_days_confirmed"] == "fri"
 
 
 def test_summary_posts_to_community_and_says_nobody_joined(conn):
@@ -419,6 +554,65 @@ def test_context_lists_open_days_and_link_permission(conn, three):
     tue = next(d for d in eligible[fnb["id"]]["days_open"] if d["weekday"] == "tue")
     assert sat["with_closing_line"] and not tue["with_closing_line"] and tue["value_post"]
     assert view["toolbox_live"] == ["quote-builder"] and view["limits"]["groups_per_week"] == 3
+
+
+def test_context_opens_no_day_until_ting_yu_confirms_the_days(conn):
+    waiting = joined(conn, group("SG cafe owners", "sgcafe", rules="No promotion on weekends."))
+    no_day = joined(conn, group("SG florists", "sgflorists", rules="Self-promotion is welcome."))
+    rules_only = joined(conn, group("SG printers", "sgprinters", rules="Self-promo is welcome on #SelfPromoSaturday."))
+    no_promo = joined(conn, group("SG tutors", "sgtutors", rules="No self-promo."), "rules_confirmed=yes", "promo_days=any", "post_days=any")
+    weekend = joined(conn, group("SG bakery owners", "sgbakery", rules="No promotion on weekends."),
+                     "rules_confirmed=yes", "promo_days=mon-fri", "post_days=any")
+    sunday = joined(conn, group("SG tuition centres", "sgtuition", rules="No posts on Sundays."),
+                    "rules_confirmed=yes", "promo_days=any", "post_days=mon-sat")
+    view = json.loads(invoke("community", "context", "--json").output)
+    eligible = {g["id"]: g for g in view["eligible"]}
+
+    for still_closed in (waiting, no_day, rules_only):
+        closed = eligible[still_closed["id"]]
+        assert not closed["rules"]["days_confirmed"] and closed["days_open"] == []
+        assert "promo_days" in closed["rules_summary"]
+    assert not eligible[rules_only["id"]]["link_allowed"]
+    assert eligible[waiting["id"]]["rules"]["mentions_timing"] and not eligible[no_day["id"]]["rules"]["mentions_timing"]
+    assert not any(d["with_closing_line"] for d in eligible[no_promo["id"]]["days_open"])
+    assert all(d["value_post"] for d in eligible[no_promo["id"]]["days_open"])
+
+    promo = {d["weekday"]: d for d in eligible[weekend["id"]]["days_open"]}
+    assert promo["mon"]["with_closing_line"] and not promo["sat"]["with_closing_line"] and not promo["sun"]["with_closing_line"]
+    assert promo["sat"]["value_post"]
+    assert eligible[weekend["id"]]["rules_summary"] == "promotion only on mon, tue, wed, thu, fri"
+    assert eligible[weekend["id"]]["link_allowed"] and not eligible[weekend["id"]]["needs_rules_ok"]
+
+    posts = {d["weekday"]: d for d in eligible[sunday["id"]]["days_open"]}
+    assert not posts["sun"]["value_post"] and not posts["sun"]["with_closing_line"] and posts["sat"]["value_post"]
+
+
+def test_checklist_plans_only_on_the_days_ting_yu_confirmed(conn):
+    waiting = joined(conn, group("SG cafe owners", "sgcafe", rules="No promotion on weekends."))
+    weekend = joined(conn, group("SG bakery owners", "sgbakery", rules="No promotion on weekends."),
+                     "rules_confirmed=yes", "promo_days=mon-fri", "post_days=any")
+    sunday = joined(conn, group("SG tuition centres", "sgtuition", rules="No posts on Sundays."),
+                    "rules_confirmed=yes", "promo_days=any", "post_days=mon-sat")
+    closing_line = POST_FNB.format(slug=weekend["slug"])
+    refused = plan_mod.add(conn, {"week": "2026-W44", "posts": [
+        {"group_id": weekend["id"], "day": "saturday", "text": closing_line},
+        {"group_id": sunday["id"], "day": "sunday", "text": POST_HOME},
+        {"group_id": waiting["id"], "day": "monday", "text": POST_RENO.split("\n")[0], "rules_ok": "A weekday value post."},
+    ]})
+    assert any("Sat 31 Oct breaks the rules" in e for e in refused.errors), refused.errors
+    assert any("Sun 01 Nov breaks the rules" in e for e in refused.errors), refused.errors
+    assert any("Mon 26 Oct breaks the rules" in e and "hasn't confirmed" in e for e in refused.errors), refused.errors
+
+    planned = plan_mod.add(conn, {"week": "2026-W44", "posts": [
+        {"group_id": weekend["id"], "day": "monday", "text": closing_line},
+        {"group_id": sunday["id"], "day": "saturday", "text": POST_HOME},
+    ]})
+    assert planned.ok, planned.lines
+    file, *_ = plan_mod.publish(conn)
+    checklist = file.read_text()
+    assert "Planned as: promotion only on mon, tue, wed, thu, fri." in checklist
+    assert "Planned as: posts only on mon, tue, wed, thu, fri, sat." in checklist
+    assert checklist.count("the rules mention timing, so check the day against them") == 2
 
 
 def test_brand_channels():

@@ -578,7 +578,8 @@ def render(conn: sqlite3.Connection, week: str) -> str:
     monday = week_monday(week)
     posts = db.rows(
         conn,
-        "SELECT p.*, g.name AS group_name, g.url AS group_url, g.promo_rules, g.rules_confirmed "
+        "SELECT p.*, g.name AS group_name, g.url AS group_url, g.promo_rules, g.rules_confirmed, "
+        "g.promo_days_confirmed, g.post_days_confirmed "
         "FROM community_posts p JOIN community_groups g ON g.id = p.group_id "
         "WHERE p.week = ? AND p.kind = 'post' AND p.status != 'skipped' ORDER BY p.planned_day, p.id",
         (week,),
@@ -608,7 +609,7 @@ def render(conn: sqlite3.Connection, week: str) -> str:
     for p in posts:
         day = date.fromisoformat(p["planned_day"])
         box = "x" if p["status"] == "posted" else " "
-        rules = rules_mod.parse(p["promo_rules"])
+        rules = groups_mod.rules_for(p)
         confirmed = "confirmed by you" if p["rules_confirmed"] else "not yet confirmed by you"
         qa = json.loads(p["qa_json"] or "{}")
         out += [
@@ -616,7 +617,9 @@ def render(conn: sqlite3.Connection, week: str) -> str:
             "",
             f"- [{box}] Post item {p['id']} on {day:%a %d %b} in [{p['group_name']}]({p['group_url']})"
             + (f" · posted {p['posted_url']}" if p["posted_url"] else ""),
-            f"- Rules reminder: {p['promo_rules'] or 'unknown'} ({confirmed}). Planned as: {rules.summary()}."
+            f"- Rules reminder: {p['promo_rules'] or 'unknown'} ({confirmed}"
+            + (f"; {rules_mod.TIMING_HINT}" if rules.mentions_timing else "")
+            + f"). Planned as: {rules.summary()}."
             + (f" Why this day fits: {qa['rules_ok']}" if qa.get("rules_ok") else ""),
             f"- Image: {p['image_path'] or 'none'}",
             "",

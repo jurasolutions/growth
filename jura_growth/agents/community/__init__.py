@@ -173,7 +173,7 @@ def groups_cmd(fit, joined, channel, as_json) -> None:
     if as_json:
         for r in rows:
             r["source_urls"] = json.loads(r.pop("source_urls_json") or "[]")
-            r["rules_parsed"] = rules_mod.parse(r["promo_rules"]).as_dict()
+            r["rules_parsed"] = groups_mod.rules_for(r).as_dict()
         click.echo(json.dumps(rows, indent=2, ensure_ascii=False))
         return
     if not rows:
@@ -184,7 +184,9 @@ def groups_cmd(fit, joined, channel, as_json) -> None:
         click.echo(f"{r['id']:>4}  {r['name']}  [{r['channel']}, {r['fit']}" + (f", {flags}" if flags else "") + "]")
         click.echo(f"      {r['url']}")
         click.echo(f"      audience: {r['audience'] or '-'}; size: {r['size_hint'] or '-'}; activity: {r['active_hint'] or '-'}")
-        click.echo(f"      rules: {r['promo_rules'] or '-'}  ->  {rules_mod.parse(r['promo_rules']).summary()}")
+        rules = groups_mod.rules_for(r)
+        click.echo(f"      rules: {r['promo_rules'] or '-'}  ->  {rules.summary()}"
+                   + (f" ({rules_mod.TIMING_HINT})" if rules.mentions_timing else ""))
         click.echo(f"      fit: {r['fit_reason']}")
         click.echo(f"      utm_campaign: {r['slug']}; sources: {', '.join(json.loads(r['source_urls_json'] or '[]'))}")
 
@@ -202,7 +204,7 @@ def set_cmd(group_id, pairs) -> None:
     click.echo(
         f"group {group['id']} {group['name']}: fit {group['fit']}, joined {'yes' if group['joined'] else 'no'}, "
         f"rules confirmed {'yes' if group['rules_confirmed'] else 'no'}; rules: {group['promo_rules'] or '-'} "
-        f"({rules_mod.parse(group['promo_rules']).summary()})"
+        f"({groups_mod.rules_for(group).summary()})"
     )
 
 
@@ -240,7 +242,7 @@ def context_cmd(as_json, week) -> None:
             )
             last = max(filter(None, [last and last[:10], g["last_posted_at"] and g["last_posted_at"][:10]]), default=None)
             ok_days = []
-            for d in days:
+            for d in days if rules.days_confirmed else []:  # no open day until Ting Yu sets them
                 if d < today:
                     continue
                 if last and abs((d - date.fromisoformat(last)).days) < plan_mod.no_repeat_days():
@@ -249,7 +251,8 @@ def context_cmd(as_json, week) -> None:
                     "date": d.isoformat(),
                     "weekday": rules_mod.WEEKDAYS[d.weekday()],
                     "value_post": rules_mod.day_problem(rules, d.weekday(), promotional=False) is None,
-                    "with_closing_line": rules_mod.day_problem(rules, d.weekday(), promotional=True) is None,
+                    "with_closing_line": not rules.no_promo
+                    and rules_mod.day_problem(rules, d.weekday(), promotional=True) is None,
                 })
             eligible.append({
                 "id": g["id"], "name": g["name"], "url": g["url"], "slug": g["slug"], "audience": g["audience"],
