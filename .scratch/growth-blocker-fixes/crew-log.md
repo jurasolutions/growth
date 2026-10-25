@@ -275,3 +275,25 @@ artifacts: crew/growth-blocker-fixes at dacf740 (merge of 07: e35ddd7 fe35657 14
 decisions: fix round 3 verified by the conductor (confirm_days required for every group; detector is a hint only); merged
 questions: -
 evidence:  merged branch uv run pytest -> 975 passed
+
+## 2026-10-25T17:30+0800 reviewer (final)
+status:    done
+persona:   reviewer
+ticket:    final
+artifacts: reviews/code-review-final.md
+decisions: verdict approve; no blocking finding on either axis, security or blocked paths
+decisions: should fix Spec SP1 #community summary hint and SP2 set --help omit promo_days/post_days (refused as printed); SP3 runner preamble invites refused discord/<group> --help calls
+decisions: should fix Standards ST1 runner _lock_held duplicates locks; ST2 hand-built log record; ST3 path-within check x3 (Path.is_relative_to); ST4 publish() shadows images module; ST5 FREE_MAIL_CONTACTS ceiling outside caps.py
+questions: release notes: confirmed groups closed until days set; website D1 append-only before D1 secrets; first sync replays from id 0 -> conductor: put all three in the PR body
+evidence:  uv run pytest -> 975 passed (with and without temp exports); git status and live mtimes unchanged
+evidence:  main-built db opened by branch -> core/0002 and community/0002 applied once, rows intact; main code still runs on migrated db
+evidence:  real-process probes -> .env and symlink refused (exit 2), secrets masked; pyright 76 (baseline 84)
+
+## 2026-10-25T17:54+0800 conductor (final review)
+status:    done
+persona:   conductor
+ticket:    final
+artifacts: reviews/code-review-final.md
+decisions: final review approve; should-fix SP1-SP3 (user-facing messages) and ST1/ST3 sent to a developer as ticket 09 on the feature branch; ST2, ST4, ST5 left as follow-ups; the three release notes go in the PR body
+questions: -
+evidence:  reviewer: pytest 975 with and without exports; db built at main upgrades cleanly; .env and symlink refused by a real CLI process
