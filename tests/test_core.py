@@ -406,6 +406,16 @@ def test_stale_sweep_ignores_frozen_clock_and_held_locks(isolated, conn, monkeyp
     assert db.scalar(conn, "SELECT status FROM runs WHERE id = ?", (run_id,)) == "failed"
 
 
+def test_is_held_sees_another_holder_without_taking_the_lock(isolated):
+    from jura_growth import locks
+
+    assert not locks.is_held("social")
+    assert not (paths.data_dir() / "locks" / "social.lock").exists()
+    with locks.held("social") as got:
+        assert got and locks.is_held("social")
+    assert not locks.is_held("social")
+
+
 def test_markdown_copy_reads_wrapped_bullets_and_inline_labels():
     from jura_growth.copy_check import items_from_markdown
 

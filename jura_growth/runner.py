@@ -17,7 +17,6 @@ Three failed runs in a row pause the agent (pause.check_auto_pause).
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import shlex
@@ -148,22 +147,9 @@ def _abandon_stale(conn: sqlite3.Connection) -> None:
             started = timeutil.parse(row["started_at"])
         except ValueError:
             continue
-        if started > cutoff or _lock_held(row["job"]):
+        if started > cutoff or locks.is_held(row["job"]):
             continue
         log.finish_run(conn, row["id"], "failed", error="abandoned: the process stopped before finishing")
-
-
-def _lock_held(name: str) -> bool:
-    path = paths.data_dir() / "locks" / f"{name}.lock"
-    if not path.exists():
-        return False
-    with open(path, "a") as handle:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return True
-        fcntl.flock(handle, fcntl.LOCK_UN)
-    return False
 
 
 # --- command jobs ----------------------------------------------------------
