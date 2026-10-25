@@ -155,4 +155,10 @@ uv run pytest
 ```
 
 Tests never touch `jurasolutions/data/`, Discord, launchd or the network. `conftest.py` points
-every path at a temporary folder.
+every path at a temporary folder, including rendered plists (`JURA_GROWTH_PLIST_DIR`) and a copy
+of `prompts/` (`JURA_GROWTH_PROMPTS_DIR`). Its write guard is an audit hook that refuses, and
+fails the test for, any write the test process makes into this repo or under `jurasolutions/`:
+opening a file for writing, creating, removing, renaming or truncating it, changing its mode or
+times, and opening a SQLite file there at all. It doesn't see writes made by subprocesses, or
+operations relative to an open folder (`dir_fd`, as inside `shutil.rmtree`), and it allows
+`__pycache__/` and `.pytest_cache/`.

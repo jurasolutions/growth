@@ -45,7 +45,7 @@ def config_dir() -> Path:
 
 
 def prompts_dir() -> Path:
-    return REPO_ROOT / "prompts"
+    return Path(os.environ.get("JURA_GROWTH_PROMPTS_DIR", REPO_ROOT / "prompts"))
 
 
 def pause_file() -> Path:

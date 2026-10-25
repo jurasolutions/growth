@@ -37,6 +37,10 @@ from jura_growth import (
 def cli() -> None:
     """Jura growth engine."""
     config.reset_caches()
+    # Before any command opens growth.db: an open alone rolls back a stale journal.
+    problem = timeutil.frozen_clock_problem()
+    if problem:
+        raise click.ClickException(problem)
 
 
 def main() -> None:
