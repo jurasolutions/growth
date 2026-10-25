@@ -18,13 +18,14 @@ def png_size(path: str | os.PathLike[str]) -> tuple[int, int] | None:
     return width, height
 
 
-# Chunks that carry text (comments, software, any key and value) rather than pixels.
-TEXT_CHUNKS = (b"tEXt", b"iTXt", b"zTXt", b"eXIf")
+# The chunks a PNG's pixels need. Every other chunk (text, metadata, anything
+# private) is dropped before an image leaves for Discord.
+PIXEL_CHUNKS = (b"IHDR", b"PLTE", b"tRNS", b"IDAT", b"IEND")
 
 
-def without_text_chunks(data: bytes) -> bytes | None:
-    """The PNG with its text chunks dropped, so nothing but pixels goes out; None
-    if `data` isn't a well-formed PNG."""
+def pixels_only(data: bytes) -> bytes | None:
+    """The PNG with only the chunks in PIXEL_CHUNKS, so nothing but the picture
+    goes out; None if `data` isn't a well-formed PNG."""
     if not data.startswith(PNG_SIGNATURE):
         return None
     out, at = [PNG_SIGNATURE], len(PNG_SIGNATURE)
@@ -36,7 +37,7 @@ def without_text_chunks(data: bytes) -> bytes | None:
         end = at + 12 + length
         if end > len(data):
             return None
-        if kind not in TEXT_CHUNKS:
+        if kind in PIXEL_CHUNKS:
             out.append(data[at:end])
         at = end
         if kind == b"IEND":

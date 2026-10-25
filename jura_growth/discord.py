@@ -76,8 +76,8 @@ def attachment(path: Path, own_copy=()) -> Attachment | str:
     """The file ready to attach, or why it can't be.
 
     A text file goes through the same masking as the message. A PNG goes only
-    if the engine made it (it sits in the data or outputs folder), without its
-    text chunks. Nothing else is attached: its contents can't be checked.
+    if the engine made it (it sits in the data or outputs folder), with
+    only the chunks its pixels need. Nothing else is attached: its contents can't be checked.
     """
     path = Path(path)
     name = privacy.for_discord(path.name)
@@ -88,7 +88,7 @@ def attachment(path: Path, own_copy=()) -> Attachment | str:
     if data.startswith(images.PNG_SIGNATURE):
         if not _engine_file(path):
             return f"{name} was not attached (only images the engine made)"
-        clean = images.without_text_chunks(data)
+        clean = images.pixels_only(data)
         if clean is None:
             return f"{name} was not attached (not a readable PNG)"
         return Attachment(path, (name, clean), (config.redact(path.name), clean))

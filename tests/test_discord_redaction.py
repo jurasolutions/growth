@@ -296,8 +296,22 @@ def test_an_engine_png_goes_out_without_its_text_chunks(conn, discord_double, se
     assert body == png() and RESEND_KEY.encode() not in body
 
 
-def png(text: bytes | None = None) -> bytes:
-    """A one-pixel PNG, with a tEXt chunk if asked."""
+def test_an_engine_png_keeps_only_the_chunks_its_pixels_need(conn, discord_double, secrets):
+    # Review 02 round 2, S1: a private chunk carried a secret and a name through.
+    image = paths.data_dir() / "work" / "community" / "grid.png"
+    image.parent.mkdir(parents=True)
+    hidden = f"{RESEND_KEY} Jane Tan +65 9123 4567".encode()
+    image.write_bytes(png(extra=[(b"prVt", hidden), (b"tRNS", b"\x00\x00"), (b"pHYs", b"\x00" * 9)]))
+
+    discord.post(conn, "alerts", "with an image", files=[image])
+
+    [(name, body)] = discord_double.posts("alerts")[0].files
+    assert body == png(extra=[(b"tRNS", b"\x00\x00")])
+    assert hidden not in body
+
+
+def png(text: bytes | None = None, extra: tuple | list = ()) -> bytes:
+    """A one-pixel PNG, with a tEXt chunk and other chunks if asked."""
     import struct
     import zlib
 
@@ -305,6 +319,7 @@ def png(text: bytes | None = None) -> bytes:
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
 
     header = chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0))
-    extra = chunk(b"tEXt", text) if text is not None else b""
+    more = chunk(b"tEXt", text) if text is not None else b""
+    more += b"".join(chunk(kind, data) for kind, data in extra)
     pixels = chunk(b"IDAT", zlib.compress(b"\x00\x00"))
-    return b"\x89PNG\r\n\x1a\n" + header + extra + pixels + chunk(b"IEND", b"")
+    return b"\x89PNG\r\n\x1a\n" + header + more + pixels + chunk(b"IEND", b"")
