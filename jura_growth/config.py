@@ -11,15 +11,18 @@ anything that is, and `redacted_output()` from everything the CLI writes.
 
 from __future__ import annotations
 
+import html
+import json
 import os
 import re
 import stat
 import subprocess
 import sys
+import urllib.parse
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import yaml
 
@@ -56,13 +59,25 @@ def read_lines(name: str) -> list[str]:
 
 
 def reset_caches() -> None:
-    global _secrets
+    global _secrets, _masking_loaded
     for cached in (settings, agent_config, _env_file):
         clear = getattr(cached, "cache_clear", None)  # tests may swap these out
         if clear:
             clear()
     _secrets = None
+    _masking_loaded = False
     _from_keychain.clear()
+    for forget in _reset_hooks:
+        forget()
+
+
+_reset_hooks: list[Callable[[], None]] = []
+
+
+def on_reset(forget: Callable[[], None]) -> None:
+    """Call `forget()` from `reset_caches()`: for modules that learn values to mask (privacy)."""
+    if forget not in _reset_hooks:
+        _reset_hooks.append(forget)
 
 
 # --- secrets ---------------------------------------------------------------
@@ -157,6 +172,32 @@ MIN_SECRET_LENGTH = 8
 _secrets: tuple[str, ...] | None = None
 _finding_secrets = False
 _from_keychain: set[str] = set()
+_masking_loaded = False
+
+
+def load_secrets_for_masking() -> None:
+    """Read every `keychain:` setting now, so `redact()` masks those values too.
+
+    `secret_values()` only knows the Keychain values this process has read
+    itself. A message built from disk (a run summary, a transcript, another
+    process's output) can still carry one, so a builder of such a message
+    calls this first, through `privacy.load_for_masking()`: today
+    `discord.alert()`, the digest and `jura-growth discord post`. It runs the
+    Keychain lookups once per process; later calls do nothing.
+    """
+    global _masking_loaded
+    if _masking_loaded:
+        return
+    _masking_loaded = True
+    file = _env_file()
+    names = set(file) | set(_parse_env(paths.REPO_ROOT / ".env.example"))
+    names |= {name for name, value in os.environ.items() if value.startswith("keychain:")}
+    for name in sorted(names):
+        raw = os.environ.get(name)
+        if raw is None:
+            raw = file.get(name, "")
+        if raw.startswith("keychain:"):
+            secret(name)
 
 
 def secret_values() -> tuple[str, ...]:
@@ -200,12 +241,71 @@ def redact(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [redact(v) for v in value]
     if isinstance(value, str):
-        for secret_value in secret_values():
-            value = value.replace(secret_value, "[redacted]")
+        known = secret_values()
+        for form in _encoded_forms(known):
+            value = value.replace(form, "[redacted]")
         for pattern in _SECRET_VALUES:
             value = pattern.sub("[redacted]", value)
-        return value
+        return _mask_pieces(value, known)
     return value
+
+
+@lru_cache(maxsize=8)
+def _encoded_forms(values: tuple[str, ...]) -> tuple[str, ...]:
+    """Each secret value as written, and as it reads once URL-encoded (either case of hex),
+    HTML-escaped or JSON-escaped, longest first."""
+    forms = set(values)
+    for value in values:
+        quoted = urllib.parse.quote(value, safe="")
+        forms |= {
+            quoted,
+            re.sub(r"%[0-9A-F]{2}", lambda m: m.group(0).lower(), quoted),
+            urllib.parse.quote_plus(value, safe=""),
+            html.escape(value),
+            json.dumps(value, ensure_ascii=False)[1:-1],
+        }
+    return tuple(sorted((f for f in forms if len(f) >= MIN_SECRET_LENGTH), key=len, reverse=True))
+
+
+def _mask_pieces(text: str, values: tuple[str, ...]) -> str:
+    """Mask any run of MIN_SECRET_LENGTH or more characters taken from a secret:
+    what a cut such as `error[:500]` leaves of one, at its start, its end or
+    from the middle. Each match grows to the longest run of the secret it is.
+
+    For a URL (a webhook) only the last path segment, the token, counts: the
+    start of the URL is the same for every webhook and every ordinary link.
+    """
+    tokens, windows = _windows(values)
+    if windows is None:
+        return text
+    spans = []
+    for match in windows.finditer(text):
+        start, end = match.span()
+        if spans and start < spans[-1][1]:
+            continue
+        while end < len(text) and any(text[start : end + 1] in t for t in tokens):
+            end += 1
+        while start > 0 and any(text[start - 1 : end] in t for t in tokens):
+            start -= 1
+        if spans and start <= spans[-1][1]:
+            start = spans.pop()[0]
+        spans.append((start, end))
+    for start, end in reversed(spans):
+        text = text[:start] + "[redacted]" + text[end:]
+    return text
+
+
+@lru_cache(maxsize=8)
+def _windows(values: tuple[str, ...]) -> tuple[tuple[str, ...], re.Pattern | None]:
+    tokens = tuple(
+        token
+        for token in (v.rstrip("/").rsplit("/", 1)[-1] if "://" in v else v for v in values)
+        if len(token) >= MIN_SECRET_LENGTH
+    )
+    windows = {t[i : i + MIN_SECRET_LENGTH] for t in tokens for i in range(len(t) - MIN_SECRET_LENGTH + 1)}
+    if not windows:
+        return tokens, None
+    return tokens, re.compile("|".join(re.escape(w) for w in sorted(windows)))
 
 
 class _RedactingStream:

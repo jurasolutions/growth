@@ -127,5 +127,6 @@ def bounce_rate_pause(conn: sqlite3.Connection, *, notify: bool = True) -> str |
     return None
 
 
-def post(conn: sqlite3.Connection, channel: str, text: str) -> None:
-    discord.post(conn, channel, text, username=USERNAME)
+def post(conn: sqlite3.Connection, channel: str, text: str, *, own_copy: tuple[str, ...] = ()) -> None:
+    """`own_copy`: the parts of `text` that are Jura's own email, shown as written (privacy.py)."""
+    discord.post(conn, channel, text, username=USERNAME, own_copy=own_copy)

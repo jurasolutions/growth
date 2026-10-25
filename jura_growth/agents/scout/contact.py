@@ -23,23 +23,23 @@ from urllib.parse import unquote, urlsplit
 
 import httpx
 
+from jura_growth import role_addresses
+from jura_growth.role_addresses import (  # noqa: F401 - part of this module's interface
+    ENQUIRY_ROLES,
+    NOT_FOR_ENQUIRIES,
+    OTHER_ROLES,
+    is_enquiry_role,
+    local_part,
+    not_for_enquiries,
+)
+
 USER_AGENT = "Mozilla/5.0 (compatible; JuraScout/1.0; +https://jurasolutions.sg)"
 MAX_PAGE_BYTES = 3_000_000
 
 EMAIL_RE = re.compile(r"[a-z0-9][a-z0-9._%+-]*@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}", re.I)
 ADDRESS_RE = re.compile(r"^[a-z0-9][a-z0-9._%+-]*@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$")
 
-# Enquiry role addresses, in order of preference.
-ENQUIRY_ROLES = ("info", "enquiry", "enquiries", "enquire", "inquiry", "inquiries", "sales", "hello", "contact", "admin")
-OTHER_ROLES = (
-    "office", "general", "mail", "team", "reception", "service", "services", "support", "help",
-    "booking", "bookings", "book", "orders", "order", "sales.sg", "sg", "singapore", "accounts",
-    "account", "billing", "cs", "customerservice", "customer.service", "customercare", "care",
-    "ask", "operations", "ops", "marketing", "projects", "quote", "quotes", "quotation",
-    "rental", "events", "catering", "reservations", "reservation", "studio", "clinic",
-    "frontdesk", "front.desk", "admissions", "enrol", "enroll", "hr", "careers", "jobs",
-)
-NOT_FOR_ENQUIRIES = ("careers", "jobs", "hr", "privacy", "dpo", "abuse", "noreply", "no-reply", "donotreply", "postmaster", "webmaster")
+# The role vocabulary lives in core, shared with what may appear in Discord.
 
 FREE_MAIL = frozenset(
     {
@@ -153,28 +153,9 @@ def valid_email(value: str) -> bool:
 # --- classification --------------------------------------------------------
 
 
-def local_part(email: str) -> str:
-    return email.split("@", 1)[0].lower()
-
-
 def kind_of(email: str) -> str:
     """`role` for a shared inbox (info@, sales@ ...), otherwise `named`."""
-    local = local_part(email)
-    base = re.sub(r"[\d_.-]+$", "", local) or local
-    if local in ENQUIRY_ROLES or local in OTHER_ROLES or base in ENQUIRY_ROLES or base in OTHER_ROLES:
-        return "role"
-    return "named"
-
-
-def is_enquiry_role(email: str) -> bool:
-    local = local_part(email)
-    base = re.sub(r"[\d_.-]+$", "", local) or local
-    return local in ENQUIRY_ROLES or base in ENQUIRY_ROLES
-
-
-def not_for_enquiries(email: str) -> bool:
-    local = local_part(email)
-    return any(local == word or local.startswith(word) for word in NOT_FOR_ENQUIRIES)
+    return "role" if role_addresses.is_role(email) else "named"
 
 
 # --- decoding obfuscation --------------------------------------------------

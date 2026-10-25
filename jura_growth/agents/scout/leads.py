@@ -30,7 +30,7 @@ from datetime import timedelta
 
 import httpx
 
-from jura_growth import db, discord, log, suppression, timeutil
+from jura_growth import db, discord, log, privacy, suppression, timeutil
 from jura_growth.agents.scout import contact, dnc, registry, settings
 
 USERNAME = "Jura growth · scout"
@@ -375,7 +375,7 @@ def _post_lead(conn: sqlite3.Connection, lead_id: int) -> None:
     if row and row["kind"] == "role":
         reach = f"{row['email']} (role address), listed on {row['source_url']}"
     elif row:
-        reach = f"a named enquiry address, listed on {row['source_url']}"
+        reach = f"{privacy.masked_address(row['email'])} (named address), listed on {row['source_url']}"
     elif lead["form_url"]:
         reach = f"contact form only: {lead['form_url']} (not emailed)"
     else:

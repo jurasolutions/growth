@@ -319,7 +319,7 @@ def _post(conn, day, theme, settings, passing, sub, images, out, dropped, result
         content = f"{header}\n```\n{body}\n```"
         if len(content) > discord.MAX_CONTENT:
             content = f"{header}\n\n{body}"
-        discord.post(conn, CHANNEL, content, files=files[: discord.MAX_FILES], username=USERNAME)
+        discord.post(conn, CHANNEL, content, files=files[: discord.MAX_FILES], username=USERNAME, own_copy=(body,))
 
     footer = []
     if sub.urls:

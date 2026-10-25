@@ -26,7 +26,7 @@ from pathlib import Path
 
 import httpx
 
-from jura_growth import config, log, paths, timeutil
+from jura_growth import config, images, log, paths, privacy, timeutil
 
 MAX_CONTENT = 2000
 MAX_FILES = 10
@@ -54,12 +54,61 @@ def webhook(channel: str) -> str | None:
     return config.secret(env_name(channel))
 
 
-def content_hash(content: str, files: list[Path]) -> str:
+def content_hash(content: str, files: list[tuple[str, bytes]]) -> str:
     digest = hashlib.sha256(content.encode("utf-8"))
-    for file in files:
-        digest.update(Path(file).name.encode("utf-8"))
-        digest.update(Path(file).read_bytes())
+    for name, body in files:
+        digest.update(name.encode("utf-8"))
+        digest.update(body)
     return digest.hexdigest()
+
+
+@dataclass
+class Attachment:
+    """A file as it goes to Discord: its name and bytes masked (`sent`), and the
+    secret-masked original the dedupe hash covers (`hashed`)."""
+
+    path: Path
+    sent: tuple[str, bytes]
+    hashed: tuple[str, bytes]
+
+
+def attachment(path: Path, own_copy=()) -> Attachment | str:
+    """The file ready to attach, or why it can't be.
+
+    A text file goes through the same masking as the message. A PNG goes only
+    if the engine made it (it sits in the data or outputs folder), with
+    only the chunks its pixels need. Nothing else is attached: its contents can't be checked.
+    """
+    path = Path(path)
+    name = privacy.for_discord(path.name)
+    try:
+        data = path.read_bytes()
+    except OSError as error:
+        return f"{name} was not attached ({type(error).__name__})"
+    if data.startswith(images.PNG_SIGNATURE):
+        if not _engine_file(path):
+            return f"{name} was not attached (only images the engine made)"
+        clean = images.pixels_only(data)
+        if clean is None:
+            return f"{name} was not attached (not a readable PNG)"
+        return Attachment(path, (name, clean), (config.redact(path.name), clean))
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        text = None
+    if text is None or "\x00" in text:
+        return f"{name} was not attached (only text files and images the engine made)"
+    sent = privacy.for_discord(text, own_copy=own_copy).encode("utf-8")
+    return Attachment(path, (name, sent), (config.redact(path.name), config.redact(text).encode("utf-8")))
+
+
+def _engine_file(path: Path) -> bool:
+    target = path.resolve()
+    for folder in (paths.data_dir(), paths.outputs_dir()):
+        root = Path(folder).resolve()
+        if target == root or root in target.parents:
+            return True
+    return False
 
 
 def split(content: str, limit: int = MAX_CONTENT) -> list[str]:
@@ -93,20 +142,44 @@ def post(
     dedupe: bool = True,
     suppress_embeds: bool = False,
     client: httpx.Client | None = None,
+    own_copy: list[str] | tuple[str, ...] = (),
 ) -> PostResult:
+    """Post `content` (and `files`) to a channel, or save it to the outbox.
+
+    The last line of defence (MC §4.3, §4.4): the content, username, file names
+    and text files go through `privacy.for_discord()`, after `privacy.learn()`
+    has read the named contacts from the database. Nothing here asks the
+    Keychain; builders whose text comes from another process call
+    `privacy.load_for_masking()` first. `own_copy` names the parts of
+    `content` that are Jura's own outgoing text, kept as written.
+
+    The dedupe hash covers the content with secrets masked but personal data
+    as written, so posts to two different people never dedupe as one.
+    """
     if channel not in channels():
         raise ValueError(f"unknown Discord channel {channel!r}; expected one of {channels()}")
-    files = [Path(f) for f in (files or [])]
-    if len(files) > MAX_FILES:
+    given = [Path(f) for f in (files or [])]
+    if len(given) > MAX_FILES:
         raise ValueError(f"Discord takes at most {MAX_FILES} files per message")
 
-    digest = content_hash(content, files)
+    privacy.learn(conn)
+    prepared = [attachment(f, own_copy) for f in given]
+    attached = [a for a in prepared if isinstance(a, Attachment)]
+    held_back = [a for a in prepared if isinstance(a, str)]
+    if held_back:
+        log.event(conn, "discord.attachment_refused", {"channel": channel, "files": held_back}, level="warning")
+        content = content + "\n" + "\n".join(f"({reason})" for reason in held_back)
+    digest = content_hash(config.redact(content), [a.hashed for a in attached])
+    content = privacy.for_discord(content, own_copy=own_copy)
+    username = privacy.for_discord(username) if username else username
+    uploads = [a.sent for a in attached]
+    saved = [privacy.for_discord(str(a.path)) for a in attached]  # where each file is, for the outbox
     if dedupe and conn is not None and _posted_today(conn, channel, digest):
         return PostResult(channel, delivered=False, reason="already posted today")
 
     url = webhook(channel)
     if not url:
-        _outbox(channel, content, files, username)
+        _outbox(channel, content, saved, username)
         _record(conn, channel, digest, delivered=False)
         log.event(conn, "discord.outbox", {"channel": channel, "chars": len(content)}, level="warning")
         return PostResult(channel, delivered=False, reason=f"{env_name(channel)} not set; saved to outbox")
@@ -117,9 +190,9 @@ def post(
     try:
         for index, piece in enumerate(pieces):
             last = index == len(pieces) - 1
-            _send(client, url, piece, files if last else [], username, suppress_embeds)
+            _send(client, url, piece, uploads if last else [], username, suppress_embeds)
     except DiscordError as error:
-        _outbox(channel, content, files, username)
+        _outbox(channel, content, saved, username)
         _record(conn, channel, digest, delivered=False)
         log.event(conn, "discord.error", {"channel": channel, "error": str(error)}, level="error")
         return PostResult(channel, delivered=False, reason=f"{error}; saved to outbox")
@@ -128,12 +201,17 @@ def post(
             client.close()
 
     _record(conn, channel, digest, delivered=True)
-    log.event(conn, "discord.post", {"channel": channel, "chars": len(content), "files": len(files)})
+    log.event(conn, "discord.post", {"channel": channel, "chars": len(content), "files": len(uploads)})
     return PostResult(channel, delivered=True, messages=len(pieces))
 
 
 def alert(conn: sqlite3.Connection | None, text: str, *, agent: str | None = None) -> PostResult:
-    """Post to #alerts and log a warning event. Alerts are never deduplicated."""
+    """Post to #alerts and log a warning event. Alerts are never deduplicated.
+
+    `alert` is a message builder, not the last line of defence: an alert can
+    carry text from another process (an error, a summary), so it loads the
+    masking values first, Keychain included."""
+    privacy.load_for_masking(conn)
     who = agent or log.current_agent() or "growth"
     log.event(conn, "alert", {"text": text}, level="warning", agent=who)
     return post(conn, "alerts", f"**{who}**: {text}", username=f"Jura growth · {who}", dedupe=False)
@@ -147,7 +225,12 @@ SUPPRESS_EMBEDS = 1 << 2  # Discord message flag: no link previews
 
 
 def _send(
-    client: httpx.Client, url: str, content: str, files: list[Path], username: str | None, suppress_embeds: bool = False
+    client: httpx.Client,
+    url: str,
+    content: str,
+    files: list[tuple[str, bytes]],
+    username: str | None,
+    suppress_embeds: bool = False,
 ) -> None:
     payload = {"content": content, "allowed_mentions": {"parse": []}}
     if suppress_embeds:
@@ -157,9 +240,9 @@ def _send(
     for attempt in range(3):
         try:
             if files:
-                multipart = {"payload_json": (None, json.dumps(payload), "application/json")}
-                for i, file in enumerate(files):
-                    multipart[f"files[{i}]"] = (file.name, file.read_bytes())
+                multipart: dict = {"payload_json": (None, json.dumps(payload), "application/json")}
+                for i, (name, body) in enumerate(files):
+                    multipart[f"files[{i}]"] = (name, body)
                 response = client.post(url, files=multipart)
             else:
                 response = client.post(url, json=payload)
@@ -208,14 +291,14 @@ def _record(conn: sqlite3.Connection | None, channel: str, digest: str, *, deliv
     )
 
 
-def _outbox(channel: str, content: str, files: list[Path], username: str | None) -> None:
+def _outbox(channel: str, content: str, files: list[str], username: str | None) -> None:
     path = paths.writable(paths.data_dir() / "discord-outbox" / f"{timeutil.today_str()}.jsonl")
     record = {
         "ts": timeutil.stamp(),
         "channel": channel,
         "username": username,
         "content": content,
-        "files": [str(f) for f in files],
+        "files": files,
     }
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")

@@ -27,7 +27,7 @@ from datetime import timedelta
 from email.message import Message
 from email.utils import parseaddr, parsedate_to_datetime
 
-from jura_growth import config, db, log, suppression, timeutil
+from jura_growth import config, db, log, privacy, suppression, timeutil
 from jura_growth.agents.outreach import store
 
 MAX_BODY_BYTES = 512_000
@@ -165,6 +165,7 @@ def _batch(conn, imap, numbers: list[bytes], known: dict, result: Result) -> Non
         if headers.get("Auto-Submitted", "no").strip().lower() not in ("", "no"):
             continue
         subject = str(headers.get("Subject", ""))
+        privacy.never_show(subject)  # read in memory only; never posted (MC §4.4)
         if AUTO_SUBJECT_RE.search(subject):
             continue
         message_id = (headers.get("Message-ID") or f"{sender}|{received.isoformat()}").strip()
@@ -179,7 +180,10 @@ def _batch(conn, imap, numbers: list[bytes], known: dict, result: Result) -> Non
             body_status, body_data = imap.fetch(number.decode(), "(BODY.PEEK[])")
             if body_status == "OK":
                 for _, raw in _fetch_parts(body_data):
-                    wants_out = bool(UNSUBSCRIBE_RE.search(_own_text(email.message_from_bytes(raw))))
+                    own = _own_text(email.message_from_bytes(raw))
+                    # Lines of four words or more: a sign-off ("Best regards") would blank later posts.
+                    privacy.never_show(*(line for line in own.splitlines() if len(line.split()) >= 4))
+                    wants_out = bool(UNSUBSCRIBE_RE.search(own))
         _record(conn, contact, sender, received, key, wants_out, result)
 
 

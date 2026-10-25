@@ -28,6 +28,7 @@ from jura_growth import (
     log,
     pause as pause_mod,
     paths,
+    privacy,
     runner,
     schedule as schedule_mod,
     suppression,
@@ -225,6 +226,7 @@ def discord_test() -> None:
 def discord_post(channel, text, files) -> None:
     """Post TEXT to CHANNEL (internal notes only; agent output has its own commands)."""
     with db.session() as conn:
+        privacy.load_for_masking(conn)  # TEXT comes from outside this process
         result = discord.post(conn, channel, text, files=list(files), username=f"Jura growth · {log.current_agent() or 'manual'}")
     click.echo("posted" if result.delivered else f"not posted: {result.reason}")
 

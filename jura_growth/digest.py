@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from jura_growth import agents, db, discord, holidays, log, pause, paths, timeutil
+from jura_growth import agents, db, discord, holidays, log, pause, paths, privacy, timeutil
 
 
 def build(conn: sqlite3.Connection, day: str | None = None) -> dict:
@@ -100,6 +100,8 @@ def render(summary: dict) -> str:
 
 
 def run(conn: sqlite3.Connection, day: str | None = None, *, post: bool = True) -> dict:
+    if post:
+        privacy.load_for_masking(conn)  # the runs it reports were written by other processes
     summary = build(conn, day)
     json_path = paths.writable(paths.data_dir() / "daily-summary.json")
     json_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
