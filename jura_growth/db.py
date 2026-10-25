@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from jura_growth import agents, paths, timeutil
 
@@ -38,16 +38,63 @@ def session(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+# Work that must happen only once a transaction commits (the JSONL mirror
+# lines of its events), by connection. Dropped on rollback.
+_after_commit: dict[int, list[Callable[[], None]]] = {}
+
+
 @contextmanager
 def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """`BEGIN IMMEDIATE`, committed when the block ends and rolled back if
+    it raises. Anything registered with `after_commit()` runs after the
+    commit, and never after a rollback."""
     conn.execute("BEGIN IMMEDIATE")
+    key = id(conn)
+    _after_commit[key] = []
     try:
         yield conn
     except BaseException:
+        _after_commit.pop(key, None)
         conn.execute("ROLLBACK")
         raise
-    else:
+    try:
         conn.execute("COMMIT")
+    finally:
+        waiting = _after_commit.pop(key, [])
+    for run in waiting:
+        run()
+
+
+@contextmanager
+def atomic(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """One step that succeeds or fails whole: its own `transaction()`, or a
+    savepoint inside the caller's, so a failing step rolls back alone."""
+    if not conn.in_transaction:
+        with transaction(conn):
+            yield conn
+        return
+    waiting = _after_commit.get(id(conn))
+    mark = len(waiting) if waiting is not None else 0
+    conn.execute("SAVEPOINT atomic_step")
+    try:
+        yield conn
+    except BaseException:
+        conn.execute("ROLLBACK TO atomic_step")
+        conn.execute("RELEASE atomic_step")
+        if waiting is not None:
+            del waiting[mark:]
+        raise
+    conn.execute("RELEASE atomic_step")
+
+
+def after_commit(conn: sqlite3.Connection, run: Callable[[], None]) -> bool:
+    """Run `run` once the `transaction()` open on `conn` commits. Returns
+    False, and does nothing, when no `transaction()` is open on it."""
+    waiting = _after_commit.get(id(conn))
+    if waiting is None or not conn.in_transaction:
+        return False
+    waiting.append(run)
+    return True
 
 
 def migration_sets() -> list[tuple[str, Path]]:

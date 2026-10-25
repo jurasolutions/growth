@@ -16,7 +16,7 @@ import os
 import sqlite3
 from typing import Any
 
-from jura_growth import config, paths, timeutil
+from jura_growth import config, db, paths, timeutil
 
 
 def current_run_id() -> int | None:
@@ -47,9 +47,11 @@ def event(
             "INSERT INTO events (run_id, ts, agent, level, kind, payload_json) VALUES (?, ?, ?, ?, ?, ?)",
             (run_id, ts, agent, level, kind, body),
         )
-    mirror(
-        {"ts": ts, "run_id": run_id, "agent": agent, "level": level, "kind": kind, "payload": clean}
-    )
+    record = {"ts": ts, "run_id": run_id, "agent": agent, "level": level, "kind": kind, "payload": clean}
+    # Inside db.transaction() the mirror line waits for the commit: the
+    # mirror is append-only, so it must never hold an event that rolled back.
+    if conn is None or not db.after_commit(conn, lambda: mirror(record)):
+        mirror(record)
 
 
 def mirror(record: dict[str, Any]) -> None:
