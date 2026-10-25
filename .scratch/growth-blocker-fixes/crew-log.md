@@ -297,3 +297,12 @@ artifacts: reviews/code-review-final.md
 decisions: final review approve; should-fix SP1-SP3 (user-facing messages) and ST1/ST3 sent to a developer as ticket 09 on the feature branch; ST2, ST4, ST5 left as follow-ups; the three release notes go in the PR body
 questions: -
 evidence:  reviewer: pytest 975 with and without exports; db built at main upgrades cleanly; .env and symlink refused by a real CLI process
+
+## 2026-10-25T18:01+0800 conductor (merge 09)
+status:    done
+persona:   conductor
+ticket:    09
+artifacts: merge of 09 (d9f0066 5f41e18 06e26e6 55ba563)
+decisions: verified by the conductor; merged; worktree removed
+questions: -
+evidence:  merged branch uv run pytest -> see commit
