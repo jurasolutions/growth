@@ -49,8 +49,12 @@ core. A plug-in module may define any of:
         The "Produced:" lines of this agent's run update (ticket MC-03); None
         posts nothing.
 
-    approval_kinds() -> list
-        The approval kinds this agent owns (ticket MC-04).
+    approval_kinds() -> dict[str, approvals.ApprovalKind]
+        The approval kinds this agent owns, by name (MC §4.6, ADR 0003). A
+        gated action of one of them claims its approval with
+        `approvals.use()`; the agent's pause flag stops the claim. A kind
+        two plug-ins declare, or one whose plug-in failed to load, fails
+        closed.
 
 The optional hooks are found with `getattr`, like `digest()`, so a plug-in
 that defines none of them still loads.

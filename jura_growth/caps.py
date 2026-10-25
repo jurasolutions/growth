@@ -31,6 +31,18 @@ NO_REPEAT_DAYS = 14
 APP_PRDS_PER_DAY = 1
 APP_PRDS_WAITING_MAX = 7
 
+# Approvals (MC §5.7). Settings may shorten a deadline, never lengthen one.
+# No request waits longer than the ceiling, whatever its kind asks for.
+APPROVAL_DEADLINE_MAX_DAYS = 14
+OUTREACH_DECIDE_BY_BUSINESS_DAYS = 1  # 16:30 on the next business day
+OUTREACH_USE_BY_BUSINESS_DAYS = 3     # 16:30 on the third business day after approval
+OUTREACH_DEADLINE_TIME = "16:30"
+APP_BUILD_DECIDE_BY_DAYS = 7
+APP_BUILD_USE_BY_DAYS = 1
+APP_RELEASE_DECIDE_BY_DAYS = 7
+APP_RELEASE_USE_BY_DAYS = 14
+GROUP_RULES_DECIDE_BY_DAYS = 14
+
 
 def effective(hard: int, configured: int | None) -> int:
     """The configured value, never above the hard limit."""
