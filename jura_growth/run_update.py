@@ -11,7 +11,8 @@ A job asks for run updates with `run_update: true` in `config/settings.yaml`,
 or with `run_update: claimed-only` for an update only when the plug-in's
 `run_update()` gives one (the publish job: only a run that claimed an item,
 never a skip, a quiet run or the lock skip). The message goes to the agent
-plug-in's `RUN_UPDATE_DISCORD_CHANNEL`:
+plug-in's `RUN_UPDATE_DISCORD_CHANNEL`, or the channel its optional
+`run_update_channel(conn, run)` names for that run:
 
     **social** · ok · 07:00 SGT · 4m 12s · US$0.41 · run 1287
     > Drafted LinkedIn, Facebook and Instagram for "PayNow QR for small shops".
@@ -119,7 +120,24 @@ def after_run(conn: sqlite3.Connection | None, job: str, spec: dict, run_id: int
                 if produced is None:
                     return  # the plug-in asks for no update for this run
     text = build(run, produced, approvals.raised_by(conn, run_id) if conn is not None and run_id is not None else [])
+    discord_channel = _channel_for(conn, module, agent, run) or discord_channel
     discord.post(conn, discord_channel, text, username=f"Jura growth · {job}", dedupe=False, suppress_embeds=True)
+
+
+def _channel_for(conn: sqlite3.Connection | None, module, agent: str, run: Run) -> str | None:
+    """The plug-in's `run_update_channel(conn, run)`, when it has one and names a channel for this
+    run (the publish job: `#community` for a group item); otherwise None, and the update goes to
+    `RUN_UPDATE_DISCORD_CHANNEL`. An error is logged and falls back the same way."""
+    hook = getattr(module, "run_update_channel", None)
+    if hook is None or conn is None or run.id is None:
+        return None
+    try:
+        return hook(conn, run)
+    except Exception as error:  # noqa: BLE001 - the update still posts, to the default channel
+        log.event(conn, "run.after_run_error", {"hook": f"{agent}.run_update_channel",
+                                                "error": f"{type(error).__name__}: {error}"[:500]},
+                  level="error", agent=agent, run_id=run.id)
+        return None
 
 
 def _run(conn: sqlite3.Connection | None, job: str, agent: str, run_id: int | None, outcome: Outcome) -> Run:

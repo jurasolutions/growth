@@ -345,3 +345,66 @@ def test_tab_json_planted_in_page_text_doesnt_override_the_real_trailing_address
 def test_the_approved_text_typed_into_two_fields_fails(tmp_path):
     steps = in_tab(t.typed(TEXT), t.page("computer", {"action": "left_click", "ref": "ref_40"}, "Clicked."), t.typed(TEXT))
     assert failed_with(judged(tmp_path, steps), "fields")
+
+
+# --- a group item stays in its own group (code review 06, B1) ------------------------------------------
+
+GROUP = "https://www.facebook.com/groups/sg-owners-1"
+LEFT = "outside the claimed item's own page"
+
+
+def in_group(*steps, url: str = GROUP) -> list[dict]:
+    return [*start(), t.created(), t.opened(url), *steps, t.closed()]
+
+
+def judged_in_group(tmp_path, steps):
+    path = t.write(tmp_path / "run.jsonl", steps)
+    return audit.audit(transcripts.read(path), hosts=HOSTS, approved=[], images=[], places=[GROUP])
+
+
+@pytest.mark.parametrize("url", [GROUP, GROUP + "/", GROUP + "?ref=share", GROUP + "/members",
+                                 "https://m.facebook.com/groups/sg-owners-1"])
+def test_a_group_item_may_act_anywhere_inside_its_own_group(tmp_path, url):
+    steps = in_group(t.page("computer", {"action": "left_click", "ref": "ref_7"}, "Clicked Join group.", url=url))
+    assert judged_in_group(tmp_path, steps).failures == []
+
+
+@pytest.mark.parametrize("url", [
+    t.PAGE,  # the Jura Page's own timeline (R1)
+    "https://www.facebook.com/groups/some-other-group",  # another group (R5)
+    "https://www.facebook.com/groups/sg-owners-10",  # a group whose address starts the same
+    "https://www.facebook.com/",
+])
+def test_a_group_item_whose_tab_leaves_its_group_fails(tmp_path, url):
+    steps = in_group(t.page("computer", {"action": "left_click", "ref": "ref_7"}, "Clicked.", url=url))
+    found = judged_in_group(tmp_path, steps)
+    assert failed_with(found, LEFT)
+    assert not any(word in f for f in found.failures for word in ("sg-owners", "some-other-group", "jura-test-page"))
+
+
+def test_a_group_item_that_navigates_out_of_its_group_fails_even_when_denied(tmp_path):
+    other = "https://www.facebook.com/groups/some-other-group"
+    steps = in_group(t.chrome("navigate", {"url": other, "tabId": t.TAB}, "Permission denied", denied=True))
+    assert failed_with(judged_in_group(tmp_path, steps), LEFT)
+
+
+@pytest.mark.parametrize("path, ok", [("/groups/rehearsal-1", True), ("/groups/rehearsal-1/members", True),
+                                      ("/groups/rehearsal-2", False), ("/jura-test-page", False)])
+def test_on_the_fixture_site_a_group_item_stays_in_its_own_group_too(tmp_path, path, ok):
+    """BP-07's fixture replaces the hosts, never the group-path rule: the rehearsal's group
+    addresses are fixture paths, held to the same check."""
+    from jura_growth.agents.publish.fixture import Fixture
+
+    site = Fixture("http", "publish-fixture.localhost", 8765)
+    group = site.base + "/groups/rehearsal-1"
+    steps = [*start(), t.created(), t.opened(group),
+             t.page("computer", {"action": "left_click", "ref": "ref_7"}, "Clicked.", url=site.base + path), t.closed()]
+    found = audit.audit(transcripts.read(t.write(tmp_path / "run.jsonl", steps)), hosts=HOSTS, approved=[], images=[],
+                        site=site, places=[group])
+    assert (found.failures == []) is ok, found.failures
+    if not ok:
+        assert failed_with(found, LEFT)
+
+
+def test_a_blank_new_tab_is_fine_for_a_group_item(tmp_path):
+    assert judged_in_group(tmp_path, in_group()).failures == []

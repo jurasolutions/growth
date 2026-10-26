@@ -51,8 +51,10 @@ def channels() -> dict[str, brand_check.Channel]:
 
 def permissions(job: str):
     """The `jura-growth` commands `prompts/community.md` uses. Joining a
-    group, confirming its rules and recording posts or removals (`set`,
-    `posted`, `removed`) are Ting Yu's steps.
+    group by hand, confirming its rules and recording posts or removals
+    (`set`, `posted`, `removed`) are Ting Yu's steps. `propose-join` only asks
+    him, in #approvals, to join a group as the Jura Page (browser publishing);
+    a publish run joins once he approves.
 
     The run may not fetch any blocked domain or its subdomains
     (`groups.fetch_denials()`)."""
@@ -63,7 +65,7 @@ def permissions(job: str):
     return Permissions(
         commands=(
             "community context", "community add-group", "community summary",
-            "community plan-add", "community publish-plan", "social render", "check",
+            "community plan-add", "community publish-plan", "community propose-join", "social render", "check",
         ),
         disallowed_tools=groups_mod.fetch_denials(),
     )
@@ -279,6 +281,8 @@ def removed_cmd(group_id, reason) -> None:
 @click.option("--week", help="Plan week, default this week (2026-W44).")
 def context_cmd(as_json, week) -> None:
     """Everything the weekly run needs, in one call (records checklist ticks first)."""
+    from jura_growth.agents.publish import items as publish_items
+
     week = week or plan_mod.current_week()
     with db.session() as conn:
         ticks = plan_mod.sync_ticks(conn)
@@ -322,6 +326,7 @@ def context_cmd(as_json, week) -> None:
             (timeutil.stamp(timeutil.days_ago(int(plan_mod.settings().get("compare_days", 28)))),),
         )
         counts = groups_mod.counts(conn)
+        joins = publish_items.join_room(conn)
     tools, registry_ok = plan_mod.live_tools()
     from jura_growth.cli import cli as root
 
@@ -347,6 +352,7 @@ def context_cmd(as_json, week) -> None:
             for g in everything
         ],
         "eligible": eligible,
+        "joins": joins,
         "planned_this_week": [{k: p[k] for k in ("id", "group_id", "kind", "planned_day", "status", "text")} for p in planned],
         "recent_post_texts": recent,
         "toolbox_live": sorted(tools),

@@ -124,8 +124,11 @@ def validate(record: dict) -> tuple[dict, list[str]]:
     if not re.match(r"^https?://\S+$", url):
         errors.append("url must be the group's full http(s) link")
     elif clean["channel"] == "facebook":
-        if not (host(url) in ("facebook.com",) or host(url).endswith(".facebook.com")) or "/groups/" not in url.lower():
-            errors.append("a Facebook group's url must be its facebook.com/groups/... link (recorded, never fetched)")
+        from jura_growth.agents.publish import hosts as publish_hosts
+
+        if publish_hosts.group_url_problem(url):
+            errors.append("a Facebook group's url must be one group's own address, "
+                          "https://www.facebook.com/groups/<group>/, with nothing after it (recorded, never fetched)")
     elif is_blocked(url):
         errors.append(f"a {clean['channel']} group's url can't be on a Facebook domain")
     fit = (clean.get("fit") or "").lower()
@@ -259,8 +262,7 @@ def set_parsed(conn: sqlite3.Connection, group_id: int, parsed: list[tuple[str, 
         elif key == "joined_as":
             if value.lower() not in JOINED_AS:
                 raise GroupError(f"joined_as must be {', '.join(JOINED_AS[:-1])} or {JOINED_AS[-1]}")
-            updates["joined_as_set"] = value.lower()
-            updates["joined"] = 0 if value.lower() == "none" else 1
+            updates.update(_joined_as(value.lower()))
         elif key == "fit":
             if value.lower() not in FITS:
                 raise GroupError("fit must be \"good fit\", \"possible\" or \"skip\"")
@@ -285,11 +287,27 @@ def set_parsed(conn: sqlite3.Connection, group_id: int, parsed: list[tuple[str, 
         updates.setdefault("rules_confirmed", 0)
     if updates.get("rules_confirmed") == 1:
         _check_days_confirmed({**group, **updates})
-    updates["updated_at"] = timeutil.stamp()
+    return _write(conn, group_id, updates, "community.group.set")
+
+
+def _joined_as(value: str) -> dict[str, object]:
+    """How a group was joined, kept in step with the legacy `joined` flag: the one place both are
+    written (`set_parsed`, `record_join`)."""
+    return {"joined_as_set": value, "joined": 0 if value == "none" else 1}
+
+
+def _write(conn: sqlite3.Connection, group_id: int, updates: dict[str, object], event: str, *,
+           run_id: int | None = None, extra: dict | None = None) -> dict:
+    """Write `updates` (fixed column names; every value a parameter) and log `event` with them,
+    and with `extra`."""
+    updates = {**updates, "updated_at": timeutil.stamp()}
     assignments = ", ".join(f"{k} = ?" for k in updates)
     conn.execute(f"UPDATE community_groups SET {assignments} WHERE id = ?", (*updates.values(), group_id))
-    log.event(conn, "community.group.set", {"id": group_id, **{k: v for k, v in updates.items() if k != "updated_at"}}, agent=NAME)
-    return get(conn, group_id)
+    log.event(conn, event, {"id": group_id, **{k: v for k, v in updates.items() if k != "updated_at"}, **(extra or {})},
+              agent=NAME, run_id=run_id)
+    group = get(conn, group_id)
+    assert group is not None  # written above
+    return group
 
 
 def _check_days_confirmed(group: dict) -> None:
@@ -319,6 +337,61 @@ def remove(conn: sqlite3.Connection, group_id: int, reason: str) -> dict:
     ).rowcount
     log.event(conn, "community.group.removed", {"id": group_id, "reason": reason, "planned_skipped": skipped}, level="warning", agent=NAME)
     return get(conn, group_id)
+
+
+JOIN_STATUSES = ("requested", "member", "declined")
+PROFILES_ONLY = "only personal profiles can join or post"  # the fit reason `pages_not_allowed` records
+
+
+def record_join(conn: sqlite3.Connection, group_id: int, status: str, *, run_id: int | None = None) -> dict:
+    """What a publish run's join as the Jura Page came to (browser publishing PRD §5.6). The run
+    acted as the Page, so a request or membership also records that the group allows Pages; a
+    membership records `joined_as = page`. The group's rules and open days are untouched: they
+    still need Ting Yu's `group-rules` decision (AC-P4.4)."""
+    if status not in JOIN_STATUSES:
+        raise GroupError(f"join status must be {', '.join(JOIN_STATUSES)}")
+    group = get(conn, group_id)
+    if group is None:
+        raise GroupError(f"no group {group_id}")
+    updates: dict[str, object] = {"join_status": status}
+    if status in ("requested", "member"):
+        updates["pages_allowed"] = "yes"
+    if status == "member":
+        updates.update(_joined_as("page"))
+    before = {column: group[column] for column in JOIN_COLUMNS}
+    return _write(conn, group_id, updates, JOIN_EVENT, run_id=run_id, extra={"before": before})
+
+
+JOIN_EVENT = "community.group.join"
+JOIN_COLUMNS = ("join_status", "pages_allowed", "joined_as_set", "joined")
+
+
+def undo_joins(conn: sqlite3.Connection, run_id: int) -> list[int]:
+    """Set back every join record run `run_id` wrote (`record_join`), newest first, to what it
+    was before: the run's audit failed, so its word for what the join came to can't stand (code
+    review 06, N11). Returns the groups set back. Call it inside a transaction."""
+    undone = []
+    rows = db.rows(conn, "SELECT payload_json FROM events WHERE kind = ? AND run_id = ? ORDER BY id DESC",
+                   (JOIN_EVENT, run_id))
+    for row in rows:
+        payload = json.loads(row["payload_json"] or "{}")
+        before = payload.get("before") or {}
+        if not isinstance(payload.get("id"), int) or set(before) != set(JOIN_COLUMNS):
+            continue
+        _write(conn, payload["id"], {column: before[column] for column in JOIN_COLUMNS}, "community.group.join_undone",
+               run_id=run_id)
+        undone.append(payload["id"])
+    return list(dict.fromkeys(undone))
+
+
+def pages_not_allowed(conn: sqlite3.Connection, group_id: int, *, run_id: int | None = None) -> dict:
+    """A publish run found that only personal profiles can join or post in the group: it is
+    skipped for good (BP §4.3, AC-P4.3). `pages_allowed = no` keeps it out of every join and
+    post (`publish.group_kinds.gone`)."""
+    if get(conn, group_id) is None:
+        raise GroupError(f"no group {group_id}")
+    return _write(conn, group_id, {"pages_allowed": "no", "fit": "skip", "fit_reason": PROFILES_ONLY},
+                  "community.group.pages_not_allowed", run_id=run_id)
 
 
 def get(conn: sqlite3.Connection, group_id: int) -> dict | None:

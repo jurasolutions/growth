@@ -13,6 +13,10 @@ did. It walks the calls in transcript order:
   such. A new tab's own `chrome://newtab/` and `about:blank` are fine. An attempt fails even when
   it was denied (rehearsal R3). URLs inside page text are not tab URLs, and are ignored. While
   the fixture platform is on (`site`, BP-07), every address must be on the fixture site instead.
+- **Places.** For a group item (a join, its answers, a group post), every such URL must also be
+  the item's own group address or a page under it (`places`, `hosts.within`): never another
+  group, the Page's own timeline or any other Facebook page (code review 06, B1). The finding
+  names no address. On the fixture site the same path rule holds.
 - **Tab addresses fail closed.** Every page-tool result on a tab this run opened must report that
   tab's address in the extension's own tab context, which ends the result: a JSON block with
   `tabId` and `url` starting on a line of its own, or trailing `tabId <n>: "<title>" (<url>)`
@@ -140,9 +144,10 @@ class _Uploads:
 
 
 def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[str], approved: list[str],
-          images: list[str], site: Fixture | None = None) -> Audit:
+          images: list[str], site: Fixture | None = None, places: tuple[str, ...] | list[str] = ()) -> Audit:
     """`site`: the fixture platform, when it is on (BP-07). Then every address must be on the
-    fixture site (`hosts.site_problem`) in place of `hosts`."""
+    fixture site (`hosts.site_problem`) in place of `hosts`. `places`: the claimed group items'
+    own addresses, which every address must also be inside (code review 06, B1)."""
     found = Audit()
     allowed = tuple(h.lower() for h in hosts)
     texts = [_normal(text) for text in approved if text and text.strip()]
@@ -160,6 +165,8 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
         problem = _url_problem(url, allowed, site)
         if problem:
             fail(f"{where}: {problem}")
+        elif places and url.strip() not in BLANK_TABS and not any(hosts_mod.within(url, place) for place in places):
+            fail(f"{where}: an address outside the claimed item's own page")
 
     def typed(text: str, tool: str, name: str) -> None:
         if not claimed and _normal(text):

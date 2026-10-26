@@ -1,11 +1,12 @@
 """What the publish run may do: its commands and its Chrome tools (BP §4.7, AC-P9.2, ADR 0005).
 
-- **Commands:** `publish next`, `publish done` and `publish stopped`. BP-06 adds `publish
-  note-rules`. Nothing else, so `publish resolve`, `resume` and every decision stay Ting Yu's.
+- **Commands:** `publish next`, `publish done`, `publish stopped` and `publish note-rules`
+  (BP-06). Nothing else, so `publish resolve`, `resume` and every decision stay Ting Yu's.
 - **Tab tools by name:** `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp` and
   `list_connected_browsers`. They read and open tabs, never a page.
 - **Page tools only by domain:** one `ClaudeInChromeDomain(<host>)` rule per host of each platform
-  this build drives (`hosts.BROWSER_PLATFORMS`) that is in `browser` mode in `config/social.yaml`.
+  this build drives (`hosts.BROWSER_PLATFORMS`) that is in `browser` mode in `config/social.yaml`,
+  and Facebook's while `browser` is on in `config/community.yaml` (group joins and posts).
   No page tool is allowed by name: a tool-name allow covers every site. While the fixture
   platform is on (`fixture.py`, BP-07), the fixture host is the only one.
 - **Denied by name:** the scripting, network, console, shortcut, recording, browser-switching,
@@ -23,7 +24,7 @@ from jura_growth import paths, timeutil
 from jura_growth.agents.publish import fixture, hosts
 
 CHROME = "mcp__claude-in-chrome__"
-COMMANDS = ("publish next", "publish done", "publish stopped")
+COMMANDS = ("publish next", "publish done", "publish stopped", "publish note-rules")
 TAB_TOOLS = ("tabs_context_mcp", "tabs_create_mcp", "tabs_close_mcp", "list_connected_browsers")
 DENIED_TOOLS = (
     "javascript_tool", "read_network_requests", "read_console_messages", "shortcuts_execute", "shortcuts_list",
@@ -34,11 +35,16 @@ FILE_UPLOAD = CHROME + "file_upload"
 
 
 def enabled_platforms() -> tuple[str, ...]:
-    """The platforms a publish run may open: driven by this build and in `browser` mode."""
+    """The platforms a publish run may open: driven by this build and in `browser` mode. Facebook
+    is also open while `community.browser` is on, for group joins and posts (BP-06), even when
+    the Page's own posts stay in `draft` mode."""
+    from jura_growth.agents.publish import group_kinds, items
     from jura_growth.agents.social.settings import load
 
     platforms = load().platforms
-    return tuple(name for name in hosts.BROWSER_PLATFORMS if name in platforms and platforms[name].browser)
+    groups = group_kinds.browser_on()
+    return tuple(name for name in hosts.BROWSER_PLATFORMS if (name in platforms and platforms[name].browser)
+                 or (groups and name == items.COMMUNITY_PLATFORM))
 
 
 def browser_hosts(platforms: tuple[str, ...] | None = None) -> tuple[str, ...]:

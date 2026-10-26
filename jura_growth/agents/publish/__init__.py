@@ -35,7 +35,8 @@ from pathlib import Path
 
 NAME = "publish"
 MIGRATIONS = Path(__file__).parent / "migrations"
-# Social posts are the only kind this build publishes; BP-05's community posts report to #community.
+# A social post's run update goes to #social-drafts; a group item's to #community (§5.9,
+# `run_update_channel`).
 RUN_UPDATE_DISCORD_CHANNEL = "social-drafts"
 
 
@@ -99,6 +100,13 @@ def run_update(conn: sqlite3.Connection, run) -> list[str] | None:
     from jura_growth.agents.publish import job as publish_job
 
     return publish_job.run_update(conn, run)
+
+
+def run_update_channel(conn: sqlite3.Connection, run) -> str | None:
+    """`#community` for a run that claimed a group item (a join, its answers, a group post)."""
+    from jura_growth.agents.publish import job as publish_job
+
+    return publish_job.run_update_channel(conn, run)
 
 
 def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):

@@ -243,6 +243,8 @@ exact bytes, with no Unicode normalisation (ADR 0003).
 |---|---|---|
 | `jura-growth publish next [--json]` | the publish run | Claims at most one item, or prints "nothing due" with the reasons |
 | `jura-growth publish done <A-id> --url <url> --live-text-file <f>` | the publish run | Records the post. The URL must be `https://` on the platform's own host, and for Instagram and LinkedIn the post's own address: Instagram `/p/<code>/` or `/reel/<code>/`; LinkedIn `/feed/update/urn:li:activity:<n>/` (or `share`, `ugcPost`) or a `/posts/…-activity-<n>-…` address. A profile, feed or company page is refused (`hosts.post_problem`). Live text that differs from the approved text (after Unicode NFC, collapsing whitespace and trimming) is recorded, alerts and pauses `publish` |
+| `jura-growth publish done <A-id> --outcome <o> [--url <group url>] [--file <q.json>]` | the publish run | What a group join came to (`requested`, `member`, `declined`, `questions`) or that a group's screen takes only personal profiles (`pages-not-allowed`). No alert, no pause. See docs/community.md |
+| `jura-growth publish note-rules <group-id> --file <f>` | the publish run that claimed an item in that group | Records the rules seen inside the group and raises a `group-rules` card |
 | `jura-growth publish stopped <A-id> --reason <r>` | the publish run | A stop signal (`login`, `captcha`, `checkpoint`, `warning`, `restriction`, `rate-limit`, `removed`, `admin-warning`, `wrong-identity`, `unidentified`): the item stops, `publish` pauses for every item, and `#alerts` gives the reason and the run id |
 | `jura-growth publish queue [--json]` | Ting Yu | Every item, its state and its A-id |
 | `jura-growth publish resolve <A-id> posted --url <url>` or `not-posted` | Ting Yu only (refused in any scheduled run) | Settles an item whose outcome is unknown |
@@ -278,10 +280,12 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
   treats subdomains. No image CDN, link shim or country host is listed: a run never opens one
   in its tab, and `publish done` refuses a post URL on one. The rules are the union of the
   enabled platforms, because they are set before anything is claimed; the audit holds each run to
-  its claimed item's own platform (below).
+  its claimed item's own platform (below). Facebook's rules are also set while `browser` is on
+  in `config/community.yaml` (group joins and posts), and a group item's run is held to its own
+  group's address.
   Scripting, network, console, shortcut, recording, browser-switching, batch and
   resize tools, `upload_image`, web search and fetch are denied, and `file_upload` too unless the
-  item due has an image. Bash runs only `publish next`, `done` and `stopped`.
+  item due has an image. Bash runs only `publish next`, `done`, `stopped` and `note-rules`.
 - **The prompt** (`prompts/publish.md`) checks the connected browser before `publish next` (no
   browser ends `SKIP:` and claims nothing), opens its own tab, checks the posting identity before
   typing, posts exactly the approved text and images, reads the live post back and records it,

@@ -4,13 +4,16 @@
 |---|---|
 | `publish next [--json]` | the publish run: claims at most one item (`claim.py`) |
 | `publish done <A-id> --url <url> --live-text-file <f>` | the publish run: records the post |
+| `publish done <A-id> --outcome <o> [--url <group url>] [--file <q.json>]` | the publish run: what a join or a group screen came to (`outcomes.py`) |
 | `publish stopped <A-id> --reason <r>` | the publish run: records a stop signal |
+| `publish note-rules <group-id> --file <f>` | the publish run: rules seen inside a group, raising a `group-rules` request |
 | `publish queue [--json]` | Ting Yu: items, their state and their A-ids |
 | `publish resolve <A-id> posted --url <url>` or `not-posted` | Ting Yu: settles an `unknown` item (in `headless.NEVER`) |
 
 Every command takes the request's `A-nnnn` (MC §4.6 A1), never the `P-nnnn` label. None of them
 decides anything: approving and skipping happen in #approvals. A stop and a live-text mismatch
-pause `publish` for every item and alert; only Ting Yu resumes it.
+pause `publish` for every item and alert; only Ting Yu resumes it. A join's outcomes (membership
+questions, a group that takes only personal profiles) neither alert nor pause (BP §4.6).
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from pathlib import Path
 import click
 
 from jura_growth import approvals, caps, db, discord, log, pause, timeutil
-from jura_growth.agents.publish import claim, fixture, hosts, items, kinds
+from jura_growth.agents.publish import claim, fixture, hosts, items, kinds, outcomes
 
 # What the run may report as a stop signal (BP §4.6). A closed list, so a page's own words
 # never reach an alert through the reason.
@@ -58,8 +61,8 @@ def _normal(text: str) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFC", text)).strip()
 
 
-SOCIAL_ONLY = ("for social posts only so far; a community post or join is recorded by the community "
-               "publishing steps that follow (browser publishing#05 and #06)")
+SOCIAL_ONLY = ("for social posts only so far: a join is recorded with --outcome, and a community post by the "
+               "community publishing step that follows (browser publishing#05)")
 
 
 def _item_for(conn: sqlite3.Connection, typed: str) -> tuple[approvals.Approval, items.Item]:
@@ -157,11 +160,21 @@ def next_cmd(as_json) -> str:
 
 @publish.command()
 @click.argument("approval_id", metavar="A-ID")
-@click.option("--url", required=True, help="The live post's address, on the platform's own host.")
-@click.option("--live-text-file", "live_text_file", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path),
+@click.option("--url", help="The live post's address, on the platform's own host; with --outcome, the group's.")
+@click.option("--live-text-file", "live_text_file", type=click.Path(exists=True, dir_okay=False, path_type=Path),
               help="The post's text as it reads live, saved in the run's scratch folder.")
-def done(approval_id, url, live_text_file) -> str:
-    """Record that a claimed item was posted."""
+@click.option("--outcome", type=click.Choice(outcomes.OUTCOMES),
+              help="What a join, or a group's join or post screen, came to (instead of a post).")
+@click.option("--file", "answers_file", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="With --outcome questions: the questions and the drafted answers, as JSON.")
+def done(approval_id, url, live_text_file, outcome, answers_file) -> str:
+    """Record that a claimed item was posted, or what its join came to (--outcome)."""
+    if outcome is not None:
+        return _done_outcome(approval_id, outcome, url, live_text_file, answers_file)
+    if not url or live_text_file is None:
+        raise click.UsageError("a post needs --url and --live-text-file; a join needs --outcome")
+    if answers_file is not None:
+        raise click.UsageError("--file goes with --outcome questions")
     live = live_text_file.read_text(encoding="utf-8")
     with db.session() as conn:
         record, found = _item_for(conn, approval_id)
@@ -190,6 +203,38 @@ def done(approval_id, url, live_text_file) -> str:
                                 f"{RESUME}.", agent=items.AGENT)
     click.echo(f"{record.id}: posted, {url}" + ("" if matches else " (live text doesn't match; publish paused)"))
     return f"{record.id} posted"
+
+
+def _done_outcome(approval_id: str, outcome: str, url: str | None, live_text_file, answers_file) -> str:
+    """`publish done <A-id> --outcome …` (`outcomes.py`): no alert, no pause."""
+    if live_text_file is not None:
+        raise click.UsageError("--live-text-file is for a post, not --outcome")
+    asks = outcome == outcomes.QUESTIONS
+    if asks and answers_file is None:
+        raise click.UsageError("--outcome questions needs --file <q.json>")
+    if not asks and answers_file is not None:
+        raise click.UsageError("only --outcome questions takes --file")
+    if url:
+        wrong = hosts.problem(items.COMMUNITY_PLATFORM, url)
+        if wrong:
+            raise click.ClickException(f"refused: {wrong}")
+    try:
+        answers = outcomes.read_answers(answers_file.read_text(encoding="utf-8")) if answers_file else None
+    except (outcomes.Refused, UnicodeDecodeError) as refusal:
+        raise click.ClickException(f"refused: {refusal}") from None
+    with db.session() as conn:
+        record, found = _item_for(conn, approval_id)
+        try:
+            with db.transaction(conn):
+                recorded = outcomes.record(conn, record, found, outcome, url=url, answers=answers,
+                                           run_id=log.current_run_id())
+        except outcomes.Refused as refusal:
+            raise click.ClickException(f"refused: {refusal}") from None
+        _post_cards(conn)
+    click.echo(recorded.line)
+    if not recorded.ok:
+        raise SystemExit(1)
+    return recorded.line
 
 
 @publish.command()
@@ -222,6 +267,41 @@ def stopped(approval_id, reason) -> str:
         discord.alert(conn, text, agent=items.AGENT)
     click.echo(f"{record.id}: stopped ({reason}); publish is paused")
     return f"{record.id} stopped"
+
+
+@publish.command("note-rules")
+@click.argument("group_id", type=int)
+@click.option("--file", "rules_file", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="The group's rules exactly as the group shows them, as plain text.")
+def note_rules(group_id, rules_file) -> str:
+    """Record the rules a run saw inside a group, and ask Ting Yu to confirm them (group-rules).
+
+    Only the publish run that claimed an item in that group may call it: the rules replace the
+    researched ones, and a change clears any confirmation, so Ting Yu decides again."""
+    from jura_growth.agents.community import group_rules
+    from jura_growth.agents.community import groups as groups_mod
+
+    run_id = log.current_run_id()
+    try:
+        text = rules_file.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise click.ClickException("refused: the rules file isn't UTF-8 text") from None
+    with db.session() as conn:
+        if run_id is None or not outcomes.claimed_in_group(conn, run_id, group_id):
+            raise click.ClickException(f"refused: only a publish run that claimed an item in group {group_id} "
+                                       f"records the rules seen there")
+        try:
+            with db.transaction(conn):
+                raised = group_rules.note_seen(conn, group_id, text, run_id=run_id)
+        except groups_mod.GroupError as error:
+            raise click.ClickException(f"refused: {error}") from None
+        _post_cards(conn)
+    if raised is None:
+        line = f"group {group_id}: the rules seen are the ones Ting Yu confirmed; nothing to decide"
+    else:
+        line = f"group {group_id}: rules recorded; Ting Yu confirms them and the open days as {raised.id} in #approvals"
+    click.echo(line)
+    return line
 
 
 def _request_word(conn: sqlite3.Connection, found: items.Item) -> tuple[approvals.Approval | None, str]:

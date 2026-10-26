@@ -6,7 +6,8 @@ A group's rules and its open days unlock links and posting days there, so Ting Y
 - `community set <id> rules=…` (rules Ting Yu read inside the group) and `community set <id>
   rules_confirmed=yes` (over the rules text now recorded) raise a `group-rules` request, subject
   `group:<id>`, over the group id and the rules text. Rules the community run found by web search
-  raise nothing by themselves. `publish note-rules` will raise one too (browser publishing#06).
+  raise nothing by themselves. `publish note-rules` raises one too, for rules a publish run saw
+  inside the group (`note_seen`, browser publishing#06).
 - **Approve** needs the open days typed in the decision: `/growth approve A-nnnn promo_days=…
   post_days=…`, each any, none, or days like sat,sun or mon-fri. It claims the request and sets
   `rules_confirmed` and both days fields through `groups.set_fields`, in the decision's own
@@ -140,7 +141,8 @@ def _set_aside(conn: sqlite3.Connection, subject: str, event: str) -> None:
 
 
 def request(conn: sqlite3.Connection, group_id: int, *, reason: str, run_id: int | None = None) -> approvals.Approval | None:
-    """Raise the group's request (A11: `community set` calls this, and `publish note-rules` will).
+    """Raise the group's request (A11: `community set` calls this, and `publish note-rules`
+    through `note_seen`).
     Returns the live request when one is already waiting over the same rules."""
     return approvals.request(conn, KIND, subject(group_id), reason=reason, run_id=run_id)
 
@@ -153,6 +155,42 @@ def _raise_fresh(conn: sqlite3.Connection, group_id: int, reason: str) -> approv
     if made is not None and made.status == approvals.EXPIRED:
         made = request(conn, group_id, reason=reason)
     return made
+
+
+MAX_SEEN_CHARS = 4000
+
+
+def note_seen(conn: sqlite3.Connection, group_id: int, text: str, *, run_id: int | None) -> approvals.Approval | None:
+    """`publish note-rules`: rules a publish run saw inside the group (browser publishing PRD
+    §5.4, X10). They are recorded as the group's rules and raise one `group-rules` request, so
+    Ting Yu confirms them and the open days. Rules he already confirmed, seen unchanged, raise
+    nothing; rules that differ clear the old confirmation and days, as `community set rules=…`
+    does. Returns the live request, or None when nothing needs deciding. Call it inside a
+    transaction; post the card once that has committed (A12)."""
+    seen = unicodedata.normalize("NFC", text.strip())
+    if not seen:
+        raise groups_mod.GroupError("the rules file is empty")
+    if len(seen) > MAX_SEEN_CHARS:
+        raise groups_mod.GroupError(f"the rules seen are longer than {MAX_SEEN_CHARS} characters")
+    group = groups_mod.get(conn, group_id)
+    if group is None:
+        raise groups_mod.GroupError(f"no group {group_id}")
+    if group["removed"]:
+        raise groups_mod.GroupError(f"group {group_id} was removed, so there are no rules to confirm")
+    # The same words with other line breaks or spacing are the same rules (code review 06, S3):
+    # two copies taken from a page rarely match byte for byte.
+    same = _collapsed(seen) == _collapsed(_rules_text(group))
+    if same and group["rules_confirmed"]:
+        log.event(conn, "community.group.rules_seen", {"id": group_id, "changed": False}, agent=groups_mod.NAME, run_id=run_id)
+        return None
+    if not same:
+        groups_mod.set_parsed(conn, group_id, [("rules", seen)])
+    log.event(conn, "community.group.rules_seen", {"id": group_id, "changed": True}, agent=groups_mod.NAME, run_id=run_id)
+    return request(conn, group_id, reason="a publish run saw these rules inside the group", run_id=run_id)
+
+
+def _collapsed(text: str) -> str:
+    return " ".join(text.split())
 
 
 EARLIER = "community.group.rules_confirmed_earlier"

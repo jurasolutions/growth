@@ -20,7 +20,7 @@ import sqlite3
 from pathlib import Path
 
 from jura_growth import agents, cards, db, discord, log, pause, timeutil, transcripts
-from jura_growth.agents.publish import audit, claim, commands, fixture, items, scope
+from jura_growth.agents.publish import audit, claim, commands, fixture, items, outcomes, scope
 
 # With either set, Claude Code keeps Chrome integration off, even with --chrome (spike §1).
 AUTH_VARIABLES = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
@@ -79,11 +79,15 @@ def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
     claimed = _claimed_by(conn, run_id)
     found = _audit(run_id, claimed)
     failures = found.failures + _copy_problems(conn, claimed)
+    undone: list[int] = []
     if failures:
+        from jura_growth.agents.community import groups as groups_mod
+
         with db.transaction(conn):
             log.event(conn, "publish.audit_failed", {"failures": failures}, level="error", agent=items.AGENT,
                       run_id=run_id)
             pause.pause(conn, items.AGENT, f"the audit of run {run_id} failed", notify=False)
+            undone = groups_mod.undo_joins(conn, run_id)
     if found.no_browser and not claimed:
         _no_browser(conn, run_id)
 
@@ -97,6 +101,9 @@ def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
     if failures:
         errors.append(f"The audit of run {run_id} failed: {'; '.join(failures)}. Publishing is paused for every "
                       f"item until you resume it: {commands.RESUME}.")
+        if undone:
+            named = ", ".join(f"group {group_id}" for group_id in undone)
+            errors.append(f"What the run recorded for the join of {named} was set back: check the group by hand.")
     stops = [item for item in claimed if item.state == "stopped"]
     if model_failed and not errors:
         errors = [_failure(conn, item, run_id) for item in claimed] or [_ending(outcome.error, run_id)]
@@ -113,13 +120,20 @@ def run_update(conn: sqlite3.Connection, run) -> list[str] | None:
         return None
     from jura_growth.run_update import count
 
-    words = {"posted": 0, "stopped": 0, "unknown": 0}
+    nouns = {"posted": "post", **{outcome: words.noun for outcome, words in outcomes.WORDS.items()}}
+    tally = {**{word: 0 for word in nouns}, "stopped": 0, "unknown": 0}
     for item in claimed:
         if item.state == "done":
-            words["posted"] += 1
-        elif item.state in words:
-            words[item.state] += 1
-    return [count(n, "post") if word == "posted" else f"{n} {word}" for word, n in words.items() if n]
+            tally[item.outcome if item.outcome in outcomes.WORDS else "posted"] += 1
+        elif item.state in tally:
+            tally[item.state] += 1
+    return [count(n, nouns[word]) if word in nouns else f"{n} {word}" for word, n in tally.items() if n]
+
+
+def run_update_channel(conn: sqlite3.Connection, run) -> str | None:
+    """The item's channel (BP §5.9): `#community` when the run claimed a group item."""
+    claimed = _claimed_by(conn, run.id) if run.id is not None else []
+    return "community" if any(item.kind in outcomes.GROUP_KINDS for item in claimed) else None
 
 
 def _claimed_by(conn: sqlite3.Connection, run_id: int) -> list[items.Item]:
@@ -134,14 +148,22 @@ def _shown(conn: sqlite3.Connection, item: items.Item) -> str:
 
 
 def _line(conn: sqlite3.Connection, item: items.Item) -> str:
-    """`A-0001 · Facebook Page · posted · <url>`, from the item's own record."""
+    """`A-0001 · Facebook Page · posted · <url>`, from the item's own record. A community item
+    names its group by the register's id, never by text a page or a run wrote."""
     from jura_growth.agents.social.settings import load
 
     try:
         where = load().platforms[item.platform].label
     except Exception:  # noqa: BLE001 - the label is only for reading
         where = item.platform
-    if item.state == "done":
+    if item.kind in outcomes.GROUP_KINDS:
+        where = f"Facebook group {outcomes.group_of(item)}"
+    if item.state == "done" and item.outcome in outcomes.WORDS:
+        what = outcomes.WORDS[item.outcome].line
+        if item.outcome == outcomes.QUESTIONS:
+            answers = outcomes.answers_request(conn, item)
+            what += f"; the answers wait for your decision as {answers.id}" if answers else "; no answers were raised"
+    elif item.state == "done":
         what = f"posted · {item.post_url}"
         if item.live_text_matches == 0:
             what += " · the live text doesn't match the approved text; publishing is paused"
@@ -179,8 +201,10 @@ def _audit(run_id: int, claimed: list[items.Item]) -> audit.Audit:
     # Only the claimed item's own platform: an item posted on another enabled platform fails (B1).
     # While the fixture platform is on, only the fixture site (BP-07).
     own = tuple(dict.fromkeys(item.platform for item in claimed)) or None
+    # A group item is held to its own group's address as well (code review 06, B1).
+    places = [item.target_url for item in claimed if item.kind in outcomes.GROUP_KINDS]
     return audit.audit(transcripts.read(path), hosts=scope.browser_hosts(own), approved=approved, images=images,
-                       site=fixture.active())
+                       site=fixture.active(), places=places)
 
 
 def _approved_texts(item: items.Item) -> list[str]:

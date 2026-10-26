@@ -64,7 +64,7 @@ def test_fixture_join_seeds_an_approved_join_for_a_group_on_that_fixture_page(ua
         request = only_request(conn, "group-join")
         assert request.status == "approved" and request.used_at is None
         [item] = claim.claimable(conn)
-        assert item.target_url == f"{FIXTURE}/{page}"
+        assert item.target_url == f"{FIXTURE}/groups/{page.removesuffix('.html')}/"  # one group's own address
 
 
 @pytest.mark.parametrize("scenario", ["fixture-post", "fixture-join"])

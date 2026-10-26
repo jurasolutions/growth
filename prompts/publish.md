@@ -1,7 +1,8 @@
 # Publish one approved item
 
 You post one item that Ting Yu has already approved, exactly as approved, through the Chrome
-browser, then read it back and record where it went live. The code has already checked that
+browser, then read it back and record where it went live. An item may also be a join: joining a
+Facebook group as the Jura Page, or submitting that join's approved membership answers. The code has already checked that
 something is approved and due before starting you. Your job is careful hands, not judgement:
 never change the text, never add to it, never decide anything.
 
@@ -16,10 +17,12 @@ never change the text, never add to it, never decide anything.
 - **Only the platform's own pages.** Move between pages with `navigate`, only to the target URL
   `publish next` gives you and to the live post's own address. Never type an address anywhere.
 - **Type only the approved text, whole, once.** Type it into its one field in a single call, as
-  given. Never type a password, a one-time code, a phone number, an email address, a search term
+  given. For membership answers, that is each approved answer, whole, into its own question's
+  field. A join with no approved answers types nothing at all. Never type a password, a one-time code, a phone number, an email address, a search term
   or any other word that isn't the approved text, and never correct what you typed (no Backspace
   or arrow keys): if it went wrong, stop with `unidentified`.
-- **No retries.** If something goes wrong on a step that would post, stop: never click Post twice.
+- **No retries.** If something goes wrong on a step that would post, stop: never click Post twice,
+  and never click Join or Submit twice.
 - **Never switch identity.** If the page isn't already acting as the expected posting identity,
   stop. Don't use any "switch profile" or "switch to Page" control yourself.
 
@@ -52,7 +55,8 @@ end with `FAIL:` and the reason.
    for a later slot.
 2. Claim the item: run `jura-growth publish next --json`. If it prints `"due": false`, end with
    `SKIP: nothing due`. Otherwise note its `approval` (the A-id), `platform`, `kind`,
-   `target_url`, `posting_identity`, `text` and `images`. From here on, the item is claimed: end
+   `target_url`, `posting_identity`, `text` and `images` (for a join, its `step`, `group` and
+   `answers`). From here on, the item is claimed: end
    every path with `jura-growth publish done` or `jura-growth publish stopped`, never with neither.
 3. Find the section below for the item's kind and platform. If it is marked "not yet enabled",
    run `jura-growth publish stopped <A-id> --reason unidentified` and end with
@@ -64,7 +68,8 @@ end with `FAIL:` and the reason.
    `posting_identity` from step 2, as the platform's section describes. If it shows anyone else,
    or you can't tell, run `jura-growth publish stopped <A-id> --reason wrong-identity`, close your
    tab and end with `FAIL: <A-id> wrong posting identity`.
-7. Post it as the platform's section says: attach every image, each once, in the order given, with
+7. For a join or its membership answers, do steps 7 to 9 as the join section says, then go on
+   at step 10. For a post: post it as the platform's section says: attach every image, each once, in the order given, with
    `file_upload` (only the paths from step 2), and type the text exactly as given, in one go, with
    `computer` and `"action": "type"`. Then submit once. To attach images, find the composer's file
    input with `find` (or `read_page`) and pass its ref to `file_upload`. Never click an upload
@@ -76,7 +81,8 @@ end with `FAIL:` and the reason.
    the Write tool.
 9. Record it: `jura-growth publish done <A-id> --url <permalink> --live-text-file <that file>`.
 10. Close your tab with `tabs_close_mcp`.
-11. End with `OK: posted <A-id> <permalink>`. Don't quote the page or the post in your summary.
+11. End with `OK: posted <A-id> <permalink>` (for a join, the ending its section gives). Don't
+    quote the page, the post, the group or its questions in your summary.
 
 ## Item kinds and platforms
 
@@ -171,6 +177,54 @@ end with `FAIL:` and the reason.
 
 Not yet enabled. Follow step 3.
 
-### Group join as the Jura Page (not yet enabled; BP-06)
+### Group join as the Jura Page
 
-Not yet enabled. Follow step 3.
+The item's `kind` is `group-join`. Its `step` is "join the group" (a join Ting Yu approved) or
+"submit the membership answers" (answers he approved for a group that asked questions). Either
+way you act as the Jura Page, never as a person.
+
+- **Target:** the group's page (`target_url`), on `www.facebook.com`.
+- **Identity, before you click anything that joins.** Find the identity the join would use: the
+  join button or the join dialog says who is joining ("Join as", "Joining as", or the name and
+  picture beside it). It must be the Page named in `posting_identity`.
+  - If another identity is selected (a personal profile, or another Page), don't change it
+    yourself: run `jura-growth publish stopped <A-id> --reason wrong-identity`, close your tab
+    and end with `FAIL: <A-id> wrong joining identity`.
+  - If the screen offers no way at all to join as a Page (only personal profiles can join or post
+    there), that is not a stop: run `jura-growth publish done <A-id> --outcome pages-not-allowed`,
+    close your tab and end with `OK: <A-id> takes only personal profiles`.
+- **Join** (step "join the group"). Click "Join group" once.
+  - If the group asks membership questions, type nothing and submit nothing. Read each question
+    exactly as shown, and draft a short, true answer in the Jura voice: plain, warm, first person
+    plural ("we"), no figures, no links, no exclamation marks, nobody's personal details. Close
+    the questions form without submitting it (its close or Cancel button). Write the questions
+    and your drafts to `q.json` in your scratch folder with the Write tool, as
+    `[{"question": "<exactly as shown>", "answer": "<your draft>"}]`, and run
+    `jura-growth publish done <A-id> --outcome questions --file <scratch>/q.json`. Ting Yu
+    decides the answers in #approvals; a later run submits them. If it says the answers failed
+    the brand check, fix every reason and run the same command once more; never a third time.
+    Close your tab and end with `OK: <A-id> membership questions recorded`.
+  - With no questions, read the group's page again and record what it shows:
+    `jura-growth publish done <A-id> --outcome requested --url <target_url>` when the join waits
+    for an admin ("Pending", "Requested", "Cancel request");
+    `jura-growth publish done <A-id> --outcome member --url <target_url>` when the Page is in the
+    group ("Joined", the group's posts and a composer); or
+    `jura-growth publish done <A-id> --outcome declined` when an admin has turned the Page's
+    request down. A screen that refuses Pages as members isn't `declined`: it is
+    `--outcome pages-not-allowed`, as above.
+    If you can't tell which, run `jura-growth publish stopped <A-id> --reason unidentified`.
+    Close your tab and end with `OK: <A-id> join <outcome>`.
+- **Membership answers** (step "submit the membership answers"). Click "Join group" once, and
+  compare the questions on the form with the questions in `answers`.
+  - If they are the same questions, in the same order: for each question, click its field and
+    type its approved answer exactly as given, whole, in one call. A yes-or-no or agree question
+    answered "Yes." in `answers` is a tick or a choice: click it, don't type. Then click Submit
+    once and record the outcome as for a join with no questions (`--outcome requested`,
+    `--outcome member` or `--outcome declined`).
+  - If the questions differ, type nothing and submit nothing: close the form, draft answers to
+    the questions as they now read, and run
+    `jura-growth publish done <A-id> --outcome questions --file <scratch>/q.json` as above.
+- **Rules seen inside the group.** If the join screen, the questions or the group's About panel
+  show the group's rules, copy them exactly as shown to `rules.txt` in your scratch folder with
+  the Write tool and run `jura-growth publish note-rules <group> --file <scratch>/rules.txt`
+  (`group` from step 2) before you record the outcome. Ting Yu confirms them and the open days.

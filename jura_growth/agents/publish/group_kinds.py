@@ -39,7 +39,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from jura_growth import approvals, brand_check, db, timeutil
-from jura_growth.agents.publish import items, limits
+from jura_growth.agents.publish import hosts, items, limits
 
 ANSWERS_DAYS = 3  # BP §5.5: answers are decided by 18:00 on the third day after they are raised
 
@@ -90,6 +90,9 @@ def gone(group: dict | None, step: str) -> str | None:
         return "the group was removed"
     if group["pages_allowed"] == "no":
         return "only personal profiles can join or post in the group"
+    if hosts.group_url_problem(group["url"]):
+        # Recorded before the register checked it (code review 06, S7): fail closed.
+        return "the group's address isn't one group's own address"
     if step == POST and group["joined_as"] != "page":
         return "the group isn't joined as the Jura Page"
     return None
@@ -113,6 +116,10 @@ def problem(group: dict | None, step: str) -> str | None:
         return "the group is already joined as the Jura Page"
     if group["join_status"] == "member" or (step == JOIN and group["join_status"] == "requested"):
         return f"the group's join is already {group['join_status']}"
+    if group["join_status"] == "declined":
+        # The conductor's decision (code review 06, S4): never proposed again on its own, so it
+        # never takes one of a week's joins.
+        return "the group declined the Jura Page's join, so it isn't proposed again"
     return None
 
 
