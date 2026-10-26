@@ -747,3 +747,12 @@ artifacts: merge of 12 (2429947 ca5de35 cf1a096)
 decisions: fix round verified (handoff_fit shared limit; redacted prd_text withheld; PRDs the privacy filter would change rejected at submit); merged and pushed; all mission-control code tickets (01-12, 04b, 10b, 17, 18) are merged; 13-16 are Ting Yu setup tickets
 questions: -
 evidence:  merged branch pytest -rs -> see commit
+
+## 2026-10-27T04:18+0800 conductor (bp 02b done)
+status:    done
+persona:   conductor
+ticket:    bp-02b
+artifacts: crew/browser-publishing-02b-community-items (5 commits)
+decisions: crew recommendation adopted: AC-P1.3 reworded to a fresh request on the same item for every queued kind (Amended 2026-10-27); bp 02b sent to review
+questions: -
+evidence:  2733 passed, 0 skipped; 63 gate cases pass for community-post and group-join
