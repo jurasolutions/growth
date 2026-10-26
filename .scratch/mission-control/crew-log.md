@@ -825,3 +825,13 @@ decisions: changes-requested; B1 audit uses all enabled platform hosts, not the 
 decisions: conductor: weekends stay on with three platforms (crew recommendation), weekends:false documented; sent as fix round 1
 questions: -
 evidence:  3015 passed; repro_04 and fake-claude B1b/S1 reproduce
+
+## 2026-10-27T05:46+0800 reviewer (bp 07) via conductor
+status:    done
+persona:   reviewer
+ticket:    bp-07
+artifacts: .scratch/browser-publishing/reviews/code-review-07.md
+decisions: changes-requested; B1 fixture URL with a backslash (http://evil.com\\.localhost:8765) parses as host evil.com in a browser; should fix ST-1..3, SP-1; live, symlinked and ../ data folders refused; no fallback; mixed real and fixture refused
+decisions: conductor: WHATWG-style host validation; AC3 stays Ting Yu R1 step, recorded before close; sent as fix round 1
+questions: -
+evidence:  2989 passed; WHATWG parse reproduces B1
