@@ -10,10 +10,13 @@ Facebook's hosts are proved in BP-02a; BP-04 proves Instagram's and LinkedIn's.
 `BROWSER_HOSTS` are the hosts a publish run's tab may be on: the publish job's
 `ClaudeInChromeDomain(<host>)` rules (`scope.py`) and the hosts the transcript audit accepts
 (`audit.py`). They are the post-URL hosts plus the ones the page tools need to post as the Page
-(`business.facebook.com`, where a Page admin's composer may open). Each is listed explicitly
-until BP-01's check U18 shows how the domain rule treats subdomains; image CDN hosts are not
-listed, because a run never opens one in its tab. Only the platforms in `BROWSER_PLATFORMS` are
-driven in this build: BP-04 adds Instagram and LinkedIn.
+(`business.facebook.com`, where a Page admin's composer may open). Instagram and LinkedIn need
+nothing beyond their post-URL hosts: the composer, the identity check and the permalink are all
+on `www.`, and the bare host only redirects there. Each is listed explicitly until BP-01's check
+U18 shows how the domain rule treats subdomains. No image CDN (`*.fbcdn.net`, `*.cdninstagram.com`,
+`media.licdn.com`), link shim (`l.facebook.com`, `l.instagram.com`, `lnkd.in`) or help host is
+listed, because a run never opens one in its tab. `BROWSER_PLATFORMS` are the platforms this build
+drives: Facebook from BP-03, Instagram and LinkedIn from BP-04.
 """
 
 from __future__ import annotations
@@ -26,9 +29,13 @@ HOSTS: dict[str, tuple[str, ...]] = {
     "linkedin": ("www.linkedin.com", "linkedin.com"),
 }
 
-BROWSER_PLATFORMS: tuple[str, ...] = ("facebook",)
+BROWSER_PLATFORMS: tuple[str, ...] = ("facebook", "instagram", "linkedin")
 BROWSER_HOSTS: dict[str, tuple[str, ...]] = {
     "facebook": (*HOSTS["facebook"], "business.facebook.com"),
+    # The web composer for the Jura account and the post's permalink are both on these hosts.
+    "instagram": HOSTS["instagram"],
+    # The company page's admin view, its "Start a post" composer and the post's permalink.
+    "linkedin": HOSTS["linkedin"],
 }
 
 
