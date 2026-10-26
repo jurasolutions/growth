@@ -355,7 +355,8 @@ def test_app_copy_channel_blocks_saving_claims():
 # --- submit-prd, the limits and the digest ---------------------------------
 
 
-def test_submit_prd_files_updates_backlog_and_posts(tmp_path, prd_tree):
+def test_submit_prd_files_updates_backlog_and_raises_an_app_build_request(tmp_path, prd_tree):
+    """The card itself is in `test_app_builds.py` (AC-M9.1); the old #app-factory post is gone."""
     result = invoke("apps", "submit-prd", str(write(tmp_path, GOOD)))
     assert result.exit_code == 0, result.output
     target = prd_tree / "pending" / "apps" / "prd-app-003-delivery-order-maker-2026-10-26.md"
@@ -363,16 +364,11 @@ def test_submit_prd_files_updates_backlog_and_posts(tmp_path, prd_tree):
     row = next(r for r in backlog.load() if r["name"] == "Delivery order maker")
     assert row["status"] == "prd-pending" and row["app_id"] == "APP-003"
     assert backlog.path().exists()
-    [message] = outbox("app-factory")
-    content = message["content"]
-    assert "APP-003 Delivery order maker" in content and "Tier: browser" in content
-    assert "Lead types it suits: wholesale and distribution" in content
-    assert (
-        'To build: open Claude Code in jurasolutions/ and say "approved, build '
-        'prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md".'
-    ) in content
+    assert outbox("app-factory") == []
+    assert "approval request A-0001 raised" in result.output
     with db.session() as c:
         assert db.scalar(c, "SELECT app_id FROM app_prds") == "APP-003"
+        assert db.scalar(c, "SELECT subject FROM approvals WHERE kind = 'app-build'") == "app:APP-003"
 
 
 def test_dry_run_files_nothing(tmp_path, prd_tree):
@@ -399,16 +395,14 @@ def test_one_a_day(tmp_path, conn):
     assert part["figures"]["app_prd_today"] == "APP-003 Delivery order maker"
 
 
-def test_waiting_pile_guard(tmp_path, prd_tree, conn):
+def test_prds_with_no_app_build_request_are_not_in_the_waiting_pile(tmp_path, prd_tree, conn):
+    """MC §5.9 step 6: the pile counts PRDs waiting for an `app-build` decision. Ting Yu's own
+    PRDs never get a request, so seven of them don't stop the factory; AC-M9.10 is in
+    `test_app_builds.py`."""
     for n in range(3, 8):
         (prd_tree / "pending" / "apps" / f"prd-app-{n:03d}-tool-{n}-2026-10-20.md").write_text(f"# PRD — APP-{n:03d} Tool\n")
-    reason = apps_plugin.precheck("app-factory", conn)
-    assert reason and reason.startswith("7 app PRDs waiting")
-    outcome = runner.run("app-factory", ignore_schedule=True)
-    assert outcome.status == "skipped"
-    assert "skipped: 7 app PRDs waiting" in apps_plugin.digest(conn, TODAY)["lines"][0]
-    result = invoke("apps", "submit-prd", str(write(tmp_path, GOOD)))
-    assert result.exit_code == 1 and "waiting" in result.output
+    assert apps_plugin.precheck("app-factory", conn) is None
+    assert invoke("apps", "submit-prd", str(write(tmp_path, GOOD.replace("APP-003", "APP-008").replace("prd-app-003", "prd-app-008")))).exit_code == 0
 
 
 def test_brand_failure_allows_one_regeneration_then_drops(tmp_path, conn):
@@ -475,7 +469,7 @@ def test_context_json_has_everything_the_prompt_needs():
     result = invoke("apps", "context", "--json")
     assert result.exit_code == 0
     view = json.loads(result.output)
-    assert view["next_number"] == "APP-003" and view["waiting"] == {"count": 2, "max": 7}
+    assert view["next_number"] == "APP-003" and view["waiting"] == {"count": 0, "max": 7}
     assert view["usage"]["status"] == "not configured"
     assert {"industries", "observations", "source"} <= set(view["scout_insights"])
     assert len(view["backlog"]) == 20 and view["limit_reason"] is None

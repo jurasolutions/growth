@@ -4,9 +4,11 @@ Seeded from the app factory PRD §5.7 (`backlog-seed.yaml` beside this file).
 `jura-growth apps submit-prd` marks the row it used, or adds one for a new
 idea. Ting Yu may edit the file by hand; keep the keys.
 
-Statuses: idea, prd-pending (PRD written, waiting for "approved, build"),
-prd-done (built; PRD moved to prd/done/apps), live (in the site registry),
-dropped (not to be picked).
+Statuses: idea, prd-pending (PRD written, waiting for its `app-build`
+decision in #approvals, or handed off to be built), prd-done (built; PRD moved
+to prd/done/apps), live (in the site registry), dropped (not to be picked;
+Ting Yu skipped its PRD). An idea whose PRD expired unanswered keeps status
+idea with a `reopens` date, and shows as `resting` until then (MC §5.9 step 5).
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ HEADER = """\
 # adds a row for a new idea. You can edit it by hand; keep the keys.
 #
 # status: idea | prd-pending | prd-done | live | dropped
+#   An idea with a `reopens` date had its PRD expire unanswered: it shows as
+#   `resting`, and the factory may offer it again from that date.
 #   (`jura-growth apps backlog` also shows the status worked out from the PRD
 #   folders and the site registry, which wins if this file is behind.)
 # tier: browser | ai. Category: Sales, Finance, Admin, HR, Marketing, Documents.
@@ -89,6 +93,47 @@ def mark_written(*, name: str, slug: str, app_id: str, prd_path: str, tier: str,
     return row
 
 
+def _row_for(rows: list[dict], *, app_id: str, slug: str | None, name: str | None) -> dict | None:
+    for row in rows:
+        if row.get("app_id") == app_id:
+            return row
+    return find(rows, slug=slug, name=name) if slug and name else None
+
+
+def _note(row: dict, note: str) -> str:
+    return f"{(row.get('notes') or '').strip()} {note}".strip()
+
+
+def drop(*, app_id: str, slug: str | None, name: str | None, note: str) -> dict | None:
+    """Ting Yu skipped the app's PRD: the idea closes for good."""
+    rows = load()
+    row = _row_for(rows, app_id=app_id, slug=slug, name=name)
+    if row is None:
+        return None
+    row.update(status="dropped", notes=_note(row, note))
+    save(rows)
+    return row
+
+
+def rest(*, app_id: str, slug: str | None, name: str | None, note: str, reopens: str) -> dict | None:
+    """The app's PRD expired unanswered: the idea is an idea again, offered from `reopens`."""
+    rows = load()
+    row = _row_for(rows, app_id=app_id, slug=slug, name=name)
+    if row is None:
+        return None
+    for key in ("app_id", "prd", "prd_date"):
+        row.pop(key, None)
+    row.update(status="idea", reopens=reopens, notes=_note(row, f"{note} Offered again from {reopens}."))
+    save(rows)
+    return row
+
+
+def resting(row: dict, today: str | None = None) -> bool:
+    """An idea whose PRD expired unanswered, before its `reopens` date."""
+    reopens = row.get("reopens")
+    return (row.get("status") or "idea") == "idea" and bool(reopens) and str(reopens) > (today or timeutil.today_str())
+
+
 def effective(rows: list[dict], *, prd_files: list, live: list[dict]) -> list[dict]:
     """Rows with `effective_status` worked out from the PRD folders and the
     registry (live beats done beats pending beats the file's own status)."""
@@ -98,6 +143,8 @@ def effective(rows: list[dict], *, prd_files: list, live: list[dict]) -> list[di
     for row in rows:
         slug = row.get("slug") or prd_mod.slugify(row["name"])
         status = row.get("status") or "idea"
+        if resting(row):
+            status = "resting"
         app_id = row.get("app_id")
         if slug in files:
             f = files[slug]
