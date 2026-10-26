@@ -177,20 +177,29 @@ Browser publishing (`prd-jura-browser-publishing-2026-10-25.md` §4.3, §5.6) ad
 Off by default: `browser: false` in `config/community.yaml`. With `browser: true`:
 
 - `community publish-plan` raises a `community-post` card for each planned post in a group joined
-  as the Jura Page. Posts in other groups stay on the checklist for you to post by hand.
+  as the Jura Page. On the checklist and in `#community` those posts have no box to tick and say
+  they go out through `#approvals`: don't post them by hand. Posts in other groups stay on the
+  checklist for you to post as before.
 - `community propose-join <group-id>` raises a `group-join` card for a good-fit group that isn't
   joined as the Page, doesn't take only personal profiles, and has no join requested. At most
   `joins_per_week` (hard cap 3) are proposed in an ISO week; one proposed after Sunday's 18:00
-  counts in the next week. A join is decided by 18:00 on the Sunday of its week.
+  counts in the next week. A proposal you skip, or leave to expire, still counts toward its week's
+  three, so the pace never goes above three a week. A join is decided by 18:00 on the Sunday of its
+  week.
 - If a group asks membership questions, the answers come to you as their own `group-join` card,
-  decided by 18:00 on the third day after they are raised.
+  decided by 18:00 on the third day after they are raised. A fresh card for changed answers, or for
+  a group whose address changed, gets its own three days.
 - `publish next` hands a community post out only on its day, in a good-fit group joined as the
   Page whose rules and open days you confirmed, on a day they leave open, with one community post
-  a day, three groups an ISO week and 14 days between posts in one group. A join goes out only
+  a day, three groups an ISO week and 14 days between posts in one group. A promotional post (a
+  link, or Jura named) also needs the rules to allow promotion (promotion days of `none` allow
+  none), and a post with a link needs rules that are known and don't forbid links. A join goes out only
   inside three joins an ISO week. Turning `browser` off again stops every claim without using the
   approvals.
 - Changing a post's text, image, group or day, a group's URL, or a join's answers supersedes its
-  card and raises a fresh one on the same item.
+  card and raises a fresh one on the same item, unless `browser` is off: then no card is raised
+  until it is on again. A post whose group is no longer joined as the Page, was removed or takes
+  only personal profiles has its card superseded with no new one.
 
 ## Decisions and open questions
 
