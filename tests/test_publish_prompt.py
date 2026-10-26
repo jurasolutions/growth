@@ -52,14 +52,14 @@ def test_every_stop_reason_is_named():
         assert f"`{reason}`" in PROMPT, reason
 
 
-def test_one_heading_per_item_kind_and_platform_with_the_later_ones_marked():
+def test_one_heading_per_item_kind_and_platform_and_every_one_enabled():
+    """BP-05 enables the last one, community posts as the Jura Page."""
     headings = re.findall(r"^### (.+)$", PROMPT, re.M)
-    for enabled in ("Social post: Facebook Page", "Social post: Instagram", "Social post: LinkedIn company page"):
+    for enabled in ("Social post: Facebook Page", "Social post: Instagram", "Social post: LinkedIn company page",
+                    "Community post: a Facebook group as the Jura Page", "Group join as the Jura Page"):
         found = [h for h in headings if h.startswith(enabled)]
         assert len(found) == 1 and "not yet" not in found[0], enabled
-    for later in ("community post",):
-        found = [h for h in headings if later.lower() in h.lower()]
-        assert found and all("not yet enabled" in h for h in found), later
+    assert "not yet enabled" not in "\n".join(headings)
 
 
 # --- BP-04: a section per social platform -----------------------------------------------------------
@@ -230,3 +230,71 @@ def test_declined_is_an_admin_turning_the_join_down_and_a_screen_refusing_pages_
     assert "admin" in block and "turn" in block
     assert "can't join" not in block
     assert re.search(r"refus\w* Pages?.{0,80}pages-not-allowed|pages-not-allowed.{0,120}refus\w* (?:a )?Pages?", section, re.S)
+
+
+# --- the community post section (BP-05: AC-P11.1 for the Page in groups, AC-P4.3's composer branch, AC-P6.2) ----
+
+
+COMMUNITY = "Community post: a Facebook group as the Jura Page"
+
+
+def test_the_community_post_section_says_where_who_how_and_the_permalink():
+    text = section(COMMUNITY)
+    for label in ("Target", "Identity", "Post", "Permalink", "Stop signals"):
+        part(text, label)
+    assert "posting_identity" in part(text, "Identity")
+
+
+def test_the_page_is_checked_as_the_group_identity_at_the_composer_before_any_typing():
+    text = section(COMMUNITY)
+    identity = part(text, "Identity")
+    assert "composer" in identity and re.search(r"before you type", identity, re.I)
+    assert "jura-growth publish stopped <A-id> --reason wrong-identity" in identity
+    assert re.search(r"don't change it yourself", identity)
+    assert text.index("--reason wrong-identity") < text.index("Type the text")
+
+
+def test_a_composer_with_no_way_to_post_as_the_page_records_pages_not_allowed_not_a_stop():
+    identity = part(section(COMMUNITY), "Identity")
+    assert "jura-growth publish done <A-id> --outcome pages-not-allowed" in identity
+    assert re.search(r"not a stop", identity) and re.search(r"type nothing", identity)
+
+
+def test_the_steps_let_a_group_composer_with_no_page_go_to_its_section_instead_of_a_stop():
+    text = " ".join(steps()[first(r"posting identity")].split())
+    assert "pages-not-allowed" in text and "not a stop" in text
+
+
+def test_the_group_post_permalink_is_one_publish_done_accepts_for_its_own_group():
+    from jura_growth.agents.publish import hosts
+
+    group = "https://www.facebook.com/groups/sg-owners-1"
+    named = re.findall(r"`(https://[^`]+)`", part(section(COMMUNITY), "Permalink"))
+    assert len(named) >= 2
+    for url in named:
+        example = url.replace("<group>", "sg-owners-1").replace("<number>", "1234567890")
+        assert hosts.group_post_problem(example, group) is None, url
+    assert re.search(r"never the group's own page", part(section(COMMUNITY), "Permalink"))
+
+
+def test_the_community_post_section_names_only_facebooks_browser_hosts():
+    from jura_growth.agents.publish import hosts
+
+    named = set(re.findall(r"`(?:https://)?((?:[a-z0-9-]+\.)+(?:com|net|in|gg))[/`]", section(COMMUNITY)))
+    assert named and named <= set(hosts.BROWSER_HOSTS["facebook"]), named
+
+
+def test_a_removal_or_admin_warning_in_a_group_is_a_stop_that_skips_the_group():
+    from jura_growth.agents.publish.commands import STOP_REASONS
+
+    signals = part(section(COMMUNITY), "Stop signals")
+    reasons = set(re.findall(r"`([a-z-]+)`", signals))
+    assert reasons <= set(STOP_REASONS), reasons - set(STOP_REASONS)
+    assert {"admin-warning", "removed", "wrong-identity", "login"} <= reasons
+    assert re.search(r"skip\w* (?:that|the) group for good", signals)
+    assert "jura-growth community removed" not in PROMPT  # the stop does it; the run can't run it
+
+
+def test_a_post_held_for_an_admins_approval_stops_rather_than_guessing_a_permalink():
+    post = part(section(COMMUNITY), "Post")
+    assert re.search(r"admin's approval", post) and "--reason unidentified" in post
