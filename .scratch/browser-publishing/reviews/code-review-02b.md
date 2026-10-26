@@ -1,10 +1,60 @@
-# Code review 02b: BP-02b, community posts and group joins in the publish queue (no browser), round 1
+# Code review 02b: BP-02b, community posts and group joins in the publish queue (no browser), rounds 1 and 2
 
-- **Branch:** `crew/browser-publishing-02b-community-items` (61da334, 21bbdf9, e764088, bf227c6, e2d4c1b), compared with its merge-base 9e4e970
+- **Branch:** `crew/browser-publishing-02b-community-items` (round 1: 61da334, 21bbdf9, e764088, bf227c6, e2d4c1b, compared with its merge-base 9e4e970; round 2: rebased onto 0ef1c13, head b6ff275)
 - **Ticket:** `.scratch/browser-publishing/issues/02b-community-items.md`. **Spec:** `prd/pending/prd-jura-browser-publishing-2026-10-25.md` §2 (SC1, SC3, SC4, SC5; AC-P1.3 as amended 2026-10-27), §4.2 to §4.5, §5.4 to §5.6, §5.10; MC §4.6 and ADR 0003 (exact bytes); test strategy v3, the BP-02b rows; lessons from `code-review-02.md`
 - **Reviewed:** 2026-10-27. I read every changed file: `config/community.yaml`, `docs/community.md`, the community `__init__`, `groups.py`, `plan.py` and migration `0003_joined_as_the_page.sql`, the publish `__init__`, `claim.py`, `commands.py`, `group_kinds.py`, `items.py`, `kinds.py` and `limits.py`, the three gate adapters, `tests/publish_world.py`, `tests/test_publish_community.py`, `tests/test_uat_seed_community.py` and `tests/uat/seed.py`. For context I also read `approvals.request`, `community/rules.py` (`confirm_days`, `day_problem`, `read_days`) and `plan.prepare`.
 
-## Verdict: changes-requested
+## Round 2 verdict: approve
+
+**Reviewed:** 2026-10-27, after fix round 1. The branch was rebased onto `crew/mission-control` 0ef1c13 and is now 527b1ca, fec9fc3, 6e8ea5d, d8a0d31 and 21b8aff (rebased), 57981d9 (the fixes) and b6ff275 (docs). I read the whole of 57981d9: `community/plan.py`, `publish/claim.py`, `group_kinds.py`, `items.py`, `kinds.py`, `limits.py`, `tests/publish_world.py`, the answers adapter and the new tests. I also read the `docs/community.md` change in b6ff275, and checked where the core calls `deadlines()` (`approvals._insert`, and approve in `decide`).
+
+Both blocking findings are fixed, and my round-1 repros now pass in their fixed form.
+
+- **B1 is fixed.** `group_kinds.rules_problem` (one place, used by the claim) runs these checks in order:
+  - the rules must be confirmed, with their open days;
+  - a promotional post is refused when `rules.no_promo`, which promotion days of `none` now set;
+  - a post with a link is refused when the rules are unknown or forbid links;
+  - then `day_problem` runs.
+  - p3 and p4 are now refused. The card lists links through `brand_check.find_links`, so S1 is fixed too.
+- **B2 is fixed.** A fresh answers request gets three days from when it is raised, whichever path raises it. `_GroupKind.deadlines` restarts the item's day when a request is being raised over an answers item that has an earlier request and no live one (`restart_clock`). `sync()` never treats answers as too late. p5 (group URL changed Fri 17:00) now gives decide-by **Mon 16 Nov 18:00**.
+
+The round-1 should-fix findings are also fixed:
+
+- **S2 and S3, reuse.** Group eligibility now lives in `group_kinds.gone` and `group_kinds.problem`. `items.join_problem`, `claim._group_problem` and `_group_gone` are gone, and lookups use `groups.get`. The ISO week comes from `group_kinds.week_of` over `plan.week_days`.
+- **S4, the switch.** `sync()` raises no card while the kind is switched off, and the change gets its card when the switch is back on (p2).
+- **S5, the checklist.** The checklist and the `#community` message mark Page posts as going "through #approvals: don't post it by hand", with no box.
+- **S6, the profile group.** A post whose group isn't joined as the Page is gone, so it is superseded with no new card and the item is withdrawn (p6).
+- **Nits.** `_probe` uses keywords, `_existing` takes `parent`, `but` is now `excluding_item`, `limits` reads the community settings, and `create_join_answers` refuses a join no run has taken.
+- **The question.** Skipped and expired join proposals counting toward the three a week is now the conductor's decision, documented in `proposals_in_week` and `docs/community.md`.
+
+### Round 2 evidence
+
+- `t.sh` (the developer worktree at b6ff275, clean; `JURA_ROOT`, temp data and outputs folders, Discord double only, no browser) with the full suite printed **2795 passed in 115.76s**.
+- Reviewer probes in a fresh scratch copy of `tests/` (`<session scratchpad>/probe02b-r2/tests/test_reviewer_probe_02b_r2.py`) printed **12 passed**:
+  - **p1 to p6** now assert the fixed behaviour.
+  - **q1, the rules changed after approval and before the claim.** New rules text clears the confirmation, and the claim refuses ("rules aren't confirmed"). Once Ting Yu re-confirms with promotion days `none`, the claim refuses again ("allow no promotion"). The approval is never consumed.
+  - **q2, post days narrowed to `sat,sun` after approval.** Refused on Tuesday ("breaks the group's rules").
+  - **q3, promotion days narrowed to `sat` after approval.** A promotional post is refused ("promotion only on sat").
+  - **q4, answers changed twice (Wed, then Thu).** Both earlier requests are superseded and exactly one is live, decided by Sun 15 Nov 18:00. Once approved, it is the one claimed, and the item holds the last answers.
+  - **q5, answers approved, then changed.** Nothing is claimed, and the first approval stays unused.
+  - **q6, unknown rules and a link.** Refused ("the group's rules are unknown, so no link").
+- `git merge-tree --write-tree` against `crew/mission-control` (8c13d28) and against `crew/browser-publishing-03-browser-job` (2c2bdda): both **clean**.
+- Pyright on `agents/community` and `agents/publish`: 15 errors at 0ef1c13 and 15 on the branch, all in `groups.py` (3) and `plan.py` (12), so **0 new**.
+- Blocked paths: none touched.
+
+### Round 2 findings
+
+**Blocking:** none.
+
+**Should fix:** none.
+
+**Nit (a follow-up is fine):**
+
+- **R2-N1. `deadlines()` now writes.** `_GroupKind.deadlines` calls `items.restart_clock`, which updates `publish_items.day`. Today only `approvals._insert` reaches that branch, because `decide` asks while a request is live. But a future caller that asks for deadlines as a read, such as a preview or the read model, would move an answers item's clock. Moving the reset into the paths that raise (`items.raise_request`, or `sync()` just before it raises) would keep the kind's hooks read-only.
+- **R2-N2. Round 1's repeated switches on item kind remain** (`kinds.read`, `closes`, `opens`, `items.raise_request`, `claim._item_problem`, `commands.STEPS`). This is a judgement call, for a later refactor.
+- **R2-N3. While a kind is switched off, a live card over content that has since changed stays open,** and Ting Yu can approve it. Nothing can go out from it: `use()` refuses both the switch and the hash mismatch, and once the switch is on again, `sync()` supersedes it and raises the new card (p2). A line in `docs/community.md` would save a confusing approval.
+
+## Round 1 verdict: changes-requested
 
 Two blocking findings, both reproduced:
 
@@ -102,5 +152,7 @@ I ran the security pass on this diff only. **No findings at 8/10 confidence or h
 - **Integrity.** B1 is a gap in the gate, filed under Spec: it needs a rules change after the plan, not an attacker.
 
 ## Questions for Ting Yu
+
+*Settled in round 2 by the conductor: skipped and expired proposals count, as built and now documented.*
 
 - **Do skipped or expired join proposals count against the three proposals a week?** *Recommended:* yes, as built. It fails closed and keeps the weekly pace you set. Record it in `docs/community.md`.

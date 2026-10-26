@@ -776,3 +776,12 @@ decisions: crew recommendations adopted: new ticket bp 07 (loopback-only fixture
 decisions: bp 03 sent to an adversarial review of Chrome scope
 questions: -
 evidence:  2742 passed, 0 skipped
+
+## 2026-10-27T04:40+0800 conductor (merge bp 02b)
+status:    done
+persona:   conductor
+ticket:    bp-02b
+artifacts: merge of bp 02b (527b1ca .. b6ff275)
+decisions: round-2 review approve (12 probes incl. rules changed after approval, days narrowed, answers changed twice); merged and pushed; bp 06 now needs only bp 03
+questions: -
+evidence:  merged branch pytest -rs -> see commit
