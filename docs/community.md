@@ -194,8 +194,9 @@ Off by default: `browser: false` in `config/community.yaml`. With `browser: true
   identity selected is a stop (`publish stopped --reason wrong-identity`): `publish` pauses and
   `#alerts` says so. A screen with no way to join as a Page is not a stop: the run records
   `publish done <A-id> --outcome pages-not-allowed`. Otherwise it clicks Join once and records
-  `--outcome requested` (waiting for an admin), `member` or `declined`, which sets the group's
-  `join_status`; `member` also sets `joined_as = page`. Posting there still waits for your
+  `--outcome requested` (waiting for an admin), `member` or `declined` (an admin turned the
+  request down), which sets the group's `join_status`; `member` also sets `joined_as = page`. A
+  group that declined is never proposed again on its own, so it never takes one of a week's three. Posting there still waits for your
   `group-rules` decision on its rules and open days.
 - **Only personal profiles.** `pages-not-allowed`, from a join, its answers or (BP-05) a post
   composer, sets `pages_allowed = no` and `fit = skip` ("only personal profiles can join or post"),

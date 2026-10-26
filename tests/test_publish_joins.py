@@ -123,6 +123,21 @@ def test_a_request_records_that_the_group_allows_pages_and_is_not_proposed_again
     assert again.approval is None and "already requested" in again.why
 
 
+def test_a_group_that_declined_is_never_proposed_again_and_takes_no_slot(conn, world, monkeypatch):
+    """Code review 06, R3, and the conductor's decision: an admin turning the Page's join down
+    keeps the group out of every later proposal, so it never uses one of a week's three."""
+    join, request = claimed_join(conn, monkeypatch)
+    assert pw.invoke("publish", "done", request.id, "--outcome", "declined").exit_code == 0
+    group = group_row(conn, join)
+    assert group["join_status"] == "declined" and group["pages_allowed"] == "unknown"
+    room = items.join_room(conn)
+    assert join.ref_id not in [candidate["id"] for candidate in room["candidates"]]
+    pw.at(monkeypatch, "2026-11-16T10:00:00+08:00")  # a later week
+    again = items.create_join(conn, join.ref_id, run_id=None)
+    assert again.item is None and "declined" in again.why
+    assert items.join_room(conn)["proposed_this_week"] == 0
+
+
 # --- AC-P4.2 membership questions: nothing submitted, the answers become their own item ------------------
 
 BAD_ANSWERS = [

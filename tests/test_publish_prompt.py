@@ -220,3 +220,13 @@ def test_the_steps_send_a_join_to_its_own_section():
     text = steps()[first(r"join section")]
     assert first(r"join section") < first(r"--live-text-file")
     assert text.index("join section") < text.index("file_upload") < text.index("type")
+
+
+def test_declined_is_an_admin_turning_the_join_down_and_a_screen_refusing_pages_is_pages_not_allowed():
+    """Code review 06, S4."""
+    section = join_section()
+    line = next(line for line in section.splitlines() if "--outcome declined" in line)
+    block = section[section.index(line) - 200:section.index(line) + 200]
+    assert "admin" in block and "turn" in block
+    assert "can't join" not in block
+    assert re.search(r"refus\w* Pages?.{0,80}pages-not-allowed|pages-not-allowed.{0,120}refus\w* (?:a )?Pages?", section, re.S)

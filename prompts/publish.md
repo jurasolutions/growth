@@ -209,7 +209,9 @@ way you act as the Jura Page, never as a person.
     for an admin ("Pending", "Requested", "Cancel request");
     `jura-growth publish done <A-id> --outcome member --url <target_url>` when the Page is in the
     group ("Joined", the group's posts and a composer); or
-    `jura-growth publish done <A-id> --outcome declined` when the group says the Page can't join.
+    `jura-growth publish done <A-id> --outcome declined` when an admin has turned the Page's
+    request down. A screen that refuses Pages as members isn't `declined`: it is
+    `--outcome pages-not-allowed`, as above.
     If you can't tell which, run `jura-growth publish stopped <A-id> --reason unidentified`.
     Close your tab and end with `OK: <A-id> join <outcome>`.
 - **Membership answers** (step "submit the membership answers"). Click "Join group" once, and

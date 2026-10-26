@@ -113,6 +113,10 @@ def problem(group: dict | None, step: str) -> str | None:
         return "the group is already joined as the Jura Page"
     if group["join_status"] == "member" or (step == JOIN and group["join_status"] == "requested"):
         return f"the group's join is already {group['join_status']}"
+    if group["join_status"] == "declined":
+        # The conductor's decision (code review 06, S4): never proposed again on its own, so it
+        # never takes one of a week's joins.
+        return "the group declined the Jura Page's join, so it isn't proposed again"
     return None
 
 
