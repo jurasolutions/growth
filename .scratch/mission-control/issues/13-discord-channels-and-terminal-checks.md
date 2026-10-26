@@ -29,3 +29,9 @@ These steps need Ting Yu's own Discord server, his `.env`, his launchd schedule 
 - `.scratch/mission-control/uat.md` "Before you start" and Part A
 - `.scratch/mission-control/setup/discord.md`, `.scratch/mission-control/setup/morning-brief.md` (from 09)
 - `docs/agents/crew.md` (running `jura-growth schedule install` is Ting Yu's, never an agent's)
+
+## Comments
+
+### 2026-10-26T21:02+0800 conductor
+
+Ting Yu turned Terminal decisions off (Discord only; PRD amended before §6). Drop the Terminal-approval checks from this ticket and check instead that `jura-growth approve` and `skip` refuse with a pointer to #approvals.

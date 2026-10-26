@@ -416,3 +416,31 @@ decisions: approve; gap: a precheck that raises leaves no run row, no #alerts po
 decisions: conductor ruling (Ting Yu: all communication via Discord, updates whenever agents run): a crash before recording counts as a failed run (run row, #alerts, auto-pause, run update); small runner.py change allowed in 03; sent back as fix round 1
 questions: -
 evidence:  1533 passed; probes mask names, emails, phone, secrets, mentions
+
+## 2026-10-26T01:20+0800 conductor (merge mc 03)
+status:    done
+persona:   conductor
+ticket:    03
+artifacts: crew/mission-control at 54cbbdf (merge of 03)
+decisions: fix round verified by the conductor (precheck exception becomes a failed run with row, alert, auto-pause and run update; after_run skipped on that path); merged
+questions: -
+evidence:  merged branch pytest -> 1540 passed
+
+## 2026-10-26T21:02+0800 conductor (04b and 08 reviews; Discord-only decision)
+status:    done
+persona:   conductor
+ticket:    04b, 08
+artifacts: reviews/code-review-04b.md, code-review-08.md; PRD amendment note before §6; issues/13 Comment
+decisions: 04b changes-requested (S1: a Claude session recorded Terminal decisions via an orphaned expect; code shown on cards). Ting Yu chose Discord only: Terminal decisions off, decisions only via Dispatch over SSH; Touch ID may come later as a ticket. Sent as fix round 1
+decisions: 08 changes-requested (B-1 one-pager window of seconds at 08:00:05); conductor accepts S-1 (CONTROL_DISCORD_USER_ID core gap) and S-2 (digest lines name no day); Terminal note replaced by a pointer to #approvals; sent as fix round 1
+questions: -
+evidence:  04b: 1670 passed, orphaned expect recorded A-0001/A-0004; 08: 1575 passed, merged tree 1779, window_probe loses note and counts
+
+## 2026-10-26T21:02+0800 conductor (standing instruction)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: -
+decisions: Ting Yu: "dont ask me questions, just make the decisions and push". From here the conductor decides using the crew recommendations, logs each decision, pushes crew/mission-control after merges and opens the PR at the end
+questions: -
+evidence:  -
