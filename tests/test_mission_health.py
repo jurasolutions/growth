@@ -110,6 +110,55 @@ def test_a_gap_name_must_be_a_setting_name(bad):
         health.Gap(bad)
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"name": "EXTRA_TOKEN", "ok": "re_uat_9Xq7Lm2Pz"},
+        {"name": "Discord", "have": "re_uat_9Xq7Lm2Pz", "of": 1},
+        {"name": "Discord", "have": 1, "of": "8"},
+        {"name": "Discord", "have": True, "of": 8},
+    ],
+)
+def test_a_gap_carries_names_booleans_and_counts_only(fields):
+    with pytest.raises(ValueError):
+        health.Gap(**fields)
+
+
+def test_a_plugin_cannot_report_the_discord_count(monkeypatch):
+    plugin = types.SimpleNamespace(NAME="extra", setup_gaps=lambda: [health.Gap("Discord", have=7, of=7), health.Gap("EXTRA_TOKEN")])
+    with_plugins(monkeypatch, plugin)
+    lines = [gap.line for gap in health.setup_gaps()]
+    assert "Discord: 7 of 7 webhooks" not in lines
+    assert "`EXTRA_TOKEN`: not set" in lines
+
+
+def test_a_plugin_value_never_reaches_a_gap_line(monkeypatch):
+    plugin = types.SimpleNamespace(NAME="extra", setup_gaps=lambda: [health.Gap("Discord", have="re_uat_9Xq7Lm2Pz", of=1)])
+    with_plugins(monkeypatch, plugin)
+    lines = [gap.line for gap in health.setup_gaps()]
+    assert not any("re_uat" in line for line in lines)
+    assert "`EXTRA_SETUP_CHECK`: not set" in lines
+
+
+def test_a_malformed_required_setting_is_a_gap_not_a_crash(monkeypatch, tmp_path):
+    from jura_growth import mission
+
+    import mission_world as world
+
+    with_plugins(monkeypatch, types.SimpleNamespace(NAME="extra", REQUIRED_SETTINGS=("lower_case",)))
+    assert "`EXTRA_SETUP_CHECK`: not set" in [gap.line for gap in health.setup_gaps()]
+    snapshot = mission.read(world.source())
+    assert health.Gap("EXTRA_SETUP_CHECK") in snapshot.gaps
+    assert any(line.startswith(GAP_PREFIX + "`EXTRA_SETUP_CHECK`") for line in status_output(monkeypatch, tmp_path).splitlines())
+
+
+def test_control_discord_user_id_is_a_core_gap(tmp_path, monkeypatch):
+    monkeypatch.delenv("CONTROL_DISCORD_USER_ID", raising=False)
+    assert "`CONTROL_DISCORD_USER_ID`: not set" in [gap.line for gap in health.setup_gaps()]
+    env_file(tmp_path, monkeypatch, "CONTROL_DISCORD_USER_ID=111\n")
+    assert "CONTROL_DISCORD_USER_ID" not in {gap.name for gap in health.setup_gaps()}
+
+
 # --- jura-growth status ------------------------------------------------------
 
 # `jura-growth status` on crew/mission-control at 8e3d9b4, before the gap lines.
@@ -156,6 +205,18 @@ def test_status_lists_the_same_gaps_as_the_health_strip(monkeypatch, tmp_path):
     output = status_output(monkeypatch, tmp_path)
     shown = [line.removeprefix(GAP_PREFIX) for line in output.splitlines() if line.startswith(GAP_PREFIX)]
     assert shown == [gap.line for gap in health.setup_gaps()]
+    assert "`EXTRA_TOKEN`: not set" in shown
+
+
+def test_status_and_the_health_strip_list_the_same_gaps_from_one_fixture(monkeypatch, tmp_path):
+    from jura_growth import mission
+
+    import mission_world as world
+
+    with_plugins(monkeypatch, types.SimpleNamespace(NAME="extra", REQUIRED_SETTINGS=("EXTRA_TOKEN",)))
+    shown = [line.removeprefix(GAP_PREFIX) for line in status_output(monkeypatch, tmp_path).splitlines() if line.startswith(GAP_PREFIX)]
+    strip = health.strip(mission.read(world.source()))
+    assert [item for item in strip if GAP_LINE.match(item)] == shown
     assert "`EXTRA_TOKEN`: not set" in shown
 
 

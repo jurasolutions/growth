@@ -72,7 +72,8 @@ core. A plug-in module may define any of:
         booleans only (`health.Gap("PUBLISH_AUTH", ok=False)`), never a
         value, prefix, length or Keychain service. Read by
         `health.setup_gaps()`, so by `jura-growth status` and the health
-        strip alike. An exception shows as one gap, `<NAME>_SETUP_CHECK`.
+        strip alike. An exception, or a name that isn't a setting, shows as
+        one gap, `<NAME>_SETUP_CHECK`; only the core reports Discord.
 
     health(conn) -> list[str]
         Extra "Needs you" lines for the one-pager (for example a build

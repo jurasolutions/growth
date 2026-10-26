@@ -26,6 +26,8 @@ from jura_growth import agents, config, discord, holidays, schedule, timeutil
 
 _SETTING = re.compile(r"[A-Z][A-Z0-9_]*")
 DISCORD = "Discord"
+# Core settings: approvals.py refuses every Dispatch decision without this one.
+CORE_SETTINGS = ("CONTROL_DISCORD_USER_ID",)
 
 
 @dataclass(frozen=True)
@@ -39,10 +41,16 @@ class Gap:
     of: int | None = None
 
     def __post_init__(self) -> None:
+        """Names, booleans and counts only (MC §4.3): anything else would let a
+        value into a line that `status` prints as it is."""
+        if not isinstance(self.ok, bool):
+            raise ValueError("a setup gap's ok is True or False")
         counted = self.of is not None
         if counted and self.name != DISCORD:
             raise ValueError("only the Discord check counts webhooks")
-        if not counted and not _SETTING.fullmatch(self.name):
+        if counted and not all(isinstance(n, int) and not isinstance(n, bool) for n in (self.have, self.of)):
+            raise ValueError("the Discord check counts whole webhooks")
+        if not counted and not (isinstance(self.name, str) and _SETTING.fullmatch(self.name)):
             raise ValueError(f"a setup gap names a setting, such as RESEND_API_KEY_OUTREACH, not {self.name!r}")
 
     @property
@@ -59,11 +67,14 @@ def _discord() -> Gap:
 
 
 def _plugin_checks(module) -> list[Gap]:
+    """A plug-in's gaps, from its `setup_gaps()` or its `REQUIRED_SETTINGS`.
+    Only the core counts Discord webhooks. A check that raises, or names
+    something that isn't a setting, is one gap, `<NAME>_SETUP_CHECK`."""
     hook = getattr(module, "setup_gaps", None)
-    if hook is None:
-        return [Gap(name, ok=config.is_set(name)) for name in getattr(module, "REQUIRED_SETTINGS", ())]
     try:
-        return [gap for gap in hook() if isinstance(gap, Gap)]
+        if hook is None:
+            return [Gap(name, ok=config.is_set(name)) for name in getattr(module, "REQUIRED_SETTINGS", ())]
+        return [gap for gap in hook() if isinstance(gap, Gap) and gap.name != DISCORD]
     except Exception:  # noqa: BLE001 - a broken check is a gap, never a crash or a leaked error
         name = re.sub(r"[^A-Z0-9]+", "_", str(getattr(module, "NAME", "plugin")).upper()).strip("_") or "PLUGIN"
         return [Gap(f"{name}_SETUP_CHECK")]
@@ -96,9 +107,10 @@ def install_states(jobs: Mapping[str, Mapping[str, Any]], installed: Callable[[s
 
 
 def setup_gaps() -> list[Gap]:
-    """Every setting the engine needs that isn't set: the core's Discord
-    webhooks, then each plug-in's, in plug-in order."""
-    checks = [_discord()]
+    """Every setting the engine needs that isn't set: the core's (the Discord
+    webhooks, and the Discord user id every Dispatch decision is checked
+    against), then each plug-in's, in plug-in order."""
+    checks = [_discord(), *(Gap(name, ok=config.is_set(name)) for name in CORE_SETTINGS)]
     for module in agents.plugins():
         checks += _plugin_checks(module)
     return [gap for gap in checks if not gap.ok]

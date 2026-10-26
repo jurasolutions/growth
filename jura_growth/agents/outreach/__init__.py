@@ -15,6 +15,7 @@ from jura_growth import db
 
 NAME = "outreach"
 # Setup gaps (health.setup_gaps): what live sending and the suppression sync need.
+# The OUTREACH_IMAP_* settings are left out on purpose: reply detection is opt-in (replies.py).
 REQUIRED_SETTINGS = (
     "RESEND_API_KEY_OUTREACH",
     "UNSUBSCRIBE_SECRET",
