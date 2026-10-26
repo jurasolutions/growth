@@ -26,6 +26,8 @@ from __future__ import annotations
 import re
 from urllib.parse import unquote, urlsplit
 
+from jura_growth.agents.publish import fixture
+
 HOSTS: dict[str, tuple[str, ...]] = {
     "facebook": ("www.facebook.com", "facebook.com", "m.facebook.com", "web.facebook.com"),
     "instagram": ("www.instagram.com", "instagram.com"),
@@ -65,12 +67,11 @@ PAGE_NAMES = {"instagram": "an Instagram account's profile (/<account>/)",
 
 def problem(platform: str, url: str | None) -> str | None:
     """Why `url` isn't an address on `platform`, or None when it is. While the fixture platform is
-    on (`fixture.py`, BP-07), every platform's only address is the fixture site."""
-    from jura_growth.agents.publish import fixture
-
+    on (`fixture.py`, BP-07), every platform's only address is the fixture site. Raises
+    `fixture.FixtureRefused` when the fixture is set but refused."""
     site = fixture.active()
     if site is not None:
-        return site.url_problem(url)
+        return site_problem(url, site)
     allowed = HOSTS.get(platform)
     if not allowed:
         return f"{platform} has no known hosts"
@@ -101,26 +102,45 @@ def _shape(platform: str, url: str | None, shapes: dict, names: dict) -> str | N
     return f"the address on {host} isn't {names[platform]}"
 
 
-def url_problem(url: str | None, allowed: tuple[str, ...] | list[str], named: str = "the allowed hosts") -> str | None:
-    """Why `url` isn't an `https://` address with no user name, password or port on exactly one
-    of `allowed`, or None when it is. The one check for post URLs (`problem`) and for the
-    addresses a publish run's tab went to (`audit.py`). It names the host, never the rest of the
-    address."""
+def site_problem(url: str | None, site: fixture.Fixture) -> str | None:
+    """Why `url` isn't an address on the fixture site (its scheme, its host and its port), naming
+    the fixture so the refusal says why, or None when it is."""
+    problem = url_problem(url, (site.host,), f"the fixture site's hosts ({site.host})", scheme=site.scheme,
+                          port=site.port)
+    return f"{problem} (the fixture platform allows only {site.base})" if problem else None
+
+
+def fixture_target_problem(url: str | None) -> str | None:
+    """While the fixture platform is on, why `url` isn't on the fixture site; None when it is, or
+    when the fixture is off. Raises as `fixture.active()` does."""
+    site = fixture.active()
+    return site_problem(url, site) if site is not None else None
+
+
+def url_problem(url: str | None, allowed: tuple[str, ...] | list[str], named: str = "the allowed hosts", *,
+                scheme: str = "https", port: int | None = None) -> str | None:
+    """Why `url` isn't a `scheme://` address with no user name or password, on exactly one of
+    `allowed` and on `port` (no port, by default), or None when it is. The one check for post URLs
+    (`problem`), for the fixture site (`site_problem`) and for the addresses a publish run's tab
+    went to (`audit.py`). A backslash, which a browser reads as `/` (code review 07, B1), is
+    refused anywhere. It names the host, never the rest of the address."""
     text = (url or "").strip()
     if not text:
         return "no URL given"
     try:
         parts = urlsplit(text)
-        port = parts.port
+        given = parts.port
     except ValueError:
         return "an address that isn't a URL"
     host = (parts.hostname or "").lower() or "an empty host"
-    if parts.scheme != "https":
-        return f"{host} isn't an https:// address"
+    if "\\" in text:
+        return f"the address on {host} holds a backslash"
+    if parts.scheme != scheme:
+        return f"{host} isn't an {scheme}:// address"
     if parts.username is not None or parts.password is not None or "@" in parts.netloc:
         return f"the address on {host} carries a user name"
-    if port is not None:
-        return f"the address on {host} names a port"
+    if given != port:
+        return f"the address on {host} names a port" if port is None else f"the address on {host} isn't on port {port}"
     if host not in allowed:
         return f"{host} isn't one of {named}"
     return None

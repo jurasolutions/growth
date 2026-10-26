@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 import publish_world as pw
-from jura_growth import approvals, config, paths, runner
+from jura_growth import approvals, config, paths, runner, uat_stub
 from jura_growth.agents.publish import fixture, items, scope
 
 FIXTURE = "http://publish-fixture.localhost:8765"
@@ -60,12 +60,44 @@ def test_with_the_fixture_the_only_domain_rule_is_the_fixture_host(fixture_on):
     "http://publish-fixture.localhost:8765/page.html",  # a base, not a page
     "http://publish-fixture.localhost.evil.test:8765",
     "publish-fixture.localhost:8765",
+    # Code review 07, B1: what a browser's WHATWG parser reads as another host than Python does.
+    "http://evil.com\\.localhost:8765",  # a browser reads `\` as `/`: the host is evil.com
+    "http://publish-fixture.localhost\\@evil.com:8765",
+    "http://evil.com%2F.localhost:8765",  # percent-encoding in the host
+    "http://evil.com%5C.localhost:8765",
+    "http://evil.com%00.localhost:8765",
+    "http://publish-fixture.localhost%2Eevil.com:8765",
+    "http://pub lish-fixture.localhost:8765",  # whitespace a browser strips
+    "http://publish-fixture.local\thost:8765",
+    " http://evil.com:8765",
+    "http://publish-fixtüre.localhost:8765",  # non-ASCII, which a browser folds
+    "http://evil.com。localhost:8765",
+    "http://publish-fixture.localhost:8765#.localhost",
+    "http://publish-fixture.localhost:8765?x",
+    "http://publish-fixture.localhost.:8765",
+    "http://[::ffff:127.0.0.1]:8765",  # loopback spelled another way
+    "http://127.1:8765",
+    "http://0.0.0.0:8765",
+    "http://publish-fixture.localhost:99999",
+    # Code review 07, SEC-n1: a domain rule names a host, not a port, so only the dedicated name
+    # or a loopback address literal; never `localhost` or another `*.localhost` name.
+    "http://localhost:8765",
+    "http://evil.com.localhost:8765",
+    "http://HTTP-fixture.localhost:8765",
 ])
 def test_a_non_loopback_or_malformed_fixture_url_is_refused_and_never_falls_back(fixture_on, monkeypatch, url):
     monkeypatch.setenv(FIXTURE_ENV, url)
     with pytest.raises(fixture.FixtureRefused, match=FIXTURE_ENV) as refused:
         publish_argv()
     assert "facebook" not in str(refused.value)
+
+
+def test_the_uat_stubs_share_the_browser_safe_loopback_check(monkeypatch):
+    """One loopback guard for the stubs and the fixture (code review 07, ST-1)."""
+    monkeypatch.setenv("JURA_GROWTH_D1_BASE_URL", "http://127.0.0.1:8025\\evil.com")
+    assert "must point at the local UAT stub" in (uat_stub.url_problem("JURA_GROWTH_D1_BASE_URL") or "")
+    monkeypatch.setenv("JURA_GROWTH_D1_BASE_URL", "http://127.0.0.1:8025")
+    assert uat_stub.url_problem("JURA_GROWTH_D1_BASE_URL") is None
 
 
 # These two never build the argv or open growth.db: with the live folder, either would touch it.
@@ -84,12 +116,29 @@ def test_an_unset_data_folder_refuses_the_fixture(fixture_on, monkeypatch):
         scope.permissions()
 
 
-@pytest.mark.parametrize("url", ["http://127.0.0.1:8765", "http://localhost:8765", "http://publish-fixture.localhost"])
-def test_other_loopback_hosts_are_accepted(fixture_on, monkeypatch, url):
+@pytest.mark.parametrize("url, host", [
+    ("http://publish-fixture.localhost", "publish-fixture.localhost"),
+    ("http://publish-fixture.localhost:8765/", "publish-fixture.localhost"),
+    ("HTTP://PUBLISH-FIXTURE.LOCALHOST:8765", "publish-fixture.localhost"),
+    ("http://127.0.0.1:8765", "127.0.0.1"),
+    ("http://[::1]:8765", "::1"),
+])
+def test_the_fixture_name_and_loopback_literals_are_accepted(fixture_on, monkeypatch, url, host):
     monkeypatch.setenv(FIXTURE_ENV, url)
-    from urllib.parse import urlsplit
+    assert domain_rules(publish_argv()) == [f"ClaudeInChromeDomain({host})"]
 
-    assert domain_rules(publish_argv()) == [f"ClaudeInChromeDomain({urlsplit(url).hostname})"]
+
+def test_the_prompt_takes_the_permalink_on_the_target_urls_host():
+    """On the fixture, the permalink is `post.html?id=<n>`, on the fixture host: the prompt must
+    not tie it to the platform's real host, or R1 fails for a reason it isn't testing (code
+    review 07, SP-1)."""
+    prompt = (paths.REPO_ROOT / "prompts" / "publish.md").read_text(encoding="utf-8")
+    step = prompt[prompt.index("8. Read it back."):prompt.index("9. Record it")]
+    assert "same host as the target URL" in " ".join(step.split())
+    assert "the platform's own host" not in " ".join(prompt.split())
+    facebook = prompt[prompt.index("### Social post: Facebook Page"):]
+    facebook = facebook[:facebook.index("\n### ", 1)]
+    assert "same host as the target URL" in " ".join(facebook.split())
 
 
 # --- the publish commands: only fixture addresses ------------------------------------------------
@@ -115,6 +164,7 @@ def claimed(conn, monkeypatch):
     pw.run(conn, monkeypatch=monkeypatch)
     result = pw.invoke("publish", "next", "--json")
     assert result.exit_code == 0 and '"due": true' in result.output, result.output
+    assert request is not None
     return found, request
 
 
@@ -149,6 +199,7 @@ def test_publish_next_hands_out_no_item_whose_target_is_off_the_fixture(conn, wo
 def test_a_refused_fixture_claims_nothing(conn, world, monkeypatch):
     pw.at(monkeypatch, pw.MORNING)
     found, request = pw.approved(conn, monkeypatch)
+    assert request is not None
     pw.at(monkeypatch, pw.TEN)
     monkeypatch.setenv(FIXTURE_ENV, "http://publish-fixture.example:8765")
 
@@ -156,7 +207,8 @@ def test_a_refused_fixture_claims_nothing(conn, world, monkeypatch):
 
     assert '"due": false' in result.output and FIXTURE_ENV in result.output
     assert pw.item_row(conn, found.id)["state"] == "ready"
-    assert approvals.get(conn, request.id).used_at is None
+    record = approvals.get(conn, request.id)
+    assert record is not None and record.used_at is None
 
 
 def test_publish_done_takes_the_fixture_permalink(conn, world, monkeypatch):
@@ -174,9 +226,20 @@ def test_publish_done_takes_the_fixture_permalink(conn, world, monkeypatch):
     "http://127.0.0.1:8765/post.html?id=1",  # another loopback name
     "http://x@publish-fixture.localhost:8765/post.html?id=1",
     "http://example.org/",
+    "http://publish-fixture.localhost:8765/post.html\\x",  # a browser reads `\` as `/`
 ])
 def test_publish_done_refuses_any_other_address(conn, world, monkeypatch, url):
     found, request = claimed(conn, monkeypatch)
     result = pw.invoke("publish", "done", request.id, "--url", url, "--live-text-file", live_file(pw.TEXT))
     assert result.exit_code == 1 and "refused" in result.output
+    assert pw.item_row(conn, found.id)["state"] == "claimed"
+
+
+def test_publish_done_says_refused_when_the_fixture_is_refused(conn, world, monkeypatch):
+    """A refused fixture reads as a refusal, not a traceback (code review 07, ST-n4)."""
+    found, request = claimed(conn, monkeypatch)
+    monkeypatch.setenv(FIXTURE_ENV, "http://publish-fixture.example:8765")
+    url = FIXTURE + "/post.html?id=1"
+    result = pw.invoke("publish", "done", request.id, "--url", url, "--live-text-file", live_file(pw.TEXT))
+    assert result.exit_code == 1 and "refused:" in result.output and FIXTURE_ENV in result.output
     assert pw.item_row(conn, found.id)["state"] == "claimed"

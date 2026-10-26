@@ -63,7 +63,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from jura_growth import approvals, caps, db, log, paths, pause, timeutil
-from jura_growth.agents.publish import fixture, items, kinds, limits
+from jura_growth.agents.publish import fixture, hosts, items, kinds, limits
 
 NOTHING_DUE = "nothing due"
 
@@ -134,7 +134,7 @@ def _per_run_problem(conn: sqlite3.Connection, run_id: int | None) -> str | None
 
 
 def _item_problem(conn: sqlite3.Connection, item: items.Item, today: str) -> str | None:
-    off_fixture = fixture.target_problem(item.target_url)
+    off_fixture = hosts.fixture_target_problem(item.target_url)
     if off_fixture:
         return off_fixture
     if kinds.opens(item) > today or (item.kind in (items.SOCIAL_ITEM, items.COMMUNITY_POST_ITEM) and item.day != today):

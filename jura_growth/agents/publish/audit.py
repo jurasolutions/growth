@@ -142,7 +142,7 @@ class _Uploads:
 def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[str], approved: list[str],
           images: list[str], site: Fixture | None = None) -> Audit:
     """`site`: the fixture platform, when it is on (BP-07). Then every address must be on the
-    fixture site (`Fixture.url_problem`) in place of `hosts`."""
+    fixture site (`hosts.site_problem`) in place of `hosts`."""
     found = Audit()
     allowed = tuple(h.lower() for h in hosts)
     texts = [_normal(text) for text in approved if text and text.strip()]
@@ -288,7 +288,7 @@ def _url_problem(url: str, allowed: tuple[str, ...], site: Fixture | None = None
     if transcripts.on_domains(text, DISCORD):
         return f"a Discord host ({transcripts.host_of(text)})"
     if site is not None:
-        return site.url_problem(text)
+        return hosts_mod.site_problem(text, site)
     return hosts_mod.url_problem(text, allowed, "the publish hosts")
 
 
