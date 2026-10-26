@@ -24,8 +24,11 @@ from jura_growth import (
     digest as digest_mod,
     discord,
     headless,
+    health,
     holidays,
     log,
+    mission,
+    one_pager as one_pager_mod,
     pause as pause_mod,
     paths,
     privacy,
@@ -281,6 +284,8 @@ def status() -> None:
     click.echo("")
     configured = [c for c in discord.channels() if discord.webhook(c)]
     click.echo(f"discord    {len(configured)} of {len(discord.channels())} channel webhooks set")
+    for gap in health.setup_gaps():  # the same list as the one-pager's health strip
+        click.echo(f"setup gap  {gap.line}")
     loaded = ", ".join(m.NAME for m in agents.plugins() if getattr(m, "NAME", None)) or "none"
     click.echo(f"agents     {loaded}")
     for name, error in agents.BROKEN.items():
@@ -363,6 +368,19 @@ def heartbeat() -> str:
         result = discord.post(conn, "daily-digest", text, username="Jura growth · heartbeat", dedupe=False)
     click.echo(text if result.delivered else f"{text} (not posted: {result.reason})")
     return "heartbeat posted" if result.delivered else f"heartbeat not posted: {result.reason}"
+
+
+@cli.command("one-pager")
+@click.option("--no-post", is_flag=True, help="Print the one-pager instead of posting it.")
+def one_pager_cmd(no_post) -> None:
+    """Build the one-pager from growth.db, read-only, and print it."""
+    if not no_post:
+        raise click.UsageError("posting the one-pager to #mission-control isn't built yet; use --no-post to print it")
+    pieces = one_pager_mod.messages(mission.read(mission.Source.here()))
+    for index, piece in enumerate(pieces):
+        if index:
+            click.echo(f"\n(message {index + 1} of {len(pieces)})\n")
+        click.echo(piece)
 
 
 @cli.command()

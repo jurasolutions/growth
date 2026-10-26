@@ -81,6 +81,11 @@ def parse(value: str) -> datetime:
     return moment if moment.tzinfo else moment.replace(tzinfo=SGT)
 
 
+def midnight(day: date) -> datetime:
+    """The start of an SGT day."""
+    return datetime(day.year, day.month, day.day, tzinfo=SGT)
+
+
 def days_ago(days: int) -> datetime:
     return now_sgt() - timedelta(days=days)
 

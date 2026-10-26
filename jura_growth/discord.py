@@ -54,6 +54,11 @@ def webhook(channel: str) -> str | None:
     return config.secret(env_name(channel))
 
 
+def webhook_set(channel: str) -> bool:
+    """Whether the channel has a webhook, without reading it (setup gaps)."""
+    return os.environ.get("JURA_GROWTH_DISCORD") != "off" and config.is_set(env_name(channel))
+
+
 def content_hash(content: str, files: list[tuple[str, bytes]]) -> str:
     digest = hashlib.sha256(content.encode("utf-8"))
     for name, body in files:
@@ -291,8 +296,13 @@ def _record(conn: sqlite3.Connection | None, channel: str, digest: str, *, deliv
     )
 
 
+def outbox_dir(data: Path | None = None) -> Path:
+    """Where messages wait when Discord didn't take them: one JSONL file per SGT day."""
+    return (data or paths.data_dir()) / "discord-outbox"
+
+
 def _outbox(channel: str, content: str, files: list[str], username: str | None) -> None:
-    path = paths.writable(paths.data_dir() / "discord-outbox" / f"{timeutil.today_str()}.jsonl")
+    path = paths.writable(outbox_dir() / f"{timeutil.today_str()}.jsonl")
     record = {
         "ts": timeutil.stamp(),
         "channel": channel,

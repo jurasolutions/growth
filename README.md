@@ -63,7 +63,8 @@ The database stays in rollback-journal mode, not WAL, because it lives in OneDri
 | `jura-growth discord test` | Post a test message to every channel |
 | `jura-growth pause <agent\|all>` | Stop an agent, or every agent except digest and backup |
 | `jura-growth resume <agent\|all>` | Start it again |
-| `jura-growth status` | Pauses, last runs, schedule and Discord setup |
+| `jura-growth status` | Pauses, last runs, schedule, Discord setup and setup gaps (the same list as the one-pager's) |
+| `jura-growth one-pager --no-post` | Print the one-pager: Needs you, approvals waiting, today's slots, yesterday's figures. Reads `growth.db` read-only and never repairs it (ADR 0002) |
 | `jura-growth run <job>` | Run a scheduled job now. `--dry-run` prints the command, `--ignore-schedule` runs on a weekend or holiday |
 | `jura-growth schedule list\|render\|install\|uninstall [jobs]` | launchd jobs |
 | `jura-growth heartbeat` | Post a heartbeat to `#daily-digest` |
@@ -176,6 +177,9 @@ imports it by name. The module may define:
 | `run_update(conn, run)` | The "Produced:" items of the agent's run update (`["3 drafts", "3 images"]`; `[]` reads "nothing"), or `None` to post no update for this run. `run` is a `run_update.Run`. Asked only when there is a database connection; an exception is logged as `run.after_run_error` and the update posts without the line |
 | `approval_kinds()` | `{name: approvals.ApprovalKind}`, the approval kinds the agent owns (below). A kind that two plug-ins declare, or whose plug-in failed to load, fails closed |
 | `privacy_terms(conn)` | `{"named_addresses": [], "companies": [], "owner_addresses": [], "kept_names": []}`: addresses that name a person (their names stay out of Discord), company names (never read as a person's name), Ting Yu's own addresses (removed outside Jura's own email) and names that are not a prospect's (Ting Yu's) |
+| `REQUIRED_SETTINGS` | The `.env` settings the agent needs, by name. Each one not set is a setup gap in `jura-growth status` and the one-pager |
+| `setup_gaps()` | `[health.Gap(name, ok=...)]` in place of `REQUIRED_SETTINGS`: names and booleans only, never a value |
+| `health(conn)` | Extra "Needs you" lines for the one-pager. `conn` is the read model's read-only connection, so a write raises |
 
 Every hook except `NAME` is optional and found with `getattr`. Its prompt goes in
 `prompts/<job>.md`, its settings in `config/<name>.yaml`, and its hard limits in `caps.py`.

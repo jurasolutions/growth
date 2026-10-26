@@ -14,6 +14,15 @@ from pathlib import Path
 from jura_growth import db
 
 NAME = "outreach"
+# Setup gaps (health.setup_gaps): what live sending and the suppression sync need.
+# The OUTREACH_IMAP_* settings are left out on purpose: reply detection is opt-in (replies.py).
+REQUIRED_SETTINGS = (
+    "RESEND_API_KEY_OUTREACH",
+    "UNSUBSCRIBE_SECRET",
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "D1_DATABASE_ID",
+)
 MIGRATIONS = Path(__file__).parent / "migrations"
 
 
@@ -72,7 +81,7 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         if unsubscribes:
             brief.append(f"{unsubscribes} unsubscribe{'s' if unsubscribes != 1 else ''}")
     elif queued:
-        lines.append(f"Outreach ({mode}): nothing sent today; {queued} queued")
+        lines.append(f"Outreach ({mode}): nothing sent; {queued} queued")  # no day: see MC X15
     return {
         "figures": {
             "outreach_mode": mode,

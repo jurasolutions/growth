@@ -44,6 +44,19 @@ def test_opening_a_database_in_live_data_is_refused(write_guard):
     assert any(MISSING in v for v in write_guard.take())
 
 
+def test_a_read_only_uri_into_live_data_is_refused_too(write_guard):
+    target = paths.JURA_ROOT / "data" / MISSING / "growth.db"
+    with pytest.raises(PermissionError):
+        sqlite3.connect(f"{target.as_uri()}?mode=ro", uri=True)
+    assert any(MISSING in v for v in write_guard.take())
+
+
+def test_a_read_only_uri_into_the_test_folder_is_judged_by_its_file(write_guard, tmp_path):
+    sqlite3.connect(tmp_path / "fine.db").close()
+    sqlite3.connect(f"{(tmp_path / 'fine.db').as_uri()}?mode=ro", uri=True).close()
+    assert write_guard.take() == []
+
+
 def test_writes_into_the_test_folder_are_fine(write_guard, tmp_path):
     (tmp_path / "fine.txt").write_text("x")
     assert write_guard.take() == []

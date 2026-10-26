@@ -1,6 +1,6 @@
 # The one-pager's read model opens growth.db read-only and never repairs it
 
-Status: proposed (2026-10-25). Accepted in ticket MC-08 of `prd-jura-mission-control-2026-10-25.md`.
+Status: accepted (2026-10-26, ticket MC-08 of `prd-jura-mission-control-2026-10-25.md`).
 
 Every other reader uses `db.connect()`, which creates folders, sets `journal_mode`, runs migrations
 and, on its first open, rolls back a stale journal. The one-pager's read model instead opens
@@ -10,3 +10,10 @@ recovering itself. A reporting path must never be the process that decides what 
 unfinished write. Lapsed approvals are shown as lapsed by comparing their deadlines with the clock,
 not by writing; the one-pager job writes those transitions on the runner's own connection before the
 read model runs. Don't "fix" this by switching the read model to `db.connect()` or `immutable=1`.
+
+In code: `jura_growth/mission.py` probes the connection with one query before anything else uses
+it, so a hot journal or a lock (`database is locked` after two seconds) becomes the "unfinished
+write" state, and a missing `growth.db` or migration a line, before any plug-in hook sees the
+connection. The plug-ins' `health(conn)` hooks get that read-only connection, so a write in one
+raises. The suite proves it on dataset D4, a journal copied mid-transaction that a throwaway copy
+shows to be hot (`tests/mission_world.py`).
