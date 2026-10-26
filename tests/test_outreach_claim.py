@@ -17,7 +17,7 @@ from contextlib import redirect_stdout
 import httpx
 import pytest
 
-from jura_growth import approvals, db, paths
+from jura_growth import approvals, cloudflare, db, paths
 from jura_growth.agents import outreach
 from jura_growth.agents.outreach import approval, send
 
@@ -146,7 +146,9 @@ def test_without_its_plugin_the_kind_fails_closed(conn, monkeypatch):
 
 
 def stub_env(monkeypatch, url="http://127.0.0.1:8025"):
+    """Resend at `url`; D1 at the same stub, as the pair rule needs (ticket 18)."""
     monkeypatch.setenv(send.RESEND_BASE_ENV, url)
+    monkeypatch.setenv(cloudflare.BASE_ENV, "http://127.0.0.1:8025")
 
 
 def test_the_suite_sends_to_the_real_resend_address_through_the_double():
