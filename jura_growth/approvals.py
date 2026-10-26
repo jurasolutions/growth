@@ -280,6 +280,12 @@ def _latest(conn: sqlite3.Connection, kind: str, subject: str) -> Approval | Non
     return _one(conn, "SELECT * FROM approvals WHERE kind = ? AND subject = ? ORDER BY id DESC LIMIT 1", (kind, subject))
 
 
+def latest(conn: sqlite3.Connection, kind: str, subject: str) -> Approval | None:
+    """The newest record for `(kind, subject)`, in whatever state; None if it never had one.
+    Reads only, so it works on the read model's read-only connection."""
+    return _latest(conn, kind, subject)
+
+
 def _reload(conn: sqlite3.Connection, number: int) -> Approval:
     return Approval.from_row(conn.execute("SELECT * FROM approvals WHERE id = ?", (number,)).fetchone())
 

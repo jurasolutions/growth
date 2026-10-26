@@ -81,7 +81,7 @@ in lower case joined by hyphens, and the date is today. Fill the template; repla
   *Domain: `jurasolutions/` | Created: YYYY-MM-DD | Author: app factory (for Ting Yu)*
   *Status: **PENDING SIGN-OFF** | Tier: browser | Category: Finance*
   *Follows: `prd/pending/prd-jura-app-factory-2026-10-24.md` (toolbox shell, limiter, conventions).*
-  *To build: "approved, build prd/pending/apps/prd-app-NNN-<slug>-YYYY-MM-DD.md"*
+  *To build: approve its app-build request in #approvals (prd/pending/apps/prd-app-NNN-<slug>-YYYY-MM-DD.md)*
   ```
   Tier is `browser` or `ai`. Category is one of Sales, Finance, Admin, HR, Marketing, Documents.
 - **Name**: plain words in sentence case, like "Invoice builder" or "Leave planner". No invented
@@ -120,8 +120,8 @@ in lower case joined by hyphens, and the date is today. Fill the template; repla
     `claude-haiku-5-5`.
   - 5.4: what Claude Code runs and shows Ting Yu before he approves deploying.
 - **§6 Open questions**: anything you could not settle, or "None."
-- **§7 Sign-off**: copy the template's section exactly, with your file's path in the
-  "To proceed" sentence.
+- **§7 Sign-off**: copy the template's section exactly. Its "To proceed" sentence points at the
+  `app-build` request in #approvals; don't add a reply for Ting Yu to type.
 
 ### Copy rules (the brand checker enforces them)
 

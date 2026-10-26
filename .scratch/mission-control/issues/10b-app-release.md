@@ -52,3 +52,11 @@ Every criterion above passes, `uv run pytest` passes, and the report is in. Then
 ### 2026-10-26T21:44+0800 conductor: from ticket 10
 
 Update the PRD template (jurasolutions/prd/templates/prd-app-template.md) and prd.py BUILD_RE together for the "approved, build" header and §7 text, so the PRD attached to an app-build card carries it (crew recommendation adopted).
+
+### 2026-10-27 developer: release notes
+
+For the feature's release notes and PR body:
+
+- **Migration.** `app-factory/0004_app_builds_release.sql` adds seven empty columns to `app_builds` (task, branch, head SHA, preview, built, release planned and released times) and drops and recreates the `app_builds_open` index so it also covers `built` rows. No row changes; an older checkout still runs against it, because ticket 10's code reads only the columns it had.
+- **Template.** The PRD template outside the repo (`jurasolutions/prd/templates/prd-app-template.md`) changed with `prd.py` in one commit: its "To build:" header and §7 now point at the `app-build` request in #approvals. The exact change is quoted in that commit's message. Rolling back the code without the template would make the factory reject every new PRD, so revert both together.
+- **Behaviour.** `apps built`, `apps release-plan` and `apps released` are new. Nothing deploys: `release-plan` prints the merge for Ting Yu to run, and `released` only reads the landing-page repository. `remote` reaches these commands from ticket 12 on.

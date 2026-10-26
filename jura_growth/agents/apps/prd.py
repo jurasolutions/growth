@@ -53,9 +53,16 @@ DOMAIN_RE = re.compile(
 )
 STATUS_RE = re.compile(r"^\*Status: \*\*PENDING SIGN-OFF\*\* \| Tier: (?P<tier>[^|*]+?) \| Category: (?P<category>[^|*]+?)\*$")
 FOLLOWS_RE = re.compile(r"^\*Follows: `(?P<follows>[^`]+)`(?: \([^)]*\))?\.?\*$")
-BUILD_RE = re.compile(
-    r"^\*To build: \"approved, build (?P<path>prd/pending/apps/prd-app-(?P<num>\d{3})-(?P<slug>[a-z0-9-]+?)-(?P<day>\d{4}-\d{2}-\d{2})\.md)\"\*$"
+BUILD_PATH_RE = re.compile(
+    r"(?P<path>prd/pending/apps/prd-app-(?P<num>\d{3})-(?P<slug>[a-z0-9-]+?)-(?P<day>\d{4}-\d{2}-\d{2})\.md)"
 )
+# The template's "To build:" header (ticket 10b): a build starts with the PRD's `app-build`
+# request in #approvals, never a typed reply.
+BUILD_RE = re.compile(rf"^\*To build: approve its app-build request in #approvals \({BUILD_PATH_RE.pattern}\)\*$")
+# The header before 10b, which APP-001 to APP-003 still carry: read, never written again.
+OLD_BUILD_RE = re.compile(rf"^\*To build: \"approved, build {BUILD_PATH_RE.pattern}\"\*$")
+BUILD_LINE = "*To build: approve its app-build request in #approvals (prd/pending/apps/prd-app-NNN-<slug>-YYYY-MM-DD.md)*"
+PROCEED = "To proceed: approve its app-build request in #approvals."
 FILENAME_RE = re.compile(r"^prd-app-(?P<num>\d{3,})-(?P<slug>[a-z0-9-]+?)-(?P<day>\d{4}-\d{2}-\d{2})\.md$")
 
 # Always-include success criteria (template §2): each needs these phrases.
@@ -171,7 +178,7 @@ def parse(text: str) -> AppPrd:
             prd.tier, prd.category = m["tier"].strip(), m["category"].strip()
         elif m := FOLLOWS_RE.match(line):
             prd.follows = m["follows"]
-        elif m := BUILD_RE.match(line):
+        elif m := BUILD_RE.match(line) or OLD_BUILD_RE.match(line):
             prd.build_path, prd.slug = m["path"], m["slug"]
 
     current_h2 = current_h3 = None
@@ -305,13 +312,15 @@ def validate_shape(text: str, *, strict: bool = False, categories: tuple[str, ..
         ("`*Domain: `jurasolutions/` | Created: YYYY-MM-DD | Author: …*`", DOMAIN_RE),
         ("`*Status: **PENDING SIGN-OFF** | Tier: … | Category: …*`", STATUS_RE),
         (f"`*Follows: `{FACTORY_PRD}` (…).*`", FOLLOWS_RE),
-        ('`*To build: "approved, build prd/pending/apps/prd-app-NNN-<slug>-YYYY-MM-DD.md"*`', BUILD_RE),
+        (f"`{BUILD_LINE}`", BUILD_RE),
     ]
     if len(header) != len(expected):
         errors.append(f"header: expected {len(expected)} lines before `---`, found {len(header)}")
     for index, (label, pattern) in enumerate(expected):
-        if index >= len(header) or not pattern.match(header[index]):
-            errors.append(f"header line {index + 1}: expected {label}")
+        line = header[index] if index < len(header) else ""
+        if pattern.match(line) or (pattern is BUILD_RE and not strict and OLD_BUILD_RE.match(line)):
+            continue
+        errors.append(f"header line {index + 1}: expected {label}")
     if "---" not in [l.strip() for l in lines]:
         errors.append("header: missing the `---` rule after the header")
 
@@ -323,8 +332,7 @@ def validate_shape(text: str, *, strict: bool = False, categories: tuple[str, ..
         errors.append(f"header: Follows must name `{FACTORY_PRD}`")
     if strict and prd.author and prd.author != FACTORY_AUTHOR:
         errors.append(f"header: Author must be `{FACTORY_AUTHOR}`")
-    if prd.build_path:
-        m = BUILD_RE.match(f'*To build: "approved, build {prd.build_path}"*')
+    if m := BUILD_PATH_RE.fullmatch(prd.build_path):
         if prd.number is not None and int(m["num"]) != prd.number:
             errors.append(f"header: the To build path says APP-{m['num']} but the title says {prd.app_id}")
         if prd.created and m["day"] != prd.created:
@@ -531,8 +539,8 @@ def _signoff(prd: AppPrd, strict: bool) -> list[str]:
     elif strict and GATE_SENTENCE_FULL not in body:
         errors.append(f"§7: use the template's gate sentence exactly: {GATE_SENTENCE_FULL}")
     if strict:
-        if prd.build_path and f'reply "approved, build {prd.build_path}"' not in body:
-            errors.append(f'§7: should say To proceed: reply "approved, build {prd.build_path}"')
+        if _flat(PROCEED) not in _flat(body):
+            errors.append(f"§7: should say {PROCEED}")
         if not re.search(r"^Signed off by: _+\s+Date: _+\s*$", body, re.M):
             errors.append("§7: missing the `Signed off by: ____  Date: ____` line")
     return errors

@@ -39,6 +39,9 @@ build step).
 | `jura-growth apps backlog [--json]` | The backlog with the status worked out from the PRD folders and the registry |
 | `jura-growth apps submit-prd <file> [--dry-run]` | The gate. `--dry-run` runs every check, brand check included, without filing, raising a request or using an attempt |
 | `jura-growth apps handoffs [--json]` | Build handoffs waiting for a builder, oldest first. `--json` is what Dispatch polls: each with `handoff: {repo, base, prd_text, prd_sha256, approval}`, within 64 KB |
+| `jura-growth apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>` | Reports a handed-off build and raises its `app-release` request, bound to the full head commit. Called by Dispatch (D6), or by Ting Yu after a hand build |
+| `jura-growth apps release-plan <APP-NNN>` | Claims the approved release, then prints the merge of exactly its commit into `main` |
+| `jura-growth apps released <APP-NNN> --task <T-nnnn>` | Records the release once `main` of `repos/landing-page` contains the claimed commit, and moves the PRD to `prd/done/apps/` |
 
 ## What `submit-prd` checks in code
 
@@ -97,8 +100,8 @@ button.
 
 | Path | What |
 |---|---|
-| `jura_growth/agents/apps/` | The plug-in: `prd.py` (template and factory rules), `catalog.py` (PRD folders, registry, numbering, limits), `backlog.py`, `inputs.py` (D1 usage, scout insights), `factory.py` (`submit-prd`, the `app-copy` channel), `builds.py` (the `app-build` kind, handoffs, skip and expiry, the catch-up pass) |
-| `jura_growth/agents/apps/migrations/` | `0001` `app_prds`; `0002` `app_builds`; `0003` lets an expired idea's slug be filed again |
+| `jura_growth/agents/apps/` | The plug-in: `prd.py` (template and factory rules), `catalog.py` (PRD folders, registry, numbering, limits), `backlog.py`, `inputs.py` (D1 usage, scout insights), `factory.py` (`submit-prd`, the `app-copy` channel), `builds.py` (the `app-build` kind, handoffs, skip and expiry, the catch-up pass), `releases.py` (the `app-release` kind, `built`, `release-plan`, `released`) |
+| `jura_growth/agents/apps/migrations/` | `0001` `app_prds`; `0002` `app_builds`; `0003` lets an expired idea's slug be filed again; `0004` adds a build's task, branch, commit, preview and release times |
 | `jura_growth/agents/apps/backlog-seed.yaml` | The §5.7 seed, used when the data file is missing |
 | `jurasolutions/data/growth/app-backlog.yaml` | The live backlog |
 | `prompts/app-factory.md` | The headless prompt (§5.6 steps 1 to 6) |
@@ -138,12 +141,48 @@ one byte supersedes it and raises a new one.
   `main` (Dispatch D6). Until `approvals.dispatch_builds` is set to `true`, the decision's answer
   and the one-pager say how to build it by hand: "Build it: open Claude Code in `jurasolutions/`
   and say: build the approved PRD `<path>` (approval A-nnnn)". The handoff is listed until the
-  build is reported (ticket 10b).
+  build is reported with `apps built`.
 - **Skip.** The PRD moves to `prd/skipped/apps/` with "Skipped by Ting Yu on <date>" at the top,
   and the backlog idea is dropped for good.
 - **No answer for 7 days.** The PRD moves to `prd/skipped/apps/` with "Expired unanswered on
   <date>". The backlog idea goes back to `idea` with a `reopens` date 30 days on, shows as
   `resting` until then, and may be proposed again from that date under a new number.
 
-The PRD template's "To build:" header line and its sign-off section are unchanged, because
-`prd.py` checks the template's shape; the request in #approvals is what counts.
+## Releasing a built app
+
+Going to production is a second approval, bound to the exact commit (`agents/apps/releases.py`;
+MC §5.7 `app-release` row, §5.9 steps 3 and 4).
+
+1. **Built.** The builder pushes the task branch, based on `main`, and Cloudflare Pages gives it a
+   preview. Protecting previews with Cloudflare Access is still to do: it is Ting Yu's setup step
+   (Dispatch D8, ticket 16), and until then a preview link works for anyone who has it. `apps
+   built` records the task, the branch, its full head SHA and the preview on the build's
+   `app_builds` row, and raises an `app-release` request over the app id, task id, branch, SHA and
+   preview link. The card shows the preview link as plain text, the short SHA, and a reminder that
+   the preview follows the branch's latest push while the release is that one commit. Refused: a
+   build that was never handed off, a short SHA, a SHA `main` already contains, and any preview
+   other than a bare `https://<branch>.<pages_project>.pages.dev` link, where `pages_project` in
+   `config/apps.yaml` names the landing page's Pages project (unset, every preview is refused). A
+   commit pushed later, or another preview link, needs its own request: reporting it supersedes the
+   old one.
+2. **Approve.** Nothing happens yet. The approval has 14 days to be used.
+3. **Release plan.** `apps release-plan` claims the approval, stamps the row, and only then prints
+   the commands: fetch the task branch, merge exactly the approved SHA into `main` (never the
+   branch, whose head may have moved), push, then `apps released`. Without an approved, unused
+   request it prints nothing to run. It refuses while the factory is paused, or while the
+   landing-page repository and its `main` aren't there.
+4. **Released.** `apps released` checks `git -C <repos/landing-page> merge-base --is-ancestor <sha>
+   refs/heads/main`, the branch, so a tag named `main` can't stand in for it. It never fetches, pulls or writes, so pull `main` after the merge. With the claimed
+   approval and the commit on `main`, the build becomes `released`, the PRD moves to
+   `prd/done/apps/` with "Shipped on <date>" at the top and a sign-off line naming the build and
+   release approvals, and the backlog row goes live.
+
+**Skip, no answer for 7 days, or an approval unused for 14 days** leave the build on its preview.
+The one-pager lists it with the preview link; reporting the build again with `apps built` asks
+again. The one-pager also says when an approved release waits for `release-plan`, and when a
+claimed one waits for `main`.
+
+The PRD template's "To build:" header line and its §7 say the same thing: approve the PRD's
+`app-build` request in #approvals. `prd.py` checks that wording on every new factory PRD, and still
+reads the old header, which asked for a typed reply, on the PRDs filed before it changed (APP-001
+to APP-003), whose bytes are what their requests cover.

@@ -101,11 +101,13 @@ def test_the_factory_run_files_a_prd_and_an_app_build_card_posts_with_the_prd_at
 
 
 def test_no_message_carries_the_old_approved_build_line(tmp_path, conn, discord_double):
-    """AC-M9.1: the "approved, build …" line is gone from every message. The PRD attached to the
-    card still holds the template's own header and sign-off lines (see the report)."""
+    """AC-M9.1: the "approved, build …" line is gone from every message, and from the PRD
+    attached to the card, whose header and §7 now follow the template's new wording (10b)."""
     assert submit(tmp_path).exit_code == 0
     assert discord_double.posts()
     assert not [r for r in discord_double.requests if "approved, build" in (r.content or "")]
+    [card] = discord_double.posts("approvals")
+    assert card.files and all(b"approved, build" not in data for _, data in card.files)
     assert discord_double.posts("app-factory") == []  # the card replaces the old #app-factory post
 
 
@@ -452,7 +454,8 @@ def test_the_app_build_migrations_change_no_existing_row(tmp_path, monkeypatch):
         )
     tables = [r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
     before = {t: db.rows(conn, f"SELECT * FROM {t}") for t in tables if t != "schema_migrations"}
-    assert db.migrate(conn) == ["app-factory/0002_app_builds.sql", "app-factory/0003_app_prds_slug_reusable.sql"]
+    assert db.migrate(conn) == ["app-factory/0002_app_builds.sql", "app-factory/0003_app_prds_slug_reusable.sql",
+                                "app-factory/0004_app_builds_release.sql"]
     assert {t: db.rows(conn, f"SELECT * FROM {t}") for t in before} == before
     assert db.scalar(conn, "SELECT count(*) FROM app_builds") == 0
     conn.execute(
@@ -523,10 +526,10 @@ def test_without_the_apps_plugin_nothing_is_handed_off_or_expired(conn, monkeypa
 
 @pytest.mark.parametrize("name", ["prompts/app-factory.md", "docs/app-factory.md"])
 def test_the_prompt_and_docs_no_longer_say_a_build_starts_with_approved_build(name):
-    """MC §4.9: the approval in #approvals is the sign-off. "approved, build" survives only where
-    a file quotes the template's own "To build:" header line, which `prd.py` still checks."""
+    """MC §4.9: the approval in #approvals is the sign-off, and the template's "To build:" header
+    says so too (10b), so "approved, build" appears nowhere."""
     text = (paths.REPO_ROOT / name).read_text(encoding="utf-8")
-    assert [line for line in text.splitlines() if "approved, build" in line and "To build:" not in line] == []
+    assert "approved, build" not in text
     assert "#approvals" in text and "app-build" in text
 
 

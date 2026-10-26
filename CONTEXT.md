@@ -72,7 +72,8 @@ _Avoid_: report, summary, dashboard (the 17:30 digest is a separate message)
 The "Needs you" section at the top of the one-pager: the PAUSE file, paused agents, recent
 failures, missed slots, undelivered Discord posts, unposted approval requests, approved emails that
 lapsed unsent, jobs not installed or out of date, setup gaps, build handoffs waiting for a builder,
-and a growth.db with an unfinished write.
+built apps not yet released (left on their preview, approved and waiting for `release-plan`, or
+claimed and waiting for `main`), and a growth.db with an unfinished write.
 _Avoid_: status bar, alerts panel
 
 **Run update**:
@@ -146,7 +147,9 @@ _Avoid_: protected action
 **Build handoff**:
 The `app_builds` record written when an `app-build` approval is claimed: the app, the PRD text and
 its hash, and the approval. Dispatch, or Ting Yu by hand until Dispatch can, builds from it on the
-app's own task branch.
+app's own task branch. The same record then follows the build: `built` once `apps built` reports
+its task, branch, head commit and preview, and `released` once `apps released` finds that commit on
+`main` after a second, `app-release` approval.
 _Avoid_: build request, ticket
 
 **Control command**:
