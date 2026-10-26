@@ -15,14 +15,16 @@ changed gets its new request and card (AC-P1.3), and one that is gone is withdra
 
 The checks, in order:
 
-1. Kill switches: the PAUSE file, `pause publish` or `pause all` (which auto-pause sets too).
+1. Kill switches: the PAUSE file, `pause publish` or `pause all` (which auto-pause sets too), and
+   a fixture platform its guard refuses (`fixture.py`, BP-07).
 2. Items whose day has passed, or whose posting window has closed, are judged by `use()`, which
    writes their expiry; none is claimed.
 3. The posting window (09:00 to 18:00 SGT, `limits.window()`).
 4. One item per run (`caps.PUBLISH_ITEMS_PER_RUN`).
 5. The gap: 20 minutes between the start times of the runs that claimed two items
    (`caps.PUBLISH_MINUTES_BETWEEN_ACTIONS`).
-6. Per item, by kind:
+6. Per item: while the fixture platform is on, its target must be on the fixture site. Then, by
+   kind:
    - a social post: its day is today and its platform has no claimed item yet today
      (`caps.SOCIAL_POSTS_PER_PLATFORM_PER_DAY`);
    - a community post (BP §4.5): its day is today; its group is a good fit, not removed, joined
@@ -61,7 +63,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from jura_growth import approvals, caps, db, log, paths, pause, timeutil
-from jura_growth.agents.publish import items, kinds, limits
+from jura_growth.agents.publish import fixture, hosts, items, kinds, limits
 
 NOTHING_DUE = "nothing due"
 
@@ -132,6 +134,9 @@ def _per_run_problem(conn: sqlite3.Connection, run_id: int | None) -> str | None
 
 
 def _item_problem(conn: sqlite3.Connection, item: items.Item, today: str) -> str | None:
+    off_fixture = hosts.fixture_target_problem(item.target_url)
+    if off_fixture:
+        return off_fixture
     if kinds.opens(item) > today or (item.kind in (items.SOCIAL_ITEM, items.COMMUNITY_POST_ITEM) and item.day != today):
         return f"{item.label} is for {item.day}"
     if item.kind == items.SOCIAL_ITEM:
@@ -226,6 +231,9 @@ def _name(item: items.Item) -> str:
 
 
 def _blocked(conn: sqlite3.Connection) -> str | None:
+    refused = fixture.problem()
+    if refused:
+        return refused
     paused = pause.is_paused(conn, items.AGENT)
     return f"publish is paused ({paused})" if paused else None
 

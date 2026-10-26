@@ -70,9 +70,10 @@ end with `FAIL:` and the reason.
    input with `find` (or `read_page`) and pass its ref to `file_upload`. Never click an upload
    button ("Photo/video", "Select from computer", a photo or media icon): it opens a file picker
    you can't see or close.
-8. Read it back. Open the live post's own page with `navigate` (its permalink, on the platform's
-   own host), read its text with `get_page_text`, and write that text, as it reads on the page,
-   to `<A-id>-live.txt` in your scratch folder with the Write tool.
+8. Read it back. Open the live post's own page with `navigate` (its permalink: the address its
+   timestamp links to, on the same host as the target URL), read its text with `get_page_text`,
+   and write that text, as it reads on the page, to `<A-id>-live.txt` in your scratch folder with
+   the Write tool.
 9. Record it: `jura-growth publish done <A-id> --url <permalink> --live-text-file <that file>`.
 10. Close your tab with `tabs_close_mcp`.
 11. End with `OK: posted <A-id> <permalink>`. Don't quote the page or the post in your summary.
@@ -89,8 +90,9 @@ end with `FAIL:` and the reason.
   with `find` for the composer's file input and `file_upload` with its ref; never click the
   upload button. Type the text, and click "Post" once.
 - **Permalink:** after posting, the post appears at the top of the Page. Its timestamp links to
-  its own page, an address on `www.facebook.com` with `/posts/` or `story_fbid` in it. Use that
-  address, never a feed or notification link.
+  its own page, on the same host as the target URL: on Facebook, an address on
+  `www.facebook.com` with `/posts/` or `story_fbid` in it. Use that address, never a feed or
+  notification link.
 - **Stop signals:** the "Log in to Facebook" page (`login`); "Confirm you're human" or a security
   check (`captcha`); "We noticed unusual activity" or a checkpoint asking you to confirm who you
   are (`checkpoint`); "You're temporarily restricted" or "Your Page has been restricted"
@@ -119,8 +121,9 @@ end with `FAIL:` and the reason.
   the text exactly as given, in one go. If a list of hashtag suggestions opens while you type,
   never pick from it. Then click "Share" once, and wait for "Your post has been shared".
 - **Permalink:** close the dialog and open the profile again: the new post is first in the grid.
-  Open it with `navigate` to its own address, `https://www.instagram.com/p/<code>/` (or, if
-  Instagram shows it as a reel, `https://www.instagram.com/reel/<code>/`), never the profile, a
+  Open it with `navigate` to its own address, on the same host as the target URL: on Instagram,
+  `https://www.instagram.com/p/<code>/` (or, if Instagram shows it as a reel,
+  `https://www.instagram.com/reel/<code>/`), never the profile, a
   feed or an explore link. `publish done` refuses any other address. For the live text, write only the caption under the account
   name: not the account name, the date, likes or comments.
 - **Stop signals:** the Instagram login page or "Log in to continue" (`login`); "Help us confirm
@@ -148,7 +151,8 @@ end with `FAIL:` and the reason.
   suggestion list opens while you type, never pick from it. Click "Post" once, and wait for
   "Post successful".
 - **Permalink:** use "View post" in the confirmation, or open the newest post on the company
-  page. Its own address is `https://www.linkedin.com/feed/update/urn:li:activity:<number>/`,
+  page. Its own address is on the same host as the target URL: on LinkedIn,
+  `https://www.linkedin.com/feed/update/urn:li:activity:<number>/`,
   or the same with `urn:li:share:` or `urn:li:ugcPost:` in place of `urn:li:activity:`; a
   `https://www.linkedin.com/posts/…-activity-<number>-…` address is the same post too. Open it
   with `navigate`, never the company page, a feed, notification or short link: `publish done`

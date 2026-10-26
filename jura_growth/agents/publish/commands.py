@@ -26,7 +26,7 @@ from pathlib import Path
 import click
 
 from jura_growth import approvals, caps, db, discord, log, pause, timeutil
-from jura_growth.agents.publish import claim, hosts, items, kinds
+from jura_growth.agents.publish import claim, fixture, hosts, items, kinds
 
 # What the run may report as a stop signal (BP §4.6). A closed list, so a page's own words
 # never reach an alert through the reason.
@@ -69,6 +69,14 @@ def _item_for(conn: sqlite3.Connection, typed: str) -> tuple[approvals.Approval,
     if record is None or found is None or record.kind != items.APPROVAL_KINDS.get(found.kind):
         raise click.ClickException(f"there is no approval request {typed} for a publish item (type its A-nnnn)")
     return record, found
+
+
+def _host_problem(platform: str, url: str) -> str | None:
+    """`hosts.post_problem`, with a refused fixture platform (BP-07) as a reason, not a traceback."""
+    try:
+        return hosts.post_problem(platform, url)
+    except fixture.FixtureRefused as refused:
+        return str(refused)
 
 
 def _where(found: items.Item) -> str:
@@ -161,7 +169,7 @@ def done(approval_id, url, live_text_file) -> str:
             raise click.ClickException(f"refused: publish done --url is {SOCIAL_ONLY}")
         if found.state != "claimed":
             raise click.ClickException(f"{record.id}'s item isn't claimed (it is {found.state})")
-        wrong = hosts.post_problem(found.platform, url)
+        wrong = _host_problem(found.platform, url)
         if wrong:
             raise click.ClickException(f"refused: {wrong}")
         matches = same_text(found.content["text"], live)
@@ -269,7 +277,7 @@ def resolve(approval_id, outcome, url) -> str:
             raise click.ClickException(f"refused: resolve posted is {SOCIAL_ONLY}. Check the group, then settle "
                                        f"{record.id} as not-posted, or record what happened by hand")
         if outcome == "posted":
-            wrong = hosts.post_problem(found.platform, url)
+            wrong = _host_problem(found.platform, url)
             if wrong:
                 raise click.ClickException(f"refused: posted needs --url, the post's own address on {found.platform}: {wrong}")
         with db.transaction(conn):

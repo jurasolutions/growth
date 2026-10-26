@@ -21,3 +21,22 @@ Add a fixture platform the publish job accepts only when it points at a loopback
 ## Pointers
 
 - `.scratch/browser-publishing/issues/03-browser-job-facebook-page.md` (BP-03 report in crew-log); `jura_growth/agents/publish/scope.py`; `jura_growth/uat_stub.py`; `.scratch/mission-control/uat.md` R1-R6
+
+## Comments
+
+### 2026-10-27 developer: built
+
+The fixture platform is `JURA_GROWTH_PUBLISH_FIXTURE_URL` (`jura_growth/agents/publish/fixture.py`). It is a switch over the existing platforms, not a new platform name: while it is set, the fixture host replaces every platform's hosts, so the rehearsal drives Facebook's own prompt section and, for BP-04, each new platform's. Its guard takes only an `http://` URL on a loopback host with no user name or path (narrowed in fix round 1, below), and a temporary data folder (`uat_stub.temporary_data_problem`). A refused fixture fails the publish run in its precheck before Claude starts, the argv can't be built, and `publish next` claims nothing. It never falls back to the real hosts.
+
+The rehearsal steps are in `uat.md` Part R. The UAT seed gains `fixture-post --page <page>` (R1 to R4, R6) and `fixture-join --page <page>` (R5).
+
+**The `file_upload` parameter allow rule (R1): not yet tried.** It needs real Chrome and a real `claude -p`, so it is Ting Yu's step. `uat.md` Part R, R1b, gives the two probes and how to read them. Result: _to record here after R1._
+
+### 2026-10-27 developer: fix round 1 (code review 07)
+
+- **B1.** The guard now reads the URL the way a browser's WHATWG parser does. `uat_stub.loopback_url_ok` is the one loopback check for the UAT stubs and the fixture (ST-1). It refuses a backslash, `%`, `@`, whitespace, control characters and non-ASCII characters anywhere, a malformed port, and a host that isn't exactly one of the allowed names. For the fixture, those names are `publish-fixture.localhost`, `127.0.0.1` and `::1`: no longer `localhost` or any other `*.localhost` name, because a domain rule names a host, not a port (SEC-n1). The reviewer's `http://evil.com\.localhost:8765` and the other WHATWG tricks are regression cases in `tests/test_publish_fixture_platform.py`.
+- **ST-2.** Page addresses on the fixture go through `hosts.url_problem`, which now takes a scheme and a port, and refuses a backslash anywhere.
+- **SP-1.** `prompts/publish.md` step 8 and the Facebook permalink line now say the permalink is the address the post's timestamp links to, on the same host as the target URL. That is true on Facebook and on the fixture's `post.html?id=<n>`.
+- **ST-n4.** A refused fixture in `publish done` and `publish resolve` now reads `refused: …`.
+
+**AC3 stays open, and the ticket can't close until it is recorded.** Ting Yu runs R1b during R1. The two probe results, with their `permission_denials` lines, go in these Comments after R1 and before the ticket closes.

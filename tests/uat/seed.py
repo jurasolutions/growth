@@ -3,7 +3,7 @@
 Seeds the UAT data into a temporary folder, for Ting Yu to run the script against a test Discord
 server. From the repo root, in the window `uat.md` sets up ("The window for Parts A and C"):
 
-    uv run python -m tests.uat.seed "$UAT" [--scenario base] [--today YYYY-MM-DD] [--lead <id>] [--group <id>]
+    uv run python -m tests.uat.seed "$UAT" [--scenario base] [--today YYYY-MM-DD] [--lead <id>] [--group <id>] [--page <page>]
 
 It refuses unless `$UAT` is a temporary folder (made with `mktemp -d`) outside `jurasolutions/`, and
 `JURA_GROWTH_DATA_DIR`, `JURA_GROWTH_OUTPUTS_DIR` and `JURA_PRD_DIR` all sit inside it, as does
@@ -47,6 +47,15 @@ Part C's community scenario (BP-02b), after `base`:
   Jura Page, and a G4 post planned for the seeded day that mentions Jura, with its pending
   `community-post` card raised through the code `community publish-plan` uses. G4's rules aren't
   confirmed yet, so `publish next` refuses it once approved.
+
+Part R's rehearsal scenarios (BP-07) need the fixture platform on (`JURA_GROWTH_PUBLISH_FIXTURE_URL`,
+`jura_growth/agents/publish/fixture.py`), and refuse without it. Each seeds one approved item whose
+target is a page of the fixture site, named with `--page`:
+
+- `fixture-post` (R1 to R4, R6): a Facebook item, approved, on `page.html` (the composer) unless
+  `--page` names a stop page, `link-out.html`, `injection.html` or `other-identity.html`.
+- `fixture-join` (R5): a join for G9, a good-fit group whose address is `join.html` (membership
+  questions) unless `--page profile-only-join.html`, approved.
 """
 
 from __future__ import annotations
@@ -457,13 +466,13 @@ SOCIAL_DRAFT = (
 )
 
 
-def _browser_facebook() -> None:
+def _browser_facebook(page_url: str = UAT_PAGE_URL) -> None:
     folder = os.environ.get("JURA_GROWTH_CONFIG_DIR")
     if not folder:
         raise Refused("JURA_GROWTH_CONFIG_DIR isn't set: the publish scenarios write browser mode into $UAT/config, never config/")
 
     def browser(social: dict) -> None:
-        social["platforms"]["facebook"].update(publish_mode="browser", page_url=UAT_PAGE_URL)
+        social["platforms"]["facebook"].update(publish_mode="browser", page_url=page_url)
 
     _rewrite_yaml(Path(folder) / "social.yaml", browser)
     config.reset_caches()
@@ -479,12 +488,12 @@ def _png() -> bytes:
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1200, 630, 8, 2, 0, 0, 0)) + chunk(b"IEND", b"")
 
 
-def _facebook_item(conn):
+def _facebook_item(conn, page_url: str = UAT_PAGE_URL):
     """The seeded day's Facebook draft, past the brand gate, with its item, request and card."""
     from jura_growth import cards
     from jura_growth.agents.publish import items
 
-    _browser_facebook()
+    _browser_facebook(page_url)
     day = today()
     image = paths.outputs_dir() / "social" / day.isoformat() / "facebook-1200x630.png"
     image.parent.mkdir(parents=True, exist_ok=True)
@@ -587,7 +596,65 @@ def community_plan(conn) -> None:
     cards.sweep_safely(conn)
 
 
-for _scenario in (social_post, social_approved, claimed_not_closed, community_plan):
+# --- the rehearsal scenarios (BP-07; uat.md Part R, R1 to R6) -------------------------------------
+#
+# They need the fixture platform on: `JURA_GROWTH_PUBLISH_FIXTURE_URL` set to the local fixture
+# site, which its guard accepts (`jura_growth/agents/publish/fixture.py`). The item's target is the
+# fixture page `--page` names, so each step starts from its own page.
+
+FIXTURE_SITE = paths.REPO_ROOT / "tests" / "fixtures" / "publish-site"
+FIXTURE_GROUP = 9  # G9, the rehearsal's group; the base scenario's groups are 4 and 7
+
+
+def _fixture_page(default: str) -> str:
+    """The fixture site's address for `--page`, or Refused."""
+    from jura_growth.agents.publish import fixture
+
+    try:
+        site = fixture.active()
+    except fixture.FixtureRefused as refused:
+        raise Refused(str(refused)) from None
+    if site is None:
+        raise Refused(f"{fixture.ENV} isn't set: serve tests/fixtures/publish-site on loopback and export "
+                      f"{fixture.ENV}=http://publish-fixture.localhost:8765")
+    page = _options.get("page") or default
+    pages = sorted(p.name for p in FIXTURE_SITE.glob("*.html") if p.name != "index.html")
+    if page not in pages:
+        raise Refused(f"--page must name a fixture page ({', '.join(pages)}), not {page!r}")
+    return f"{site.base}/{page}"
+
+
+def fixture_post(conn) -> None:
+    """R1 to R4 and R6: an approved Facebook item whose target is the fixture page `--page` names
+    (default `page.html`, the composer)."""
+    _approve(conn, _facebook_item(conn, _fixture_page("page.html")).approval)
+
+
+def fixture_join(conn) -> None:
+    """R5: an approved join for G9, a good-fit group not yet joined whose address is the fixture page
+    `--page` names (default `join.html`, the membership questions)."""
+    from jura_growth.agents.publish import items
+
+    url = _fixture_page("join.html")
+    if db.one(conn, "SELECT id FROM community_groups WHERE id = ?", (FIXTURE_GROUP,)) is not None:
+        raise Refused(f"group {FIXTURE_GROUP} is already seeded: start again from a fresh `mktemp -d`")
+    _community_browser()
+    now = timeutil.stamp()
+    with db.transaction(conn):
+        conn.execute(
+            "INSERT INTO community_groups (id, channel, name, slug, url, url_key, fit, fit_reason, joined, rules_confirmed,"
+            " created_at, updated_at) VALUES (?, 'facebook', 'G9 Rehearsal group', 'g9-rehearsal', ?, ?, 'good fit',"
+            " 'the rehearsal group', 0, 0, ?, ?)",
+            (FIXTURE_GROUP, url, url.split("://", 1)[1], now, now),
+        )
+        made = items.create_join(conn, FIXTURE_GROUP, run_id=None)
+    if made.approval is None:
+        raise Refused(f"no join card could be raised: {made.why}")
+    cards.sweep_safely(conn)
+    _approve(conn, made.approval)
+
+
+for _scenario in (social_post, social_approved, claimed_not_closed, community_plan, fixture_post, fixture_join):
     _scenario.own_transactions = True  # type: ignore[attr-defined]
 
 
@@ -601,6 +668,8 @@ SCENARIOS: dict[str, Callable] = {
     "social-approved": social_approved,
     "claimed-not-closed": claimed_not_closed,
     "community-plan": community_plan,
+    "fixture-post": fixture_post,
+    "fixture-join": fixture_join,
 }
 
 
@@ -653,9 +722,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--today", type=_day_argument, help="the day to date the rows from (default: today in SGT)")
     parser.add_argument("--lead", type=int, help="edit-draft: the lead whose queued draft to change")
     parser.add_argument("--group", type=int, help="note-rules: the group whose rules to raise, such as 4 for G4")
+    parser.add_argument("--page", help="fixture-post, fixture-join: the fixture page the item targets, such as login.html")
     options = parser.parse_args(argv)
     try:
-        notes = seed(options.folder, options.scenario, today=options.today, lead=options.lead, group=options.group)
+        notes = seed(options.folder, options.scenario, today=options.today, lead=options.lead, group=options.group,
+                     page=options.page)
     except Refused as refused:
         print(f"refused: {refused}")
         return 2

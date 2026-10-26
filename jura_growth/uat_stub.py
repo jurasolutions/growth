@@ -11,11 +11,16 @@ decides whether they may be used:
   Resend, and stubbed sends must never be checked against the real D1.
 
 A refused URL is never swapped for the real service: callers raise, and `live_problems` lists why.
+
+`loopback_problem` is the one loopback guard: the stubs' URLs here and the publish rehearsal's
+fixture site (`agents/publish/fixture.py`, BP-07) both go through it. It reads a URL the way a
+browser's WHATWG parser would, refusing anything the two parsers could read differently.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -25,7 +30,11 @@ from jura_growth import paths
 RESEND_ENV = "JURA_GROWTH_RESEND_BASE_URL"
 D1_ENV = "JURA_GROWTH_D1_BASE_URL"
 PAIR = (RESEND_ENV, D1_ENV)
-_LOOPBACK = ("127.0.0.1", "localhost", "::1")
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
+# Anything a browser reads differently from Python's `urlsplit`: a backslash (read as `/`),
+# percent-encoding, a user name, whitespace or a control character (stripped), and any non-ASCII
+# character (folded by IDNA, so `。` reads as `.`). Code review 07, B1.
+_UNSAFE = re.compile(r"[\\%@\s\x00-\x1f\x7f]|[^\x00-\x7f]")
 
 
 class StubRefused(RuntimeError):
@@ -48,16 +57,39 @@ def temporary_data_problem() -> str | None:
     return None
 
 
+def loopback_url_ok(value: str, hosts: tuple[str, ...] = LOOPBACK, *, bare: bool = False) -> bool:
+    """Whether `value` is a plain `http://` URL on exactly one of `hosts`, read as a browser reads
+    it: no character the parsers disagree on (`_UNSAFE`), a well-formed port, and, with `bare`,
+    no path beyond `/`, query or fragment."""
+    if _UNSAFE.search(value):
+        return False
+    try:
+        parts = urlsplit(value)
+        parts.port  # noqa: B018 - raises on a malformed port
+    except ValueError:
+        return False
+    if bare and (parts.path not in ("", "/") or parts.query or parts.fragment or "?" in value or "#" in value):
+        return False
+    return parts.scheme == "http" and parts.hostname in hosts
+
+
+def loopback_problem(variable: str, *, hosts: tuple[str, ...] = LOOPBACK, bare: bool = False,
+                     expected: str = "the local UAT stub (http://127.0.0.1:<port>)",
+                     purpose: str = "the UAT stub") -> str | None:
+    """Why the loopback URL in `variable` may not be used, or None (also None when it is unset):
+    it must pass `loopback_url_ok`, and the data folder must be a temporary one."""
+    value = os.environ.get(variable)
+    if not value:
+        return None
+    if not loopback_url_ok(value, hosts, bare=bare):
+        return f"{variable} must point at {expected}, not {value}"
+    problem = temporary_data_problem()
+    return f"{variable} is for {purpose} only, and {problem}" if problem else None
+
+
 def url_problem(variable: str) -> str | None:
     """Why the base URL in `variable` may not be used, or None (also None when it is unset)."""
-    base = os.environ.get(variable)
-    if not base:
-        return None
-    parts = urlsplit(base)
-    if parts.scheme != "http" or parts.hostname not in _LOOPBACK:
-        return f"{variable} must point at the local UAT stub (http://127.0.0.1:<port>), not {base}"
-    problem = temporary_data_problem()
-    return f"{variable} is for the UAT stub only, and {problem}" if problem else None
+    return loopback_problem(variable)
 
 
 def pair_problem() -> str | None:
