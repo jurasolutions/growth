@@ -524,3 +524,9 @@ def test_a_paused_factory_refuses_the_approval_without_claiming(tmp_path, conn, 
     assert answer.answer == "refused" and "paused" in answer.text
     assert aw.get(conn, request.id).status == "pending" and aw.claims(conn) == 0
     assert db.scalar(conn, "SELECT count(*) FROM app_builds") == 0
+    if brake == "PAUSE file":  # G19: once the brake clears, the same request can be approved
+        paths.pause_file().unlink()
+    else:
+        pause.resume(conn, "app-factory")
+    assert aw.approve(conn, request, args={}).answer == "recorded"
+    assert db.scalar(conn, "SELECT count(*) FROM app_builds") == 1 and aw.claims(conn) == 1
