@@ -276,12 +276,23 @@ def _listed(kind: str | None) -> list[dict]:
 
 
 def _masked(reply: Reply) -> Reply:
-    """The text and the listing as they may reach Discord."""
+    """The text and the listing as they may reach Discord.
+
+    If the named contacts or the Keychain values can't be loaded, masking
+    still runs on what is known (configured secrets always go first) and a
+    `remote.masking_degraded` event says so: in growth.db, or only in the
+    JSONL mirror when the database can't be opened (code review 11)."""
     try:
         with db.session() as conn:
-            privacy.load_for_masking(conn)
-    except Exception:  # noqa: BLE001 - masking still runs on what is known; secrets go first
-        pass
+            try:
+                privacy.load_for_masking(conn)
+            except Exception as error:  # noqa: BLE001 - the answer still goes back, masked
+                log.event(conn, "remote.masking_degraded", {"error": f"{type(error).__name__}: {error}"}, level="warning")
+    except Exception as error:  # noqa: BLE001 - no database: the mirror holds the event
+        try:
+            log.event(None, "remote.masking_degraded", {"error": f"{type(error).__name__}: {error}"}, level="warning")
+        except OSError:
+            pass  # nowhere to write it; the answer still goes back, masked
     reply.text = _cut(_defuse(privacy.for_discord(reply.text)))
     if reply.approvals is not None:
         reply.approvals = [

@@ -613,6 +613,36 @@ def test_the_sweep_finds_nothing_planted_in_remote_answers(conn, planted_reason)
     sweep.assert_clean(seen, None, planted_reason)
 
 
+def test_masking_that_cant_load_what_it_knows_still_masks_and_leaves_an_event(conn, world, monkeypatch, d2_secrets):
+    """Code review 11: the fallback masks secrets as before, and says so."""
+    from jura_growth import privacy
+    from sweep import RESEND_KEY
+
+    def broken(conn):
+        raise RuntimeError("contacts unreadable")
+
+    monkeypatch.setattr(privacy, "load_for_masking", broken)
+    remote(["pause", "all", RESEND_KEY])
+    result = remote(["status"])
+    assert result.exit_code == 0 and RESEND_KEY not in result.output
+    degraded = aw.events(conn, "remote.masking_degraded")
+    assert degraded and degraded[-1] == {"error": "RuntimeError: contacts unreadable"}
+
+
+def test_masking_without_a_database_leaves_its_event_in_the_mirror(world, monkeypatch):
+    import sqlite3
+    import types
+
+    def session():
+        raise sqlite3.OperationalError("database is locked")
+
+    # Only remote's own opens fail (masking, its event); the status command opens its own.
+    monkeypatch.setattr(remote_mod, "db", types.SimpleNamespace(session=session))
+    result = remote(["status"])
+    assert result.exit_code == 0
+    assert aw.mirrored("remote.masking_degraded")[-1] == {"error": "OperationalError: database is locked"}
+
+
 def test_the_event_holds_the_words_and_never_the_output(conn, planted_reason):
     output = remote(["status"]).output
     assert planted_reason.marker in output
