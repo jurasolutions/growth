@@ -13,9 +13,10 @@ from datetime import date
 import pytest
 import yaml
 
-from jura_growth import db, paths
-from jura_growth.agents.outreach import send
-from test_scout_support import CONTROL_ID, REGISTRY, d1_env, fake_d1, fake_resend, outreach_requests
+from discord_double import discord_double  # noqa: F401 - a fixture
+from jura_growth import config, db, paths
+from jura_growth.agents.outreach import approval, send
+from test_scout_support import CONTROL_ID, REGISTRY, d1_env, decide, fake_d1, fake_resend, outreach_requests
 from uat import seed
 
 TUESDAY = date(2026, 11, 17)  # a business day; the business day before it is Mon 16 Nov
@@ -174,3 +175,71 @@ def test_outreach_live_refuses_a_stub_that_isnt_on_this_mac(window, monkeypatch)
     monkeypatch.setenv(send.RESEND_BASE_ENV, "https://api.resend.com")
     with pytest.raises(seed.Refused, match="stub"):
         seed.seed(window, "outreach-live", today=TUESDAY)
+
+
+# --- S4: the requests come from the outreach commands (A4) ----------------------------------
+
+
+def buttons_on(window) -> None:
+    """A4: Ting Yu sets `approvals.discord_buttons: true` in `$UAT/config/settings.yaml` only."""
+    path = window / "config" / "settings.yaml"
+    text = path.read_text()
+    assert text.count("discord_buttons: false") == 1
+    path.write_text(text.replace("discord_buttons: false", "discord_buttons: true"))
+    config.reset_caches()
+
+
+@pytest.fixture
+def cards(live, window, monkeypatch, request):
+    """Buttons on, the clock at 10:00, Discord behind its double."""
+    buttons_on(window)
+    monkeypatch.setenv("JURA_GROWTH_NOW", f"{TUESDAY.isoformat()}T10:00:00+08:00")
+    return request.getfixturevalue("discord_double")
+
+
+def message_of(conn, lead_id: int) -> int:
+    return db.scalar(conn, "SELECT id FROM outreach_messages WHERE lead_id = ? AND status = 'queued'", (lead_id,))
+
+
+def request_for(conn, lead_id: int, status: str = "pending"):
+    subject = approval.subject_of(message_of(conn, lead_id))
+    (found,) = [r for r in outreach_requests(conn, status) if r.subject == subject]
+    return found
+
+
+def test_the_first_send_due_raises_todays_5_requests_and_posts_5_cards(live, cards):
+    assert send.live_problems() == []
+    conn = db.connect()
+    try:
+        result = send.send_due(conn)
+        assert len(outreach_requests(conn, "pending")) == 5
+        assert request_for(conn, 233)  # due since the previous business day
+        assert len(approval.without_request(conn)) == 12  # 17 queued, less the 5 asked about
+    finally:
+        conn.close()
+    assert result.note.startswith("nothing approved to send")
+    assert len(cards.posts("approvals")) == 5
+    assert live == []  # nothing is approved, so nothing reaches the stub
+    conn = db.connect()
+    try:
+        topped_up = send.send_due(conn)  # the next slot: no room, so no new request
+    finally:
+        conn.close()
+    assert topped_up.note.endswith("5 waiting for a decision, 12 waiting for a request slot")
+    assert len(cards.posts("approvals")) == 5
+
+
+def test_an_approved_email_goes_to_the_stub_once(live, cards):
+    conn = db.connect()
+    try:
+        send.send_due(conn)
+        assert decide(conn, request_for(conn, 233)).answer == "recorded"
+        result = send.send_due(conn)
+        again = send.send_due(conn)
+    finally:
+        conn.close()
+    assert result.summary and result.summary.startswith("sent message"), result.note
+    assert "sent message" not in (again.summary or "")
+    (sent,) = live
+    assert str(sent.url) == f"{STUB}/emails"
+    assert json.loads(sent.content)["to"] == ["info@example.com.sg"]

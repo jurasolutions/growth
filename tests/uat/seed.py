@@ -208,29 +208,45 @@ def _contact(conn, lead_id: int, email: str, kind: str, source: str) -> int:
     return int(cursor.lastrowid or 0)
 
 
-def _queued(conn, lead_id: int, contact_id: int, queued_at: str, send_after: date, body: str) -> None:
-    conn.execute(
-        "INSERT INTO outreach_messages (lead_id, contact_id, kind, subject, draft_body, body_text, body_html, send_after,"
-        " queued_at, status) VALUES (?, ?, 'first', 'Quotes that write themselves', ?, ?, ?, ?, ?, 'queued')",
-        (lead_id, contact_id, body, body, f"<p>{body}</p>", send_after.isoformat(), queued_at),
+SUBJECT = "Quotes that write themselves"
+TOOL = "quote-builder"  # live in the site registry, so a draft linking it passes the send-time brand gate
+
+
+def draft(company: str) -> str:
+    """A first email that passes the `email` brand channel as it stands, so an approved one sends."""
+    return (
+        f"I saw on the {company} site that each quote is still typed up by hand. We've made a free quote "
+        f"builder that turns a job into a clean PDF quote: jurasolutions.sg/apps/{TOOL}\n\n"
+        "It sits with our other small tools at jurasolutions.sg/apps. There's nothing to install, and what you "
+        "enter stays in your browser.\n\n"
+        "If quotes eat into your evenings, reply and tell me how they work today. That's the kind of work we "
+        "help Singapore teams automate."
     )
 
 
+def _queued(conn, lead_id: int, contact_id: int, queued_at: str, send_after: date, body: str) -> int:
+    cursor = conn.execute(
+        "INSERT INTO outreach_messages (lead_id, contact_id, kind, tool_slug, subject, draft_body, body_text, body_html,"
+        " send_after, queued_at, status) VALUES (?, ?, 'first', ?, ?, ?, ?, ?, ?, ?, 'queued')",
+        (lead_id, contact_id, TOOL, SUBJECT, body, body, f"<p>{body}</p>", send_after.isoformat(), queued_at),
+    )
+    return int(cursor.lastrowid or 0)
+
+
 def s4_queued_emails(conn) -> None:
-    body = "Your team still types quotes by hand. We can automate 80%+ of the manual steps."
     _lead(conn, 233, "Example Pte Ltd", "example.com.sg", score=78)
     contact = _contact(conn, 233, "info@example.com.sg", "role", "https://example.com.sg/contact")
     previous = previous_business_day()
-    _queued(conn, 233, contact, at(previous, "09:12"), previous, body)
+    _queued(conn, 233, contact, at(previous, "09:12"), previous, draft("Example"))
     for lead_id in range(240, 255):
         domain = f"lead{lead_id}.example.sg"
         _lead(conn, lead_id, f"Lead {lead_id} Pte Ltd", domain)
         contact = _contact(conn, lead_id, f"hello@{domain}", "role", f"https://{domain}/contact")
         planted = f" (draft notes: key {RESEND_KEY})" if lead_id == 254 else ""  # S6
-        _queued(conn, lead_id, contact, at(today(), "09:05"), today(), body + planted)
+        _queued(conn, lead_id, contact, at(today(), "09:05"), today(), draft(f"Lead {lead_id}") + planted)
     _lead(conn, 260, "Tan Logistics Pte Ltd", "tanlogistics.example.sg")
     contact = _contact(conn, 260, NAMED_ADDRESS, "named", "https://tanlogistics.example.sg/enquiries")
-    _queued(conn, 260, contact, at(today(), "09:05"), today(), body)
+    _queued(conn, 260, contact, at(today(), "09:05"), today(), draft("Tan Logistics"))
 
 
 def s5_s6_planted(conn) -> None:
