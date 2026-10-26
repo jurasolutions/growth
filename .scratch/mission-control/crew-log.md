@@ -785,3 +785,13 @@ artifacts: merge of bp 02b (527b1ca .. b6ff275)
 decisions: round-2 review approve (12 probes incl. rules changed after approval, days narrowed, answers changed twice); merged and pushed; bp 06 now needs only bp 03
 questions: -
 evidence:  merged branch pytest -rs -> see commit
+
+## 2026-10-27T04:43+0800 reviewer (bp 03) via conductor
+status:    done
+persona:   reviewer
+ticket:    bp-03
+artifacts: .scratch/browser-publishing/reviews/code-review-03.md
+decisions: changes-requested; B1 model or page text reaches the run row, #alerts and run updates; B2 fragmented or pre-claim typing passes the audit; should fix S-4, S-7, S-8, S-9 and drift; --chrome verified publish-only
+decisions: conductor adopts the crew recommendation: no screenshot file; AC-P6.1 and the stop paragraph amended (reason and run id only); sent as fix round 1
+questions: -
+evidence:  2742 passed; repro_audit and fake-claude run reproduce B1 and B2
