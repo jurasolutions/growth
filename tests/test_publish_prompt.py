@@ -77,7 +77,7 @@ def part(text: str, label: str) -> str:
     """The `- **<label>:** ...` bullet of a section, with its continuation lines."""
     match = re.search(rf"^- \*\*{label}:\*\*(.+(?:\n(?!- \*\*).+)*)", text, re.M)
     assert match, label
-    return match.group(1)
+    return " ".join(match.group(1).split())  # the prompt wraps lines anywhere
 
 
 @pytest.mark.parametrize("platform", list(SOCIAL))
@@ -119,13 +119,51 @@ def test_instagram_posts_every_carousel_slide_in_the_order_given():
     post = part(text, "Post")
     assert "carousel" in post.lower()
     assert re.search(r"every image", post) and re.search(r"in the order given", post)
-    assert re.search(r"one `file_upload` call", post)
     assert re.search(r"never reorder", post, re.I)
 
 
+UPLOAD_BUTTONS = ("Select from computer", "Photo/video", "media", "photo button", "Add a photo")
+
+
+@pytest.mark.parametrize("platform", list(SOCIAL))
+def test_images_go_up_only_through_the_file_input_never_an_upload_button(platform):
+    """Code review 04, S3: clicking an upload button opens a native file picker the extension can't
+    see or close. The file input is found with `find` and its ref passed to `file_upload`."""
+    post = part(section(SOCIAL[platform]), "Post")
+    assert "`find`" in post and "`file_upload`" in post and "ref" in post
+    assert re.search(r"never click [^.]*upload button", post, re.I)
+    for button in UPLOAD_BUTTONS:
+        # an instruction to click one; "never click ..." is the rule itself
+        assert not re.search(rf"(?<!never )\bclick\b[^.]*{re.escape(button)}", post, re.I), button
+    steps_text = " ".join(" ".join(steps()).split())
+    assert "never click an upload button" in steps_text.lower()
+
+
+def test_slides_may_go_up_in_several_calls_but_always_in_order():
+    """N8: five slides may be too large for one call; the audit takes several calls, in order."""
+    post = part(section(SOCIAL["instagram"]), "Post")
+    assert re.search(r"several `file_upload` calls", post) and re.search(r"first to last", post)
+
+
 def test_the_permalinks_are_each_platforms_own_post_address():
-    assert "www.instagram.com/p/" in part(section(SOCIAL["instagram"]), "Permalink")
-    assert "www.linkedin.com/feed/update/urn:li:activity:" in part(section(SOCIAL["linkedin"]), "Permalink")
+    instagram = part(section(SOCIAL["instagram"]), "Permalink")
+    assert "www.instagram.com/p/" in instagram and "/reel/" in instagram
+    linkedin = part(section(SOCIAL["linkedin"]), "Permalink")
+    for form in ("urn:li:activity:", "urn:li:share:", "urn:li:ugcPost:"):
+        assert form in linkedin, form
+
+
+def test_every_named_permalink_is_one_publish_done_accepts():
+    """The prompt and `hosts.post_problem` agree on what a post's own address is (S4)."""
+    from jura_growth.agents.publish import hosts
+
+    for platform in ("instagram", "linkedin"):
+        named = re.findall(r"`(https://[^`]+)`", part(section(SOCIAL[platform]), "Permalink"))
+        assert named, platform
+        for url in named:
+            example = (url.replace("<code>", "C0deAbc123").replace("<number>", "7254000000000000000")
+                       .replace("…", "jura-solutions_automation", 1).replace("…", "abcd", 1))
+            assert hosts.post_problem(platform, example) is None, url
 
 
 def test_the_prompt_never_names_a_command_the_run_may_not_use():
