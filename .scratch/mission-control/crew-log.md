@@ -766,3 +766,13 @@ decisions: changes-requested; B1 claim allows a promotional post where promo day
 decisions: conductor: skipped or expired join proposals count toward 3 a week (crew recommendation); sent as fix round 1
 questions: -
 evidence:  2733 passed; probes p3, p4 (B1) and p5 (B2) reproduce
+
+## 2026-10-27T04:28+0800 conductor (bp 03 done; bp 07 added)
+status:    done
+persona:   conductor
+ticket:    bp-03, bp-07
+artifacts: crew/browser-publishing-03-browser-job (7 commits); issues/07-fixture-platform.md
+decisions: crew recommendations adopted: new ticket bp 07 (loopback-only fixture platform for R1-R6); try a file_upload parameter allow rule at R1; Chrome scope stays Facebook hosts plus business.facebook.com, no CDN hosts, until U18
+decisions: bp 03 sent to an adversarial review of Chrome scope
+questions: -
+evidence:  2742 passed, 0 skipped
