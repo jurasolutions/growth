@@ -148,3 +148,103 @@ def limits_window(day: date):
     from jura_growth.agents.publish import limits
 
     return limits.window_on(day)
+
+
+# --- community items (BP-02b; dataset D10) ------------------------------------------------------
+#
+# Groups and planned posts are written straight into `community_groups` and `community_posts`, as
+# the community run and `plan-add` leave them. `community.browser` is on (`community_config`).
+
+GROUP_TEXT = (
+    "Most invoice chasing follows the same three steps: a polite reminder, a firmer one, then a call. "
+    "If your accounting software can send the first two on a schedule, you only make the call. "
+    "What does your team do when an invoice is a week late?"
+)
+PROMO_TEXT = GROUP_TEXT + "\n\nWe write about this at Jura Solutions: https://jurasolutions.sg?utm_source=facebook_group"
+
+
+def community_config(monkeypatch, *, browser: bool = True, **overrides) -> None:
+    """`config/community.yaml` with `browser` set, over whatever `agent_config` already returns."""
+    real = config.agent_config
+
+    def patched(agent):
+        base = dict(real(agent))
+        if agent == "community":
+            base["browser"] = browser
+            base.update(overrides)
+        return base
+
+    monkeypatch.setattr(config, "agent_config", patched)
+
+
+_groups = {"n": 0}
+
+
+def group(conn, *, joined_as: str | None = "page", pages_allowed: str = "unknown", fit: str = "good fit",
+          rules: str | None = "Promotion is welcome.", rules_confirmed: int = 1, promo_days: str | None = "any",
+          post_days: str | None = "any", removed: int = 0, joined: int = 1, last_posted_at: str | None = None,
+          join_status: str | None = None) -> int:
+    """One Facebook group in the register, joined as the Jura Page with its rules and days
+    confirmed (any day open) unless told otherwise. `joined_as=None` leaves it unrecorded, so it
+    reads from the legacy `joined` flag."""
+    _groups["n"] += 1
+    number = _groups["n"]
+    url = f"https://www.facebook.com/groups/sg-owners-{number}"
+    cursor = conn.execute(
+        "INSERT INTO community_groups (channel, name, slug, url, url_key, promo_rules, fit, fit_reason, joined, "
+        "rules_confirmed, removed, promo_days_confirmed, post_days_confirmed, last_posted_at, joined_as_set, "
+        "pages_allowed, join_status, created_at, updated_at) "
+        "VALUES ('facebook', ?, ?, ?, ?, ?, ?, 'owners asking about admin', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (f"SG owners {number}", f"sg-owners-{number}", url, url.removeprefix("https://www."), rules, fit, joined,
+         rules_confirmed, removed, promo_days, post_days, last_posted_at, joined_as, pages_allowed, join_status,
+         timeutil.stamp(), timeutil.stamp()),
+    )
+    return int(cursor.lastrowid or 0)
+
+
+def not_joined(conn, **given) -> int:
+    """A good-fit group nobody has joined, its rules unconfirmed: one a join could be proposed for."""
+    return group(conn, **{"joined_as": None, "joined": 0, "rules_confirmed": 0, "promo_days": None,
+                          "post_days": None, **given})
+
+
+def planned(conn, group_id: int, *, day: date = DAY, text: str = GROUP_TEXT, image: Path | None = None,
+            status: str = "planned") -> int:
+    """A planned community post, past `plan-add`'s checks and the brand gate."""
+    week = f"{day.isocalendar().year}-W{day.isocalendar().week:02d}"
+    qa = {"brand": "pass", "attempt": 1, "rules": "any day", "rules_ok": None, "sources": []}
+    cursor = conn.execute(
+        "INSERT INTO community_posts (group_id, week, planned_day, kind, text, image_path, qa_json, status, created_at)"
+        " VALUES (?, ?, ?, 'post', ?, ?, ?, ?, ?)",
+        (group_id, week, day.isoformat(), text, str(image) if image else None, json.dumps(qa), status, timeutil.stamp()),
+    )
+    return int(cursor.lastrowid or 0)
+
+
+def community_item(conn, group_id: int | None = None, **given) -> tuple[items.Item, approvals.Approval]:
+    """A planned post in a group joined as the Page, its item and its pending request."""
+    group_id = group_id if group_id is not None else group(conn)
+    made = items.create_community_post(conn, planned(conn, group_id, **given), run_id=None)
+    assert made.item is not None and made.approval is not None, made.why
+    return made.item, made.approval
+
+
+def join_item(conn, group_id: int | None = None) -> tuple[items.Item, approvals.Approval]:
+    """A good-fit group not joined as the Page, its join item and its pending request."""
+    made = items.create_join(conn, group_id if group_id is not None else not_joined(conn), run_id=None)
+    assert made.item is not None and made.approval is not None, made.why
+    return made.item, made.approval
+
+
+QUESTIONS = [
+    {"question": "Why do you want to join?", "answer": "We help small teams automate admin, and we share what we learn."},
+    {"question": "Do you agree to the group rules?", "answer": "Yes."},
+]
+
+
+def answers_item(conn, join: items.Item | None = None, answers=None) -> tuple[items.Item, approvals.Approval]:
+    """The membership answers for a join, as `publish done --outcome questions` will raise them."""
+    join = join if join is not None else join_item(conn)[0]
+    made = items.create_join_answers(conn, join, QUESTIONS if answers is None else answers, run_id=None)
+    assert made.item is not None and made.approval is not None, made.why
+    return made.item, made.approval
