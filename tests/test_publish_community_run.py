@@ -258,3 +258,39 @@ def test_a_post_typed_outside_its_own_group_fails_the_run_and_pauses(conn, fake,
     assert outcome.status == "failed"
     assert pause.is_paused(conn, "publish")
     assert "outside the claimed item's own page" in outcome.error and "some-other-group" not in outcome.error
+
+
+def test_an_audit_failed_post_names_its_posted_record_as_possibly_wrong_and_keeps_it(conn, fake, discord_double):
+    """Code review 05, S1 (R6): the run posts on the Page's timeline, then records its own group's
+    address. The record stays (the post may be live, and `planned` would invite a repost), but the
+    alert, the run row and the #community line say which record to check."""
+    group_id = pw.group(conn)
+    found, request = approved_post(conn, group_id)
+    group = group_of(conn, group_id)["url"]
+    fake.scenario([*claim(), *post_in(group, typed_at=t.PAGE)], "OK: posted {A}")
+
+    outcome = run()
+
+    assert outcome.status == "failed" and pause.is_paused(conn, "publish")
+    warning = (f"{request.id}'s posted record for group {group_id} may be wrong: check the group, and the "
+               f"Page's own timeline")
+    assert warning in outcome.error
+    [line] = [line for line in outcome.summary.splitlines() if request.id in line]
+    assert line.endswith("· the audit failed")
+    [alert] = alerts(discord_double)
+    assert warning in alert
+    [update] = discord_double.contents("community")
+    assert "the audit failed" in update
+    post = post_row(conn, found.ref_id)  # kept: the post may be live
+    assert (post["status"], post["posted_via"]) == ("posted", "browser")
+    assert group_of(conn, group_id)["last_posted_at"] == "2026-11-10"
+
+
+def test_a_clean_post_carries_no_audit_warning(conn, fake):
+    group_id = pw.group(conn)
+    approved_post(conn, group_id)
+    fake.scenario([*claim(), *post_in(group_of(conn, group_id)["url"])], "OK: posted {A}")
+
+    outcome = run()
+
+    assert outcome.status == "ok" and "audit" not in outcome.summary and "may be wrong" not in (outcome.error or "")
