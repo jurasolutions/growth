@@ -653,3 +653,12 @@ decisions: 10b fix round verified by the conductor: all 5 reviewer probes now fa
 decisions: setup item: Ting Yu sets config/apps.yaml pages_project to the landing page Cloudflare Pages project before ticket 16 (UAT A5 uses example)
 questions: -
 evidence:  merged branch pytest -rs -> see next commit
+
+## 2026-10-27T03:32+0800 conductor (merge mc 18)
+status:    done
+persona:   conductor
+ticket:    18
+artifacts: merge of 18 (33ffd45 1054f37 591fd4d)
+decisions: review approved; fix round verified (either stub URL alone refused; one resolver uat_stub.base()); seed.py import conflict with 05 resolved by keeping both import sets; merged and pushed
+questions: -
+evidence:  merged branch pytest -rs -> 2433 passed, 0 skipped
