@@ -65,6 +65,33 @@ PAGE_NAMES = {"instagram": "an Instagram account's profile (/<account>/)",
               "linkedin": "a LinkedIn company page (/company/<page>/), never a person's profile"}
 
 
+def _path(url: str) -> str:
+    """`url`'s path, lower-cased, with no query, fragment or trailing slash."""
+    return urlsplit(url.strip()).path.rstrip("/").lower()
+
+
+def within(url: str, place: str) -> bool:
+    """Whether `url` is `place` or a page under it, on any of the same platform's hosts: a group's
+    own address (`/groups/<id>`), its posts, members or About. The query and fragment don't count;
+    the path must match whole segments, so `/groups/a-10` isn't inside `/groups/a-1`. The host is
+    checked separately (`url_problem`)."""
+    try:
+        path, root = _path(url), _path(place)
+    except ValueError:
+        return False
+    return bool(root) and (path == root or path.startswith(root + "/"))
+
+
+def same_place(url: str, place: str) -> bool:
+    """`url` is exactly `place` (`publish done --outcome --url`): the same host and path, whatever
+    the query, fragment or trailing slash."""
+    try:
+        return (urlsplit(url.strip()).hostname or "").lower() == (urlsplit(place.strip()).hostname or "").lower() \
+            and _path(url) == _path(place)
+    except ValueError:
+        return False
+
+
 def problem(platform: str, url: str | None) -> str | None:
     """Why `url` isn't an address on `platform`, or None when it is. While the fixture platform is
     on (`fixture.py`, BP-07), every platform's only address is the fixture site. Raises

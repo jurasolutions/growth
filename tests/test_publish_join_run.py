@@ -51,6 +51,10 @@ def at_group(join, *steps) -> list[dict]:
                    *[{**step, "result": step["result"].replace(t.PAGE, url)} for step in steps])
 
 
+def escape(join) -> dict:
+    return t.page("computer", {"action": "key", "text": "Escape"}, "Pressed Escape.", url=group_url(join))
+
+
 def click(ref: str, text: str = "Clicked.") -> dict:
     return t.page("computer", {"action": "left_click", "ref": ref}, text)
 
@@ -98,18 +102,22 @@ def questions_run(join) -> list[dict]:
         *claim(),
         *at_group(join, click("ref_7", "Clicked Join group."),
                   t.page("get_page_text", {}, "Answer membership questions\nWhy do you want to join?")),
-        chrome(t.key("Escape")),  # the form closed, nothing submitted
+        chrome(escape(join)),  # the form closed, nothing submitted
         {"write": "q.json", "text": json.dumps(pw.QUESTIONS)},
         done("--outcome", "questions", "--file", "{WORK}/q.json"),
         chrome(t.closed()),
     ]
 
 
-def answers_run(join, answers: list[str]) -> list[dict]:
+def answers_run(join, answers: list[str], *, url: str | None = None, outcome: str = "requested") -> list[dict]:
+    """The answers typed and submitted on the group's own page, or on `url` (code review 06, R1)."""
+    where = url or group_url(join)
     steps = [*claim(), *at_group(join, click("ref_7", "Clicked Join group."))]
     for number, answer in enumerate(answers):
-        steps += [chrome(click(f"ref_{20 + number}")), chrome(t.typed(answer).copy())]
-    steps += [chrome(click("ref_40", "Clicked Submit.")), done("--outcome", "requested"), chrome(t.closed())]
+        steps += [chrome(t.page("computer", {"action": "left_click", "ref": f"ref_{20 + number}"}, "Clicked.", url=where)),
+                  chrome(t.page("computer", {"action": "type", "text": answer}, "Typed.", url=where))]
+    steps += [chrome(t.page("computer", {"action": "left_click", "ref": "ref_40"}, "Clicked Submit.", url=where)),
+              done("--outcome", outcome), chrome(t.closed())]
     return steps
 
 
@@ -155,7 +163,8 @@ def test_questions_submit_nothing_and_a_later_run_submits_exactly_the_approved_a
 def test_typing_at_the_questions_before_the_answers_are_approved_fails_the_run(conn, fake, approved_join, discord_double):
     join, _ = approved_join
     steps = questions_run(join)
-    steps.insert(steps.index(chrome(t.key("Escape"))), chrome(t.typed(pw.QUESTIONS[0]["answer"])))
+    typing = t.page("computer", {"action": "type", "text": pw.QUESTIONS[0]["answer"]}, "Typed.", url=group_url(join))
+    steps.insert(steps.index(chrome(escape(join))), chrome(typing))
     fake.scenario(steps, "OK: {A} asks membership questions")
 
     outcome = run()
@@ -176,6 +185,70 @@ def test_answers_other_than_the_approved_ones_fail_the_run(conn, fake, approved_
     outcome = run()
 
     assert outcome.status == "failed" and pause.is_paused(conn, "publish")
+
+
+# --- code review 06, B1: a group item acts only in its own group -------------------------------------------
+
+
+def test_a_join_made_in_another_group_fails_the_run_and_pauses(conn, fake, approved_join, discord_double):
+    """R5: the run claimed the join for one group, then joined another and recorded the first."""
+    join, _ = approved_join
+    other = "https://www.facebook.com/groups/some-other-group"
+    fake.scenario([*claim(), *browser(t.created(), t.opened(other), t.page("get_page_text", {}, JOIN_PAGE, url=other),
+                                      t.page("computer", {"action": "left_click", "ref": "ref_7"}, "Clicked Join group.",
+                                             url=other)),
+                   done("--outcome", "requested"), chrome(t.closed())], "OK: join requested for {A}")
+
+    outcome = run()
+
+    assert outcome.status == "failed"
+    assert pause.is_paused(conn, "publish")
+    assert "outside the claimed item's own page" in outcome.error and "some-other-group" not in outcome.error
+
+
+def test_answers_posted_on_the_page_timeline_fail_the_run_and_pause(conn, fake, approved_join, monkeypatch):
+    """R1: approved answers typed into the Jura Page's own composer and posted there."""
+    join, _ = approved_join
+    fake.scenario(questions_run(join), "OK")
+    run()
+    [second] = approvals.pending(conn)
+    pw.decide(conn, second)
+    pw.at(monkeypatch, "2026-11-10T11:00:00+08:00")
+    fake.scenario(answers_run(join, [pair["answer"] for pair in pw.QUESTIONS], url=t.PAGE, outcome="member"), "OK")
+
+    outcome = run()
+
+    assert outcome.status == "failed" and pause.is_paused(conn, "publish")
+    assert "outside the claimed item's own page" in outcome.error
+
+
+def test_a_join_outcome_url_must_be_the_items_own_group(conn, fake, approved_join):
+    join, _ = approved_join
+    fake.scenario([*claim(), *at_group(join, click("ref_7", "Clicked Join group.")),
+                   done("--outcome", "requested", "--url", "https://www.facebook.com/groups/some-other-group"),
+                   done("--outcome", "requested", "--url", group_url(join) + "/?ref=share"), chrome(t.closed())], "OK")
+
+    run()
+
+    assert [c["exit"] for c in fake.cli[1:]] == [1, 0]
+    assert "isn't the claimed item's own group" in fake.cli[1]["output"]
+
+
+def test_the_audit_takes_its_hosts_from_the_claimed_item_never_every_enabled_platform(
+        conn, fake, approved_join, monkeypatch):
+    """Code review 06, S1 (and 04's B1): with another platform also enabled, a group item's tab on
+    that platform's host fails. Hosts from the union of enabled platforms would let it pass."""
+    fake.social(lambda data: data["platforms"]["instagram"].update(publish_mode="browser", page_url=pw.INSTAGRAM_URL))
+    join, _ = approved_join
+    elsewhere = "https://www.instagram.com/jura-test-page"
+    fake.scenario([*claim(), *at_group(join, click("ref_7", "Clicked Join group.")),
+                   chrome(t.page("get_page_text", {}, "Instagram", url=elsewhere)),
+                   done("--outcome", "requested"), chrome(t.closed())], "OK")
+
+    outcome = run()
+
+    assert outcome.status == "failed" and pause.is_paused(conn, "publish")
+    assert "www.instagram.com isn't one of the publish hosts" in outcome.error
 
 
 # --- AC-P4.3 the join screen offers no way to act as the Page --------------------------------------------------

@@ -24,7 +24,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from jura_growth import approvals, db, gate, log, timeutil
-from jura_growth.agents.publish import items
+from jura_growth.agents.publish import hosts, items
 
 JOIN_OUTCOMES = ("requested", "member", "declined")
 QUESTIONS = "questions"
@@ -108,6 +108,8 @@ def record(conn: sqlite3.Connection, request: approvals.Approval, found: items.I
         return _answers(conn, request, found, answers or [], run_id)
     if found.state != "claimed":
         raise Refused(f"{request.id}'s item isn't claimed (it is {found.state})")
+    if url and not hosts.same_place(url, found.target_url):
+        raise Refused("--url isn't the claimed item's own group; leave it out, or give the group's own address")
     _finish(conn, found, outcome, url)
     log.event(conn, "publish.done", {"item": found.label, "approval": request.id, "outcome": outcome},
               agent=items.AGENT, run_id=run_id)

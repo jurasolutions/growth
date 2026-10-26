@@ -198,8 +198,10 @@ def _audit(run_id: int, claimed: list[items.Item]) -> audit.Audit:
     # Only the claimed item's own platform: an item posted on another enabled platform fails (B1).
     # While the fixture platform is on, only the fixture site (BP-07).
     own = tuple(dict.fromkeys(item.platform for item in claimed)) or None
+    # A group item is held to its own group's address as well (code review 06, B1).
+    places = [item.target_url for item in claimed if item.kind in outcomes.GROUP_KINDS]
     return audit.audit(transcripts.read(path), hosts=scope.browser_hosts(own), approved=approved, images=images,
-                       site=fixture.active())
+                       site=fixture.active(), places=places)
 
 
 def _approved_texts(item: items.Item) -> list[str]:
