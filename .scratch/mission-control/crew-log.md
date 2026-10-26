@@ -931,3 +931,25 @@ artifacts: merge b185969 (fix round b72ef32 S1, ba3d2c8 N8, 7727a25 S2)
 decisions: fix round verified by the conductor (audit-failed post kept and named, never reset; one removal helper; U14 permalink-form step); merged
 questions: -
 evidence:  3295 passed, 0 skipped on crew/mission-control after the merge
+
+## 2026-10-27T07:18+0800 reviewer (final pre-release review)
+status:    done
+persona:   reviewer
+ticket:    final
+artifacts: .scratch/mission-control/reviews/code-review-final.md
+decisions: verdict approve-with-follow-ups: no blocker; every outward action claims an approval over exact bytes, decisions only via the SSH forced command, no blocked path touched
+decisions: Sp1 (killed publish run not paused before next claim, AC-P10.1) and Sp2 (one-pager posts FAIL: text unescaped, MC §4.3) recommended fixed on-branch before G4
+decisions: St1 NFC wording vs ADR 0003, St2 .env.example missing APPROVALS/MISSION_CONTROL webhooks, St3 duplicated _normal; Sp3 release-plan answer not re-fetchable; nits St4-St8, Sp4-Sp5
+questions: fix Sp1+Sp2 before merge or ship as follow-ups? Recommended: fix before merge (small, test-first)
+evidence:  uv run pytest -rs -p no:cacheprovider -o addopts="" (temp data/outputs) -> 3295 passed, 0 skipped, 147s
+evidence:  live growth.db mtime unchanged; git status clean; blocked-path grep on diff -> none
+evidence:  same-process second flock blocks -> is_held(job) True inside the run (Sp1 mechanism)
+
+## 2026-10-27T07:18+0800 conductor (final review)
+status:    done
+persona:   conductor
+ticket:    final
+artifacts: .scratch/mission-control/reviews/code-review-final.md
+decisions: adopt the reviewer recommendation: fix on the branch before the PR. One developer fix round for Sp1 (orphaned claim settles and pauses), Sp2 (one-pager escapes model FAIL lines), Sp3 (release-plan answer re-fetchable), St1 (no-NFC wording; drop NFC in releases and group_rules), St2 (.env.example webhooks), St3 (one _normal), St8 (operating card count). Nits St4-St7, Sp4 left as follow-ups; Sp5 PRD text at move to done
+questions: -
+evidence:  3295 passed, 0 skipped
