@@ -38,7 +38,10 @@ def main():
     except ValueError as error:
         refuse("the command couldn't be split into words (" + str(error) + ").")
     program = Path(__file__).resolve().parent.parent / ".venv" / "bin" / "jura-growth"
-    os.execv(str(program), [str(program), "remote", *words])
+    try:
+        os.execv(str(program), [str(program), "remote", *words])
+    except OSError as error:  # before `uv sync`, or with the venv rebuilt
+        refuse("jura-growth couldn't be started on the growth Mac (" + (error.strerror or type(error).__name__) + ").")
 
 
 main()

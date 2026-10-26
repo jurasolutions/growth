@@ -101,6 +101,20 @@ def test_no_command_or_one_that_cant_be_split_is_refused_and_runs_nothing(layout
     assert recorded(layout) is None
 
 
+@pytest.mark.parametrize("problem", ["missing", "not-executable"])
+def test_a_jura_growth_that_cant_start_is_refused_without_a_traceback(layout, problem):
+    """Code review 11: before `uv sync`, or with the venv rebuilt, Dispatch still gets the contract."""
+    recorder = layout["repo"] / ".venv" / "bin" / "jura-growth"
+    if problem == "missing":
+        recorder.unlink()
+    else:
+        recorder.chmod(0o644)
+    ran = run(layout, "-- status")
+    assert ran.returncode == 2
+    assert ran.stdout.startswith("refused: jura-growth couldn't be started")
+    assert "Traceback" not in ran.stdout + ran.stderr
+
+
 def test_the_wrapper_never_invokes_a_shell():
     """E6: no shell, no eval, no subprocess: the words go to one exec of jura-growth."""
     source = WRAPPER.read_text(encoding="utf-8")
