@@ -18,6 +18,10 @@ The composer (`page.html`) keeps a "posted" text in the browser's local storage 
 
 `index.html` lists which page serves which rehearsal step.
 
+The two join pages are also served at one group's own address, `groups/join/` and
+`groups/profile-only-join/`, unchanged: a group item's run may act only inside its own group's
+address (`hosts.within`), so `fixture-join` seeds the group there.
+
 The publish job reaches these pages through the fixture platform (BP-07,
 `jura_growth/agents/publish/fixture.py`): set `JURA_GROWTH_PUBLISH_FIXTURE_URL` to the server's
 address, for example `http://publish-fixture.localhost:8765`, with a temporary data folder. While

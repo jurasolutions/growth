@@ -631,11 +631,18 @@ def fixture_post(conn) -> None:
 
 
 def fixture_join(conn) -> None:
-    """R5: an approved join for G9, a good-fit group not yet joined whose address is the fixture page
-    `--page` names (default `join.html`, the membership questions)."""
+    """R5: an approved join for G9, a good-fit group not yet joined, whose address is the fixture
+    group the join page `--page` names is served at (default `join.html`, the membership
+    questions, at `/groups/join/`)."""
     from jura_growth.agents.publish import items
 
-    url = _fixture_page("join.html")
+    page = _fixture_page("join.html")
+    # A group's address is one group's own address, /groups/<one segment>/ (code review 06, S7): the
+    # fixture site serves each join page there as well.
+    stem = page.rsplit("/", 1)[1].removesuffix(".html")
+    if not (FIXTURE_SITE / "groups" / stem / "index.html").is_file():
+        raise Refused(f"--page {stem}.html isn't a join page: use join.html or profile-only-join.html")
+    url = f"{page.rsplit('/', 1)[0]}/groups/{stem}/"
     if db.one(conn, "SELECT id FROM community_groups WHERE id = ?", (FIXTURE_GROUP,)) is not None:
         raise Refused(f"group {FIXTURE_GROUP} is already seeded: start again from a fresh `mktemp -d`")
     _community_browser()

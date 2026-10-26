@@ -22,6 +22,22 @@ def test_every_fixture_page_is_there_and_listed_on_the_index():
         assert f'href="{name}"' in index, name
 
 
+GROUP_PAGES = ("join.html", "profile-only-join.html")
+
+
+def test_each_join_page_is_also_served_at_one_groups_own_address():
+    """A group item acts only inside one group's own address, `/groups/<one segment>/` (code review
+    06, S7), so the rehearsal's join pages are served there too, unchanged."""
+    from jura_growth.agents.publish import hosts
+
+    for name in GROUP_PAGES:
+        stem = name.removesuffix(".html")
+        served = SITE / "groups" / stem / "index.html"
+        assert served.read_bytes() == (SITE / name).read_bytes(), name
+        assert hosts.within(f"http://publish-fixture.localhost:8765/groups/{stem}/",
+                            f"http://publish-fixture.localhost:8765/groups/{stem}/")
+
+
 def test_no_page_loads_anything_from_the_network():
     for path in SITE.glob("*.html"):
         text = path.read_text(encoding="utf-8")
