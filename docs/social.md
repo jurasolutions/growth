@@ -168,7 +168,7 @@ post says the images use fallback fonts. `--offline` blocks the network (the tes
 | `weekends` | `true` | `false` makes the 07:00 job skip Saturday and Sunday (PRD open question 2) |
 | `rhythm` | PRD §5.2 | Weekday to theme. Fallbacks are the following days' themes, in order |
 | `themes.<id>` | | `label`, `brief`, `layout`, `news`, `min_sources`, `max_sources`, `max_source_age_days`, `needs_tool` |
-| `platforms.<name>` | PRD §5.3 | `label`, `enabled`, `words`, `hashtags_max`, `links` (`post` or `bio`), `image`, `carousel`, `publish_mode` (`draft` or `browser`), `page_url` (the page a browser run posts to; `https://` on the platform's own host), `identity` (the posting identity the run must see; defaults to the Jura Solutions page or account) |
+| `platforms.<name>` | PRD §5.3 | `label`, `enabled`, `words`, `hashtags_max`, `links` (`post` or `bio`), `image`, `carousel`, `publish_mode` (`draft` or `browser`), `page_url` (the page a browser run posts to; `https://` on the platform's own host; for LinkedIn the company page, `/company/<page>/`, and for Instagram the account's profile, `/<account>/`), `identity` (the posting identity the run must see; defaults to the Jura Solutions page or account) |
 | `eligibility_line` | "Check the official page for current eligibility." | |
 | `max_quote_words` | 12 | |
 | `blocked_topics` | elections, parties, tragedies | Whole words or phrases |
@@ -201,9 +201,14 @@ Nothing posts without Ting Yu's approval of that exact post (MC §4.6). The queu
 from Terminal and the tests; the scheduled `publish` job (BP-03, below) drives Chrome. All three
 platforms can be put in `browser` mode: the Facebook Page (BP-03), then the Jura Instagram account
 and the Jura LinkedIn company page (BP-04), each on its own once its fixture rehearsal and first
-live post are done. With weekends on (`weekends: true`, kept per BP §6 Q1) and all three in
-`browser` mode, Saturday and Sunday bring up to three approval cards each; `weekends: false`
-stops weekend drafts for every platform.
+live post are done.
+
+**Weekends stay on.** This was decided at sign-off (BP1, for the Facebook Page). BP-04 asked again
+(BP §6 Q1), and the crew's recorded decision keeps weekends on with all three platforms in
+`browser` mode, so Saturday and Sunday bring up to three approval cards each. To turn weekend
+posts off, set `weekends: false` in `config/social.yaml`: the 07:00 social job then skips
+Saturday and Sunday, so no weekend draft, item or card is made for any platform. There is no
+per-platform weekend switch.
 
 1. `social submit` makes a **publish item** for each platform in `browser` mode whose variant
    passed the brand gate, and raises one `social-post` approval request for it. The card in
@@ -237,7 +242,7 @@ exact bytes, with no Unicode normalisation (ADR 0003).
 | Command | Who | Does |
 |---|---|---|
 | `jura-growth publish next [--json]` | the publish run | Claims at most one item, or prints "nothing due" with the reasons |
-| `jura-growth publish done <A-id> --url <url> --live-text-file <f>` | the publish run | Records the post. The URL must be `https://` on the platform's own host. Live text that differs from the approved text (after Unicode NFC, collapsing whitespace and trimming) is recorded, alerts and pauses `publish` |
+| `jura-growth publish done <A-id> --url <url> --live-text-file <f>` | the publish run | Records the post. The URL must be `https://` on the platform's own host, and for Instagram and LinkedIn the post's own address: Instagram `/p/<code>/` or `/reel/<code>/`; LinkedIn `/feed/update/urn:li:activity:<n>/` (or `share`, `ugcPost`) or a `/posts/…-activity-<n>-…` address. A profile, feed or company page is refused (`hosts.post_problem`). Live text that differs from the approved text (after Unicode NFC, collapsing whitespace and trimming) is recorded, alerts and pauses `publish` |
 | `jura-growth publish stopped <A-id> --reason <r>` | the publish run | A stop signal (`login`, `captcha`, `checkpoint`, `warning`, `restriction`, `rate-limit`, `removed`, `admin-warning`, `wrong-identity`, `unidentified`): the item stops, `publish` pauses for every item, and `#alerts` gives the reason and the run id |
 | `jura-growth publish queue [--json]` | Ting Yu | Every item, its state and its A-id |
 | `jura-growth publish resolve <A-id> posted --url <url>` or `not-posted` | Ting Yu only (refused in any scheduled run) | Settles an item whose outcome is unknown |
@@ -267,17 +272,13 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
   not, the slot is a quiet run ("nothing due") and no Claude starts.
 - **What the run may do.** `--chrome`, only because `publish` is in `caps.BROWSER_JOBS`; no
   `--add-dir`. The tab tools by name, and the page tools only through one
-  `ClaudeInChromeDomain(<host>)` rule per host (`hosts.BROWSER_HOSTS`) of each platform in
-  `browser` mode, listed exactly until BP-01's check U18 shows how the rule treats subdomains:
-
-  | Platform | Hosts |
-  |---|---|
-  | Facebook Page | `www.facebook.com`, `facebook.com`, `m.facebook.com`, `web.facebook.com`, `business.facebook.com` |
-  | Instagram | `www.instagram.com`, `instagram.com` |
-  | LinkedIn company page | `www.linkedin.com`, `linkedin.com` |
-
-  No image CDN, link shim (`l.instagram.com`, `lnkd.in`) or country host (`sg.linkedin.com`) is
-  listed: a run never opens one in its tab, and `publish done` refuses a post URL on one.
+  `ClaudeInChromeDomain(<host>)` rule per host of each platform in `browser` mode. The lists are
+  `hosts.BROWSER_HOSTS`, one per platform, exact (`www.` and the bare host, plus
+  `business.facebook.com` for the Page's composer) until BP-01's check U18 shows how the rule
+  treats subdomains. No image CDN, link shim or country host is listed: a run never opens one
+  in its tab, and `publish done` refuses a post URL on one. The rules are the union of the
+  enabled platforms, because they are set before anything is claimed; the audit holds each run to
+  its claimed item's own platform (below).
   Scripting, network, console, shortcut, recording, browser-switching, batch and
   resize tools, `upload_image`, web search and fetch are denied, and `file_upload` too unless the
   item due has an image. Bash runs only `publish next`, `done` and `stopped`.
@@ -289,27 +290,34 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
   - **Facebook Page:** the Page's composer names the Page, not a person. Permalink on
     `www.facebook.com` with `/posts/` or `story_fbid`.
   - **Instagram:** signed in as the Jura account (its own profile shows "Edit profile"; "Follow"
-    or a "Switch accounts" prompt is the wrong identity). Create, Post, then every image in one
-    upload, in the order given, never reordered or edited; the caption typed once; Share once.
-    Permalink `https://www.instagram.com/p/<code>/`.
+    or a "Switch accounts" prompt is the wrong identity). Create, Post, then every image in the
+    order given, never reordered or edited; the caption typed once; Share once. Permalink
+    `https://www.instagram.com/p/<code>/` (or `/reel/<code>/`).
   - **LinkedIn company page:** from the page's admin view, with the company name and logo at the
     top of the composer, never a person's. Permalink
-    `https://www.linkedin.com/feed/update/urn:li:activity:<number>/`.
+    `https://www.linkedin.com/feed/update/urn:li:activity:<number>/` (or `share`, `ugcPost`).
+    `page_url` must be the company page (`/company/<page>/`): a person's profile (`/in/…`)
+    raises no item.
 
-  The run never uses a "Switch" control to change who it posts as: it stops with
+  Images go up only through the composer's file input (`find`, then `file_upload` with its ref),
+  never by clicking an upload button, which opens a file picker the extension can't see or
+  close. The run never uses a "Switch" control to change who it posts as: it stops with
   `wrong-identity` instead.
 - **After the run** (`after_run`, before the run row is finished): an open claim becomes
   `unknown`. The transcript audit fails the run and pauses `publish` for:
-  - a URL off the publish hosts, asked for or shown as a tab's address in any later result, or
-    a tab address it can't read;
+  - a URL off the claimed item's own platform hosts (any enabled platform's hosts when nothing
+    was claimed), asked for or shown as a tab's address in any later result, or a tab address it
+    can't read; so an Instagram item posted on the LinkedIn company page or the Facebook Page
+    fails;
   - a Discord host;
   - a tool call on a tab the run didn't open;
   - a field typed with anything but an approved text, judged whole and in order, or typing
     before the claim;
   - an upload that isn't the claimed item's own read-only image copy, or a copy that no longer
     hashes to the approved image;
-  - images uploaded out of their approved order or more than once, or a post recorded as done
-    with fewer images than were approved (an Instagram carousel's slides go up in order);
+  - images uploaded out of their approved order or more than once, or a run that went on to
+    `publish done` with fewer images sent than were approved; a failed or denied upload sends
+    nothing (an Instagram carousel's slides go up in order);
   - a click, key, input, upload or navigation after `publish stopped`;
   - a never-tool.
 
