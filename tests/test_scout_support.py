@@ -207,13 +207,19 @@ def fake_d1(monkeypatch, rows_or_handler) -> list:
     return calls
 
 
-def live_ready(monkeypatch, *, d1_rows=(), approval_gate=True) -> list:
-    """Every live-mode pre-condition holds. With `approval_gate`, the
-    approval gate counts as installed, standing in for MC-06, so the
-    send-path tests keep exercising live sending."""
+def buttons(monkeypatch, on: bool = True) -> None:
+    """Set `approvals.discord_buttons` in the settings the code reads (ticket 15's switch)."""
+    patched = dict(config.settings())
+    patched["approvals"] = {**(patched.get("approvals") or {}), "discord_buttons": on}
+    monkeypatch.setattr(config, "settings", lambda: patched)
+
+
+def live_ready(monkeypatch, *, d1_rows=(), approval_buttons=True) -> list:
+    """Every live-mode pre-condition holds. With `approval_buttons`, Ting Yu
+    has checked the Discord buttons and set `approvals.discord_buttons: true`,
+    the last line `live_problems()` lists (MC-06)."""
     configure(monkeypatch, mode="live", legal_review_done=True, sending_domain="hello.jurasolutions.sg")
-    if approval_gate:
-        monkeypatch.setattr(send, "approval_gate_problem", lambda: None)
+    buttons(monkeypatch, approval_buttons)
     monkeypatch.setenv("RESEND_API_KEY_OUTREACH", "re_test_key_not_real_123456")
     monkeypatch.setenv("UNSUBSCRIBE_SECRET", "test-secret")
     d1_env(monkeypatch)

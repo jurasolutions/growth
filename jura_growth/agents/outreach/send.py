@@ -31,7 +31,7 @@ from email.utils import formataddr
 
 import httpx
 
-from jura_growth import caps, cloudflare, config, db, discord, holidays, locks, log, pause, timeutil
+from jura_growth import approval_settings, caps, cloudflare, config, db, discord, holidays, locks, log, pause, timeutil
 from jura_growth.agents.outreach import compose, queue, replies, store, sync
 from jura_growth.agents.scout import contact as contact_rules
 from jura_growth.agents.scout import dnc, registry, settings
@@ -68,15 +68,20 @@ def from_address() -> str:
 
 
 def approval_gate_problem() -> str | None:
-    """Why the approval gate stops live sending, or None.
+    """Why the approval gate stops live sending, or None (MC §5.8, AC-M8.11).
 
-    Until ticket MC-06 installs the `outreach-email` approvals, no email has
-    a way to be approved, so live sending may not start at all. MC-06
-    replaces this with "approval buttons not set up".
+    Every live email needs an `outreach-email` approval claimed first, and
+    approvals come only from the Approve and Skip buttons in #approvals,
+    through Dispatch. So live sending waits until Ting Yu has checked the
+    buttons work and set `approvals.discord_buttons: true` (ticket 15). The
+    switch is read here only; nothing in the engine sets it.
     """
+    if approval_settings.switch("discord_buttons"):
+        return None
     return (
-        "approval gate not installed: every live email needs Ting Yu's approval first, "
-        "and that arrives with the mission-control outreach gate (MC-06)"
+        "approval buttons not set up: every live email needs Ting Yu's approval from #approvals first. "
+        "Set approvals.discord_buttons: true in config/settings.yaml only after checking the Approve and "
+        "Skip buttons work (mission-control ticket 15)"
     )
 
 
