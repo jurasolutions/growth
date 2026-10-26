@@ -486,3 +486,12 @@ decisions: BP header, §4.2 and §5.7 amended. publish queue and resolve stay in
 decisions: 05 X9: rules_confirmed=yes raises a group-rules request decided in #approvals. It refuses days given in the same command, and refuses when no rules text is recorded. 13 U1 now checks that approve and skip refuse with a pointer to #approvals
 questions: -
 evidence:  grep -> AC-M6.4 and AC-M7.1-7.7 each 1; AC counts MC 80, BP 36 unchanged; "code 3f9a1c|Origin.terminal|terminal:<macOS" -> 0; closing lines intact
+
+## 2026-10-27T02:21+0800 conductor (merge mc 11)
+status:    done
+persona:   conductor
+ticket:    11
+artifacts: merge of 11 (rebased on c2b468f; fixes d81d895 33ec43b 03bece3)
+decisions: review approved; fix round verified by the conductor (shared waiting() helper, execv refusal, masking-degraded event); merged and pushed
+questions: -
+evidence:  merged branch pytest -> see commit
