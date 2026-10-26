@@ -242,6 +242,7 @@ def plan_release(conn: sqlite3.Connection, app_id: str, *, run_id: int | None,
     does `emit` get the merge of exactly the approved commit. On a refusal nothing is emitted, and
     any lapse or supersede the claim found is kept."""
     refusal: str | None = None
+    claimed: tuple[dict, approvals.Approval] | None = None
     try:
         with db.transaction(conn):
             try:
@@ -254,10 +255,12 @@ def plan_release(conn: sqlite3.Connection, app_id: str, *, run_id: int | None,
                 conn.execute("UPDATE app_builds SET release_planned_at = ? WHERE id = ?", (timeutil.stamp(), row["id"]))
                 log.event(conn, "apps.release.planned", {"app_id": app_id, "approval": approval.id, "sha": row["head_sha"]},
                           agent=catalog.NAME)
+                claimed = (row, approval)
     except sqlite3.Error as error:
-        refusal = f"the release plan couldn't be recorded ({error}), so nothing was claimed"
-    if refusal is not None:
+        claimed, refusal = None, f"the release plan couldn't be recorded ({error}), so nothing was claimed"
+    if claimed is None:
         return Outcome(False, [f"refused: {refusal}. There is no merge to run."])
+    row, approval = claimed
     lines = merge_plan(app_id, row, approval)
     for line in lines:
         emit(line)

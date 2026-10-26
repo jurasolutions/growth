@@ -332,8 +332,7 @@ def validate_shape(text: str, *, strict: bool = False, categories: tuple[str, ..
         errors.append(f"header: Follows must name `{FACTORY_PRD}`")
     if strict and prd.author and prd.author != FACTORY_AUTHOR:
         errors.append(f"header: Author must be `{FACTORY_AUTHOR}`")
-    if prd.build_path:
-        m = BUILD_PATH_RE.fullmatch(prd.build_path)
+    if m := BUILD_PATH_RE.fullmatch(prd.build_path):
         if prd.number is not None and int(m["num"]) != prd.number:
             errors.append(f"header: the To build path says APP-{m['num']} but the title says {prd.app_id}")
         if prd.created and m["day"] != prd.created:
