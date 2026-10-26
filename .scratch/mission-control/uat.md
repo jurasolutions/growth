@@ -54,13 +54,18 @@ Only you can do these steps. Each one touches your accounts or your Mac.
    `authorized_keys` entry runs `bin/growth-remote` with the UAT folder variables fixed in the entry
    itself (`JURA_GROWTH_DATA_DIR=/tmp/jura-uat/data`, `JURA_GROWTH_OUTPUTS_DIR=/tmp/jura-uat/outputs`,
    `JURA_PRD_DIR=/tmp/jura-uat/prd`, `JURA_GROWTH_CONFIG_DIR=/tmp/jura-uat/config`,
-   `JURA_GROWTH_PAUSE_FILE=/tmp/jura-uat/PAUSE`, `JURA_GROWTH_ENV_FILE=~/jura-uat/uat.env`). Remove
+   `JURA_GROWTH_PAUSE_FILE=/tmp/jura-uat/PAUSE`, `JURA_GROWTH_ENV_FILE=~/jura-uat/uat.env`,
+   `JURA_INPUTS_DIR=/tmp/jura-uat/inputs`, `JURA_GROWTH_RESEND_BASE_URL=http://127.0.0.1:8025`, and
+   once ticket 18 lands `JURA_GROWTH_D1_BASE_URL` at its loopback stub). Remove
    that key and binding when you finish. *The exact form of this entry is waiting on the tech lead
    (QA lead's question, crew-log 2026-10-27); until it is settled, Parts A to C can't be run.*
 5. **The harness.** `uv run python -m tests.uat.seed <folder> [--scenario <name>] [--today <date>]`
    seeds the data, and `uv run python -m tests.resend_stub` records what would have gone to Resend.
-   The scenarios each step needs are listed under "Seed data"; the ones still missing are in ticket
-   17 and the tickets named there.
+   The scenarios each step needs are listed under "Seed data". Ticket 17 added the outreach ones;
+   the rest come with the tickets named there.
+6. **A local D1 stand-in (ticket 18).** Live mode also checks D1, and the first approved send would
+   otherwise call Cloudflare. Until ticket 18's loopback D1 stub exists, `jura-growth status` lists
+   "D1 is not configured" and Part A's live-mode steps (A4) can't run. Every other step can.
 
 ### The window for Parts A and C
 
@@ -77,6 +82,9 @@ export JURA_PRD_DIR="$UAT/prd"
 export JURA_GROWTH_CONFIG_DIR="$UAT/config"
 export JURA_GROWTH_PAUSE_FILE="$UAT/PAUSE"
 export JURA_GROWTH_ENV_FILE="$HOME/jura-uat/uat.env"
+export JURA_INPUTS_DIR="$UAT/inputs"                        # never the real inputs/
+export JURA_GROWTH_RESEND_BASE_URL="http://127.0.0.1:8025"  # the loopback Resend stub
+# export JURA_GROWTH_D1_BASE_URL="http://127.0.0.1:<port>"  # ticket 18's D1 stub, once it lands
 export TODAY="$(TZ=Asia/Singapore date +%Y-%m-%d)"
 uv run python -m tests.uat.seed "$UAT" --today "$TODAY"
 ```
@@ -144,20 +152,22 @@ decision in that part, because a decision is always stamped with the real time.
 
 **A4. The email gate (must, AC-M5.1, AC-M8.1 to AC-M8.9, AC-M8.11)**
 
-Start the stub in a second window: `uv run python -m tests.resend_stub`. It prints every request it
-receives. Then seed S3: `uv run python -m tests.uat.seed "$UAT" --scenario outreach-live --today
+Needs ticket 18's D1 stub (see "Before you start", step 6). Start the Resend stub in a second
+window with the same variables set: `uv run python -m tests.resend_stub` (port 8025, matching
+`JURA_GROWTH_RESEND_BASE_URL`). It prints every request it receives and refuses to start against a
+folder that isn't temporary. Then seed S3: `uv run python -m tests.uat.seed "$UAT" --scenario outreach-live --today
 "$TODAY"`.
 
 - *Live waits for the buttons switch.*
   Do: `uv run jura-growth status`, then `uv run jura-growth outreach send-due`.
   Expect: `status` lists "approval buttons not set up" under live problems, and `send-due` refuses.
   Do: set `approvals.discord_buttons: true` in `$UAT/config/settings.yaml` only (never in the real
-  `config/`), and run `status` again. Expect: no live problems.
+  `config/`), and run `status` again. Expect: no live problems (with ticket 18's D1 stub set).
 - *Requests only for what can go out today.*
   Do: `uv run jura-growth outreach send-due` (its first run of the day raises the requests).
-  Expect: exactly 5 cards in `#approvals` (today's warm-up cap), and `uv run jura-growth outreach
-  queue-list` shows the other emails "waiting for a request slot".
-  Nothing reaches the stub, because nothing is approved yet.
+  Expect: exactly 5 cards in `#approvals` (today's warm-up cap). `send-due` answers "nothing
+  approved to send: 5 waiting for a decision, 12 waiting for a request slot" (the 17 seeded emails
+  less the 5 asked about). Nothing reaches the stub, because nothing is approved yet.
 - *A card says what, why and when.*
   Expect, on lead 233's card: "A-nnnn · outreach email · decide by <the next business day>, 16:30
   SGT" (a public holiday is skipped), the To line with company, industry and score, a Why line
