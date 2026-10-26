@@ -4,7 +4,7 @@
 - An item is an app whose build was handed off (an `app_builds` row, written directly so no
   `app-build` claim is counted) with a commit on its own task branch in the temp landing-page
   repository (D13). `raise_request` reports it with `releases.report_built`, as `apps built` does.
-- The gated action is `apps release-plan`; "went out" means a merge command was printed. The
+- The gated action is `apps release-plan`; "went out" means a distinct merge command was printed. The
   printer is a double that reads, at call time and on a fresh connection, whether the claim is
   committed (G21).
 - The content is the app id, task id, branch and head SHA: `change` moves the build to a newer
@@ -104,7 +104,9 @@ class AppReleaseAdapter:
         releases.plan_release(self.conn, builds.app_id_of(subject), run_id=aw.run(self.conn), emit=self._emit)
 
     def went_out(self) -> int:
-        return len(self.printed)
+        """Distinct merges printed. A retry prints the same merge of the same SHA again under the
+        same claim (final review Sp3), which releases nothing new, so it isn't a second effect."""
+        return len({p["line"] for p in self.printed})
 
     def seen_at_call(self) -> list[bool]:
         return [p["used"] for p in self.printed]

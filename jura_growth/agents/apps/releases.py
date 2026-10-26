@@ -13,7 +13,9 @@ Pages preview. Then:
   `config/apps.yaml`), so the card can only ever link there (code review 10b, B1 and S1).
 - **`apps release-plan`** is the gated action. It claims the approved request (MC §4.6 A6) and
   stamps the row in one transaction, then prints the merge of exactly the approved commit into
-  `main`. Ting Yu runs it by hand until Dispatch D7 can.
+  `main`. Ting Yu runs it by hand until Dispatch D7 can. Run again while the build still hashes
+  to the claimed request, it prints the same merge with no new claim, so a lost answer can be
+  fetched again.
 - **`apps released`** records the release once the branch `main` of the landing-page repository
   contains the claimed commit (`git merge-base --is-ancestor <sha> refs/heads/main`; it never
   fetches, pulls or writes), moves the PRD to `prd/done/apps/` with the ship date and a sign-off
@@ -253,22 +255,32 @@ def plan_release(conn: sqlite3.Connection, app_id: str, *, run_id: int | None,
     """`apps release-plan`, the gated action (A6). In one transaction it claims the approved
     `app-release` request and stamps `release_planned_at` on the build, its in-flight marker;
     only after that commits does `emit` get the merge of exactly the approved commit. On a refusal
-    nothing is emitted, and any lapse or supersede the claim found is kept."""
+    nothing is emitted, and any lapse or supersede the claim found is kept.
+
+    A retry after the claim, while the build still hashes to the claimed request, gets the same
+    merge again with no new claim: the answer may have been lost on its way back, and the merge
+    names a fixed SHA, so printing it again releases nothing new (A6, ADR 0003; final review Sp3)."""
     refusal: str | None = None
     claimed: tuple[dict, approvals.Approval] | None = None
     try:
         with db.transaction(conn):
-            try:
-                approval = approvals.use(conn, KIND, builds.subject(app_id), run_id=run_id)
-            except approvals.NotApproved as refused:
-                refusal = refused.text
+            again = _planned(conn, app_id)
+            if again is not None:
+                log.event(conn, "apps.release.plan_repeated", {"app_id": app_id, "approval": again[1].id,
+                                                               "sha": again[0]["head_sha"]}, agent=catalog.NAME)
+                claimed = again
             else:
-                row = _built(conn, app_id)
-                assert row is not None  # use() just matched its content
-                conn.execute("UPDATE app_builds SET release_planned_at = ? WHERE id = ?", (timeutil.stamp(), row["id"]))
-                log.event(conn, "apps.release.planned", {"app_id": app_id, "approval": approval.id, "sha": row["head_sha"]},
-                          agent=catalog.NAME)
-                claimed = (row, approval)
+                try:
+                    approval = approvals.use(conn, KIND, builds.subject(app_id), run_id=run_id)
+                except approvals.NotApproved as refused:
+                    refusal = refused.text
+                else:
+                    row = _built(conn, app_id)
+                    assert row is not None  # use() just matched its content
+                    conn.execute("UPDATE app_builds SET release_planned_at = ? WHERE id = ?", (timeutil.stamp(), row["id"]))
+                    log.event(conn, "apps.release.planned", {"app_id": app_id, "approval": approval.id,
+                                                             "sha": row["head_sha"]}, agent=catalog.NAME)
+                    claimed = (row, approval)
     except sqlite3.Error as error:
         claimed, refusal = None, f"the release plan couldn't be recorded ({error}), so nothing was claimed"
     if claimed is None:
@@ -278,6 +290,18 @@ def plan_release(conn: sqlite3.Connection, app_id: str, *, run_id: int | None,
     for line in lines:
         emit(line)
     return Outcome(True, lines, approval)
+
+
+def _planned(conn: sqlite3.Connection, app_id: str) -> tuple[dict, approvals.Approval] | None:
+    """The built row and its `app-release` request when `release-plan` already claimed it and the
+    build still hashes to it: the case where the same merge may be printed again."""
+    row = _built(conn, app_id)
+    claimed = claimed_release(conn, app_id)
+    if row is None or claimed is None or not row["release_planned_at"]:
+        return None
+    if claimed.content_hash != approvals.content_hash(encode(row)):
+        return None
+    return row, claimed
 
 
 def merge_plan(app_id: str, row: dict, approval: approvals.Approval) -> list[str]:
