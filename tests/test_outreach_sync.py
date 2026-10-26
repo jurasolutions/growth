@@ -16,6 +16,7 @@ from jura_growth.cli import cli
 from test_scout_support import (  # noqa: F401
     MONDAY_10AM,
     add,
+    approve_due,
     at,
     d1_env,
     fake_d1,
@@ -63,6 +64,7 @@ def live_sends(conn, monkeypatch, count):
     table = D1()
     fake_d1(monkeypatch, table)
     sent = fake_resend(monkeypatch)
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     for index in range(count):
         at(monkeypatch, f"2026-10-26T{10 + index // 6:02d}:{(index % 6) * 10:02d}:00+08:00")
         assert send.send_due(conn).summary.startswith("sent message")
@@ -132,6 +134,7 @@ def test_complaint_pauses_outreach_and_resume_restarts_it(conn, monkeypatch):
     seeded, table = live_sends(conn, monkeypatch, 1)
     at(monkeypatch, "2026-10-26T08:00:00+08:00")
     waiting = seed(conn, 2)
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     table.rows.append(d1_row(seeded[0]["email"], "complaint", resend_id=seeded[0]["resend_id"]))
     at(monkeypatch, "2026-10-26T13:00:00+08:00")
     result = send.send_due(conn)
@@ -457,6 +460,7 @@ def test_follow_up_only_after_five_business_days_with_reply_detection(conn, monk
     assert [d["lead_id"] for d in due] == [lead_id] and due[0]["first_subject"].startswith("A free delivery order maker")
     queued = queue_mod.queue(conn, lead_id, FOLLOW_UP)
     assert queued.status == "queued" and queued.send_after == "2026-11-02"
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     at(monkeypatch, "2026-11-02T10:00:00+08:00")
     assert send.send_due(conn).summary.startswith("sent message")
     assert db.scalar(conn, "SELECT status FROM leads WHERE id = ?", (lead_id,)) == "followed_up"
@@ -471,6 +475,7 @@ def test_reply_before_the_follow_up_cancels_it(conn, monkeypatch):
     fake = imap_env(monkeypatch, [])
     at(monkeypatch, "2026-11-02T09:00:00+08:00")
     queued = queue_mod.queue(conn, lead["lead_id"], FOLLOW_UP)
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     fake.messages.append(reply_message(lead["email"], when="2026-11-02T09:30:00+08:00", body="Yes, tell me more."))
     at(monkeypatch, "2026-11-02T10:00:00+08:00")
     send.send_due(conn)
@@ -493,6 +498,7 @@ def test_leads_that_never_replied_are_deleted_after_24_months(conn, monkeypatch)
     live_ready(monkeypatch)
     fake_d1(monkeypatch, [])
     fake_resend(monkeypatch)
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     at(monkeypatch, "2024-09-02T10:00:00+08:00")
     send.send_due(conn)
     conn.execute(

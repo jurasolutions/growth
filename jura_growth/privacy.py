@@ -18,8 +18,9 @@ Secrets go first, through `config.redact()`.
 own outgoing text (an email draft, a social post) with `own_copy`. There a
 registered reply line and Ting Yu's sender address are left as written.
 Secrets, phone numbers, prospects' named addresses and every learned name
-(so "Hi Jane," too) are still masked: until MC-06 drops drafts that name a
-person, a preview may read "[name removed]" where a word looked like a name.
+(so "Hi Jane," too) are still masked. Since MC-06 the `email` brand channel
+drops an outreach draft that greets a person or names the person behind a
+named address, so an email preview shows its draft exactly.
 
 **What the process knows.** A name or a reply body can't be recognised by its
 shape, so the process says what it knows:

@@ -222,6 +222,12 @@ A kind is an object with:
 | `on_approve(conn, subject, args)` | Optional. Applies the change inside the decision's transaction, after `approved` is written. Raise `approvals.BadArgs(text)` to refuse with that text; a `NotApproved` from a claim inside it also refuses. A returned string is appended to the answer |
 | `switched_off(conn, subject)` | Optional. The kind's own switch (outreach in shadow mode, a platform in draft): a reason makes `use()` refuse without claiming |
 | `on_skip`, `on_expire`, `on_lapse` | Optional, `(conn, subject)`. What a skip, an unanswered decide-by and an unclaimed use-by do to the item |
+| `superseded_note(conn, subject)` | Optional. Why the item changed or went away, in Ting Yu's words ("lead unsubscribed"), for the card's edited first line; `None` keeps the core's reason |
+| `used_word` | Optional. How the answer to a decision on a used request names the use ("already sent at 10:40"); "used" by default |
+
+The outreach plug-in's `outreach-email` kind (`agents/outreach/approval.py`) is the worked example:
+requests are raised only in live mode, only for emails due today and only up to today's remaining
+quota (MC §4.6 A14), and `send-due` claims before it calls Resend.
 
 ## Tests
 

@@ -40,46 +40,37 @@ def test_a_short_reply_line_is_not_registered(conn, monkeypatch, discord_double)
     assert discord_double.contents("alerts")[-1] == "**outreach**: Best regards from the digest"
 
 
-def test_a_shadow_preview_that_names_the_contact_is_clean(conn, monkeypatch, discord_double):
-    # Review 02, blocking finding 1: a shadow draft naming the contact, nothing seeded by hand.
+def _queue_twice(conn, monkeypatch, body_change):
+    """A draft written to the named contact, through the real queue: since MC-06 the `email`
+    brand channel refuses it, then drops it (AC-M12.2), so no preview or card can show it."""
     from jura_growth.agents.outreach import queue as queue_mod
-    from jura_growth.agents.outreach import send
     from test_scout_support import MONDAY_10AM, body_for, seed
 
     at(monkeypatch, MONDAY_10AM)
     named = {"email": "jane.tan@alderlogistics.sg", "source_url": "https://www.alderlogistics.sg/contact", "enquiry_contact": True}
     seeded = seed(conn, 1, queue=False, contact=named)
-    body = body_for("Alder Logistics").replace("Hi there,", "Hi there,\n\nJane Tan mentioned the paper orders.")
-    queued = queue_mod.queue(
-        conn, seeded["lead_id"], {"subject": "A free delivery order maker for Alder Logistics", "body": body, "tool": "delivery-order-maker"}
+    data = {"subject": "A free delivery order maker for Alder Logistics", "body": body_change(body_for("Alder Logistics")),
+            "tool": "delivery-order-maker"}
+    first = queue_mod.queue(conn, seeded["lead_id"], data)
+    second = queue_mod.queue(conn, seeded["lead_id"], data)
+    return named, first, second
+
+
+def test_a_draft_that_names_the_contact_never_reaches_a_preview(conn, monkeypatch, discord_double):
+    # Review 02, blocking finding 1: a draft naming the contact, nothing seeded by hand.
+    named, first, second = _queue_twice(
+        conn, monkeypatch, lambda body: body.replace("Hi there,", "Hi there,\n\nJane Tan mentioned the paper orders.")
     )
-    assert queued.status == "queued", queued.reasons
-
-    assert send.send_due(conn).summary.startswith("SHADOW message")
-
-    [content] = discord_double.contents("outreach-sent")
-    assert "[name removed] mentioned the paper orders." in content
-    assert "We've made a free delivery order maker" in content  # Jura's own words, as written
-    assert_clean(discord_double, outbox_dir(), Planted(marker="**SHADOW** (not sent)", personal=("Jane Tan", named["email"])))
+    assert first.status == "retry" and any("names the person" in r for r in first.reasons)
+    assert second.status == "dropped"
+    assert discord_double.contents("outreach-sent") == []
+    assert_clean(discord_double, outbox_dir(), Planted(marker="failed the brand check", personal=("Jane Tan", named["email"])))
 
 
-def test_a_shadow_preview_that_greets_the_contact_by_first_name_is_clean(conn, monkeypatch, discord_double):
+def test_a_draft_that_greets_the_contact_by_first_name_never_reaches_a_preview(conn, monkeypatch, discord_double):
     # Review 02 round 2, blocking: the real queue and send path posted "Hi Jane,".
-    from jura_growth.agents.outreach import queue as queue_mod
-    from jura_growth.agents.outreach import send
-    from test_scout_support import MONDAY_10AM, body_for, seed
-
-    at(monkeypatch, MONDAY_10AM)
-    named = {"email": "jane.tan@alderlogistics.sg", "source_url": "https://www.alderlogistics.sg/contact", "enquiry_contact": True}
-    seeded = seed(conn, 1, queue=False, contact=named)
-    body = body_for("Alder Logistics").replace("Hi there,", "Hi Jane,")
-    queued = queue_mod.queue(
-        conn, seeded["lead_id"], {"subject": "A free delivery order maker for Alder Logistics", "body": body, "tool": "delivery-order-maker"}
-    )
-    assert queued.status == "queued", queued.reasons
-
-    assert send.send_due(conn).summary.startswith("SHADOW message")
-
-    [content] = discord_double.contents("outreach-sent")
-    assert "Hi [name removed]," in content
-    assert_clean(discord_double, outbox_dir(), Planted(marker="**SHADOW** (not sent)", personal=("Jane", named["email"])))
+    named, first, second = _queue_twice(conn, monkeypatch, lambda body: body.replace("Hi there,", "Hi Jane,"))
+    assert first.status == "retry" and any("Greet the company, not a person" in r for r in first.reasons)
+    assert second.status == "dropped"
+    assert discord_double.contents("outreach-sent") == []
+    assert_clean(discord_double, outbox_dir(), Planted(marker="failed the brand check", personal=("Jane", named["email"])))

@@ -110,6 +110,8 @@ class ApprovalKind(Protocol):
             so it reads the item's own state. None keeps the core's reason
             ("the item is gone", "the content changed"). MC-06 fills it for
             outreach-email.
+        used_word: str  how a decision on a used request names the use
+            ("A-0412 was already sent at 10:40 SGT"); "used" by default
     """
 
     name: str
@@ -524,8 +526,10 @@ def _refresh(conn, registered: _Registered, approval: Approval, now: datetime, *
 def _closed_answer(conn, approval: Approval) -> Answer:
     """The answer for a record that can no longer be decided."""
     if approval.status == APPROVED and approval.used_at:
-        used = timeutil.parse(approval.used_at).strftime("%H:%M")
-        return Answer(ALREADY_USED, f"{approval.id} was already used at {used} SGT; it can't be undone.", approval)
+        used = timeutil.parse(approval.used_at).astimezone(timeutil.SGT).strftime("%H:%M")
+        registered = _kind(approval.kind)
+        word = getattr(registered.kind, "used_word", None) if registered else None
+        return Answer(ALREADY_USED, f"{approval.id} was already {word or 'used'} at {used} SGT; it can't be undone.", approval)
     if approval.status == EXPIRED:
         return Answer(EXPIRED, f"{approval.id} expired: {approval.close_reason}.", approval)
     if approval.status == SUPERSEDED:

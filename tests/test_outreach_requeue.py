@@ -11,7 +11,7 @@ from jura_growth.agents.outreach import compose, requeue, send, store
 from jura_growth.agents.scout import registry
 from jura_growth.cli import cli
 
-from test_scout_support import at, fake_resend, live_ready, scout_env, seed  # noqa: F401
+from test_scout_support import approve_due, at, fake_resend, live_ready, scout_env, seed  # noqa: F401
 
 
 def shadow_trial(conn, monkeypatch, count=3):
@@ -55,6 +55,7 @@ def test_requeued_emails_send_live_with_a_live_token(conn, monkeypatch):
     sent = go_live(monkeypatch)
 
     plan = requeue.requeue_shadow(conn)
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     assert [i["shadow_id"] for i in plan.requeued] == [s["message_id"] for s in seeded] and plan.skipped == []
     for item, original in zip(plan.requeued, seeded):
         new = db.one(conn, "SELECT * FROM outreach_messages WHERE id = ?", (item["message_id"],))
@@ -143,6 +144,7 @@ def test_requeued_email_still_passes_every_send_time_check(conn, monkeypatch):
     seeded = shadow_trial(conn, monkeypatch, 2)
     sent = go_live(monkeypatch)
     plan = requeue.requeue_shadow(conn)
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     suppression.add(conn, email=seeded[0]["email"], reason="unsubscribe", source="reply")  # after the requeue
     at(monkeypatch, "2026-10-29T10:00:00+08:00")
     result = send.send_due(conn)
@@ -161,6 +163,7 @@ def test_requeued_emails_count_against_the_live_warm_up(conn, monkeypatch):
         send.send_due(conn)
     go_live(monkeypatch)
     assert len(requeue.requeue_shadow(conn).requeued) == 8
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     sends = 0
     for hour in range(9, 17):
         for minute in (0, 10, 20, 30, 40, 50):
