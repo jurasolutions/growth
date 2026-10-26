@@ -464,3 +464,14 @@ decisions: ticket 05 X9: setting rules_confirmed raises a group-rules request de
 decisions: wave 4 dispatched: 06 outreach gate, 10 app-factory kinds, 11 remote core
 questions: -
 evidence:  merged branch pytest -> 1803 passed
+
+## 2026-10-26T21:21+0800 qa-lead (test strategy v3: Terminal decisions off)
+status:    done
+persona:   qa-lead
+ticket:    -
+artifacts: .scratch/mission-control/reviews/test-strategy-v3.md
+decisions: AC-M6.4, AC-M7.2, AC-M7.3, AC-M7.4 now test the 2026-10-26 amendment: approve/skip in Terminal exit 2 with the #approvals pointer, ask no code and record nothing; decide() refuses every non-SSH origin; the orphaned-expect probe (ppid 1, Claude markers set and stripped) is AC-M7.3's regression case
+decisions: new matrix case G38 (Terminal off, every state); G13 layer 5, S13, the fake origin, D7, D12, U1, X9 (raises a group-rules request decided in #approvals), AC-M10.6 (remote only), E6 (no Terminal origin) and §11.2 rows updated
+questions: business analyst Q11: bring the PRD text (AC-M6.4, AC-M7.2-7.4, §4.6 A8, §4.8, §5.3, §5.12, §6 Q3, BP §4.2, §5.7) in line with the amendment, keeping AC ids (rec yes)
+evidence:  python check -> MC 80/80, BP 36/36 rows, same AC ids as the PRDs; 39 matrix rows (G1-G38 with G4a/G4b); Q1-Q11
+evidence:  uv run pytest tests/test_origin_processes.py tests/test_approvals_cli.py tests/test_origin.py @04a609e -> 90 passed; grep jura_growth for Origin.terminal / "terminal: -> no hits
