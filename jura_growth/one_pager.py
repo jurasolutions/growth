@@ -14,8 +14,10 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import timedelta
+from html import escape
+from pathlib import Path
 
-from jura_growth import discord, health, mission, privacy, slots
+from jura_growth import discord, health, images, mission, privacy, slots
 
 ASK_ME = ("`/growth status`", "`/growth approvals`", "`/growth one-pager`", "`/growth pause <agent|all>`", "`/growth resume <agent|all>`")
 SLOTS_LISTED = 3  # a job with more slots in a day shows counts per status instead
@@ -113,3 +115,116 @@ def _yesterday(snapshot: mission.Snapshot) -> list[str]:
     lines = [f"- {line}" for line in snapshot.yesterday.lines] or ["- No agent figures recorded."]
     lines.append(f"Claude spend: US${snapshot.yesterday.spend:.2f} yesterday, US${snapshot.spend_today:.2f} so far today")
     return lines
+
+
+# --- the 14-day grid (MC §5.4 item 7, §4.1) -----------------------------------------------
+#
+# One cell per job per day: the day's worst slot status (`slots.day_cell`), so
+# scout-send's and publish's many slots collapse to one cell, with how many
+# slots had that status when the job has more than one that day. Every status
+# is a word as well as a colour, and the legend says what each word means. The
+# page links `design-system/styles.css`; every colour and font below is one of
+# its tokens. Sizes are pixels because the page is a fixed-size image.
+
+GRID_LABELS = {  # status: (the word in the cell, what the legend says it means)
+    "failed": ("Fail", "failed"),
+    "missed": ("Miss", "missed"),
+    "running": ("Run", "still running"),
+    "ok": ("OK", "ran"),
+    "skipped": ("Skip", "skipped"),
+    "due": ("Due", "due now"),
+    "upcoming": ("Next", "later today"),
+    "not installed": ("Off", "not installed"),
+}
+GRID_NO_SLOT = "·"
+GRID_WIDTH = 1200
+_PAD, _TITLE, _HEAD_ROW, _ROW, _LEGEND, _NOTE = 32, 76, 44, 34, 72, 40
+
+_GRID_CSS = """
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--white); }
+.page { box-sizing: border-box; width: 100%; height: 100%; padding: 32px; display: flex; flex-direction: column; }
+.overline { font-family: var(--font-mono); font-size: 12px; letter-spacing: var(--tracking-overline);
+  text-transform: uppercase; color: var(--text-brand); height: 20px; }
+h1 { font-family: var(--font-display); font-size: 26px; line-height: 40px; height: 56px; color: var(--text-strong); }
+.note { font-family: var(--font-body); font-size: 16px; line-height: 40px; color: var(--text-muted); }
+table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 3px; margin: 0 -3px; }
+th { font-family: var(--font-mono); font-weight: var(--weight-regular); color: var(--text-muted); font-size: 12px; }
+thead th { height: 38px; line-height: 15px; text-align: center; }
+thead th.job, tbody th { width: 168px; text-align: left; }
+tbody th { font-size: 13px; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+thead th.today { color: var(--text-brand); font-weight: var(--weight-medium); }
+td.cell { height: 28px; padding: 0; text-align: center; border-radius: var(--radius-xs); font-family: var(--font-mono);
+  font-size: 13px; font-weight: var(--weight-medium); white-space: nowrap; border: 1px solid transparent; }
+.count { font-weight: var(--weight-regular); margin-left: 4px; }
+.legend { margin-top: auto; height: 48px; display: flex; flex-wrap: wrap; align-content: flex-end; gap: 8px 20px;
+  font-family: var(--font-body); font-size: 13px; color: var(--text-body); }
+.key { display: inline-block; min-width: 40px; padding: 2px 6px; margin-right: 6px; text-align: center;
+  border-radius: var(--radius-xs); font-family: var(--font-mono); font-size: 12px; font-weight: var(--weight-medium);
+  border: 1px solid transparent; }
+.s-failed { background: var(--danger-bg); color: var(--danger-fg); }
+.s-missed { background: var(--warning-bg); color: var(--warning-fg); }
+.s-running { background: var(--info-bg); color: var(--info-fg); }
+.s-ok { background: var(--success-bg); color: var(--success-fg); }
+.s-skipped { background: var(--neutral-100); color: var(--neutral-600); }
+td.s-due, span.s-due { background: var(--white); color: var(--info-fg); border-color: var(--info-fg); }
+td.s-upcoming, span.s-upcoming { background: var(--white); color: var(--text-muted); border-color: var(--border-subtle); }
+.s-not-installed { background: var(--neutral-50); color: var(--text-faint); }
+.s-none { background: var(--white); color: var(--text-faint); }
+"""
+
+
+def grid_size(snapshot: mission.Snapshot) -> tuple[int, int]:
+    rows = len({job for job, _ in snapshot.slots})
+    height = 2 * _PAD + _TITLE + _LEGEND + (_HEAD_ROW + _ROW * rows if rows else _NOTE)
+    return GRID_WIDTH, height
+
+
+def grid_html(snapshot: mission.Snapshot) -> str:
+    """The grid page, checked before it is drawn (X14)."""
+    now = snapshot.now
+    jobs = list(dict.fromkeys(job for job, _ in snapshot.slots))
+    title = f"{len(snapshot.days)} days to {health.day_label(now)}, as of {now:%H:%M} SGT"
+    head = "".join(
+        f'<th class="day{" today" if day == now.date() else ""}">{day:%a}<br>{day.day}</th>' for day in snapshot.days
+    )
+    rows = []
+    for job in jobs:
+        tds = "".join(_grid_cell(job, day, snapshot.slots.get((job, day), [])) for day in snapshot.days)
+        rows.append(f"<tr><th>{escape(job)}</th>{tds}</tr>")
+    body = (
+        f'<table><thead><tr><th class="job">Job</th>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
+        if jobs
+        else f'<p class="note">{escape(_unavailable(snapshot))}</p>'
+    )
+    keys = [(status.replace(" ", "-"), *GRID_LABELS[status]) for status in slots.WORST_FIRST]
+    keys.append(("none", GRID_NO_SLOT, "no slot that day"))
+    legend = "".join(
+        f'<span class="item"><span class="key s-{css}">{escape(label)}</span>{escape(meaning)}</span>' for css, label, meaning in keys
+    )
+    width, height = grid_size(snapshot)
+    styles = (images.design_system() / "styles.css").as_uri()
+    return (
+        '<!doctype html>\n<html lang="en-SG"><head><meta charset="utf-8">'
+        f'<meta name="viewport" content="width={width}, height={height}">'
+        f'<link rel="stylesheet" href="{escape(styles)}"><style>{_GRID_CSS}</style></head>'
+        f'<body><main class="page"><div class="overline">Jura growth · mission control</div><h1>{escape(title)}</h1>'
+        f'{body}<footer class="legend">{legend}</footer></main></body></html>'
+    )
+
+
+def _grid_cell(job: str, day, states: list[slots.SlotStatus]) -> str:
+    cell = slots.day_cell(states)
+    if cell.status is None:
+        css, status, inner = "none", "none", GRID_NO_SLOT
+    else:
+        css, status = cell.status.replace(" ", "-"), cell.status
+        inner = escape(GRID_LABELS[status][0])
+        if len(states) > 1:
+            inner += f'<span class="count">{cell.counts[status]}</span>'
+    return f'<td class="cell s-{css}" data-job="{escape(job)}" data-day="{day.isoformat()}" data-status="{escape(status)}">{inner}</td>'
+
+
+def render_grid(snapshot: mission.Snapshot, out: Path, *, chrome: images.Chrome, offline: bool = False) -> Path:
+    """The grid as a PNG at `out`, through the core Chrome helper."""
+    width, height = grid_size(snapshot)
+    return images.screenshot(grid_html(snapshot), out, width, height, chrome=chrome, offline=offline)
