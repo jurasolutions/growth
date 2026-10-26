@@ -74,11 +74,18 @@ def approval_kinds() -> dict:
 
 
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
-    """Before the Monday run: write down rules confirmed before group-rules approvals existed
-    (once each). The register part runs every Monday, even with nothing joined."""
+    """Never skips: the register part runs every Monday, even with nothing joined.
+
+    It has one side effect: the one-off pass that writes down rules confirmed before group-rules
+    approvals existed (`group_rules.record_earlier_confirmations`). A failure there is logged as
+    `community.group.rules_pass_error` and retried next time, never a reason to skip the run."""
     if job == "community":
-        with db.transaction(conn):
-            group_rules.record_earlier_confirmations(conn)
+        try:
+            with db.transaction(conn):
+                group_rules.record_earlier_confirmations(conn)
+        except Exception as error:  # noqa: BLE001 - the run goes ahead whatever the pass does
+            log.event(conn, "community.group.rules_pass_error", {"error": f"{type(error).__name__}: {error}"},
+                      level="warning", agent=NAME)
     return None
 
 

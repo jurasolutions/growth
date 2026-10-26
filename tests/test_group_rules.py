@@ -220,12 +220,111 @@ def test_new_rules_text_unconfirms_the_group_and_supersedes_the_request_with_a_n
     assert second.id != first.id and second.id in result.output
 
 
+def confirmed(conn) -> tuple[int, approvals.Approval]:
+    """A group confirmed through a decision, and a second request raised to change its days."""
+    first = raised(conn)
+    group_id = group_rules.group_id_of(first.subject)
+    aw.approve(conn, first, args=DAYS)
+    result = invoke("community", "set", str(group_id), "rules_confirmed=yes")
+    assert result.exit_code == 0, result.output
+    [second] = [r for r in requests(conn, group_id) if r.status == "pending"]
+    assert second.id != first.id and second.id in result.output
+    assert confirmation(conn, group_id) == (1, "sat,sun", "any")  # unchanged until the decision
+    return group_id, second
+
+
+def test_confirming_a_confirmed_group_again_raises_a_card_whose_approve_replaces_the_days(conn):
+    """Code review 05 S5 (the conductor's decision): this is the way to change a group's days."""
+    group_id, second = confirmed(conn)
+    assert aw.approve(conn, second, args={"promo_days": "sat", "post_days": "mon-sat"}).answer == "recorded"
+    assert confirmation(conn, group_id) == (1, "sat", "mon,tue,wed,thu,fri,sat")
+
+
+def test_skipping_or_ignoring_that_card_keeps_the_earlier_confirmation(conn, monkeypatch):
+    group_id, second = confirmed(conn)
+    assert aw.skip(conn, second).answer == "recorded"
+    assert confirmation(conn, group_id) == (1, "sat,sun", "any")
+    assert invoke("community", "set", str(group_id), "rules_confirmed=yes").exit_code == 0
+    [third] = [r for r in requests(conn, group_id) if r.status == "pending"]
+    approvals.expire_due(conn, aw.at(monkeypatch, third.decide_by))
+    assert aw.get(conn, third.id).status == "expired"
+    assert confirmation(conn, group_id) == (1, "sat,sun", "any")
+
+
 def test_unconfirming_by_hand_still_works_and_raises_nothing(conn):
     first = raised(conn)
     group_id = group_rules.group_id_of(first.subject)
     aw.approve(conn, first, args=DAYS)
     assert invoke("community", "set", str(group_id), "rules_confirmed=no").exit_code == 0
     assert groups_mod.get(conn, group_id)["rules_confirmed"] == 0 and len(requests(conn, group_id)) == 1
+
+
+def test_a_quoted_yes_never_confirms_from_terminal(conn):
+    """Code review 05 B1, the reviewer's repro: after an unconfirm, the decided days are still
+    there, so a quoted yes must not slip past as a plain field."""
+    request = raised(conn)
+    group_id = group_rules.group_id_of(request.subject)
+    aw.approve(conn, request, args=DAYS)
+    assert invoke("community", "set", str(group_id), "rules_confirmed=no").exit_code == 0
+    invoke("community", "set", str(group_id), 'rules_confirmed="yes"')
+    assert confirmation(conn, group_id)[0] == 0
+
+
+@pytest.mark.parametrize("word", [
+    'rules_confirmed="yes"', "rules_confirmed='y'", "RULES_CONFIRMED=YES", " rules_confirmed = yes ",
+    "Rules_Confirmed=True", "rules_confirmed=1", 'rules_confirmed="on"',
+])
+def test_every_spelling_of_yes_raises_the_request_and_confirms_nothing(conn, word):
+    request = raised(conn)
+    group_id = group_rules.group_id_of(request.subject)
+    aw.approve(conn, request, args=DAYS)
+    assert invoke("community", "set", str(group_id), "rules_confirmed=no").exit_code == 0
+    result = invoke("community", "set", str(group_id), word)
+    assert result.exit_code == 0, result.output
+    assert confirmation(conn, group_id)[0] == 0
+    [waiting] = [r for r in requests(conn, group_id) if r.status == "pending"]
+    assert waiting.id in result.output
+
+
+@pytest.mark.parametrize("word", [
+    '"promo_days"=sat', "PROMO_DAYS=sat", " post_days =any", "Post_Days='any'", 'promo_days="sat"',
+])
+def test_every_spelling_of_a_day_key_is_refused(conn, word):
+    group_id = researched(conn)
+    before = groups_mod.get(conn, group_id)
+    result = invoke("community", "set", str(group_id), word)
+    assert result.exit_code != 0 and "decide it in #approvals" in result.output
+    assert groups_mod.get(conn, group_id) == before
+
+
+@pytest.mark.parametrize("word", ["rules_confirmed=maybe", 'rules_confirmed=""', "rules_confirmed="])
+def test_a_confirmation_that_is_neither_yes_nor_no_is_refused(conn, word):
+    group_id = researched(conn)
+    before = groups_mod.get(conn, group_id)
+    result = invoke("community", "set", str(group_id), word)
+    assert result.exit_code != 0 and "yes or no" in result.output
+    assert groups_mod.get(conn, group_id) == before and requests(conn) == []
+
+
+@pytest.mark.parametrize("empty", ['rules=""', "rules=''", "rules=   ", 'promo_rules=""'])
+def test_quoted_empty_rules_with_a_confirmation_are_refused(conn, empty):
+    """Code review 05 B1, the same root cause: quotes around nothing are no rules."""
+    group_id = researched(conn)
+    before = groups_mod.get(conn, group_id)
+    result = invoke("community", "set", str(group_id), empty, "rules_confirmed=yes")
+    assert result.exit_code != 0 and f"set the rules first: community set {group_id} rules=…" in result.output
+    assert groups_mod.get(conn, group_id) == before and requests(conn) == []
+
+
+@pytest.mark.parametrize("pairs", [["rules_confirmed=yes"], ["promo_days=sat"], ["post_days=any"],
+                                   ['"rules_confirmed"="yes"', "promo_days=sat", "post_days=any"]])
+def test_set_fields_refuses_the_gated_keys_unless_a_decision_applies_them(conn, pairs):
+    """Defence in depth: only the group-rules decision may write them."""
+    group_id = researched(conn)
+    with pytest.raises(groups_mod.GroupError, match="#approvals"):
+        groups_mod.set_fields(conn, group_id, pairs)
+    assert confirmation(conn, group_id) == (0, None, None)
+    groups_mod.set_fields(conn, group_id, ["rules_confirmed=no", "notes=checked"])  # no is always fine
 
 
 def test_the_card_posts_when_the_command_ends_with_the_rules_and_the_typed_form_and_no_buttons(conn, discord_double, monkeypatch):
@@ -435,7 +534,7 @@ def test_earlier_confirmations_stand_and_are_recorded_once_as_an_event(conn):
     earlier = researched(conn)
     legacy = researched(conn, name="SG printers", slug="sgprinters")
     with db.transaction(conn):  # as Terminal did before group-rules existed (ticket 07, and before it)
-        groups_mod.set_fields(conn, earlier, ["rules_confirmed=yes", "promo_days=sat", "post_days=any"])
+        groups_mod.set_fields(conn, earlier, ["rules_confirmed=yes", "promo_days=sat", "post_days=any"], by_decision=True)
         conn.execute("UPDATE community_groups SET rules_confirmed = 1 WHERE id = ?", (legacy,))
     decided = raised(conn, researched(conn, name="SG florists", slug="sgflorists"))
     aw.approve(conn, decided, args=DAYS)
@@ -454,6 +553,36 @@ def test_earlier_confirmations_stand_and_are_recorded_once_as_an_event(conn):
     assert {g: (r["rules_confirmed"], r["promo_days_confirmed"]) for g, r in after.items()} == {
         g: (r["rules_confirmed"], r["promo_days_confirmed"]) for g, r in before.items()}
     assert requests(conn, earlier) == [] and requests(conn, legacy) == []
+
+
+def test_the_pass_runs_once_so_a_later_confirmation_without_a_decision_is_never_written_down(conn):
+    """Code review 05 S4: after the first pass, a `rules_confirmed = 1` that no decision made
+    (a raw edit, a future path) is not laundered into "confirmed before group-rules"."""
+    from jura_growth.agents import community as community_plugin
+
+    first = researched(conn)
+    assert community_plugin.precheck("community", conn) is None  # the one-off pass: nothing to record
+    assert len(aw.events(conn, group_rules.EARLIER_DONE)) == 1
+    later = researched(conn, name="SG printers", slug="sgprinters")
+    conn.execute("UPDATE community_groups SET rules_confirmed = 1 WHERE id = ?", (later,))
+    conn.commit()
+    community_plugin.precheck("community", conn)
+    assert invoke("community", "set", str(first), "notes=checked").exit_code == 0
+    assert aw.events(conn, group_rules.EARLIER) == []
+    assert len(aw.events(conn, group_rules.EARLIER_DONE)) == 1
+
+
+def test_a_failing_pass_never_stops_the_monday_run(conn, monkeypatch):
+    """Code review 05 S3: precheck's one write is logged when it fails, never "precheck failed"."""
+    from jura_growth.agents import community as community_plugin
+
+    def broken(conn):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(group_rules, "record_earlier_confirmations", broken)
+    assert community_plugin.precheck("community", conn) is None
+    [logged] = aw.events(conn, "community.group.rules_pass_error")
+    assert "disk full" in logged["error"]
 
 
 # --- what Ting Yu is told ---------------------------------------------------------------------------

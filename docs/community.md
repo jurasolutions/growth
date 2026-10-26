@@ -46,15 +46,21 @@ and `community audit-run` proves the run fetched none of them from its transcrip
   refused. Skip the card, or leave it for 14 days, and the rules stay unconfirmed: posts there
   carry no link, and the group has no open day.
 - `community set` refuses `promo_days=` and `post_days=`, and refuses `rules_confirmed=yes` when
-  the group has no rules text yet ("set the rules first"). Running `rules_confirmed=yes` again
-  names the card already waiting. New rules text clears the confirmation and the days, and raises
-  a new card. Rules the community run found by web search never raise a card by themselves.
-- **Groups confirmed before group-rules approvals** keep their confirmation and days. Each is
-  written down once as a `community.group.rules_confirmed_earlier` event, before the next
-  community run or `community set`. A group confirmed before ticket 07 has no days and stays
-  closed: run `community set <id> rules_confirmed=yes` and confirm its card with the days.
-  `jura-growth community groups --joined` lists them, with "no post until Ting Yu confirms the
-  open days".
+  the group has no rules text yet ("set the rules first"). However a yes is spelled or quoted
+  (`yes`, `y`, `true`, `1`, `on`, `"yes"`), it only raises the card. Running `rules_confirmed=yes`
+  again names the card already waiting. New rules text clears the confirmation and the days, and
+  raises a new card. Rules the community run found by web search never raise a card by themselves.
+- **To change a confirmed group's days**, run `community set <id> rules_confirmed=yes` again. It
+  raises a new card over the same rules; approve it with the new days and they replace the old
+  ones. Skip it, or leave it for 14 days, and the group keeps the confirmation and days it had.
+  `rules_confirmed=no` unconfirms a group at once, with no card.
+- **Groups confirmed before group-rules approvals** keep their confirmation and days. A one-off
+  pass writes each down once as a `community.group.rules_confirmed_earlier` event, before the next
+  community run or `community set`, and then never runs again: a confirmation that appears later
+  without a decision is not written down as history. A group confirmed before ticket 07 has no
+  days and stays closed: run `community set <id> rules_confirmed=yes` and confirm its card with
+  the days. `jura-growth community groups --joined` lists them, with "no post until Ting Yu
+  confirms the open days".
 - Post the plan's items yourself, then tick `- [x]` in the checklist or run
   `jura-growth community posted <item-id> [url]`.
 - If an admin removes a post or warns you: `jura-growth community removed <group-id>`. The group
@@ -116,7 +122,8 @@ Structural problems reject the whole plan and store nothing, without touching th
   reads days out of the rules text: day, frequency and holiday rules ("promo Saturdays only",
   "#FridayPromo thread", "once a week") are too easy to invert or miss. Every group has no open
   day, in `context`'s `days_open` or in a plan, until Ting Yu types both `promo_days` and
-  `post_days` in the group's `group-rules` decision; then only those days count, and the checklist's "Planned as" line shows them.
+  `post_days` in the group's `group-rules` decision; then only those days count, and the
+  checklist's "Planned as" line shows them.
   `promo_days` limits promotional posts and `post_days` limits every post. A post is
   promotional when it mentions Jura or carries a link. When the rules seem to mention timing,
   the register listing and the checklist say "the rules mention timing, so check the day

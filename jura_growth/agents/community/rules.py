@@ -2,8 +2,9 @@
 
 No group is plannable until Ting Yu has said which days are open, typed in his
 `group-rules` decision in #approvals (`/growth approve A-nnnn promo_days=...
-post_days=...`, then `confirm_days`), whatever its rules text says. Code never reads days out of English rules: day,
-frequency and holiday rules are too easy to invert or miss, and a forbidden day
+post_days=...`, then `confirm_days`), whatever its rules text says. Code never
+reads days out of English rules: day, frequency and holiday rules are too easy
+to invert or miss, and a forbidden day
 can get Ting Yu removed from the group. `mentions_timing` only flags rules that
 seem to talk about timing, as a hint to read them carefully; it never opens a day.
 

@@ -57,7 +57,7 @@ def group(name, url_slug, *, rules="not stated in public sources", fit="good fit
 def joined(conn, record, *pairs):
     status, group_id, messages = groups_mod.add(conn, record)
     assert status == "added", messages
-    groups_mod.set_fields(conn, group_id, ["joined=yes", *pairs])
+    groups_mod.set_fields(conn, group_id, ["joined=yes", *pairs], by_decision=True)  # days as a group-rules decision sets them
     return groups_mod.get(conn, group_id)
 
 
@@ -357,11 +357,11 @@ def test_confirming_rules_needs_the_open_days_for_every_group(conn, monkeypatch,
 
 def test_new_rules_text_clears_the_confirmed_days(conn):
     _, group_id, _ = groups_mod.add(conn, group("SG cafe owners", "sgcafe", rules="No promotion on weekends."))
-    groups_mod.set_fields(conn, group_id, ["rules_confirmed=yes", "promo_days=mon-fri", "post_days=any"])
+    groups_mod.set_fields(conn, group_id, ["rules_confirmed=yes", "promo_days=mon-fri", "post_days=any"], by_decision=True)
     row = groups_mod.set_fields(conn, group_id, ["rules=Promo on Saturdays only."])
     assert row["promo_days_confirmed"] is None and row["post_days_confirmed"] is None
     assert not groups_mod.rules_for(row).days_confirmed
-    kept = groups_mod.set_fields(conn, group_id, ["rules=Promo on Fridays only.", "promo_days=fri", "post_days=any"])
+    kept = groups_mod.set_fields(conn, group_id, ["rules=Promo on Fridays only.", "promo_days=fri", "post_days=any"], by_decision=True)
     assert kept["promo_days_confirmed"] == "fri"
 
 

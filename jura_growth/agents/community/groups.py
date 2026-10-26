@@ -201,18 +201,47 @@ YES = {"yes", "y", "true", "1", "on"}
 NO = {"no", "n", "false", "0", "off"}
 
 
-def set_fields(conn: sqlite3.Connection, group_id: int, pairs: list[str]) -> dict:
-    group = get(conn, group_id)
-    if group is None:
-        raise GroupError(f"no group {group_id}")
-    updates: dict[str, object] = {}
+GATED = "rules_confirmed=yes, promo_days and post_days are set only by a group-rules decision in #approvals"
+
+
+def _unquote(text: str) -> str:
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        text = text[1:-1].strip()
+    return text
+
+
+def parse_pairs(pairs: list[str]) -> list[tuple[str, str]]:
+    """`key=value` words as `community set` takes them, read one way everywhere: key and value
+    trimmed, one layer of surrounding quotes dropped from each, the key lower-cased."""
+    parsed = []
     for pair in pairs:
         if "=" not in pair:
             raise GroupError(f"expected key=value, got {pair!r}")
         key, _, value = pair.partition("=")
-        key, value = key.strip().lower(), value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-            value = value[1:-1]
+        parsed.append((_unquote(key).lower(), _unquote(value)))
+    return parsed
+
+
+def is_gated(key: str, value: str) -> bool:
+    """A field only the `group-rules` decision may write: a yes for `rules_confirmed`, or a day."""
+    return key in DAY_COLUMNS or (key == "rules_confirmed" and value.lower() in YES)
+
+
+def set_fields(conn: sqlite3.Connection, group_id: int, pairs: list[str], *, by_decision: bool = False) -> dict:
+    """Write `key=value` fields. `rules_confirmed=yes` and the days are refused unless
+    `by_decision` (only the `group-rules` kind's `on_approve` passes it)."""
+    return set_parsed(conn, group_id, parse_pairs(pairs), by_decision=by_decision)
+
+
+def set_parsed(conn: sqlite3.Connection, group_id: int, parsed: list[tuple[str, str]], *, by_decision: bool = False) -> dict:
+    group = get(conn, group_id)
+    if group is None:
+        raise GroupError(f"no group {group_id}")
+    if not by_decision and any(is_gated(key, value) for key, value in parsed):
+        raise GroupError(f"refused: {GATED}")
+    updates: dict[str, object] = {}
+    for key, value in parsed:
         if key not in SETTABLE:
             raise GroupError(f"can't set {key!r}; settable: {', '.join(sorted(SETTABLE))}")
         if key in ("joined", "rules_confirmed"):
