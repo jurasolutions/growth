@@ -69,6 +69,11 @@ def work_dir(job: str) -> Path:
     return data_dir() / "work" / job
 
 
+def one_pager_dir() -> Path:
+    """The one-pager's grid PNGs, one a day (`grid-YYYY-MM-DD.png`), pruned by the backup."""
+    return data_dir() / "one-pager"
+
+
 class PathRefused(PermissionError):
     """A CLI option or plan field named a file it may not use."""
 

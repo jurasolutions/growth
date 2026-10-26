@@ -301,9 +301,3 @@ def test_one_pager_no_post_prints_the_text_and_writes_nothing(conn, monkeypatch)
     assert result.exit_code == 0, result.output
     assert result.output.splitlines()[0] == "**Tue 10 Nov, as of 08:00 SGT**"
     assert world.stat_snapshot(*folders) == before
-
-
-def test_one_pager_without_no_post_waits_for_ticket_09():
-    result = CliRunner().invoke(cli.cli, ["one-pager"])
-    assert result.exit_code != 0
-    assert "--no-post" in result.output

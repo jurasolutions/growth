@@ -23,7 +23,7 @@ from click.testing import CliRunner
 
 import approval_world as aw
 from sweep import d2_secrets  # noqa: F401 - a fixture
-from jura_growth import approvals, config, headless, origin, paths, remote as remote_mod
+from jura_growth import approvals, config, headless, one_pager, origin, paths, remote as remote_mod
 from jura_growth.cli import cli
 from jura_growth.origin import Origin
 
@@ -56,6 +56,7 @@ def world(conn, monkeypatch):
     world = aw.install(monkeypatch)
     aw.prepare(conn)
     aw.at(monkeypatch, aw.NOW)
+    monkeypatch.setattr(one_pager, "OFFLINE", True)  # `one-pager` draws its grid with Chrome, offline here
     return world
 
 
@@ -183,6 +184,9 @@ def _table(conn, world):
         (["approve", approval.id, *ARGS], 0, f"{approval.id} approved."),
         (["community", "removed", str(group_id)], 0, "is now skip, permanently"),
         (["community", "removed", "999"], 1, "999"),
+        # MC-09. Discord is off here, so the one-pager waits in the outbox; AC-M1.6's
+        # "posted to #mission-control" through the Discord double is in test_one_pager_post.py.
+        (["one-pager"], 0, "not posted to #mission-control: DISCORD_WEBHOOK_MISSION_CONTROL not set; saved to outbox"),
         (["outreach", "requeue-shadow", "--dry-run"], 1, "live sending is ready"),
         (["pause", "all", "holiday"], 0, "paused all"),
         (["resume", "all"], 0, "resumed all"),

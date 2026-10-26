@@ -73,6 +73,7 @@ brackets are required; words in square brackets are optional.
 | `approvals [kind]` | `approvals` | The 15 soonest to lapse, then "and N more". `--json` adds `approvals` |
 | `approve <A-nnnn> [key=value …] [note]` | `approve` | Answers from the enum below. Leading `key=value` words are the kind's arguments (`group-rules`: `promo_days=… post_days=…`); the rest is a note |
 | `community removed <group-id>` | `community removed` | |
+| `one-pager` | `one-pager` | Posts the one-pager to `#mission-control` with the 14-day grid, dedupe off: asked twice, it posts twice. Exit 0 and `recorded` either way, like `heartbeat`: the text says "posted to #mission-control", or "not posted to #mission-control: <why>" when Discord didn't take it and it waits in the outbox, which the next one-pager lists under Needs you. Read the text, not the exit code, to tell them apart |
 | `outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]` | `outreach requeue-shadow` | Live mode only; each requeued email raises its own approval request. Exit 1 in shadow mode |
 | `pause <agent\|all> [reason]` | `pause` | The rest of the words are the reason; "paused from Discord" without one |
 | `resume <agent\|all>` | `resume` | With a PAUSE file present, the answer says it can only be removed on the Mac |
@@ -98,9 +99,10 @@ Every answer is one of seven. For `approve` and `skip`, each answer has exactly 
 | `refused` | 2 | Nothing was done: not the Dispatch origin, not the control user, not on the allowlist, missing `key=value` arguments, or a command growth didn't understand |
 
 Commands other than `approve` and `skip` answer `recorded` with exit 0 when they ran, and
-`refused` with exit 2 when `remote` refused them. Exit 1 means the command ran and reported a
-problem of its own (for example `outreach requeue-shadow` before live sending is ready, or
-`community removed` for a group that doesn't exist). Its answer is `refused` and `ok` is false.
+`refused` with exit 2 when `remote` refused them (`one-pager` answers exit 0 even when Discord
+didn't take the post; see its row). Exit 1 means the command ran and reported a problem of its
+own (for example `outreach requeue-shadow` before live sending is ready, or `community removed`
+for a group that doesn't exist). Its answer is `refused` and `ok` is false.
 Read `exit_code` to tell the two refusals apart.
 
 ## The JSON answer

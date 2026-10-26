@@ -26,15 +26,12 @@ from __future__ import annotations
 
 import html
 import json
-import os
 import re
-import shutil
-import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from jura_growth import images, paths
+from jura_growth import images
 from jura_growth.agents.social import toolbox
 from jura_growth.agents.social.settings import LAYOUTS, Settings, load
 
@@ -52,12 +49,10 @@ LIMITS = {"overline": 32, "headline": 90, "subtitle": 150, "caption": 60, "item"
 MAX_ITEMS = 5
 
 
-class RenderError(RuntimeError):
-    pass
-
-
-def design_system() -> Path:
-    return paths.JURA_ROOT / "design-system"
+# The Chrome helper is the core's (`images.py`); these names stay so the
+# social code and its tests read as before.
+RenderError = images.RenderError
+design_system = images.design_system
 
 
 # --- the card spec -----------------------------------------------------------
@@ -283,10 +278,12 @@ def tool_strings(info: toolbox.Tool | None) -> dict[str, str]:
 # --- Chrome ------------------------------------------------------------------
 
 
+def _chrome_of(settings: Settings) -> images.Chrome:
+    return images.Chrome(settings.chrome, settings.virtual_time_budget_ms, settings.render_timeout_seconds)
+
+
 def chrome_path(settings: Settings | None = None) -> Path | None:
-    settings = settings or load()
-    candidate = Path(os.environ.get("JURA_GROWTH_CHROME") or settings.chrome)
-    return candidate if candidate.exists() and os.access(candidate, os.X_OK) else None
+    return images.chrome_path((settings or load()).chrome)
 
 
 def png_size(path: Path) -> tuple[int, int]:
@@ -297,53 +294,12 @@ def png_size(path: Path) -> tuple[int, int]:
     return size
 
 
-def _chrome(args: list[str], settings: Settings, *, offline: bool) -> subprocess.CompletedProcess:
-    binary = chrome_path(settings)
-    if not binary:
-        raise RenderError(f"Google Chrome not found at {os.environ.get('JURA_GROWTH_CHROME') or settings.chrome}")
-    profile = tempfile.mkdtemp(prefix="jura-chrome-")
-    argv = [
-        str(binary),
-        "--headless=new",
-        "--disable-gpu",
-        "--hide-scrollbars",
-        "--force-device-scale-factor=1",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-extensions",
-        "--mute-audio",
-        f"--user-data-dir={profile}",
-        f"--virtual-time-budget={settings.virtual_time_budget_ms}",
-    ]
-    if offline:
-        argv.append("--host-resolver-rules=MAP * ~NOTFOUND")
-    try:
-        return subprocess.run(
-            argv + args, capture_output=True, text=True, timeout=settings.render_timeout_seconds
-        )
-    except subprocess.TimeoutExpired as error:
-        raise RenderError(f"Chrome took longer than {settings.render_timeout_seconds}s") from error
-    finally:
-        shutil.rmtree(profile, ignore_errors=True)
+def _chrome(args: list[str], settings: Settings, *, offline: bool):
+    return images.run_chrome(args, _chrome_of(settings), offline=offline)
 
 
 def screenshot(page: str, out: Path, width: int, height: int, *, settings: Settings | None = None, offline: bool = False) -> Path:
-    settings = settings or load()
-    out = paths.writable(Path(out))
-    with tempfile.TemporaryDirectory(prefix="jura-card-") as folder:
-        source = Path(folder) / "card.html"
-        source.write_text(page, encoding="utf-8")
-        if out.exists():
-            out.unlink()
-        result = _chrome(
-            [f"--window-size={width},{height}", f"--screenshot={out}", source.as_uri()], settings, offline=offline
-        )
-    if not out.exists():
-        raise RenderError(f"Chrome wrote no image (exit {result.returncode}): {(result.stderr or '')[-300:]}")
-    actual = png_size(out)
-    if actual != (width, height):
-        raise RenderError(f"{out.name} is {actual[0]}×{actual[1]}, expected {width}×{height}")
-    return out
+    return images.screenshot(page, out, width, height, chrome=_chrome_of(settings or load()), offline=offline)
 
 
 def fonts_loaded(page: str, *, settings: Settings | None = None) -> list[str]:

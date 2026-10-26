@@ -130,6 +130,7 @@ ALLOWLIST: dict[str, Entry] = {
     "approvals": Entry("approvals [kind]", _positional("approvals", 0, 1)),
     "approve": Entry("approve <A-nnnn> [key=value …] [note]", _decision("approve"), decision=True),
     "community removed": Entry("community removed <group-id>", _positional("community removed", 1, 1)),
+    "one-pager": Entry("one-pager", _none("one-pager")),
     "outreach requeue-shadow": Entry("outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]", _requeue_shadow),
     "pause": Entry("pause <agent|all> [reason]", _pause),
     "resume": Entry("resume <agent|all>", _positional("resume", 1, 1)),
