@@ -11,6 +11,8 @@ slides went up out of order (AC-P9.3).
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 import pytest
 
 import publish_transcripts as t
@@ -19,38 +21,39 @@ from discord_double import discord_double  # noqa: F401 - a fixture
 from jura_growth import pause, paths
 from test_publish_run import alerts, browser, chrome, claim, fake, item, run, run_row  # noqa: F401 - fake is a fixture
 
-THURSDAY = pw.date(2026, 11, 12)  # an Instagram carousel day
-IG_PROFILE = pw.INSTAGRAM_URL
-IG_POST = "https://www.instagram.com/p/C0deAbc123/"
-LI_PAGE = pw.LINKEDIN_URL
-LI_POST = "https://www.linkedin.com/feed/update/urn:li:activity:7254000000000000000/"
-WHERE = {"instagram": (IG_PROFILE, IG_POST, "Instagram"), "linkedin": (LI_PAGE, LI_POST, "LinkedIn page")}
-OWN_PAGE = {"instagram": "jura.solutions\nEdit profile\nCreate", "linkedin": "Jura Solutions\nAdmin view\nStart a post"}
+IG_POST = pw.INSTAGRAM_POST
+LI_POST = pw.LINKEDIN_POST
+WHERE = {"instagram": (pw.INSTAGRAM_URL, IG_POST, "Instagram"), "linkedin": (pw.LINKEDIN_URL, LI_POST, "LinkedIn page"),
+         "facebook": (pw.PAGE_URL, t.POST, "Facebook Page")}
+OWN_PAGE = {"instagram": "jura.solutions\nEdit profile\nCreate", "linkedin": "Jura Solutions\nAdmin view\nStart a post",
+            "facebook": "Jura Solutions\nCreate post"}
 SOMEONE_ELSE = {"instagram": "someone.else\nFollow\nMessage", "linkedin": "Start a post\nPosting as Someone Else"}
+ALL = ("facebook", "instagram", "linkedin")
 
 
-def browser_mode(fake, platform: str) -> None:
+def browser_mode(fake, *platforms: str) -> None:
     def change(data):
         for name, spec in data["platforms"].items():
-            spec["publish_mode"] = "browser" if name == platform else "draft"
-        data["platforms"][platform]["page_url"] = WHERE[platform][0]
+            spec["publish_mode"] = "browser" if name in platforms else "draft"
+            if name in platforms:
+                spec["page_url"] = WHERE[name][0]
 
     fake.social(change)
 
 
-def slides() -> list:
-    return [pw.image(f"instagram-{n}-of-3-1080x1350.png", pw.png(1080, 1350, extra=bytes([n])), day=THURSDAY)
-            for n in (1, 2, 3)]
+def approved_instagram(conn, fake, monkeypatch, *platforms: str):
+    """An approved Instagram carousel for Thu 12 Nov, three slides, and 10:00 that day, with
+    `platforms` (Instagram alone by default) in `browser` mode."""
+    browser_mode(fake, *(platforms or ("instagram",)))
+    pw.at(monkeypatch, "2026-11-12T07:05:00+08:00")
+    found, approval = pw.approved(conn, monkeypatch, "instagram", day=pw.THURSDAY, images=pw.slides())
+    pw.at(monkeypatch, "2026-11-12T10:00:00+08:00")
+    return found, approval
 
 
 @pytest.fixture
 def instagram(conn, fake, monkeypatch):
-    """An approved Instagram carousel for Thu 12 Nov, three slides, and 10:00 that day."""
-    browser_mode(fake, "instagram")
-    pw.at(monkeypatch, "2026-11-12T07:05:00+08:00")
-    found, approval = pw.approved(conn, monkeypatch, "instagram", day=THURSDAY, images=slides())
-    pw.at(monkeypatch, "2026-11-12T10:00:00+08:00")
-    return found, approval
+    return approved_instagram(conn, fake, monkeypatch)
 
 
 @pytest.fixture
@@ -63,8 +66,11 @@ def linkedin(conn, fake, monkeypatch):
     return found, approval
 
 
-def post_steps(platform: str, uploads: list[list[str]]) -> list[dict]:
-    page_url, post_url, _ = WHERE[platform]
+def post_steps(platform: str, uploads: list[list[str]], *, on: str | None = None, done_url: str | None = None) -> list[dict]:
+    """A post of the claimed `platform` item, made on `on`'s page (the item's own by default) and
+    recorded with `done_url` (the platform's post address by default)."""
+    page_url, post_url, _ = WHERE[on or platform]
+    done_url = done_url or WHERE[platform][1]
     return [
         *browser(t.created(), t.opened(page_url), t.page("get_page_text", {}, OWN_PAGE[platform], url=page_url),
                  t.page("computer", {"action": "left_click", "ref": "ref_5"}, "Clicked Create.", url=page_url)),
@@ -75,7 +81,7 @@ def post_steps(platform: str, uploads: list[list[str]]) -> list[dict]:
                  t.opened(post_url)),
         chrome(t.page("get_page_text", {}, "{TEXT}", url=post_url)),
         {"write": "{A}-live.txt", "text": "{TEXT}"},
-        {"cli": ["publish", "done", "{A}", "--url", post_url, "--live-text-file", "{WORK}/{A}-live.txt"]},
+        {"cli": ["publish", "done", "{A}", "--url", done_url, "--live-text-file", "{WORK}/{A}-live.txt"]},
         chrome(t.closed()),
     ]
 
@@ -129,7 +135,6 @@ def test_a_linkedin_company_page_post_posts_and_reports_once(conn, fake, linkedi
 
 
 def test_carousel_slides_uploaded_out_of_order_fail_the_run_and_pause_publish(conn, fake, instagram, discord_double):
-    found, approval = instagram
     fake.scenario([*claim(), *post_steps("instagram", [["{IMG2}", "{IMG1}", "{IMG3}"]])], "OK: posted {A}")
 
     outcome = run()
@@ -139,6 +144,42 @@ def test_carousel_slides_uploaded_out_of_order_fail_the_run_and_pause_publish(co
     assert pause.is_paused(conn, "publish")
     assert any("out of their approved order" in a for a in alerts(discord_double))
     assert not any("instagram-" in a for a in alerts(discord_double))  # never a path
+
+
+def test_a_carousel_whose_last_slide_failed_to_upload_fails_the_run(conn, fake, instagram, discord_double):
+    """Code review 04, S1: a failed upload never counts as a slide sent."""
+    steps = post_steps("instagram", [["{IMG1}", "{IMG2}"]])
+    failed = chrome(t.page("file_upload", {"paths": ["{IMG3}"], "ref": "ref_20"}, "Upload failed.", url=pw.INSTAGRAM_URL,
+                           error=True))
+    steps.insert(5, failed)
+    fake.scenario([*claim(), *steps], "OK: posted {A}")
+
+    outcome = run()
+
+    assert outcome.status == "failed"
+    assert "2 of its 3" in outcome.error
+    assert pause.is_paused(conn, "publish")
+
+
+# --- code review 04, B1: an item goes out only on its own platform ---------------------------------------
+
+
+@pytest.mark.parametrize("other", ["linkedin", "facebook"])
+def test_an_instagram_item_posted_on_another_enabled_platform_fails_the_run_and_pauses(
+        conn, fake, monkeypatch, discord_double, other):
+    """With every platform in `browser` mode, an Instagram carousel posted on the LinkedIn company
+    page or the Facebook Page, and recorded with an Instagram post address, fails closed."""
+    found, approval = approved_instagram(conn, fake, monkeypatch, *ALL)
+    fake.scenario([*claim(), *post_steps("instagram", [["{IMG1}", "{IMG2}", "{IMG3}"]], on=other)], "OK: posted {A}")
+
+    outcome = run()
+
+    assert len([a for a in fake.argv if a.startswith("ClaudeInChromeDomain(")]) == 9  # the rules are the union
+    assert outcome.status == "failed"
+    host = urlsplit(WHERE[other][0]).hostname or ""
+    assert host in outcome.error and "the publish hosts" in outcome.error
+    assert pause.is_paused(conn, "publish")
+    assert any(host in a for a in alerts(discord_double))
 
 
 # --- AC-P11.1: the wrong identity stops before any typing ----------------------------------------------

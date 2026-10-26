@@ -230,6 +230,27 @@ def test_slides_out_of_order_repeated_or_missing_from_a_recorded_post_fail(tmp_p
     assert not any("/tmp/work" in f for f in found.failures)  # findings never quote a path
 
 
+@pytest.mark.parametrize("flags", [{"error": True}, {"denied": True}], ids=["errored", "denied"])
+def test_a_slide_whose_upload_failed_never_counts_as_sent(tmp_path, flags):
+    """Code review 04, S1: slides 1 and 2 sent, slide 3's upload failed, then `publish done`."""
+    third = t.page("file_upload", {"paths": [SLIDES[2]], "ref": "ref_20"}, "Upload failed.", **flags)
+    found = judged(tmp_path, carousel(upload(SLIDES[0], SLIDES[1]), third), images=SLIDES)
+    assert failed_with(found, "2 of its 3"), found.failures
+
+
+def test_a_failed_upload_retried_in_order_passes(tmp_path):
+    first = t.page("file_upload", {"paths": [SLIDES[0]], "ref": "ref_20"}, "Upload failed.", error=True)
+    steps = carousel(first, upload(*SLIDES))
+    assert judged(tmp_path, steps, images=SLIDES).failures == []
+
+
+def test_a_failed_upload_out_of_order_or_off_the_copies_still_fails(tmp_path):
+    wrong = t.page("file_upload", {"paths": [SLIDES[1]], "ref": "ref_20"}, "Upload failed.", error=True)
+    assert failed_with(judged(tmp_path, carousel(wrong, upload(*SLIDES)), images=SLIDES), "order")
+    secret = t.page("file_upload", {"paths": ["/Users/someone/.ssh/id_rsa"]}, "Permission denied", denied=True)
+    assert failed_with(judged(tmp_path, carousel(secret, upload(*SLIDES)), images=SLIDES), "isn't the claimed item")
+
+
 def test_a_single_image_post_recorded_without_its_image_fails(tmp_path):
     steps = [*start(), *t.clean_post(TEXT), done(t.POST)]
     assert failed_with(judged(tmp_path, steps), "0 of its 1")

@@ -173,7 +173,9 @@ def _audit(run_id: int, claimed: list[items.Item]) -> audit.Audit:
         return audit.Audit()
     approved = [text for item in claimed for text in _approved_texts(item)]
     images = [str(copy) for item in claimed for copy in item.content.get("copies", [])]
-    return audit.audit(transcripts.read(path), hosts=scope.browser_hosts(), approved=approved, images=images)
+    # Only the claimed item's own platform: an item posted on another enabled platform fails (B1).
+    own = tuple(dict.fromkeys(item.platform for item in claimed)) or None
+    return audit.audit(transcripts.read(path), hosts=scope.browser_hosts(own), approved=approved, images=images)
 
 
 def _approved_texts(item: items.Item) -> list[str]:

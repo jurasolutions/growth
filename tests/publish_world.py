@@ -47,6 +47,16 @@ def png(width: int = 1200, height: int = 630, extra: bytes = b"") -> bytes:
 
 PNG = png()
 
+# Instagram and LinkedIn (BP-04): a carousel day, each platform's own post address.
+THURSDAY = date(2026, 11, 12)  # an Instagram carousel day in ISO week 46
+INSTAGRAM_POST = "https://www.instagram.com/p/C0deAbc123/"
+LINKEDIN_POST = "https://www.linkedin.com/feed/update/urn:li:activity:7254000000000000000/"
+
+
+def slides(day: date = THURSDAY) -> list[Path]:
+    """Three Instagram carousel slides for `day`, each with its own bytes, in order."""
+    return [image(f"instagram-{n}-of-3-1080x1350.png", png(1080, 1350, extra=bytes([n])), day=day) for n in (1, 2, 3)]
+
 
 def at(monkeypatch, moment: str):
     monkeypatch.setenv("JURA_GROWTH_NOW", moment)
