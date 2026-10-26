@@ -35,6 +35,7 @@ from jura_growth import (
     pause as pause_mod,
     paths,
     privacy,
+    remote,
     runner,
     schedule as schedule_mod,
     suppression,
@@ -449,6 +450,11 @@ def suppression_check(email) -> None:
 # --- approvals, approve, skip (ticket 04b) -----------------------------------
 
 approvals_cli.register(cli)
+
+
+# --- remote (ticket 11) --------------------------------------------------------
+
+remote.register(cli)
 
 
 # --- agent plug-ins --------------------------------------------------------

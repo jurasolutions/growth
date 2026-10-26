@@ -15,9 +15,12 @@ process tree, give itself a terminal and type a code that isn't secret. So
 `Origin.ssh()`:
 
 - the forced command's `SSH_ORIGINAL_COMMAND` is set;
-- an `sshd` process is an ancestor, from `/bin/ps -o ppid=,comm=` walked up to
-  launchd, by its full path so a `ps` earlier on PATH can't answer; a walk
-  that can't be finished refuses;
+- an `sshd` process running as root is an ancestor, from `/bin/ps -o
+  ppid=,comm=` walked up to launchd, by its full path so a `ps` earlier on PATH
+  can't answer; a walk that can't be finished refuses. Root matters: a name
+  is only a file name, and any process can run a symlink called `sshd` (code
+  review 11). The real daemon's privileged monitor runs as root above every
+  session, and no process running as Ting Yu's user can start a root one;
 - no ancestor is `claude`;
 - none of Claude Code's environment markers (`CLAUDE_MARKERS`) is set. They
   survive a process leaving the session's tree, so they catch every casual
@@ -95,6 +98,7 @@ class Process:
     ppid: int
     comm: str
     args: str | None = None  # only for an interpreter, to see what it runs
+    uid: int | None = None  # only for an `sshd`, to see that it is the real, root one
 
 
 def _ps(pid: int, field: str) -> str | None:
@@ -137,7 +141,8 @@ def ancestry(pid: int, *, ps=None) -> list[Process] | None:
         except ValueError:
             return None
         args = ps(pid, "args=") if _base(comm) in _HOSTS else None
-        found.append(Process(pid, ppid, comm, args))
+        uid = _uid(ps(pid, "uid=")) if _is_sshd_named(comm) else None
+        found.append(Process(pid, ppid, comm, args, uid))
         pid = ppid
     return found
 
@@ -155,8 +160,18 @@ def claude_among(processes: list[Process] | None) -> bool:
     return any(_is_claude(p) for p in processes or [])
 
 
+def _is_sshd_named(comm: str) -> bool:
+    return _base(comm).startswith("sshd")
+
+
+def _uid(line: str | None) -> int | None:
+    text = (line or "").strip()
+    return int(text) if text.isdigit() else None
+
+
 def sshd_among(processes: list[Process] | None) -> bool:
-    return any(_base(p.comm).startswith("sshd") for p in processes or [])
+    """An `sshd` ancestor running as root. A user-owned one is only a name."""
+    return any(_is_sshd_named(p.comm) and p.uid == 0 for p in processes or [])
 
 
 # --- the check ----------------------------------------------------------------------

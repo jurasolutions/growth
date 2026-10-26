@@ -16,12 +16,16 @@ from jura_growth import origin
 from jura_growth.origin import NOT_HUMAN, SSH, Process
 
 
-def table(rows: dict[int, str], args: dict[int, str] | None = None):
-    """A fake `ps`: `rows[pid]` is the `ppid comm` line, `args[pid]` the `args` line."""
+def table(rows: dict[int, str], args: dict[int, str] | None = None, uids: dict[int, int] | None = None):
+    """A fake `ps`: `rows[pid]` is the `ppid comm` line, `args[pid]` the `args` line and
+    `uids[pid]` the `uid` line."""
 
     def ps(pid: int, field: str) -> str | None:
         if field == "args=":
             return (args or {}).get(pid)
+        if field == "uid=":
+            uid = (uids or {}).get(pid)
+            return None if uid is None else f"  {uid}"
         return rows.get(pid)
 
     return ps
@@ -93,10 +97,26 @@ def test_a_name_that_only_contains_claude_is_not_claude():
     assert not origin.claude_among(origin.ancestry(500, ps=table(rows)))
 
 
-def test_sshd_and_its_session_process_are_both_found():
+def test_sshd_and_its_session_process_are_both_found_when_they_run_as_root():
     for name in ("/usr/sbin/sshd", "sshd-session", "sshd: tingy [priv]"):
         rows = {500: f"  400 {name}", 400: "    1 /sbin/launchd"}
-        assert origin.sshd_among(origin.ancestry(500, ps=table(rows))), name
+        assert origin.sshd_among(origin.ancestry(500, ps=table(rows, uids={500: 0}))), name
+
+
+@pytest.mark.parametrize("uid", [501, None], ids=["ting-yus-user", "uid-unknown"])
+def test_an_sshd_that_isnt_root_is_not_sshd(uid):
+    """Code review 11: a symlink named `sshd`, run by any process as Ting Yu's user, showed
+    in `ps` as `sshd`. Only the real daemon's monitor runs as root, and no user process
+    can start a root one."""
+    rows = {500: "  400 /tmp/x/sshd", 400: "    1 /sbin/launchd"}
+    found = origin.ancestry(500, ps=table(rows, uids={} if uid is None else {500: uid}))
+    assert found is not None and not origin.sshd_among(found)
+
+
+def test_a_root_process_that_isnt_sshd_is_not_sshd():
+    """Terminal's `login` runs as root above every Terminal shell."""
+    rows = {500: "  400 /bin/zsh", 400: "  300 login", 300: "    1 /sbin/launchd"}
+    assert not origin.sshd_among(origin.ancestry(500, ps=table(rows, uids={400: 0})))
 
 
 # --- there is no Terminal origin (MC3 as amended 2026-10-26, ADR 0004) ------------------
@@ -115,8 +135,11 @@ def test_terminal_decisions_are_off_so_there_is_no_terminal_check_to_pass():
 def remote(monkeypatch):
     """Dispatch's forced command, with an sshd ancestor. Claude Code's markers are
     removed on purpose: this suite may itself run inside a Claude session."""
-    state = {"rows": {500: "  400 /bin/sh", 400: "  300 sshd-session", 300: "    1 /sbin/launchd"}}
-    monkeypatch.setattr(origin, "_ps", lambda pid, field: table(state["rows"])(pid, field))
+    state = {
+        "rows": {500: "  400 /bin/sh", 400: "  300 sshd-session", 300: "  200 sshd-session", 200: "    1 /sbin/launchd"},
+        "uids": {300: 0},  # the privileged monitor; the session process above the shell runs as Ting Yu
+    }
+    monkeypatch.setattr(origin, "_ps", lambda pid, field: table(state["rows"], uids=state["uids"])(pid, field))
     monkeypatch.setattr(origin, "_start", lambda: 500)
     monkeypatch.setenv("SSH_ORIGINAL_COMMAND", "approve A-0412")
     for name in origin.CLAUDE_MARKERS:
@@ -160,7 +183,15 @@ def test_no_sshd_ancestor_is_refused(remote):
 
 def test_a_claude_ancestor_under_sshd_is_refused(remote):
     remote["rows"] = {500: "  400 claude", 400: "  300 sshd-session", 300: "    1 /sbin/launchd"}
+    remote["uids"] = {400: 0}
     assert origin.detect_ssh().kind == NOT_HUMAN
+
+
+def test_an_sshd_ancestor_running_as_ting_yus_user_only_is_refused(remote):
+    """The probe from code review 11: an orphaned shell under a symlink named `sshd`."""
+    remote["uids"] = {}
+    found = origin.detect_ssh()
+    assert found.kind == NOT_HUMAN and found.reason == origin.NOT_DISPATCH
 
 
 # --- structure (test strategy v3 E6) ----------------------------------------------------

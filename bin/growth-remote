@@ -1,0 +1,47 @@
+#!/usr/bin/env -S python3 -I
+# The SSH forced command for Dispatch (MC §4.7; docs/dispatch-contract.md).
+#
+# authorized_keys on the growth Mac holds one entry for Dispatch:
+#
+#   restrict,command="<repo>/bin/growth-remote",from="<dispatch tailnet address>" ssh-ed25519 …
+#
+# Whatever Dispatch asks ssh to run arrives in SSH_ORIGINAL_COMMAND and is never
+# run as given. This file splits it into words with shlex, which only parses
+# quotes and runs nothing, then replaces itself with one program:
+#
+#   <repo>/.venv/bin/jura-growth remote <words…>
+#
+# No shell sees the words, so ";", "&&", "$(…)", backticks and newlines are
+# only characters in a word. `jura-growth remote` then checks the origin and
+# its own allowlist. Kept to the standard library and Python 3.9, macOS's own
+# python3, because the forced command runs with the system PATH.
+
+import os
+import shlex
+import sys
+from pathlib import Path
+
+REFUSED = 2
+
+
+def refuse(why):
+    print("refused: " + why)
+    sys.exit(REFUSED)
+
+
+def main():
+    command = os.environ.get("SSH_ORIGINAL_COMMAND")
+    if command is None or not command.strip():
+        refuse("this key runs control commands only; send one, for example `-- status`.")
+    try:
+        words = shlex.split(command, posix=True)
+    except ValueError as error:
+        refuse("the command couldn't be split into words (" + str(error) + ").")
+    program = Path(__file__).resolve().parent.parent / ".venv" / "bin" / "jura-growth"
+    try:
+        os.execv(str(program), [str(program), "remote", *words])
+    except OSError as error:  # before `uv sync`, or with the venv rebuilt
+        refuse("jura-growth couldn't be started on the growth Mac (" + (error.strerror or type(error).__name__) + ").")
+
+
+main()

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from datetime import datetime
 
 import click
 
@@ -86,23 +87,48 @@ def _decide(ctx: click.Context, approval_id: str, decision: str, words: tuple[st
     ctx.exit(EXIT_CODES[answer.answer])
 
 
-def _listing(conn, kind: str | None) -> list[str]:
+def _title(conn, approval, registered) -> str:
+    if registered is None:
+        return "(its plug-in isn't loaded)"
+    try:
+        return registered.kind.preview(conn, approval.subject).title
+    except Exception as error:  # noqa: BLE001
+        return f"(no preview: {type(error).__name__})"
+
+
+def waiting(conn, kind: str | None) -> tuple[list[tuple[approvals.Approval, datetime]], int]:
+    """The one selection both listings show: pending requests (of `kind`)
+    still in time, soonest to lapse first (decide-by, then id), each with its
+    decide-by; and how many more are pending but past it. A plain read: their
+    lapse is written later (A17), and content is judged on decision."""
     now = timeutil.now_sgt()
-    waiting = [(a, timeutil.parse(a.decide_by)) for a in approvals.pending(conn) if kind is None or a.kind == kind]
-    if not waiting:
+    pending = [(a, timeutil.parse(a.decide_by)) for a in approvals.pending(conn) if kind is None or a.kind == kind]
+    live = sorted(((a, due) for a, due in pending if due > now), key=lambda pair: (pair[1], pair[0].number))
+    return live, len(pending) - len(live)
+
+
+def listed(conn, kind: str | None) -> list[dict]:
+    """The requests `approvals [kind]` shows, as data for `remote --json`,
+    each with the `key=value` arguments an approve must carry (no buttons
+    for those)."""
+    registry = approvals.kinds()
+    found = []
+    for approval, _ in waiting(conn, kind)[0][:LIST_LIMIT]:
+        registered = registry.get(approval.kind)
+        found.append({"id": approval.id, "kind": approval.kind, "decide_by": approval.decide_by,
+                      "title": _title(conn, approval, registered),
+                      "args": list(getattr(registered.kind, "decision_args", None) or ()) if registered else []})
+    return found
+
+
+def _listing(conn, kind: str | None) -> list[str]:
+    live, lapsed = waiting(conn, kind)
+    if not live and not lapsed:
         return [f"No {cards.label(kind)} requests are waiting." if kind else "No requests are waiting."]
-    # A plain read: a request past its decide-by is no longer offered, though
-    # its lapse is written later (A17), and content is judged on decision.
-    live = [(a, due) for a, due in waiting if due > now]
-    lapsed = len(waiting) - len(live)
     registry = approvals.kinds()
     lines = []
     for approval, due in live[:LIST_LIMIT]:
-        registered = registry.get(approval.kind)
-        try:
-            title = registered.kind.preview(conn, approval.subject).title if registered else "(its plug-in isn't loaded)"
-        except Exception as error:  # noqa: BLE001
-            title = f"(no preview: {type(error).__name__})"
+        title = _title(conn, approval, registry.get(approval.kind))
         lines.append(f"{approval.id} · {cards.label(approval.kind)} · decide by {cards.when_at(due)} · {title}")
     if lapsed:
         lines.append(f"{lapsed} more passed {'their' if lapsed != 1 else 'its'} decide-by and "

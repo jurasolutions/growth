@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from jura_growth import approvals, db, discord, locks, log, privacy, timeutil
+from jura_growth import approval_settings, approvals, db, discord, locks, log, privacy, timeutil
 
 CHANNEL = "approvals"
 USERNAME = "Jura growth · approvals"
@@ -126,6 +126,19 @@ def answer_line(approval: approvals.Approval, kind: approvals.ApprovalKind) -> s
     return f"Answer: Approve / Skip, or /growth approve {approval.id}"
 
 
+def button_row(approval: approvals.Approval, kind: approvals.ApprovalKind) -> list[dict] | None:
+    """Approve and Skip buttons (X11), or None. Only when `approvals.post_buttons`
+    is on, and never for a kind whose approve needs typed `key=value`
+    arguments (`group-rules` needs its days). Dispatch maps each `custom_id`
+    to `approve A-nnnn` or `skip A-nnnn` (docs/dispatch-contract.md)."""
+    if not approval_settings.switch("post_buttons") or getattr(kind, "decision_args", None):
+        return None
+    return [{"type": 1, "components": [
+        {"type": 2, "style": 3, "label": "Approve", "custom_id": f"growth:approve:{approval.id}"},
+        {"type": 2, "style": 4, "label": "Skip", "custom_id": f"growth:skip:{approval.id}"},
+    ]}]
+
+
 def build(conn: sqlite3.Connection, approval: approvals.Approval, kind: approvals.ApprovalKind) -> tuple[str, list]:
     """The card's text and files. Raises `CardRefused` for more than ten files."""
     preview = kind.preview(conn, approval.subject)
@@ -185,7 +198,7 @@ def _post_unposted(conn: sqlite3.Connection) -> int:
                       level="warning", agent=registered.agent)
             continue
         result = discord.post(conn, CHANNEL, content, files=files, username=USERNAME, dedupe=False,
-                              suppress_embeds=True, wait=True)
+                              suppress_embeds=True, wait=True, components=button_row(approval, registered.kind))
         if not result.delivered:
             continue  # saved to the outbox by post(); the next sweep posts it again
         message_id = result.message_ids[0] if result.message_ids else None
@@ -207,6 +220,8 @@ def _edit_changed(conn: sqlite3.Connection) -> int:
         _OPEN,
     ).fetchall()
     edited = 0
+    # A card that changed is no longer pending, so it keeps no button.
+    no_buttons = [] if approval_settings.switch("post_buttons") else None
     for row in rows:
         approval = approvals.get(conn, approvals.format_id(row["approval_id"]))
         if approval is None:
@@ -216,7 +231,7 @@ def _edit_changed(conn: sqlite3.Connection) -> int:
             continue
         rest = row["first_piece"].split("\n", 1)
         content = header(conn, approval) + ("\n" + rest[1] if len(rest) > 1 else "")
-        done = row["message_id"] and discord.edit(conn, CHANNEL, row["message_id"], content).delivered
+        done = row["message_id"] and discord.edit(conn, CHANNEL, row["message_id"], content, components=no_buttons).delivered
         if not done:
             follow_up = f"{approval.id}: {status_line(conn, approval)} (the card couldn't be edited)."
             discord.post(conn, CHANNEL, follow_up, username=USERNAME, dedupe=False, suppress_embeds=True)
