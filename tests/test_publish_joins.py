@@ -254,6 +254,82 @@ def test_approved_answers_submitted_record_the_join_status(conn, world, monkeypa
     assert community_groups.get(conn, answers.ref_id)["join_status"] == "requested"
 
 
+# --- X10 note-rules raises one group-rules request for the rules seen inside the group ------------------
+
+SEEN = "No selling on weekdays.\nPromotion only on Saturdays, one post a week."
+
+
+def rules_file(tmp_path, text: str = SEEN):
+    path = tmp_path / "rules.txt"
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def rules_requests(conn, group_id: int) -> list[approvals.Approval]:
+    return [r for r in approvals.pending(conn) if r.kind == "group-rules" and r.subject == f"group:{group_id}"]
+
+
+def test_note_rules_records_the_rules_seen_and_raises_one_group_rules_request(conn, world, monkeypatch, discord_double, tmp_path):
+    join, _ = claimed_join(conn, monkeypatch)
+    assert rules_requests(conn, join.ref_id) == []  # the researched rules raised nothing
+
+    result = pw.invoke("publish", "note-rules", str(join.ref_id), "--file", rules_file(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    assert group_row(conn, join)["promo_rules"] == SEEN
+    [request] = rules_requests(conn, join.ref_id)
+    assert request.id in result.output
+    assert any("Promotion only on Saturdays" in card for card in discord_double.contents("approvals"))
+    again = pw.invoke("publish", "note-rules", str(join.ref_id), "--file", rules_file(tmp_path))
+    assert again.exit_code == 0 and len(rules_requests(conn, join.ref_id)) == 1
+    assert discord_double.contents("alerts") == [] and not pause.is_paused(conn, "publish")
+
+
+def test_rules_seen_as_ting_yu_confirmed_them_raise_nothing(conn, world, monkeypatch, tmp_path):
+    group_id = pw.not_joined(conn, rules=SEEN, rules_confirmed=1, promo_days="sat", post_days="any")
+    join, _ = claimed_join(conn, monkeypatch, group_id)
+    result = pw.invoke("publish", "note-rules", str(group_id), "--file", rules_file(tmp_path))
+    assert result.exit_code == 0, result.output
+    assert rules_requests(conn, group_id) == [] and group_row(conn, join)["rules_confirmed"] == 1
+
+
+def test_rules_seen_that_differ_from_the_confirmed_ones_clear_the_confirmation(conn, world, monkeypatch, tmp_path):
+    group_id = pw.not_joined(conn, rules="Promotion is welcome.", rules_confirmed=1, promo_days="any", post_days="any")
+    join, _ = claimed_join(conn, monkeypatch, group_id)
+    assert pw.invoke("publish", "note-rules", str(group_id), "--file", rules_file(tmp_path)).exit_code == 0
+    group = group_row(conn, join)
+    assert group["promo_rules"] == SEEN and group["rules_confirmed"] == 0 and group["promo_days_confirmed"] is None
+    assert len(rules_requests(conn, group_id)) == 1
+
+
+def test_note_rules_only_for_a_group_this_run_claimed_an_item_in(conn, world, monkeypatch, tmp_path):
+    join, _ = claimed_join(conn, monkeypatch)
+    other = pw.not_joined(conn)
+    refused = pw.invoke("publish", "note-rules", str(other), "--file", rules_file(tmp_path))
+    assert refused.exit_code != 0 and "claimed" in refused.output
+    monkeypatch.delenv("JURA_GROWTH_RUN_ID")
+    outside = pw.invoke("publish", "note-rules", str(join.ref_id), "--file", rules_file(tmp_path))
+    assert outside.exit_code != 0
+    pw.run(conn, monkeypatch=monkeypatch)  # a later run, which claimed nothing
+    later = pw.invoke("publish", "note-rules", str(join.ref_id), "--file", rules_file(tmp_path))
+    assert later.exit_code != 0
+    assert approvals.pending(conn) == [] and group_row(conn, join)["promo_rules"] != SEEN
+
+
+@pytest.mark.parametrize("text", ["   \n", "x" * 4001], ids=["empty", "too long"])
+def test_a_rules_file_that_is_empty_or_too_long_is_refused(conn, world, monkeypatch, tmp_path, text):
+    join, _ = claimed_join(conn, monkeypatch)
+    result = pw.invoke("publish", "note-rules", str(join.ref_id), "--file", rules_file(tmp_path, text))
+    assert result.exit_code != 0 and approvals.pending(conn) == []
+
+
+def test_the_publish_run_may_call_note_rules_and_still_nothing_that_decides():
+    from jura_growth.agents.publish import scope
+
+    assert "publish note-rules" in scope.COMMANDS
+    assert not {"publish resolve", "approve", "skip", "resume"} & set(scope.COMMANDS)
+
+
 # --- AC-P4.3 pages-not-allowed, for every item kind ---------------------------------------------------
 
 

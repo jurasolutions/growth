@@ -4,13 +4,16 @@
 |---|---|
 | `publish next [--json]` | the publish run: claims at most one item (`claim.py`) |
 | `publish done <A-id> --url <url> --live-text-file <f>` | the publish run: records the post |
+| `publish done <A-id> --outcome <o> [--url <group url>] [--file <q.json>]` | the publish run: what a join or a group screen came to (`outcomes.py`) |
 | `publish stopped <A-id> --reason <r>` | the publish run: records a stop signal |
+| `publish note-rules <group-id> --file <f>` | the publish run: rules seen inside a group, raising a `group-rules` request |
 | `publish queue [--json]` | Ting Yu: items, their state and their A-ids |
 | `publish resolve <A-id> posted --url <url>` or `not-posted` | Ting Yu: settles an `unknown` item (in `headless.NEVER`) |
 
 Every command takes the request's `A-nnnn` (MC §4.6 A1), never the `P-nnnn` label. None of them
 decides anything: approving and skipping happen in #approvals. A stop and a live-text mismatch
-pause `publish` for every item and alert; only Ting Yu resumes it.
+pause `publish` for every item and alert; only Ting Yu resumes it. A join's outcomes (membership
+questions, a group that takes only personal profiles) neither alert nor pause (BP §4.6).
 """
 
 from __future__ import annotations
@@ -261,6 +264,41 @@ def stopped(approval_id, reason) -> str:
         discord.alert(conn, text, agent=items.AGENT)
     click.echo(f"{record.id}: stopped ({reason}); publish is paused")
     return f"{record.id} stopped"
+
+
+@publish.command("note-rules")
+@click.argument("group_id", type=int)
+@click.option("--file", "rules_file", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="The group's rules exactly as the group shows them, as plain text.")
+def note_rules(group_id, rules_file) -> str:
+    """Record the rules a run saw inside a group, and ask Ting Yu to confirm them (group-rules).
+
+    Only the publish run that claimed an item in that group may call it: the rules replace the
+    researched ones, and a change clears any confirmation, so Ting Yu decides again."""
+    from jura_growth.agents.community import group_rules
+    from jura_growth.agents.community import groups as groups_mod
+
+    run_id = log.current_run_id()
+    try:
+        text = rules_file.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise click.ClickException("refused: the rules file isn't UTF-8 text") from None
+    with db.session() as conn:
+        if run_id is None or not outcomes.claimed_in_group(conn, run_id, group_id):
+            raise click.ClickException(f"refused: only a publish run that claimed an item in group {group_id} "
+                                       f"records the rules seen there")
+        try:
+            with db.transaction(conn):
+                raised = group_rules.note_seen(conn, group_id, text, run_id=run_id)
+        except groups_mod.GroupError as error:
+            raise click.ClickException(f"refused: {error}") from None
+        _post_cards(conn)
+    if raised is None:
+        line = f"group {group_id}: the rules seen are the ones Ting Yu confirmed; nothing to decide"
+    else:
+        line = f"group {group_id}: rules recorded; Ting Yu confirms them and the open days as {raised.id} in #approvals"
+    click.echo(line)
+    return line
 
 
 def _request_word(conn: sqlite3.Connection, found: items.Item) -> tuple[approvals.Approval | None, str]:

@@ -1,7 +1,7 @@
 """What the publish run may do: its commands and its Chrome tools (BP §4.7, AC-P9.2, ADR 0005).
 
-- **Commands:** `publish next`, `publish done` and `publish stopped`. BP-06 adds `publish
-  note-rules`. Nothing else, so `publish resolve`, `resume` and every decision stay Ting Yu's.
+- **Commands:** `publish next`, `publish done`, `publish stopped` and `publish note-rules`
+  (BP-06). Nothing else, so `publish resolve`, `resume` and every decision stay Ting Yu's.
 - **Tab tools by name:** `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp` and
   `list_connected_browsers`. They read and open tabs, never a page.
 - **Page tools only by domain:** one `ClaudeInChromeDomain(<host>)` rule per host of each platform
@@ -23,7 +23,7 @@ from jura_growth import paths, timeutil
 from jura_growth.agents.publish import fixture, hosts
 
 CHROME = "mcp__claude-in-chrome__"
-COMMANDS = ("publish next", "publish done", "publish stopped")
+COMMANDS = ("publish next", "publish done", "publish stopped", "publish note-rules")
 TAB_TOOLS = ("tabs_context_mcp", "tabs_create_mcp", "tabs_close_mcp", "list_connected_browsers")
 DENIED_TOOLS = (
     "javascript_tool", "read_network_requests", "read_console_messages", "shortcuts_execute", "shortcuts_list",

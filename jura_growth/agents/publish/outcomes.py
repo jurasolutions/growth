@@ -148,6 +148,15 @@ def _answers(conn: sqlite3.Connection, request: approvals.Approval, found: items
                     f"#approvals; a later run submits them once approved.", made.approval)
 
 
+def claimed_in_group(conn: sqlite3.Connection, run_id: int, group_id: int) -> bool:
+    """Whether run `run_id` claimed a community item in the group (`publish note-rules`)."""
+    return db.scalar(
+        conn, f"SELECT 1 FROM publish_items WHERE run_id = ? AND claimed_at IS NOT NULL AND kind IN "
+              f"({', '.join('?' for _ in GROUP_KINDS)}) AND json_extract(content_json, '$.group') = ? LIMIT 1",
+        (run_id, *GROUP_KINDS, int(group_id)),
+    ) is not None
+
+
 def group_of(found: items.Item) -> int:
     """The register's group a community item acts in."""
     return int(found.content["group"])
