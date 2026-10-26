@@ -73,3 +73,11 @@ Every criterion above passes, `uv run pytest` passes, and the report is in. Ting
 - Decisions come only from Dispatch over SSH (ADR 0004 as amended 2026-10-26). AC-M9.2 "from Terminal" now means through `remote`'s in-process seam; there is no Terminal origin, cards carry no code, and tests decide with `aw.dispatch()` and actor `aw.CONTROL`.
 - The deadline settings are read through `approval_settings.deadline("app-build", …)`, and `approval_settings.switch("dispatch_builds")` says whether Dispatch polls the handoffs.
 - A kind may fill the optional `superseded_note(conn, subject)` hook to word the card's "Superseded:" line in its own terms (code review 04b, Sp1).
+
+### 2026-10-27 developer: release notes (code review 10, N1)
+
+For the feature's release notes and PR body:
+
+- **Migrations.** `app-factory/0002_app_builds.sql` adds the `app_builds` table. `app-factory/0003_app_prds_slug_reusable.sql` drops and rebuilds `app_prds` so its slug is no longer unique, copying every row with its id; `UNIQUE(app_id)` and the day index stay, and a slug index is added. It is the first migration that rebuilds a table. It runs in one transaction with its `schema_migrations` row, so an interrupted run rolls back whole. Rolling back to an older checkout is safe: that code still runs against the rebuilt table, because `submit-prd` checks slugs before it inserts. The operating card's rollback line says so.
+- **Behaviour.** The 06:30 factory no longer posts "approved, build …" to `#app-factory`; each PRD becomes an `app-build` request in `#approvals`. On the first factory run after merge, the catch-up pass raises one request for each factory PRD already in `prd/pending/apps/` (APP-003 today; Ting Yu's APP-001 and APP-002 get none). Until Dispatch polls `apps handoffs --json`, keep `approvals.dispatch_builds: false` so approvals answer with the "Build it: …" line.
+- **Still to do outside this repo.** The PRD template (`jurasolutions/prd/templates/prd-app-template.md`) keeps its "To build: approved, build …" header and sign-off lines, which `prd.py` checks; changing them is a follow-up that touches the template and `prd.py` together.
