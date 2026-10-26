@@ -756,3 +756,13 @@ artifacts: crew/browser-publishing-02b-community-items (5 commits)
 decisions: crew recommendation adopted: AC-P1.3 reworded to a fresh request on the same item for every queued kind (Amended 2026-10-27); bp 02b sent to review
 questions: -
 evidence:  2733 passed, 0 skipped; 63 gate cases pass for community-post and group-join
+
+## 2026-10-27T04:26+0800 reviewer (bp 02b) via conductor
+status:    done
+persona:   reviewer
+ticket:    bp-02b
+artifacts: .scratch/browser-publishing/reviews/code-review-02b.md
+decisions: changes-requested; B1 claim allows a promotional post where promo days are none and a link post where rules forbid links; B2 identity or URL change re-raises with the old deadline; should-fix list
+decisions: conductor: skipped or expired join proposals count toward 3 a week (crew recommendation); sent as fix round 1
+questions: -
+evidence:  2733 passed; probes p3, p4 (B1) and p5 (B2) reproduce
