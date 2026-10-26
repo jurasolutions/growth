@@ -22,19 +22,18 @@ exactly one.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from jura_growth import approval_settings, approvals, db, log, paths, timeutil
+from jura_growth import approval_settings, approvals, config, db, handoff_fit, log, paths, timeutil
 from jura_growth.agents.apps import backlog, catalog
 from jura_growth.agents.apps import prd as prd_mod
 
 KIND = "app-build"
 REPO = "landing-page"
 BASE = "main"
-JSON_LIMIT = 64 * 1024  # bytes of `apps handoffs --json` (technical review N5)
+JSON_LIMIT = handoff_fit.JSON_LIMIT  # bytes of `apps handoffs --json` (technical review N5)
 REST_DAYS = 30  # an idea whose PRD expired unanswered may come back after this many days
 
 
@@ -248,19 +247,25 @@ def handoff(build: dict) -> tuple[dict | None, str | None]:
         return None, "the PRD file can't be read"
     if approvals.content_hash(data) != build["prd_sha256"]:
         return None, "the PRD changed after it was approved; it isn't handed out"
+    text = data.decode("utf-8")
+    if config.redact(text) != text:
+        # Printing masks it, so the text sent wouldn't be the bytes approved (code review 12, S2).
+        return None, "the PRD holds a secret-looking value, so it isn't handed out"
     return {
         "repo": REPO,
         "base": BASE,
-        "prd_text": data.decode("utf-8"),
+        "prd_text": text,
         "prd_sha256": build["prd_sha256"],
         "approval": build["approval_id"],
     }, None
 
 
 def handoffs_json(conn: sqlite3.Connection) -> dict:
-    """`apps handoffs --json`, oldest first, within `JSON_LIMIT` bytes. What doesn't fit is
-    counted in `more` and comes on a later poll, once the earlier ones are built."""
-    payload: dict = {"contract": 1, "handoffs": [], "more": 0}
+    """`apps handoffs --json`, oldest first, within `handoff_fit.HANDOFF_LIMIT` bytes, so it also
+    fits inside `remote`'s answer, by the policy `remote` shares (`handoff_fit.fit`): what doesn't
+    fit is counted in `more` and comes on a later poll, and a PRD too large for any answer is
+    named with its problem."""
+    entries = []
     for build in open_handoffs(conn):
         given, problem = handoff(build)
         entry = {
@@ -274,22 +279,9 @@ def handoffs_json(conn: sqlite3.Connection) -> dict:
         }
         if problem:
             entry["problem"] = problem
-        trial = {**payload, "handoffs": [*payload["handoffs"], entry]}
-        if _size(trial) > JSON_LIMIT:
-            if not payload["handoffs"] and given is not None:  # one PRD too big for any answer
-                entry = {**entry, "handoff": None, "problem": f"the PRD is too large to hand out in one answer ({JSON_LIMIT // 1024} KB)"}
-                trial = {**payload, "handoffs": [entry]}
-                if _size(trial) <= JSON_LIMIT:
-                    payload = trial
-                    continue
-            payload["more"] += 1
-            continue
-        payload = trial
-    return payload
-
-
-def _size(payload: dict) -> int:
-    return len(json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+        entries.append(entry)
+    return {"contract": 1, **handoff_fit.fit(entries, wrap=lambda fitted: {"contract": 1, **fitted},
+                                             limit=handoff_fit.HANDOFF_LIMIT)}
 
 
 def health_lines(conn: sqlite3.Connection) -> list[str]:

@@ -21,7 +21,7 @@ import site_repo
 from discord_double import discord_double  # noqa: F401 - the fixture
 from gate_adapter_app_build import file_prd, prd_path
 from test_app_releases import BRANCH, PREVIEW, PROJECT, TASK, done_prds, handed_off, pages_project, pending_prd, release_requests
-from jura_growth import config, db, origin, paths, remote as remote_mod
+from jura_growth import config, db, handoff_fit, origin, paths, remote as remote_mod
 from jura_growth.agents.apps import builds, releases
 from jura_growth.cli import cli
 from jura_growth.origin import Origin
@@ -118,20 +118,77 @@ def test_the_handoff_answer_stays_within_64_kb_and_counts_what_waits_for_a_later
         assert hashlib.sha256(entry["handoff"]["prd_text"].encode()).hexdigest() == entry["handoff"]["prd_sha256"]
 
 
-def test_one_prd_too_large_for_the_answer_is_named_with_its_problem_not_dropped(conn):
-    """A PRD that just fits `apps handoffs --json` on its own, but not beside remote's text."""
-    app_id, _ = handed_off(conn)
+def _approve_padded(conn, app_id: str, room: int) -> None:
+    """Pad the handed-off PRD by `room` bytes, as if those were the bytes approved."""
     path = prd_path(app_id)
-    room = builds.JSON_LIMIT - builds._size(builds.handoffs_json(conn)) - 50
     path.write_text(path.read_text() + "y" * room)
-    with db.transaction(conn):  # as if these were the bytes approved
-        conn.execute("UPDATE app_builds SET prd_sha256 = ?", (hashlib.sha256(path.read_bytes()).hexdigest(),))
-    alone = builds.handoffs_json(conn)
-    assert alone["handoffs"][0]["handoff"] is not None and builds._size(alone) <= builds.JSON_LIMIT
-    result = remote(["apps", "handoffs"], as_json=True)
-    assert len(result.output.rstrip("\n").encode("utf-8")) <= remote_mod.JSON_LIMIT
-    [entry] = answer(result)["handoff"]["handoffs"]
-    assert entry["app_id"] == app_id and entry["handoff"] is None and "too large" in entry["problem"]
+    with db.transaction(conn):
+        conn.execute("UPDATE app_builds SET prd_sha256 = ? WHERE app_id = ?",
+                     (hashlib.sha256(path.read_bytes()).hexdigest(), app_id))
+
+
+def test_a_prd_that_fits_alone_but_not_beside_remotes_text_holds_up_no_newer_handoff(conn):
+    """Probe p9 (code review 12, S1): APP-101 would fit 64 KB on its own, but not beside remote's
+    envelope. The plug-in and remote agree it is too large: it is named with its problem in both,
+    and APP-102 is handed out on the same poll, every poll."""
+    first, _ = handed_off(conn, 101)
+    _approve_padded(conn, first, handoff_fit.JSON_LIMIT - handoff_fit.size(builds.handoffs_json(conn)) - 50)
+    second, approval = handed_off(conn, 102)
+    local = builds.handoffs_json(conn)
+    assert [e["app_id"] for e in local["handoffs"]] == [first, second] and local["more"] == 0
+    assert local["handoffs"][0]["problem"] == handoff_fit.TOO_LARGE
+    for _ in range(2):
+        result = remote(["apps", "handoffs"], as_json=True)
+        assert len(result.output.rstrip("\n").encode("utf-8")) <= remote_mod.JSON_LIMIT
+        given = answer(result)["handoff"]
+        assert given == local  # remote's own fit is only the backstop: it changes nothing here
+        big, small = given["handoffs"]
+        assert big["handoff"] is None and big["problem"] == handoff_fit.TOO_LARGE
+        assert small["handoff"]["approval"] == approval.id
+
+
+def test_whatever_the_plugin_hands_out_fits_remotes_answer_unchanged(conn):
+    """A PRD just inside the plug-in's limit still fits beside remote's longest text."""
+    app_id, _ = handed_off(conn)
+    _approve_padded(conn, app_id, handoff_fit.HANDOFF_LIMIT - handoff_fit.size(builds.handoffs_json(conn)) - 10)
+    local = builds.handoffs_json(conn)
+    assert local["handoffs"][0]["handoff"] is not None
+    reply = remote_mod.Reply(0, "already-decided", "\u0001" * remote_mod.TEXT_LIMIT, handoff=local)
+    encoded = remote_mod.payload(reply)
+    assert len(encoded.encode("utf-8")) <= remote_mod.JSON_LIMIT
+    assert json.loads(encoded)["handoff"] == local
+
+
+# --- code review 12, S2: the bytes handed out are the bytes approved ----------------------------------
+
+
+def test_a_prd_holding_a_secret_looking_value_is_withheld_with_its_problem(conn):
+    """Probe p1: printing would mask the value, so the text sent wouldn't be the approved bytes."""
+    app_id = file_prd(101)
+    path = prd_path(app_id)
+    path.write_text(path.read_text() + "\nKey for testing: sk-ant-abcdefghijklmnop0123\n")
+    with db.transaction(conn):
+        request = builds.request(conn, app_id, reason="test", run_id=None)
+    assert aw.approve(conn, request, args={}).answer == "recorded"
+    for given in (builds.handoffs_json(conn), answer(remote(["apps", "handoffs"], as_json=True))["handoff"]):
+        [entry] = given["handoffs"]
+        assert entry["app_id"] == app_id and entry["handoff"] is None
+        assert "secret-looking" in entry["problem"]
+
+
+def test_remote_withholds_any_handoff_whose_text_doesnt_hash_to_its_sha(conn, monkeypatch):
+    """The backstop: whatever changed the text on its way out, a mismatch is never handed out."""
+    app_id, _ = handed_off(conn)
+    real = builds.handoff
+
+    def altered(build):
+        given, problem = real(build)
+        return ({**given, "prd_text": given["prd_text"] + "changed on the way out"}, problem)
+
+    monkeypatch.setattr(builds, "handoff", altered)
+    [entry] = answer(remote(["apps", "handoffs"], as_json=True))["handoff"]["handoffs"]
+    assert entry["app_id"] == app_id and entry["handoff"] is None
+    assert "doesn't match its approved SHA-256" in entry["problem"]
 
 
 def test_handoffs_that_cant_be_read_as_json_fail_and_hand_nothing_out(conn, monkeypatch):
@@ -326,7 +383,10 @@ def test_released_through_remote_records_the_release_and_moves_the_prd_to_done(c
     assert db.one(conn, "SELECT status FROM app_builds WHERE app_id = ?", (app_id,))["status"] == "released"
     [done] = done_prds()
     assert pending_prd(app_id) is None
-    assert f"release approval {release.id}" in done.read_text()
+    signed = [line for line in done.read_text().splitlines() if line.startswith("Signed off by:")]
+    assert len(signed) == 1 and f"build approval {build_approval.id}" in signed[0]
+    assert f"release approval {release.id}" in signed[0]
+    assert done.read_text().startswith("*Shipped on 2026-11-10:")
 
 
 @pytest.mark.parametrize("words", [["apps", "released", "APP-101"], ["apps", "released", "APP-101", "--task"],

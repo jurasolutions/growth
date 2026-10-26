@@ -72,9 +72,9 @@ brackets are required; words in square brackets are optional.
 | --- | --- | --- |
 | `approvals [kind]` | `approvals` | The 15 soonest to lapse, then "and N more". `--json` adds `approvals` |
 | `approve <A-nnnn> [key=value …] [note]` | `approve` | Answers from the enum below. Leading `key=value` words are the kind's arguments (`group-rules`: `promo_days=… post_days=…`); the rest is a note |
-| `apps built <APP-NNN> --task <T-nnnn> --branch <branch> --sha <sha> --preview <url>` | `apps built` | Dispatch calls it when a build task ships (D6): the task, its branch based on `main`, the branch's full head SHA and its Cloudflare Pages preview. Raises an `app-release` request in `#approvals` bound to that SHA. Each option once, as `--task T-0031` or `--task=T-0031`, in any order. Exit 1 for a build that wasn't handed off, or a value it can't bind (a short SHA, a preview outside the landing page's Pages project) |
+| `apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>` | `apps built` | Dispatch calls it when a build task ships (D6): the task, its branch based on `main`, the branch's full head SHA and its Cloudflare Pages preview. Raises an `app-release` request in `#approvals` bound to that SHA. Each option once, as `--task T-0031` or `--task=T-0031`, in any order. Exit 1 for a build that wasn't handed off, or a value it can't bind (a short SHA, a preview outside the landing page's Pages project) |
 | `apps handoffs` | `apps handoffs` | What Dispatch polls (D6). `--json` adds `handoff`, below. A handoff stays listed until `apps built` reports it |
-| `apps release-plan <APP-NNN>` | `apps release-plan` | Claims the approved `app-release` request, then answers with the merge of exactly the approved SHA into `main`, for Ting Yu to run (later Dispatch D7). Exit 1, with nothing to run, when no approved release is waiting. A second call never gives the merge again |
+| `apps release-plan <APP-NNN>` | `apps release-plan` | Claims the approved `app-release` request, then answers with the merge of exactly the approved SHA into `main`, for Ting Yu to run on the Mac. The claim is spent once it runs, so a retry answers that it was already used. Exit 1, with nothing to run, when no approved release is waiting. A second call never gives the merge again |
 | `apps released <APP-NNN> --task <T-nnnn>` | `apps released` | Records the release once `main` of the landing-page repository holds the claimed SHA, and moves the PRD to `prd/done/apps/`. Exit 1 while the release isn't claimed or `main` lacks the SHA |
 | `community removed <group-id>` | `community removed` | |
 | `one-pager` | `one-pager` | Posts the one-pager to `#mission-control` with the 14-day grid, dedupe off: asked twice, it posts twice. Exit 0 and `recorded` either way, like `heartbeat`: the text says "posted to #mission-control", or "not posted to #mission-control: <why>" when Discord didn't take it and it waits in the outbox, which the next one-pager lists under Needs you. Read the text, not the exit code, to tell them apart |
@@ -137,17 +137,22 @@ for a group that doesn't exist, or `apps release-plan` with no approved release)
 
   Dispatch starts one task per entry, against `handoff.repo` on its own branch based on
   `handoff.base`, with `handoff.prd_text` as the brief, verbatim (D6). `prd_text` is the approved
-  PRD's exact bytes as UTF-8: its SHA-256 is `prd_sha256`, which Dispatch may check. It is not
-  masked, so it is for the task's brief, never for posting to Discord; `text` is what to post. An
-  entry whose `handoff` is `null` carries a `problem` instead (the PRD changed after it was
-  approved, can't be read, or is too large for one answer) and is not to be built. `more` counts
-  handoffs that didn't fit in this answer; they come on a later poll, once the earlier ones are
-  reported built. A handoff stays listed on every poll until `apps built` reports it, so Dispatch
-  keys its tasks on `approval` and starts one task for each.
+  PRD's exact bytes as UTF-8, and its SHA-256 is always `prd_sha256`: growth checks that before it
+  answers. It is not masked, so it is for the task's brief only, never for posting to Discord;
+  `text` is what to post. The factory refuses a PRD that holds anything the privacy filter would
+  mask, so none should reach a brief.
 
-The whole answer is at most 64 KB. Listed requests are dropped from the end to keep it there, and
-so are handoffs, each counted in `more`. A lone handoff too large to fit keeps its entry with
-`handoff: null` and a `problem`.
+  An entry whose `handoff` is `null` carries a `problem` instead and is not to be built: the PRD
+  changed after it was approved, can't be read, holds a secret-looking value (printing would mask
+  it, so the text wouldn't be the approved bytes), or is too large for one answer. Such an entry
+  holds up no other. `more` counts handoffs that didn't fit beside the ones in this answer; they
+  come on a later poll, once the earlier ones are reported built. A handoff stays listed on every
+  poll until `apps built` reports it, so Dispatch keys its tasks on `approval` and starts one task
+  for each.
+
+The whole answer is at most 64 KB, measured as compact JSON in UTF-8. Listed requests are dropped
+from the end to keep it there. `apps handoffs --json` on the Mac keeps its handoffs within 52 KB,
+leaving 12 KB for this answer's other fields, so what it hands out always fits here.
 
 ## Buttons
 
@@ -168,7 +173,7 @@ lapses, is superseded or is claimed.
 | D3 | The SSH transport above, answering within 60 seconds, and "the growth Mac is unreachable" when it can't connect |
 | D4 | The acting Discord user id as `--actor discord:<id>`, and `--ref <message id>:<delivery id>` on every decision |
 | D5 | Approve and Skip buttons on each card in `#approvals`, mapped as above, through a webhook the Dispatch application owns. Until then, typed `/growth approve A-nnnn` works |
-| D6 | Build handoffs from `apps handoffs --json` (ticket 12), each a Dispatch task based on `main` with the approved PRD text as its brief, verbatim; `apps built …` when it ships |
+| D6 | Build handoffs from `apps handoffs` with `--json` (ticket 12), each a Dispatch task based on `main` with the approved PRD text as its brief, verbatim. `prd_text` is for the brief only, never posted to Discord. `apps built …` when it ships |
 | D7 | (Later, a Dispatch PRD amendment.) Promotion of exactly the SHA `apps release-plan --json` hands out, refusing if the branch head moved |
 | D8 | Deployment: the always-on machine, the bot, Tailscale, and `landing-page` onboarded with Cloudflare Pages branch previews |
 | D9 | The SSH private key readable only by the gateway's user, never by the `run_as` user its Claude tasks run as (a SEC-3 extension) |
