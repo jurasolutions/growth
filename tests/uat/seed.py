@@ -32,8 +32,7 @@ from typing import Callable
 from jura_growth import config, db, holidays, paths, schedule, suppression, timeutil
 
 FOLDERS = ("JURA_GROWTH_DATA_DIR", "JURA_GROWTH_OUTPUTS_DIR", "JURA_PRD_DIR")
-FIRST_DAY = date(2026, 11, 2)
-TODAY = date(2026, 11, 10)
+HISTORY_DAYS = 8  # S1: run history from eight days before the seeded day
 
 # Datasets D2 and D3 (test strategy v3 §3), as uat.md S5 and S6 plant them.
 RESEND_KEY = "re_uat_9Xq7Lm2Pz"
@@ -44,6 +43,35 @@ NAMED_ADDRESS = "jane.tan@example.com.sg"
 
 class Refused(RuntimeError):
     pass
+
+
+# --- the seeded day (`--today`) -------------------------------------------------------------
+#
+# Dispatch stamps every decision with the real clock (ADR 0004 as amended 2026-10-26), so the
+# seed dates its rows from the day the UAT runs: `--today`, by default today in SGT. Scenarios
+# read it through `today()` and `previous_business_day()`, never a fixed date.
+
+_day: date | None = None
+
+
+def today() -> date:
+    """The day being seeded."""
+    return _day if _day is not None else timeutil.today()
+
+
+def previous_business_day(day: date | None = None) -> date:
+    candidate = (day or today()) - timedelta(days=1)
+    while not holidays.is_business_day(candidate):
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def day_refusal(day: date) -> str | None:
+    """Why `day` can't be the seeded day, or None."""
+    if holidays.is_business_day(day):
+        return None
+    why = holidays.holiday(day) or "weekend"
+    return f"{day.isoformat()} is not a business day ({why}): run the UAT on a business day"
 
 
 # --- the refusal ----------------------------------------------------------------------------
@@ -110,16 +138,16 @@ def _runs_on(spec: dict, day: date) -> list[str]:
 
 def s1_history(conn) -> None:
     jobs = config.settings()["jobs"]
-    day = FIRST_DAY
-    while day < TODAY:
+    day = today() - timedelta(days=HISTORY_DAYS)
+    while day < today():
         for name, spec in jobs.items():
             for clock in _runs_on(spec, day):
                 cost = 0.50 if spec["kind"] == "claude" else None
                 run_row(conn, spec["agent"], name, at(day, clock), cost=cost, summary=f"OK: {name} on {day.isoformat()}")
         day += timedelta(days=1)
-    # Fri 6 Nov: scout-send's quiet traces, with 10:00, 10:10 and 10:20 slept through and a
-    # quiet run at 10:26.
-    friday = date(2026, 11, 6)
+    # The previous business day: scout-send's quiet traces, with 10:00, 10:10 and 10:20 slept
+    # through and a quiet run at 10:26.
+    friday = previous_business_day()
     minute = 9 * 60 + 30
     while minute <= 16 * 60 + 30:
         clock = f"{minute // 60:02d}:{minute % 60:02d}"
@@ -132,9 +160,9 @@ def s1_history(conn) -> None:
 
 
 def s2_today(conn) -> None:
-    run_row(conn, "app-factory", "app-factory", at(TODAY, "06:31"), minutes=6, cost=1.20,
+    run_row(conn, "app-factory", "app-factory", at(today(), "06:31"), minutes=6, cost=1.20,
             summary="OK: filed APP-014 PayNow QR for small shops")
-    run_row(conn, "social", "social", at(TODAY, "07:00"), minutes=4.2, cost=0.41,
+    run_row(conn, "social", "social", at(today(), "07:00"), minutes=4.2, cost=0.41,
             summary="OK: drafted LinkedIn, Facebook and Instagram for \"PayNow QR for small shops\"")
 
 
@@ -143,15 +171,20 @@ def _lead(conn, lead_id: int, company: str, domain: str, *, industry: str = "log
         "INSERT INTO leads (id, company, display_name, domain, website, industry, score, score_reasons, channel, status,"
         " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, '[\"runs dispatch by hand\"]', 'email', 'queued', ?, ?)",
         (lead_id, company, company.removesuffix(" Pte Ltd"), domain, f"https://{domain}", industry, score,
-         at(date(2026, 11, 5), "09:00"), at(date(2026, 11, 5), "09:00")),
+         _found(), _found()),
     )
+
+
+def _found() -> str:
+    """When the seeded leads were found: the day before the previous business day, 09:00."""
+    return at(previous_business_day() - timedelta(days=1), "09:00")
 
 
 def _contact(conn, lead_id: int, email: str, kind: str, source: str) -> int:
     cursor = conn.execute(
         "INSERT INTO contacts (lead_id, email, email_hash, source_url, kind, mx_ok, verified_at, created_at)"
         " VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
-        (lead_id, email, suppression.email_hash(email), source, kind, at(date(2026, 11, 5), "09:00"), at(date(2026, 11, 5), "09:00")),
+        (lead_id, email, suppression.email_hash(email), source, kind, _found(), _found()),
     )
     return int(cursor.lastrowid or 0)
 
@@ -168,23 +201,25 @@ def s4_queued_emails(conn) -> None:
     body = "Your team still types quotes by hand. We can automate 80%+ of the manual steps."
     _lead(conn, 233, "Example Pte Ltd", "example.com.sg", score=78)
     contact = _contact(conn, 233, "info@example.com.sg", "role", "https://example.com.sg/contact")
-    _queued(conn, 233, contact, at(date(2026, 11, 6), "09:12"), date(2026, 11, 6), body)
+    previous = previous_business_day()
+    _queued(conn, 233, contact, at(previous, "09:12"), previous, body)
     for lead_id in range(240, 255):
         domain = f"lead{lead_id}.example.sg"
         _lead(conn, lead_id, f"Lead {lead_id} Pte Ltd", domain)
         contact = _contact(conn, lead_id, f"hello@{domain}", "role", f"https://{domain}/contact")
         planted = f" (draft notes: key {RESEND_KEY})" if lead_id == 254 else ""  # S6
-        _queued(conn, lead_id, contact, at(TODAY, "09:05"), TODAY, body + planted)
+        _queued(conn, lead_id, contact, at(today(), "09:05"), today(), body + planted)
     _lead(conn, 260, "Tan Logistics Pte Ltd", "tanlogistics.example.sg")
     contact = _contact(conn, 260, NAMED_ADDRESS, "named", "https://tanlogistics.example.sg/enquiries")
-    _queued(conn, 260, contact, at(TODAY, "09:05"), TODAY, body)
+    _queued(conn, 260, contact, at(today(), "09:05"), today(), body)
 
 
 def s5_s6_planted(conn) -> None:
-    run_row(conn, "scout", "scout-research", at(date(2026, 11, 6), "09:00:30"), summary=f"OK: 3 leads (token {RESEND_KEY})")
-    failed = run_row(conn, "outreach", "scout-sync", at(date(2026, 11, 6), "16:45:30"), status="failed",
+    previous = previous_business_day()
+    run_row(conn, "scout", "scout-research", at(previous, "09:00:30"), summary=f"OK: 3 leads (token {RESEND_KEY})")
+    failed = run_row(conn, "outreach", "scout-sync", at(previous, "16:45:30"), status="failed",
                      error=f"ResendError: 401 for key {RESEND_KEY}")
-    folder = paths.data_dir() / "transcripts" / TODAY.isoformat()
+    folder = paths.data_dir() / "transcripts" / today().isoformat()
     folder.mkdir(parents=True, exist_ok=True)
     lines = [
         {"type": "assistant", "text": f"Reply from lead 233: {REPLY}. Call {PHONE}."},
@@ -196,7 +231,7 @@ def s5_s6_planted(conn) -> None:
 def s7_factory_prd(conn) -> None:
     folder = paths.prd_dir() / "pending" / "apps"
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / "prd-app-014-paynow-qr-2026-11-10.md").write_text(
+    (folder / f"prd-app-014-paynow-qr-{today().isoformat()}.md").write_text(
         "# APP-014 PayNow QR for small shops\n\n"
         "Pitch: a shop prints one PayNow QR per invoice, so payments match themselves.\n"
         "Tier: free tool. Lead types: retail, food and beverage.\n"
@@ -204,7 +239,7 @@ def s7_factory_prd(conn) -> None:
 
 
 def _group(conn, name: str, slug: str, *, joined: int, rules: str | None) -> None:
-    now = at(date(2026, 11, 2), "07:30")
+    now = at(today() - timedelta(days=HISTORY_DAYS), "07:30")
     url = f"https://www.facebook.com/groups/{slug}"
     conn.execute(
         "INSERT INTO community_groups (name, slug, url, url_key, promo_rules, fit, fit_reason, joined, rules_confirmed,"
@@ -229,7 +264,9 @@ SCENARIOS: dict[str, Callable] = {"base": base}
 # --- seeding --------------------------------------------------------------------------------
 
 
-def seed(folder: str | os.PathLike[str], scenario: str = "base") -> None:
+def seed(folder: str | os.PathLike[str], scenario: str = "base", *, today: date | None = None) -> None:
+    """Seed `scenario` into `folder`, dating it from `today` (default: today in SGT)."""
+    global _day
     problem = refusal(folder)
     if problem:
         raise Refused(problem)
@@ -237,20 +274,36 @@ def seed(folder: str | os.PathLike[str], scenario: str = "base") -> None:
     if build is None:
         raise Refused(f"no scenario {scenario!r}; known: {', '.join(SCENARIOS)}")
     config.reset_caches()
-    with db.session() as conn:
-        if scenario == "base" and db.scalar(conn, "SELECT count(*) FROM runs"):
-            raise Refused(f"{folder} is already seeded: start again from a fresh `mktemp -d`")
-        with db.transaction(conn):
-            build(conn)
+    day = today or timeutil.today()
+    problem = day_refusal(day)
+    if problem:
+        raise Refused(problem)
+    _day = day
+    try:
+        with db.session() as conn:
+            if scenario == "base" and db.scalar(conn, "SELECT count(*) FROM runs"):
+                raise Refused(f"{folder} is already seeded: start again from a fresh `mktemp -d`")
+            with db.transaction(conn):
+                build(conn)
+    finally:
+        _day = None
+
+
+def _day_argument(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a date (YYYY-MM-DD)") from None
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Seed uat.md Part A into a temporary folder.")
+    parser = argparse.ArgumentParser(description="Seed uat.md's scenarios into a temporary folder.")
     parser.add_argument("folder")
     parser.add_argument("--scenario", default="base")
+    parser.add_argument("--today", type=_day_argument, help="the day to date the rows from (default: today in SGT)")
     options = parser.parse_args(argv)
     try:
-        seed(options.folder, options.scenario)
+        seed(options.folder, options.scenario, today=options.today)
     except Refused as refused:
         print(f"refused: {refused}")
         return 2
