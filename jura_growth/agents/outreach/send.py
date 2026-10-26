@@ -19,6 +19,20 @@ Every rule is code. In order:
  7. Per message: suppression (address and domain), the do-not-contact list,
     `contacted_domains`, the per-company rule, and the brand gate again on the
     exact text being sent.
+ 8. Live only: the claim (mission control §5.8, ADR 0003). Live mode considers
+    only emails Ting Yu approved in #approvals (`due(approved_only=True)`,
+    which also feeds the spacing in step 5). After every check above, one
+    `BEGIN IMMEDIATE` transaction claims the email's `outreach-email`
+    approval and counts the attempt; then Resend is called under
+    `Idempotency-Key: jura-outreach-<id>`; then the email is marked sent. A
+    claimed email that Resend errored on, or that the process lost before the
+    mark, is retried under the same key with no second claim.
+
+In live mode each run also tops up the approval requests (`approval.raise_due`)
+and posts or edits their cards when it ends. Live mode waits for
+`approvals.discord_buttons: true` (`approval_gate_problem`). Before rolling back
+past the mission-control outreach gate, set `mode: shadow` in config/scout.yaml: an older
+`send.py` has no gate.
 """
 
 from __future__ import annotations
