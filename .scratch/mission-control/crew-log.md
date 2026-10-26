@@ -904,3 +904,12 @@ decisions: the worktree cleanup removed the just-started bp 05 developer's workt
 decisions: cleanup rule from now on: remove only worktrees whose branch starts with crew/, is merged, and whose agent has reported done; never a worktree-agent-* branch of a running agent
 questions: -
 evidence:  git status clean; no bp 05 branch existed
+
+## 2026-10-27T06:51+0800 developer (bp 05) via conductor
+status:    done
+persona:   developer
+ticket:    bp-05
+artifacts: crew/browser-publishing-05-community-posts-as-the-page (4 commits)
+decisions: removal or admin warning removes the group in the stop transaction; done URLs limited to the own group post path; conductor adopts the crew recommendation: posts held for admin approval stop as unidentified (publish pauses) until U14 shows how often, then add a pending outcome; sent to review
+questions: -
+evidence:  3292 passed, 0 skipped
