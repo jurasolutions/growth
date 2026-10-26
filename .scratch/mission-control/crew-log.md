@@ -874,3 +874,13 @@ artifacts: merge of bp 07 (59c4106 06bc555 8156f61 e737c4b)
 decisions: round-2 review approved; M1 resolved in the rebase (fixture override first; dry-run with the fixture on shows only publish-fixture.localhost; guard test fails without the override); code merged and pushed; ticket stays open until Ting Yu records R1b (AC3)
 questions: -
 evidence:  merged branch pytest -rs -> see commit
+
+## 2026-10-27T06:18+0800 reviewer (bp 06, round 2) via conductor
+status:    done
+persona:   reviewer
+ticket:    bp-06
+artifacts: .scratch/browser-publishing/reviews/code-review-06.md (round 2)
+decisions: approve; B1 fixed (22 path probes); S7 groups.validate accepts any facebook URL containing /groups/, widening the path check if a bad address is approved; N10, N11
+decisions: conductor: S7, N10, N11 fixed before merge in a short fix round 2
+questions: -
+evidence:  3230 passed, 0 skipped
