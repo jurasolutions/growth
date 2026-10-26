@@ -76,6 +76,28 @@ class OutreachEmail:
             return None
         return _canonical({"to": row["email"], "subject": message["subject"], "body": message["draft_body"]})
 
+    def preview(self, conn: sqlite3.Connection, subject: str) -> approvals.Preview:
+        """The card (MC §5.6): who it goes to, why, and the draft as it will go
+        out. Emails greet the company, never a person (the `email` brand
+        channel drops one that names someone), so the draft is shown exactly.
+        A named-person address is masked beside its source page; the hash
+        still covers the full address."""
+        from jura_growth import privacy
+        from jura_growth.agents.outreach import queue
+
+        message = _message(conn, subject)
+        if message is None:
+            raise LookupError(f"no message for {subject}")
+        lead, row = queue.recipient(conn, message["lead_id"])
+        found_by = db.one(conn, "SELECT id, job FROM runs WHERE id = ?", (lead["run_id"],)) if lead["run_id"] else None
+        origin = f" from {found_by['job']} run {found_by['id']}" if found_by else ""
+        draft = "\n".join(f"> {line}" if line else ">" for line in message["draft_body"].split("\n"))
+        return approvals.Preview(
+            title=f"To: {privacy.masked_address(row['email'])} ({lead['company']}, {lead['industry']}, score {lead['score']})",
+            reason=f"lead {lead['id']}{origin}; address listed on {row['source_url']}",
+            text=f"Subject: {message['subject']}\n{draft}",
+        )
+
     def deadlines(self, conn: sqlite3.Connection | None, subject: str, now: datetime) -> approvals.Deadlines:
         today = now.astimezone(timeutil.SGT).date()
         decide = approval_settings.deadline(KIND, "decide_by_business_days")
