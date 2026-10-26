@@ -20,7 +20,8 @@ from pathlib import Path
 
 import click
 
-from jura_growth import brand_check, db, discord, log, timeutil
+from jura_growth import brand_check, cards, db, discord, log, timeutil
+from jura_growth.agents.community import group_rules
 from jura_growth.agents.community import groups as groups_mod
 from jura_growth.agents.community import plan as plan_mod
 from jura_growth.agents.community import rules as rules_mod
@@ -68,8 +69,17 @@ def permissions(job: str):
     )
 
 
+def approval_kinds() -> dict:
+    return {group_rules.KIND: group_rules.GroupRules()}
+
+
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
-    return None  # the register part runs every Monday, even with nothing joined
+    """Before the Monday run: write down rules confirmed before group-rules approvals existed
+    (once each). The register part runs every Monday, even with nothing joined."""
+    if job == "community":
+        with db.transaction(conn):
+            group_rules.record_earlier_confirmations(conn)
+    return None
 
 
 def digest(conn: sqlite3.Connection, day: str) -> dict:
@@ -218,20 +228,30 @@ def groups_cmd(fit, joined, channel, as_json) -> None:
 @click.argument("group_id", type=int)
 @click.argument("pairs", nargs=-1, required=True)
 def set_cmd(group_id, pairs) -> None:
-    """Update a group: joined=yes rules="..." rules_confirmed=yes promo_days=... post_days=... [fit=...] [notes=...].
+    """Update a group: joined=yes rules="..." rules_confirmed=yes [fit=...] [notes=...].
 
-    Confirming rules needs both day keys: each any, none, or days like sat,sun
-    or mon-fri. New rules text clears the confirmed days."""
+    rules="..." (as the group states them) and rules_confirmed=yes raise a
+    group-rules request. Confirm the rules in #approvals, typing the open days:
+    /growth approve A-nnnn promo_days=... post_days=..., each any, none, or days
+    like sat,sun or mon-fri. Days are never set here. New rules text clears the
+    confirmation and the confirmed days."""
     with db.session() as conn:
         try:
-            group = groups_mod.set_fields(conn, group_id, list(pairs))
+            with db.transaction(conn):
+                group_rules.record_earlier_confirmations(conn)
+                outcome = group_rules.set_by_hand(conn, group_id, list(pairs))
         except groups_mod.GroupError as error:
             raise click.ClickException(str(error)) from None
+        cards.sweep_safely(conn)  # the card goes out once the request is committed (A12)
+    group = outcome.group
     click.echo(
         f"group {group['id']} {group['name']}: fit {group['fit']}, joined {'yes' if group['joined'] else 'no'}, "
         f"rules confirmed {'yes' if group['rules_confirmed'] else 'no'}; rules: {group['promo_rules'] or '-'} "
         f"({groups_mod.rules_for(group).summary()})"
     )
+    line = group_rules.answer(outcome)
+    if line:
+        click.echo(line)
 
 
 @community.command("removed")
@@ -427,10 +447,10 @@ def register_summary(counts: dict, new: list[dict]) -> str:
             "",
             "No group is marked joined and good fit yet, so there is no posting plan this week. Join the good-fit "
             "groups you want (as yourself), read their rules inside, then run:",
-            "`jura-growth community set <id> joined=yes rules=\"<the rules as the group states them>\" rules_confirmed=yes "
-            "promo_days=<days> post_days=<days>`",
-            "Each `<days>` is any, none, or days like sat,sun or mon-fri: promo_days for promotional posts, "
-            "post_days for every post.",
+            "`jura-growth community set <id> joined=yes rules=\"<the rules as the group states them>\" rules_confirmed=yes`",
+            "That raises a group-rules card in #approvals. Confirm it there with the open days: "
+            "`/growth approve A-nnnn promo_days=<days> post_days=<days>`. Each `<days>` is any, none, or days like "
+            "sat,sun or mon-fri: promo_days for promotional posts, post_days for every post.",
         ]
     return "\n".join(lines)
 

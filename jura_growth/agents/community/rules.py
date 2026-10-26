@@ -1,8 +1,8 @@
 """Reading a group's promotion rules well enough to plan around them.
 
-No group is plannable until Ting Yu has said which days are open, with
-`jura-growth community set <id> promo_days=... post_days=...` (`confirm_days`),
-whatever its rules text says. Code never reads days out of English rules: day,
+No group is plannable until Ting Yu has said which days are open, typed in his
+`group-rules` decision in #approvals (`/growth approve A-nnnn promo_days=...
+post_days=...`, then `confirm_days`), whatever its rules text says. Code never reads days out of English rules: day,
 frequency and holiday rules are too easy to invert or miss, and a forbidden day
 can get Ting Yu removed from the group. `mentions_timing` only flags rules that
 seem to talk about timing, as a hint to read them carefully; it never opens a day.
@@ -69,7 +69,10 @@ NEG_RE = re.compile(
 LINK_NEG_RE = re.compile(rf"{NEG_RE.pattern}|\bnot\b", re.I)
 CLAUSE_BREAK_RE = re.compile(r"[,:;()–—]|\s-\s|\b(?:but|and)\b", re.I)
 ALLOWED_RE = re.compile(r"\b(?:allowed|welcome[ds]?|ok|okay|permitted|fine|encouraged|can|may)\b", re.I)
-CONFIRM_HINT = "jura-growth community set <id> promo_days=... post_days=..."
+CONFIRM_HINT = (
+    "confirm its rules in #approvals: jura-growth community set <id> rules_confirmed=yes, "
+    "then /growth approve A-nnnn promo_days=... post_days=..."
+)
 UNCONFIRMED = f"no post until Ting Yu confirms the open days ({CONFIRM_HINT})"
 
 
@@ -158,7 +161,7 @@ def days_in(clause: str) -> frozenset[int] | None:
 
 
 def read_days(value: str) -> frozenset[int] | None:
-    """Days as Ting Yu writes them for `community set`: "any" (no day limit),
+    """Days as Ting Yu types them in a `group-rules` decision: "any" (no day limit),
     "none", or days like "sat,sun", "mon-fri", "weekdays". Anything else is refused."""
     text = value.strip().lower()
     if text in ("any", "no limit"):

@@ -4,7 +4,7 @@
 approve needs typed `key=value` arguments: `group-rules` needs its days, so its card has no
 button. Each button's `custom_id` is what Dispatch turns into `approve A-nnnn` or
 `skip A-nnnn` (`docs/dispatch-contract.md`). A card that is no longer pending loses its buttons
-when its first line is edited.
+when its first line is edited. The real `group-rules` card is checked in `test_group_rules.py`.
 """
 
 from __future__ import annotations
@@ -73,20 +73,6 @@ def test_a_card_that_needs_typed_arguments_gets_no_buttons(conn, world, discord_
     cards.sweep(conn)
     (card,) = discord_double.posts("approvals")
     assert card.components is None
-
-
-def test_a_group_rules_card_never_gets_buttons(conn, world, discord_double, monkeypatch):
-    buttons(monkeypatch, True)
-    kind = aw.FakeKind(world)
-    kind.name = "group-rules"
-    plugin = types.SimpleNamespace(NAME="community-double", approval_kinds=lambda: {"group-rules": kind}, __name__="group_rules_double")
-    real = agents.plugins
-    monkeypatch.setattr(agents, "plugins", lambda: (*real(), plugin))
-    raised(conn, world, kind="group-rules")
-    cards.sweep(conn)
-    (card,) = discord_double.posts("approvals")
-    assert card.components is None
-    assert "/growth approve A-0001 promo_days=… post_days=…" in card.content
 
 
 def test_a_long_card_carries_its_buttons_on_the_first_piece_the_one_that_is_edited(conn, world, discord_double, monkeypatch):

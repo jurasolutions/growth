@@ -237,9 +237,10 @@ def set_fields(conn: sqlite3.Connection, group_id: int, pairs: list[str]) -> dic
     if not updates:
         raise GroupError("nothing to set")
     if "promo_rules" in updates and updates["promo_rules"] != group["promo_rules"]:
-        # days confirmed for the old text don't carry over to new text
+        # a confirmation and days given for the old text don't carry over to new text
         for column in DAY_COLUMNS.values():
             updates.setdefault(column, None)
+        updates.setdefault("rules_confirmed", 0)
     if updates.get("rules_confirmed") == 1:
         _check_days_confirmed({**group, **updates})
     updates["updated_at"] = timeutil.stamp()
