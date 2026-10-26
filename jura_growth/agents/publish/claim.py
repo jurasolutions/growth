@@ -10,6 +10,10 @@ hands out, the text printed and the image copies written to the run's scratch fo
 same bytes, so nothing Ting Yu didn't approve can be handed out, even if a file changes after
 `use()` read it (code review 02, B2).
 
+First of all, inside a run, a claim left open by another run is an orphan (that run was killed,
+whatever its row still says): `job.settle_orphans()` settles it as `unknown`, pauses `publish`
+and alerts, and nothing is claimed (AC-P10.1, final review Sp1).
+
 Before any of that, `items.sync()` brings every ready item in line with its requests: a post that
 changed gets its new request and card (AC-P1.3), and one that is gone is withdrawn.
 
@@ -253,6 +257,15 @@ def next_item(conn: sqlite3.Connection, *, run_id: int | None = None, now: datet
     """Claim at most one item, or say why nothing is due. See the module docstring. Post any card
     `items.sync()` raised with `cards.sweep_safely()` afterwards (the command does)."""
     now = now or timeutil.now_sgt()
+    if run_id is not None:
+        # Inside a run, under the publish lock: a claim left open by any other run is an orphan,
+        # even when that run's row still says `running` (AC-P10.1, final review Sp1). It settles
+        # as `unknown`, pauses `publish` and alerts, and nothing is claimed.
+        from jura_growth.agents.publish import job
+
+        orphans = job.settle_orphans(conn, run_id)
+        if orphans:
+            return Claim(why=orphans)
     blocked = _blocked(conn)
     if blocked:
         return Claim(why=[blocked])

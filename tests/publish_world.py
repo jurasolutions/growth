@@ -247,8 +247,10 @@ def join_item(conn, group_id: int | None = None) -> tuple[items.Item, approvals.
 
 
 def asked(conn, join: items.Item) -> items.Item:
-    """`join`, as BP-06's `publish done --outcome questions` leaves it, if no run has taken it yet."""
-    conn.execute("UPDATE publish_items SET state = 'done', outcome = 'questions' WHERE id = ? AND state = 'ready'",
+    """`join`, as BP-06's `publish done --outcome questions` leaves it, whether or not a run claimed
+    it first: a claim left open would be an orphan to the next run (final review Sp1)."""
+    conn.execute("UPDATE publish_items SET state = 'done', outcome = 'questions' WHERE id = ? "
+                 "AND state IN ('ready', 'claimed')",
                  (join.id,))
     found = items.get(conn, join.id)
     assert found is not None

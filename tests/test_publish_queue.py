@@ -222,6 +222,8 @@ def test_line_6_the_gap_is_measured_between_the_runs_start_times(conn, world, mo
     pw.at(monkeypatch, "2026-11-10T10:03:00+08:00")
     first = pw.run(conn, "2026-11-10T10:00:00+08:00")
     assert pw.next_item(conn, first).item is not None
+    # The first run recorded its post; an open claim would be an orphan to the next run (Sp1).
+    conn.execute("UPDATE publish_items SET state = 'done' WHERE run_id = ?", (first,))
     pw.at(monkeypatch, "2026-11-10T10:21:00+08:00")
     early = pw.run(conn, "2026-11-10T10:15:00+08:00")
     refused = pw.next_item(conn, early)
