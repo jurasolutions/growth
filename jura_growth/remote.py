@@ -23,7 +23,9 @@ This module then:
    context, where `approve` and `skip` find them (ticket 04b);
 6. answers with at most `TEXT_LIMIT` characters of text masked for Discord
    (`privacy.for_discord`), and an exit code. With `--json`, a versioned
-   object (`docs/dispatch-contract.md`);
+   object (`docs/dispatch-contract.md`); for `apps handoffs` it carries the
+   `handoff` Dispatch builds from, verbatim, since the PRD text must hash to
+   what Ting Yu approved;
 7. writes one `remote.command` event with the actor, the words, the ref and
    the answer, never the command's output.
 
@@ -124,11 +126,47 @@ def _requeue_shadow(words: list[str], ref: str | None) -> list[str]:
     return argv
 
 
+def _with_options(name: str, options: tuple[str, ...]) -> Callable[[list[str], str | None], list[str]]:
+    """One id, then each of `options` exactly once, as `--option value` or `--option=value`.
+    The values go over as `--option=value`, so none of them is ever read as an option of its own,
+    and the id goes after `--`."""
+    wanted = " ".join(f"{option} <…>" for option in options)
+
+    def build(words: list[str], ref: str | None) -> list[str]:
+        given: dict[str, str] = {}
+        ids: list[str] = []
+        rest = list(words)
+        while rest:
+            word = rest.pop(0)
+            option, equals, value = word.partition("=")
+            if option in options:
+                if option in given:
+                    raise Refusal(f"`{name}` takes {option} once")
+                if not equals:
+                    if not rest:
+                        raise Refusal(f"{option} needs a value")
+                    value = rest.pop(0)
+                given[option] = value
+            elif word.startswith("-"):
+                raise Refusal(f"`{name}` takes only <APP-NNN> {wanted}")
+            else:
+                ids.append(word)
+        if len(ids) != 1 or len(given) != len(options):
+            raise Refusal(f"`{name}` takes <APP-NNN> {wanted}")
+        return [*name.split(), *(f"{option}={given[option]}" for option in options), "--", ids[0]]
+
+    return build
+
+
 # Sorted by command, one entry per line, so tickets 09, 12 and browser-publishing#03 each add
 # their rows in a hunk of their own. `docs/dispatch-contract.md` lists them in the same order.
 ALLOWLIST: dict[str, Entry] = {
     "approvals": Entry("approvals [kind]", _positional("approvals", 0, 1)),
     "approve": Entry("approve <A-nnnn> [key=value …] [note]", _decision("approve"), decision=True),
+    "apps built": Entry("apps built <APP-NNN> --task <T-nnnn> --branch <branch> --sha <sha> --preview <url>", _with_options("apps built", ("--task", "--branch", "--sha", "--preview"))),
+    "apps handoffs": Entry("apps handoffs", _none("apps handoffs")),
+    "apps release-plan": Entry("apps release-plan <APP-NNN>", _positional("apps release-plan", 1, 1)),
+    "apps released": Entry("apps released <APP-NNN> --task <T-nnnn>", _with_options("apps released", ("--task",))),
     "community removed": Entry("community removed <group-id>", _positional("community removed", 1, 1)),
     "one-pager": Entry("one-pager", _none("one-pager")),
     "outreach requeue-shadow": Entry("outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]", _requeue_shadow),
@@ -164,6 +202,7 @@ class Reply:
     answer: str
     text: str
     approvals: list[dict] | None = None
+    handoff: dict | None = None  # `apps handoffs --json`, verbatim (D6)
     origin: str | None = None  # the origin's kind, once it was checked
 
     @property
@@ -205,11 +244,12 @@ def _usage_refusal(text: str) -> str:
 # --- running the command ---------------------------------------------------------------------------
 
 
-def _run(ctx: click.Context, argv: list[str], obj: dict) -> tuple[int, str]:
-    """The real command, in this process, with its output captured."""
+def _run(ctx: click.Context, argv: list[str], obj: dict, *, errors: bool = True) -> tuple[int, str]:
+    """The real command, in this process, with its output captured. With `errors=False`, only
+    what it printed to stdout: a warning on stderr can't then spoil output read as JSON."""
     root = ctx.find_root().command
     buffer = io.StringIO()
-    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer if errors else io.StringIO()):
         try:
             root.main(args=argv, prog_name="jura-growth", standalone_mode=True, obj=obj)
             code = OK
@@ -265,7 +305,23 @@ def handle(ctx: click.Context, words: list[str], *, actor: str | None, ref: str 
         reply.text = reply.text.rstrip() + "\nThe PAUSE file can only be removed on the Mac; until then it pauses everything."
     if name == "approvals" and code == OK:
         reply.approvals = _listed(rest[0] if rest else None)
+    if name == "apps handoffs" and code == OK:
+        reply.handoff = _handoffs(ctx, {"origin": found, "actor": actor})
+        if reply.handoff is None:
+            reply.exit_code, reply.answer = FAILED, approvals.REFUSED
+            reply.text = reply.text.rstrip() + "\nThe handoffs couldn't be read as JSON, so none is handed out."
     return reply
+
+
+def _handoffs(ctx: click.Context, obj: dict) -> dict | None:
+    """What Dispatch polls (D6): the apps plug-in's own `apps handoffs --json`, run in process
+    like every other command, so the core never imports a plug-in."""
+    code, output = _run(ctx, ["apps", "handoffs", "--json"], obj, errors=False)
+    try:
+        given = json.loads(output) if code == OK else None
+    except ValueError:
+        return None
+    return given if isinstance(given, dict) and isinstance(given.get("handoffs"), list) else None
 
 
 def _listed(kind: str | None) -> list[dict]:
@@ -304,17 +360,41 @@ def _masked(reply: Reply) -> Reply:
 
 
 def payload(reply: Reply) -> str:
-    """The `--json` answer: `{contract, ok, answer, exit_code, text, approvals?}`, at most
-    `JSON_LIMIT` bytes. Listed requests are dropped from the end to fit."""
+    """The `--json` answer: `{contract, ok, answer, exit_code, text, approvals?, handoff?}`, at
+    most `JSON_LIMIT` bytes. Listed requests are dropped from the end to fit. Handoffs are too, each
+    counted in `handoff.more` for a later poll; a lone handoff too large to fit is named with its
+    problem instead of its text, never dropped unseen."""
     body: dict = {"contract": CONTRACT, "ok": reply.ok, "answer": reply.answer, "exit_code": reply.exit_code,
                   "text": reply.text}
     if reply.approvals is not None:
         body["approvals"] = list(reply.approvals)
+    if reply.handoff is not None:
+        body["handoff"] = {**reply.handoff, "handoffs": list(reply.handoff.get("handoffs") or [])}
     encoded = json.dumps(body, ensure_ascii=False)
-    while len(encoded.encode("utf-8")) > JSON_LIMIT and body.get("approvals"):
-        body["approvals"].pop()
+    while len(encoded.encode("utf-8")) > JSON_LIMIT:
+        if body.get("approvals"):
+            body["approvals"].pop()
+        elif not _trim_handoffs(body.get("handoff")):
+            break
         encoded = json.dumps(body, ensure_ascii=False)
     return encoded
+
+
+def _trim_handoffs(given: dict | None) -> bool:
+    """One step smaller: drop the newest handoff into `more`, or, with one left, keep it named
+    without its PRD text. False when there is nothing left to trim."""
+    if not given or not given["handoffs"]:
+        return False
+    if len(given["handoffs"]) > 1:
+        given["handoffs"].pop()
+        given["more"] = int(given.get("more") or 0) + 1
+        return True
+    entry = given["handoffs"][0]
+    if entry.get("handoff") is None:
+        return False
+    given["handoffs"][0] = {**entry, "handoff": None,
+                            "problem": f"the PRD is too large to hand out in one answer ({JSON_LIMIT // 1024} KB)"}
+    return True
 
 
 def _record(words: list[str], actor: str | None, ref: str | None, reply: Reply) -> None:
