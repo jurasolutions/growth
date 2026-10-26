@@ -13,7 +13,8 @@ window:
     export JURA_GROWTH_D1_BASE_URL=http://127.0.0.1:8025
 
 It refuses to start unless `JURA_GROWTH_DATA_DIR` is a temporary folder (made with `mktemp -d`)
-outside `jurasolutions/`, and the engine refuses both base URLs on the same terms. The suite never
+outside `jurasolutions/`, and the engine refuses both base URLs on the same terms, and either one
+without the other (`jura_growth/uat_stub.py`). The suite never
 sends through it: tests use the Resend and D1 doubles.
 """
 
@@ -23,9 +24,9 @@ import argparse
 import json
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TextIO
+from typing import Sequence, TextIO
 
-from jura_growth import paths
+from jura_growth import uat_stub
 
 try:
     import d1_stub  # under pytest, tests/ is on the path
@@ -37,11 +38,11 @@ PORT = 8025
 
 def refusal() -> str | None:
     """Why the stub won't start, or None."""
-    return paths.temporary_data_problem()
+    return uat_stub.temporary_data_problem()
 
 
-def server(port: int = PORT, *, out: TextIO | None = None, suppression: list[dict] = (),
-           app_usage: list[dict] = ()) -> ThreadingHTTPServer:
+def server(port: int = PORT, *, out: TextIO | None = None, suppression: Sequence[dict] = (),
+           app_usage: Sequence[dict] = ()) -> ThreadingHTTPServer:
     """The stub, bound to 127.0.0.1 (`port` 0 picks a free one). Call `serve_forever()`.
     `suppression` and `app_usage` are D1 rows to start with (from the command line, none)."""
     out = out or sys.stdout

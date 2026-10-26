@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
+from typing import Sequence
 
 QUERY_PATH = re.compile(r"^/accounts/[^/]+/d1/database/[^/]+/query$")
 
@@ -43,7 +44,7 @@ COLUMNS = {
 class D1:
     """The stub's database. `suppression` and `app_usage` are rows to start with."""
 
-    def __init__(self, *, suppression: list[dict] = (), app_usage: list[dict] = ()):
+    def __init__(self, *, suppression: Sequence[dict] = (), app_usage: Sequence[dict] = ()):
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(":memory:", check_same_thread=False)
         self._conn.row_factory = sqlite3.Row

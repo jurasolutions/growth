@@ -19,9 +19,16 @@ from jura_growth import cloudflare, paths, suppression
 from jura_growth.agents.outreach import send, sync
 from jura_growth.agents.scout import registry
 
-from test_scout_support import d1_env, live_ready, scout_env  # noqa: F401
+from test_scout_support import MONDAY_10AM, at, d1_env, fake_resend, live_ready, scout_env  # noqa: F401
 
 UNSUBSCRIBED = "owner@unsubscribed.example.sg"
+LOCAL = "http://127.0.0.1:8025"
+
+
+def both_stubs(monkeypatch, url: str = LOCAL) -> None:
+    """Resend and D1 pointed at one stub, as `uat.md`'s window sets them."""
+    monkeypatch.setenv(send.RESEND_BASE_ENV, url)
+    monkeypatch.setenv(cloudflare.BASE_ENV, url)
 
 
 @pytest.fixture
@@ -34,7 +41,7 @@ def stub(monkeypatch):
     ])
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    monkeypatch.setenv(cloudflare.BASE_ENV, f"http://127.0.0.1:{server.server_address[1]}")
+    both_stubs(monkeypatch, f"http://127.0.0.1:{server.server_address[1]}")
     try:
         yield out
     finally:
@@ -59,8 +66,34 @@ def test_live_problems_count_the_stub_as_d1(stub, monkeypatch):
     assert send.live_problems() == []
 
 
+# --- the stubs are a pair (review 18, SEC-1) ---------------------------------------------------
+
+PAIR = "the UAT stub stands in for Resend and D1 together"
+
+
+@pytest.mark.parametrize("have, missing", [
+    (cloudflare.BASE_ENV, send.RESEND_BASE_ENV),  # a stubbed suppression list must never meet real Resend
+    (send.RESEND_BASE_ENV, cloudflare.BASE_ENV),  # stubbed sends must never be checked against real D1
+])
+def test_one_stub_without_the_other_is_refused_and_send_due_sends_nothing(conn, monkeypatch, have, missing):
+    live_ready(monkeypatch)
+    monkeypatch.setenv(have, LOCAL)
+    sent = fake_resend(monkeypatch)
+    expected = f"{have} is set but {missing} isn't: {PAIR}"
+    assert [p for p in send.live_problems() if p.startswith(expected)]
+    with pytest.raises(send.ResendStubRefused, match=PAIR):
+        send.resend_url()
+    with pytest.raises(cloudflare.D1StubRefused, match=PAIR):
+        cloudflare.query("SELECT 1")
+    at(monkeypatch, MONDAY_10AM)
+    result = send.send_due(conn)
+    assert result.note.startswith("live sending refused") and expected in result.note
+    assert sent == []
+
+
 def test_with_real_credentials_set_the_query_still_goes_to_the_stub_with_none_of_them(monkeypatch):
     d1_env(monkeypatch)
+    monkeypatch.setenv(send.RESEND_BASE_ENV, "http://localhost:8026/")
     monkeypatch.setenv(cloudflare.BASE_ENV, "http://localhost:8026/")
     seen = []
 
@@ -82,7 +115,7 @@ def test_toolbox_usage_comes_from_the_stub(monkeypatch):
     ])
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    monkeypatch.setenv(cloudflare.BASE_ENV, f"http://127.0.0.1:{server.server_address[1]}")
+    both_stubs(monkeypatch, f"http://127.0.0.1:{server.server_address[1]}")
     try:
         assert registry.usage() == {"quote-builder": {"opens": 5, "completions": 2}}
     finally:
@@ -124,7 +157,7 @@ def test_an_override_that_isnt_a_local_stub_is_refused_and_cloudflare_is_never_a
 def test_the_override_is_refused_unless_the_data_folder_is_temporary(monkeypatch):
     monkeypatch.setenv(cloudflare.BASE_ENV, "http://127.0.0.1:8025")
     monkeypatch.setenv("JURA_GROWTH_DATA_DIR", str(paths.JURA_ROOT / "data" / "growth"))
-    assert "not a temporary folder" in cloudflare.stub_problem()
+    assert "not a temporary folder" in (cloudflare.stub_problem() or "")
     with pytest.raises(cloudflare.D1StubRefused, match="not a temporary folder"):
         cloudflare.query("SELECT 1")
 

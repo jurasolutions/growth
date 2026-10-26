@@ -40,7 +40,6 @@ past the mission-control outreach gate, set `mode: shadow` in config/scout.yaml:
 
 from __future__ import annotations
 
-import os
 import random
 import sqlite3
 from dataclasses import dataclass
@@ -49,20 +48,20 @@ from email.utils import formataddr
 
 import httpx
 
-from jura_growth import approval_settings, approvals, caps, cloudflare, config, db, discord, holidays, locks, log, pause, paths, timeutil
+from jura_growth import approval_settings, approvals, caps, cloudflare, config, db, discord, holidays, locks, log, pause, timeutil, uat_stub
 from jura_growth.agents.outreach import approval, compose, queue, replies, store, sync
 from jura_growth.agents.scout import contact as contact_rules
 from jura_growth.agents.scout import dnc, registry, settings
 
 RESEND_URL = "https://api.resend.com/emails"
 # The UAT harness only (uat.md Part A): point Resend at the local stub,
-# `uv run python -m tests.resend_stub`. Refused unless it is a loopback http
-# URL and the data folder is a temporary one, so a real run can never send
-# through it or be fooled into thinking it sent.
-RESEND_BASE_ENV = "JURA_GROWTH_RESEND_BASE_URL"
+# `uv run python -m tests.resend_stub`, together with D1. `uat_stub` decides
+# whether it may be used, so a real run can never send through it or be
+# fooled into thinking it sent.
+RESEND_BASE_ENV = uat_stub.RESEND_ENV
 
 
-class ResendStubRefused(RuntimeError):
+class ResendStubRefused(uat_stub.StubRefused):
     pass
 
 
@@ -94,23 +93,15 @@ def from_address() -> str:
     return formataddr((settings.SENDER_NAME, f"{local}@{sending_domain()}"))
 
 
-temporary_data_problem = paths.temporary_data_problem
-
-
 def resend_stub_problem() -> str | None:
     """Why `JURA_GROWTH_RESEND_BASE_URL` may not be used, or None (also None when unset)."""
-    return paths.stub_url_problem(RESEND_BASE_ENV)
+    return uat_stub.url_problem(RESEND_BASE_ENV)
 
 
 def resend_url() -> str:
     """Where emails are sent: Resend, or the UAT stub when that is allowed."""
-    base = os.environ.get(RESEND_BASE_ENV)
-    if not base:
-        return RESEND_URL
-    problem = resend_stub_problem()
-    if problem:
-        raise ResendStubRefused(problem)
-    return base.rstrip("/") + "/emails"
+    base = uat_stub.base(RESEND_BASE_ENV, ResendStubRefused)
+    return base + "/emails" if base else RESEND_URL
 
 
 def approval_gate_problem() -> str | None:
@@ -162,7 +153,7 @@ def live_problems() -> list[str]:
         problems.append(f"{dnc.path()} does not exist (create it, even with only a header row)")
     if not cloudflare.configured():
         problems.append("D1 is not configured (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, D1_DATABASE_ID), so suppression can't sync")
-    for stub in (cloudflare.stub_problem(), resend_stub_problem()):
+    for stub in (cloudflare.stub_problem(), resend_stub_problem(), uat_stub.pair_problem()):
         if stub:
             problems.append(stub)
     return problems

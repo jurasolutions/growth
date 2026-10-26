@@ -16,9 +16,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
-import tempfile
 from pathlib import Path
-from urllib.parse import urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 JURA_ROOT = Path(os.environ.get("JURA_ROOT", REPO_ROOT.parent.parent)).resolve()
@@ -113,44 +111,6 @@ def run_folders(job: str) -> list[Path]:
 def is_within(path: str | os.PathLike[str], folder: str | os.PathLike[str]) -> bool:
     """Whether `path` is `folder` or sits under it, after resolving both."""
     return Path(path).resolve().is_relative_to(Path(folder).resolve())
-
-
-# --- the UAT stub (X13) ------------------------------------------------------
-#
-# `uat.md` points Resend and D1 at a local stub (`uv run python -m tests.resend_stub`)
-# through a base-URL variable. Each is honoured only for a loopback http URL while
-# the data folder is a temporary one, so a real run can never send through the stub,
-# read its empty suppression list, or be fooled into thinking it did.
-
-_LOOPBACK = ("127.0.0.1", "localhost", "::1")
-
-
-def _temporary(folder: Path) -> bool:
-    roots = {Path(tempfile.gettempdir()), Path("/tmp"), Path("/private/tmp"), Path("/private/var/folders")}
-    return any(root.exists() and is_within(folder, root.resolve()) for root in roots)
-
-
-def temporary_data_problem() -> str | None:
-    """Why the data folder isn't a temporary one the UAT stub may serve, or None."""
-    value = os.environ.get("JURA_GROWTH_DATA_DIR")
-    if not value:
-        return "JURA_GROWTH_DATA_DIR isn't set: point it at a folder made with `mktemp -d`"
-    folder = Path(value).resolve()
-    if is_within(folder, JURA_ROOT) or not _temporary(folder):
-        return f"the data folder {folder} is not a temporary folder: make one with `mktemp -d`, outside jurasolutions/"
-    return None
-
-
-def stub_url_problem(variable: str) -> str | None:
-    """Why the base URL in `variable` may not be used, or None (also None when it is unset)."""
-    base = os.environ.get(variable)
-    if not base:
-        return None
-    parts = urlsplit(base)
-    if parts.scheme != "http" or parts.hostname not in _LOOPBACK:
-        return f"{variable} must point at the local UAT stub (http://127.0.0.1:<port>), not {base}"
-    problem = temporary_data_problem()
-    return f"{variable} is for the UAT stub only, and {problem}" if problem else None
 
 
 def guard(path: str | os.PathLike[str]) -> Path:

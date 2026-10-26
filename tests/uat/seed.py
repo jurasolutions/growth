@@ -43,7 +43,7 @@ from typing import Callable
 
 import yaml
 
-from jura_growth import cloudflare, config, db, holidays, paths, schedule, suppression, timeutil
+from jura_growth import cloudflare, config, db, holidays, paths, schedule, suppression, timeutil, uat_stub
 from jura_growth.agents.outreach import send, store
 
 FOLDERS = ("JURA_GROWTH_DATA_DIR", "JURA_GROWTH_OUTPUTS_DIR", "JURA_PRD_DIR")
@@ -340,13 +340,14 @@ def outreach_live(conn) -> list[str]:
     folder = os.environ.get("JURA_GROWTH_CONFIG_DIR")
     if not folder:
         raise Refused("JURA_GROWTH_CONFIG_DIR isn't set: outreach-live writes live mode into $UAT/config, never config/")
-    for variable, problem, service in ((send.RESEND_BASE_ENV, send.resend_stub_problem, "no email can reach Resend"),
-                                       (cloudflare.BASE_ENV, cloudflare.stub_problem, "no query can reach Cloudflare")):
+    for variable, service in ((send.RESEND_BASE_ENV, "no email can reach Resend"),
+                              (cloudflare.BASE_ENV, "no query can reach Cloudflare")):
         if not os.environ.get(variable):
             raise Refused(f"{variable} isn't set: start the stub (`uv run python -m tests.resend_stub`) and "
                           f"export {variable}=http://127.0.0.1:{8025}, so {service}")
-        if problem():
-            raise Refused(problem())
+        problem = uat_stub.url_problem(variable)
+        if problem:
+            raise Refused(problem)
 
     def live(scout: dict) -> None:
         scout.update(mode="live", legal_review_done=True, sending_domain=LIVE_SENDING_DOMAIN)
