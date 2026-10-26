@@ -14,7 +14,8 @@ the clock and prepares its world. It has:
     agent: str                 the agent whose pause flag stops the action
     applied_on_decide: bool    True for kinds that take effect inside the
                                decision (group-rules, app-build); the cases
-                               marked "not applied on decide" skip them
+                               marked "not applied on decide" (those taking
+                               the `claimed` fixture) aren't collected for them
     item() -> subject          a fresh item that would raise a request
     twin(subject) -> subject   another item whose content reads the same
     raise_request(subject) -> Approval   through the kind's raising command
@@ -56,6 +57,11 @@ def adapters() -> list[type]:
 def pytest_generate_tests(metafunc):
     if "adapter_class" in metafunc.fixturenames:
         found = adapters()
+        if "claimed" in metafunc.fixturenames:
+            # Cases "not applied on decide" (§5.2) are never collected for kinds applied on
+            # decide, rather than skipped, so the suite has no skips (E3). Those kinds trace
+            # the cases that do apply to them (G9, G19, G21, G22) in their own test files.
+            found = [a for a in found if not a.applied_on_decide]
         metafunc.parametrize("adapter_class", found, ids=[a.kind for a in found])
 
 
@@ -66,8 +72,7 @@ def gate(adapter_class, conn, monkeypatch, tmp_path):
 
 @pytest.fixture
 def claimed(gate):
-    if gate.applied_on_decide:
-        pytest.skip(f"{gate.kind} takes effect inside the decision")  # documented scope, §5.2
+    """The gate, for a case collected only for kinds whose action claims later."""
     return gate
 
 
@@ -283,12 +288,17 @@ def test_g22_a_failed_in_flight_write_rolls_the_claim_back(claimed, conn):
     assert gate.went_out() == 1 and claims(conn) == 1
 
 
-@pytest.mark.parametrize("approved", [False, True], ids=["pending", "approved"])
-def test_g25_a_gone_item_supersedes_at_the_next_claim_and_raises_nothing(gate, conn, approved):
+def test_g25_a_gone_item_supersedes_at_the_next_claim_and_raises_nothing(gate, conn):
+    gone_item_case(gate, conn, approved=False)
+
+
+def test_g25_a_gone_item_approved_but_unclaimed_supersedes_too(claimed, conn):
+    gone_item_case(claimed, conn, approved=True)
+
+
+def gone_item_case(gate, conn, *, approved: bool) -> None:
     subject, approval = requested(gate)
     if approved:
-        if gate.applied_on_decide:
-            pytest.skip(f"{gate.kind} takes effect inside the decision")
         gate.approve(approval)
     gate.remove(subject)
     attempt(gate, subject)
