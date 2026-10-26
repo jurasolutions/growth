@@ -153,9 +153,9 @@ def build(run: Run, produced: list[str] | None, raised: list[approvals.Approval]
     """The run update's text."""
     when = f"{timeutil.parse(run.started_at).strftime('%H:%M')} SGT"
     if run.status == "skipped":
-        return _header(run, f"skipped: {_line(run.summary)}", when)
+        return _header(run, f"skipped: {untrusted_line(run.summary)}", when)
     if run.id is None:
-        reason = _line(run.summary)
+        reason = untrusted_line(run.summary)
         return _header(run, f"nothing to do: {reason}" if reason else "nothing to do", when)
 
     parts = [run.status, when]
@@ -166,7 +166,7 @@ def build(run: Run, produced: list[str] | None, raised: list[approvals.Approval]
     lines = [_header(run, " · ".join(parts), None)]
     error = run.error if run.status == "failed" else ""
     if error:
-        lines.append(f"Error: {_line(error)}")
+        lines.append(f"Error: {untrusted_line(error)}")
     lines += _quote(run.summary, besides=error)
     if produced is not None:
         lines.append(f"Produced: {', '.join(produced) if produced else 'nothing'}")
@@ -232,8 +232,10 @@ def _cut(text: str) -> str:
     return text
 
 
-def _line(text: str) -> str:
-    """Untrusted text as one line."""
+def untrusted_line(text: str) -> str:
+    """Untrusted text as one line (MC §4.3): masked, on one line, with backslashes, backticks,
+    masked links and mentions escaped, and cut to `LIMIT` characters. The one-pager quotes a
+    failed run's error through this too (`health.strip`, final review Sp2)."""
     return _cut(_escape(" ".join(_clean(text).split())))
 
 

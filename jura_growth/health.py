@@ -154,6 +154,7 @@ def strip(snapshot) -> list[str]:
     needs Ting Yu. `snapshot` is a `mission.Snapshot`; its strings are
     already masked."""
     from jura_growth import mission  # mission imports this module
+    from jura_growth.run_update import untrusted_line
 
     items: list[str] = []
     if snapshot.pause_file:
@@ -163,7 +164,8 @@ def strip(snapshot) -> list[str]:
     for failure in snapshot.failures:
         item = f"`{failure.job}` failed on {when(failure.at)}."
         if failure.error:
-            item += "\n> " + " ".join(failure.error.splitlines())
+            # A claude job's error is the model's own `FAIL:` line: untrusted (MC §4.3, final review Sp2).
+            item += "\n> " + untrusted_line(failure.error)
         items.append(item)
     items += _missed(snapshot)
     waiting_in_outbox = max(snapshot.undelivered, snapshot.outbox)
