@@ -20,3 +20,7 @@ Add a guarded `JURA_GROWTH_D1_BASE_URL` that the D1 client honours only when it 
 ## Pointers
 
 - Ticket 17 report (crew-log); `jura_growth/cloudflare.py`; `tests/resend_stub.py`; `.scratch/mission-control/uat.md`
+
+### conductor
+
+When this lands, check the variable name matches JURA_GROWTH_D1_BASE_URL and uncomment it in uat.md's environment block.
