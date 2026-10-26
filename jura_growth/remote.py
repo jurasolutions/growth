@@ -96,7 +96,7 @@ def _decision(name: str) -> Callable[[list[str], str | None], list[str]]:
     def build(words: list[str], ref: str | None) -> list[str]:
         if not words:
             raise Refusal(f"say which request: `{name} A-nnnn`")
-        return [name, *(["--ref", ref] if ref else []), "--", *words]
+        return [name, *([f"--ref={ref}"] if ref else []), "--", *words]
 
     return build
 

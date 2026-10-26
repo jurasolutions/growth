@@ -293,6 +293,14 @@ def test_hostile_words_in_a_note_arrive_as_literal_words_and_run_nothing(conn, w
     assert aw.record(conn, approval.id)["decision_ref"] == "m1:d1"
 
 
+@pytest.mark.parametrize("ref", ["--help", "-x", "--ref=other"])
+def test_a_ref_that_looks_like_an_option_is_only_a_ref(conn, world, ref):
+    approval = raised(conn, world)
+    result = remote(["skip", approval.id], ref=ref)
+    assert result.exit_code == 0, result.output
+    assert aw.record(conn, approval.id)["decision_ref"] == ref
+
+
 @pytest.mark.parametrize("word", [";", "&&", "$(touch {s})", "`touch {s}`", "\ntouch {s}"])
 def test_hostile_words_after_a_command_are_refused_and_run_nothing(world, tmp_path, word):
     sentinel = tmp_path / "sentinel"
