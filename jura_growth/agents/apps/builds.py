@@ -160,7 +160,7 @@ def hand_off(conn: sqlite3.Connection, subject: str, *, run_id: int | None = Non
         data = found.path.read_bytes() if found is not None else None
     except OSError:
         data = None
-    if data is None:  # content() matched a moment ago, so this is a race with a file move
+    if found is None or data is None:  # content() matched a moment ago, so this is a race with a file move
         raise approvals.NotApproved("superseded", f"the PRD for {app_id} left prd/pending/apps/", approval)
     if approvals.content_hash(data) != approval.content_hash:
         raise approvals.NotApproved("superseded", f"the PRD for {app_id} changed after it was claimed, so it isn't handed off",
