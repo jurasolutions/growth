@@ -16,10 +16,12 @@ import pytest
 from click.testing import CliRunner
 
 import approval_world as aw
+import mission_world as mw
 import site_repo
 from discord_double import discord_double  # noqa: F401 - the fixture
+from sweep import d2_secrets  # noqa: F401 - the fixture
 from gate_adapter_app_build import file_prd
-from jura_growth import approvals, config, db, paths
+from jura_growth import approvals, cards, config, db, mission, one_pager, paths, timeutil
 from jura_growth.agents.apps import backlog, builds, catalog, releases
 from jura_growth.cli import cli
 
@@ -307,6 +309,110 @@ def test_released_only_reads_the_temp_landing_page_repository(conn, tmp_path, mo
         assert Path(call[2]).resolve().is_relative_to(tmp_path.resolve())
         assert call[3] in ("merge-base", "rev-parse")
     assert ["git", "-C", str(paths.site_repo()), "merge-base", "--is-ancestor", sha, "main"] in calls
+
+
+# --- skip, expiry and lapse leave it on its preview, listed in the one-pager (MC §5.7) ---------------
+
+
+def one_pager_lines(app_id: str, now: str) -> list[str]:
+    snapshot = mission.read(mw.source(now=now))
+    found = [line for line in snapshot.plugin_lines if app_id in line and "Build handoff" not in line]
+    assert all(line in one_pager.text(snapshot) for line in found)
+    return found
+
+
+@pytest.mark.parametrize("ending", ["skipped", "expired", "lapsed"])
+def test_a_release_not_taken_stays_on_its_preview_and_the_one_pager_lists_it(conn, monkeypatch, ending):
+    app_id, _ = handed_off(conn)
+    sha = site_repo.branch(BRANCH)
+    assert built(app_id, sha).exit_code == 0
+    [request] = release_requests(conn)
+    if ending == "skipped":
+        assert aw.skip(conn, request).answer == "recorded"
+        now = aw.NOW
+    elif ending == "expired":
+        now = request.decide_by
+        approvals.expire_due(conn, timeutil.parse(now))
+    else:
+        aw.approve(conn, request, args={})
+        now = aw.get(conn, request.id).use_by
+        approvals.expire_due(conn, timeutil.parse(now))
+    assert aw.get(conn, request.id).status == ("skipped" if ending == "skipped" else "expired")
+    assert len([e for e in aw.events(conn, f"apps.release.{ending}") if e["subject"] == request.subject]) == 1
+    row = releases.current_build(conn, app_id)
+    assert row["status"] == "built" and row["head_sha"] == sha  # still on its preview
+    assert pending_prd(app_id) is not None and site_repo.main_head() != sha
+    [line] = one_pager_lines(app_id, now)
+    assert line.startswith(f"App on its preview: {app_id} ") and PREVIEW in line and request.id in line
+    assert {"skipped": "skipped", "expired": "expired unanswered", "lapsed": "approved, but its merge was never printed"}[ending] in line
+    assert f"jura-growth apps built {app_id}" in line  # how to ask again
+    again = built(app_id, sha)
+    assert again.exit_code == 0
+    assert [r.status for r in release_requests(conn)][-1] == "pending"
+
+
+def test_the_one_pager_says_what_an_approved_or_claimed_release_waits_for(conn):
+    app_id, sha, request = approved_release(conn)
+    [line] = one_pager_lines(app_id, aw.NOW)
+    assert line.startswith(f"App release approved: {app_id} ") and f"jura-growth apps release-plan {app_id}" in line
+    assert invoke("apps", "release-plan", app_id).exit_code == 0
+    [line] = one_pager_lines(app_id, aw.NOW)
+    assert line.startswith(f"App release waiting for main: {app_id} ") and sha[:7] in line
+    assert f"jura-growth apps released {app_id} --task {TASK}" in line
+    site_repo.merge(sha)
+    assert invoke("apps", "released", app_id, "--task", TASK).exit_code == 0
+    assert one_pager_lines(app_id, aw.NOW) == []
+
+
+# --- AC-M4.7 and the sweep ------------------------------------------------------------------------------
+
+
+def test_without_the_apps_plugin_no_release_is_planned_or_expired(conn, monkeypatch):
+    """AC-M4.7 for app-release: a kind whose plug-in failed to load fails closed."""
+    from jura_growth import agents
+
+    app_id, _ = handed_off(conn)
+    assert built(app_id, site_repo.branch(BRANCH)).exit_code == 0
+    [request] = release_requests(conn)
+    real = agents.plugins()
+    monkeypatch.setattr(agents, "plugins", lambda: tuple(m for m in real if getattr(m, "NAME", "") != "app-factory"))
+    outcome = releases.plan_release(conn, app_id, run_id=None, emit=pytest.fail)
+    assert not outcome.ok and "no loaded plug-in" in outcome.lines[0]
+    assert approvals.expire_due(conn, timeutil.parse(aw.later(request.decide_by, days=1))) == []
+    assert aw.get(conn, request.id).status == "pending"
+
+
+def test_an_app_release_card_and_its_edits_carry_nothing_planted(conn, discord_double, d2_secrets):
+    """AC-M11.1 and AC-M12.1 over this ticket's messages: the release card, and its first line
+    edited when approved and when claimed."""
+    from sweep import AWKWARD, KEYCHAIN_VALUE, MARKER, NAMED_ADDRESS, PHONE, RESEND_KEY, SOURCE_PAGE, assert_clean, outbox_dir, planted
+
+    conn.execute(
+        "INSERT INTO leads (id, company, display_name, domain, website, industry, score, score_reasons, channel,"
+        " status, created_at, updated_at) VALUES (233, 'Example Pte Ltd', 'Example', 'example.com.sg',"
+        " 'https://example.com.sg', 'logistics', 78, '[]', 'email', 'new', ?, ?)",
+        (timeutil.stamp(), timeutil.stamp()),
+    )
+    conn.execute(
+        "INSERT INTO contacts (lead_id, email, email_hash, source_url, kind, mx_ok, verified_at, created_at)"
+        " VALUES (233, ?, 'h', ?, 'named', 1, ?, ?)",
+        (NAMED_ADDRESS, SOURCE_PAGE, timeutil.stamp(), timeutil.stamp()),
+    )
+    name = f"Order maker {MARKER} for Jane Tan at {NAMED_ADDRESS} or {PHONE} key {RESEND_KEY} {KEYCHAIN_VALUE} {AWKWARD}"
+    app_id = file_prd(101, name=name, slug="order-maker")
+    with db.transaction(conn):
+        build_request = builds.request(conn, app_id, reason="the app factory filed it", run_id=None)
+    aw.approve(conn, build_request, args={})
+    sha = site_repo.branch(BRANCH)
+    assert built(app_id, sha).exit_code == 0
+    [request] = release_requests(conn)
+    aw.approve(conn, request, args={})
+    cards.sweep(conn)
+    assert invoke("apps", "release-plan", app_id).exit_code == 0
+    release_cards = [p for p in discord_double.posts("approvals") if "· app release**" in (p.content or "")]
+    assert len(release_cards) == 1 and PREVIEW in release_cards[0].content
+    assert [r.method for r in discord_double.requests].count("PATCH") == 2  # approved, then claimed
+    assert_clean(discord_double, outbox_dir(), planted())
 
 
 # --- X2 and X3: seven days to decide, fourteen to use ----------------------------------------------

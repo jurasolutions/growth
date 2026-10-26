@@ -73,8 +73,9 @@ def approval_kinds() -> dict:
 
 
 def health(conn: sqlite3.Connection) -> list[str]:
-    """Build handoffs waiting for a builder (MC §5.4), on the read model's read-only connection."""
-    return builds.health_lines(conn)
+    """Build handoffs waiting for a builder, and built apps not yet released (MC §5.4), on the
+    read model's read-only connection."""
+    return builds.health_lines(conn) + releases.health_lines(conn)
 
 
 def digest(conn: sqlite3.Connection, day: str) -> dict:

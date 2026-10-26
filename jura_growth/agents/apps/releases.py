@@ -366,6 +366,39 @@ def _file_done(found: catalog.PrdFile | None, row: dict, release: approvals.Appr
     return relative
 
 
+# --- the one-pager -------------------------------------------------------------------------------------
+
+
+def health_lines(conn: sqlite3.Connection) -> list[str]:
+    """Built apps not yet released (MC §5.4, §5.7): left on their preview by a skip, an expiry or
+    a lapse; approved and waiting for `release-plan`; or claimed and waiting for main. A pending
+    request is already in the approvals list. `conn` is the read model's read-only connection, so
+    this reads stored states only."""
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(app_builds)")}
+    if "head_sha" not in columns:
+        return []
+    lines = []
+    for row in db.rows(conn, "SELECT * FROM app_builds WHERE status = 'built' ORDER BY id"):
+        app_id = row["app_id"]
+        label = f"{app_id} {app_name(conn, app_id)}".strip()
+        latest = db.one(conn, "SELECT * FROM approvals WHERE kind = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+                        (KIND, subject(app_id)))
+        if latest is None or latest["status"] in (approvals.PENDING, approvals.SUPERSEDED):
+            continue
+        shown = approvals.format_id(latest["id"])
+        again = f"reporting the build again with `jura-growth apps built {app_id} …` asks again"
+        if latest["status"] == approvals.APPROVED and latest["used_at"]:
+            lines.append(f"App release waiting for main: {label}: the merge of {short(row['head_sha'])} was printed for {shown}; "
+                         f"once main holds it, run `jura-growth apps released {app_id} --task {row['task_id']}`.")
+        elif latest["status"] == approvals.APPROVED:
+            lines.append(f"App release approved: {label}: run `jura-growth apps release-plan {app_id}` for the merge ({shown}).")
+        else:
+            why = {approvals.SKIPPED: "skipped"}.get(latest["status"]) or (
+                "approved, but its merge was never printed" if latest["decided_at"] else "expired unanswered")
+            lines.append(f"App on its preview: {label} stays on {row['preview_url']} ({shown} {why}); {again}.")
+    return lines
+
+
 def claimed_release(conn: sqlite3.Connection, app_id: str) -> approvals.Approval | None:
     """The app's latest `app-release` request, when it has been claimed by `release-plan`."""
     row = db.one(conn, "SELECT id FROM approvals WHERE kind = ? AND subject = ? ORDER BY id DESC LIMIT 1",
