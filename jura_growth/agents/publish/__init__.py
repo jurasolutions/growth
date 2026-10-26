@@ -15,11 +15,16 @@ Modules:
 - `group_kinds`: the `community-post` and `group-join` approval kinds.
 - `claim`: every claim-time check and the claim itself; `claimable(conn, now)` is the read-only
   form the publish job's precheck uses (BP-03).
-- `job`: the job hooks. `after_run` settles a claim the run left open as `unknown`.
+- `job`: the job hooks: the precheck, `after_run` (unknown claims, the audit, the no-browser
+  alert, the summary) and the run update.
+- `scope`: the publish run's commands and Chrome tools, scoped by domain (ADR 0005).
+- `audit`: the transcript audit for hosts, tabs and typed text.
+- `hosts`: each platform's hosts, for post URLs and for the browser.
 - `limits`: the caps in `caps.py`, tightened by `config/publish.yaml`.
 - `commands`: `jura-growth publish next | done | stopped | queue | resolve`.
 
-No browser is involved yet: BP-03 adds the scheduled `publish` job that drives Chrome.
+The scheduled `publish` job (BP-03, `prompts/publish.md`) drives Chrome through Claude in Chrome,
+every 20 minutes from 09:00 to 17:40 SGT, posting to the Facebook Page in this build.
 See docs/social.md.
 """
 

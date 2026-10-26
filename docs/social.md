@@ -195,10 +195,10 @@ content, its day and its lifecycle (`ready`, `claimed`, `done`, `stopped`, `unkn
 `withdrawn`), the live URL and whether the live text matched. It holds no approval state: that
 lives only in `approvals`, under the subject `publish_item:<id>`.
 
-## Publishing through the browser (browser publishing PRD, BP-02a)
+## Publishing through the browser (browser publishing PRD, BP-02a and BP-03)
 
-Nothing posts without Ting Yu's approval of that exact post (MC §4.6). The queue is built and
-works from Terminal and the tests; the scheduled `publish` job that drives Chrome is BP-03.
+Nothing posts without Ting Yu's approval of that exact post (MC §4.6). The queue (BP-02a) works
+from Terminal and the tests; the scheduled `publish` job (BP-03, below) drives Chrome.
 
 1. `social submit` makes a **publish item** for each platform in `browser` mode whose variant
    passed the brand gate, and raises one `social-post` approval request for it. The card in
@@ -245,6 +245,38 @@ item becomes `unknown`: it is never claimed again, `publish` pauses, and `#alert
 `/growth publish resolve A-nnnn posted --url <url>` and `… not-posted`. A claim left by a run
 whose process died is settled the same way by the next run, and `publish resolve` also settles a
 claim nobody will close: one whose run has ended, or one made in Terminal with no run.
+`/growth publish queue` and `/growth publish resolve …` work from Discord too.
+
+### The `publish` job (BP-03, ADR 0005)
+
+Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/settings.yaml`).
+
+- **Precheck, before Claude starts.** With `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` in
+  the environment the run is skipped and says why, because either one silently removes the Chrome
+  tools; `jura-growth status` lists the variable as a setup gap. Otherwise the precheck runs the
+  queue's `items.sync()` and posts any fresh card, then asks whether anything can be claimed. If
+  not, the slot is a quiet run ("nothing due") and no Claude starts.
+- **What the run may do.** `--chrome`, only because `publish` is in `caps.BROWSER_JOBS`; no
+  `--add-dir`. The tab tools by name, and the page tools only through one
+  `ClaudeInChromeDomain(<host>)` rule per Facebook host (`hosts.BROWSER_HOSTS`) while Facebook is
+  in `browser` mode. Scripting, network, console, shortcut, recording, browser-switching, batch and
+  resize tools, `upload_image`, web search and fetch are denied, and `file_upload` too unless the
+  item due has an image. Bash runs only `publish next`, `done` and `stopped`.
+- **The prompt** (`prompts/publish.md`) checks the connected browser before `publish next` (no
+  browser ends `SKIP:` and claims nothing), opens its own tab, checks the page shows the Jura Page
+  as the posting identity before typing, posts exactly the approved text and images, reads the
+  live post back and records it, and closes its tab. Any stop signal ends in `publish stopped`.
+- **After the run** (`after_run`, before the run row is finished): an open claim becomes
+  `unknown`; the transcript audit fails the run and pauses `publish` for a URL off the publish
+  hosts (asked for, or shown as a tab's URL in any later result), a Discord host, a tool call on a
+  tab the run didn't open, typed text that isn't in the approved content, an upload that isn't the
+  approved image, or a never-tool. A tab left open is a warning. A run that found no browser
+  alerts once a day. A run that claimed an item gets its summary from the item's record.
+- **Run updates** (`run_update: claimed-only`) post in `#social-drafts` only for a run that
+  claimed an item: the A-id, the platform, what happened and the URL or stop reason, never page
+  text. Stops, mismatches and unknown items also go to `#alerts`.
+- **Transcripts** of publish runs hold page text, so they are kept 7 days
+  (`caps.BROWSER_TRANSCRIPT_DAYS`), not 30.
 
 ## Digest
 

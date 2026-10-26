@@ -153,3 +153,28 @@ def test_the_publish_schedule_is_every_20_minutes_from_0900_to_1740_every_day():
     assert slots[0][1:] == (9, 0) and slots[-1][1:] == (17, 40)
     assert not schedule.business_days_only(shape)
     assert schedule.describe(config.settings()["jobs"]["publish"]) == "daily 09:00–17:40, every 20 min"
+
+
+# --- the one --chrome, and ADR 0005 ------------------------------------------------------------
+
+
+def test_chrome_flag_appears_only_in_the_runners_browser_jobs_branch():
+    from jura_growth import paths
+
+    found = []
+    for path in sorted((paths.REPO_ROOT / "jura_growth").rglob("*.py")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if '"--chrome"' in line or "'--chrome'" in line:
+                found.append((path.relative_to(paths.REPO_ROOT).as_posix(), line.strip()))
+    assert found == [("jura_growth/runner.py", 'argv.append("--chrome")')]
+    source = (paths.REPO_ROOT / "jura_growth" / "runner.py").read_text(encoding="utf-8")
+    branch = source[source.index('argv.append("--chrome")') - 80:source.index('argv.append("--chrome")')]
+    assert "if browser and spec.get(\"browser\"):" in branch
+
+
+def test_adr_0005_is_accepted():
+    from jura_growth import paths
+
+    adr = paths.REPO_ROOT / "docs" / "adr" / "0005-browser-automation-runs-only-in-the-publish-job.md"
+    status = next(line for line in adr.read_text(encoding="utf-8").splitlines() if line.startswith("Status:"))
+    assert status.startswith("Status: accepted")
