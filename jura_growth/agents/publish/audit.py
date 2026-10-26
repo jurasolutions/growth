@@ -31,7 +31,10 @@ did. It walks the calls in transcript order:
   may hold the start of one. An editing key (Backspace, Delete, the arrows) on a field that
   already holds text fails the run, and so does anything typed before `publish next` handed out
   an item.
-- **Uploads.** `file_upload` may send only the claimed item's own image copies, path for path.
+- **Uploads.** `file_upload` may send only the claimed item's own image copies, path for path,
+  each once and in the approved order, in one call or several (an Instagram carousel's slides
+  are approved in order, BP-04). A run that went on to `publish done --url` must have sent every
+  copy; a run that stopped part-way may have sent only the first few.
 - **Nothing after a stop.** After a `publish stopped` call, a click, a key, typing, a form input,
   an upload or a navigation fails the run. Reading the page, a screenshot and closing the tab
   are fine.
@@ -116,11 +119,13 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
     found = Audit()
     allowed = tuple(h.lower() for h in hosts)
     texts = [_normal(text) for text in approved if text and text.strip()]
-    uploads = {os.path.normpath(path) for path in images}
+    order = [os.path.normpath(path) for path in images]
+    uploads = set(order)
+    sent: list[str] = []
     created: set[str] = set()
     closed: set[str] = set()
     fields = _Fields()
-    claimed = stopped = False
+    claimed = stopped = posted = False
 
     def fail(text: str) -> None:
         if text not in found.failures:
@@ -143,6 +148,8 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
                 claimed = True
             if call.ok and "publish stopped" in command:
                 stopped = True
+            if "publish done" in command and "--url" in command:
+                posted = True  # attempted or recorded, the post went out
             continue
         if not call.name.startswith(CHROME):
             continue
@@ -173,9 +180,15 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
         elif tool == "computer":
             _keyboard(call.input, action, fields, typed, fail)
         if tool == "file_upload":
-            for path in _paths(call.input):
-                if os.path.normpath(path) not in uploads:
+            for path in (os.path.normpath(p) for p in _paths(call.input)):
+                if path not in uploads:
                     fail("file_upload tried to send a file that isn't the claimed item's image copy")
+                elif path in sent:
+                    fail(f"file_upload sent image {order.index(path) + 1} of the claimed item more than once")
+                else:
+                    if path != order[len(sent)]:
+                        fail("file_upload sent the claimed item's images out of their approved order")
+                    sent.append(path)
 
         if not call.ok:
             continue
@@ -214,6 +227,8 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
     for text, count in filled.items():
         if count > 1:
             fail(f"an approved text ({len(text)} characters) was typed into {count} fields")
+    if posted and len(sent) < len(order):
+        fail(f"the post was recorded as done with {len(sent)} of its {len(order)} approved images attached")
 
     left = len(created - closed)
     if left:

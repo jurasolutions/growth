@@ -185,6 +185,67 @@ def test_an_upload_path_that_only_looks_like_a_copy_fails(tmp_path):
     assert failed_with(judged(tmp_path, steps), "upload")
 
 
+# --- uploads: every image, once, in the approved order (BP-04, Instagram carousel days) ---------------
+
+
+SLIDES = tuple(f"/tmp/work/publish/A-0001/{n}-instagram-{n}-of-3-1080x1350.png" for n in (1, 2, 3))
+IG_POST = "https://www.instagram.com/p/C0deAbc123/"
+
+
+def upload(*paths: str) -> dict:
+    return t.page("file_upload", {"paths": list(paths), "ref": "ref_20"}, f"Uploaded {len(paths)} files.")
+
+
+def done(url: str = IG_POST) -> dict:
+    return t.bash(f"jura-growth publish done A-0001 --url {url} --live-text-file /tmp/work/publish/A-0001-live.txt",
+                  "A-0001: posted")
+
+
+def carousel(*steps) -> list[dict]:
+    """A carousel post: identity checked, `steps` for the slides, the caption, Share, then done."""
+    return in_tab(t.page("get_page_text", {}, "jura.solutions\nEdit profile"), *steps, t.typed(TEXT),
+                  t.page("computer", {"action": "left_click", "ref": "ref_31"}, "Clicked Share."), done())
+
+
+@pytest.mark.parametrize("steps", [
+    [upload(*SLIDES)],
+    [upload(SLIDES[0]), upload(SLIDES[1]), upload(SLIDES[2])],
+    [upload(SLIDES[0], SLIDES[1]), upload(SLIDES[2])],
+], ids=["one call", "one call per slide", "two calls"])
+def test_every_carousel_slide_uploaded_once_in_order_passes(tmp_path, steps):
+    assert judged(tmp_path, carousel(*steps), images=SLIDES).failures == []
+
+
+@pytest.mark.parametrize("steps, word", [
+    ([upload(SLIDES[0], SLIDES[2], SLIDES[1])], "order"),
+    ([upload(SLIDES[1]), upload(SLIDES[0]), upload(SLIDES[2])], "order"),
+    ([upload(*SLIDES), upload(SLIDES[2])], "more than once"),
+    ([upload(SLIDES[0], SLIDES[0], SLIDES[1], SLIDES[2])], "more than once"),
+    ([upload(SLIDES[0], SLIDES[1])], "2 of its 3"),
+    ([], "0 of its 3"),
+], ids=["swapped", "first two swapped across calls", "last again", "first twice", "one missing", "none"])
+def test_slides_out_of_order_repeated_or_missing_from_a_recorded_post_fail(tmp_path, steps, word):
+    found = judged(tmp_path, carousel(*steps), images=SLIDES)
+    assert failed_with(found, word), found.failures
+    assert not any("/tmp/work" in f for f in found.failures)  # findings never quote a path
+
+
+def test_a_single_image_post_recorded_without_its_image_fails(tmp_path):
+    steps = [*start(), *t.clean_post(TEXT), done(t.POST)]
+    assert failed_with(judged(tmp_path, steps), "0 of its 1")
+
+
+def test_a_stop_after_the_first_slides_leaves_the_rest_unsent_and_passes(tmp_path):
+    steps = in_tab(t.page("get_page_text", {}, "jura.solutions\nEdit profile"), upload(SLIDES[0]),
+                   t.page("computer", {"action": "screenshot"}, "Screenshot taken."), t.stopped(reason="unidentified"))
+    assert judged(tmp_path, steps, images=SLIDES).failures == []
+
+
+def test_an_item_with_no_images_needs_no_upload_to_be_recorded(tmp_path):
+    steps = [*start(), *t.clean_post(TEXT), done(t.POST)]
+    assert judged(tmp_path, steps, images=()).failures == []
+
+
 # --- nothing after a stop (S-9) -------------------------------------------------------------------
 
 
