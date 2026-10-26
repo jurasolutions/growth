@@ -30,9 +30,11 @@ compare_days: 28
 
 utm_source: facebook_group
 
-# Open question 1, defaulted until Ting Yu confirms: post as Ting Yu
-# personally, mentioning Jura Solutions in the closing line.
-post_as: Ting Yu personally, mentioning Jura Solutions in the closing line
+# Who posts in groups (browser publishing PRD §3.3, §5.10; decision TY1): the
+# Jura Solutions Facebook Page, in groups that allow Pages. Drafts are written
+# in the Jura voice ("we"), per design-system/README.md §3. Groups that only
+# let personal profiles post are skipped.
+post_as: the Jura Solutions Facebook Page
 
 # The one list of domains the run may not fetch. The community job's Claude
 # Code rules deny WebFetch on each domain and every subdomain of it (built from

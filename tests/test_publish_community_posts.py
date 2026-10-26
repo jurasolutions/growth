@@ -231,3 +231,29 @@ def test_settling_a_group_post_refuses_an_address_outside_its_group(conn, world,
 
     assert result.exit_code == 1 and "refused" in result.output
     assert pw.item_row(conn, found.id)["state"] == "unknown"
+
+
+# --- the posting identity in groups is the Jura Page, and drafts speak as Jura (BP §3.3, §5.10; TY1) -------
+
+
+def test_community_posts_go_out_as_the_jura_page():
+    import yaml
+
+    from jura_growth import paths
+
+    settings = yaml.safe_load((paths.REPO_ROOT / "config" / "community.yaml").read_text(encoding="utf-8"))
+    assert settings["post_as"] == "the Jura Solutions Facebook Page"
+
+
+def test_the_community_plan_prompt_writes_drafts_in_the_jura_voice():
+    import re
+
+    from jura_growth import paths
+
+    prompt = (paths.REPO_ROOT / "prompts" / "community.md").read_text(encoding="utf-8")
+    flat = " ".join(prompt.split())
+    for old in ("Ting Yu personally", "I run Jura Solutions", "Ting Yu posts by hand", "Ting Yu posts himself"):
+        assert old not in flat, old
+    assert re.search(r"Jura Solutions Facebook Page \(`post_as`\)", flat)
+    voice = next(line for line in prompt.split("\n   - ") if line.startswith("Voice:"))
+    assert '"we"' in voice and "design-system/README.md" in voice
