@@ -671,3 +671,12 @@ artifacts: crew/browser-publishing-02-publish-queue rebased on d0b0119 (e5110e3 
 decisions: B1 and B2 fixed; conductor adopts the crew recommendation to record sync() raising requests in A11 (BA amends); BP-03 precheck must run sync() first (note on issues/03); sent to the reviewer for round 2
 questions: -
 evidence:  2586 passed, 0 skipped
+
+## 2026-10-27T03:40+0800 business-analyst (amendment: publish queue sync() raises replacement social-post requests)
+status:    done
+persona:   business-analyst
+ticket:    -
+artifacts: jurasolutions/prd/pending/prd-jura-mission-control-2026-10-25.md (§4.6 A11, header); prd-jura-browser-publishing-2026-10-25.md (§5.4, §5.5 social-post row, header); all marked "Amended 2026-10-27"
+decisions: the publish queue's sync() is a request raiser. When a queued social post's content changes, it raises a fresh social-post request for the new content and supersedes the old one, and it never withdraws an item without raising its replacement. No AC ids changed; no in-repo doc other than this log needed a change
+questions: -
+evidence:  grep "sync()" -> MC 2, BP 3; AC counts MC 80, BP 36 unchanged; closing lines intact

@@ -101,3 +101,12 @@ questions: -
 evidence:  render.py to a temp folder -> MC 80/80, BP 36/36 placed once, exit 0
 evidence:  cmp -> exactly the 7 named tickets differ
 evidence:  git diff --stat -> 7 issue files, 11+/3-, no code
+
+## 2026-10-27T03:40+0800 business-analyst (amendment: publish queue sync() raises replacement social-post requests)
+status:    done
+persona:   business-analyst
+ticket:    -
+artifacts: jurasolutions/prd/pending/prd-jura-mission-control-2026-10-25.md (§4.6 A11, header); prd-jura-browser-publishing-2026-10-25.md (§5.4, §5.5 social-post row, header); all marked "Amended 2026-10-27"
+decisions: the publish queue's sync() is a request raiser. When a queued social post's content changes, it raises a fresh social-post request for the new content and supersedes the old one, and it never withdraws an item without raising its replacement. No AC ids changed; no in-repo doc other than this log needed a change
+questions: -
+evidence:  grep "sync()" -> MC 2, BP 3; AC counts MC 80, BP 36 unchanged; closing lines intact
