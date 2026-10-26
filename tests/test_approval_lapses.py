@@ -1,8 +1,8 @@
 """Who writes lapses and posts cards on a schedule (MC §4.6 A12, A17; X12, gate case G36; ticket 04b).
 
 The noon heartbeat and the 23:30 backup each call `expire_due()` and edit the cards that changed;
-only the heartbeat posts unposted cards, so nothing new notifies at 23:30. (The 08:00 `one-pager`
-job joins them in ticket 09.)
+only the heartbeat posts unposted cards, so nothing new notifies at 23:30. The 08:00 `one-pager`
+job does the same before it builds, without posting new cards (`test_one_pager_post.py`).
 """
 
 from __future__ import annotations

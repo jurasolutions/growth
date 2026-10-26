@@ -66,7 +66,7 @@ The database stays in rollback-journal mode, not WAL, because it lives in OneDri
 | `jura-growth status` | Pauses, last runs, schedule, Discord setup and setup gaps (the same list as the one-pager's) |
 | `jura-growth approvals [kind]` | Pending approval requests, the 15 soonest to lapse first. Decisions come only from `#approvals`, through Dispatch (ADR 0004) |
 | `jura-growth remote …` | Control commands from Discord, reached only through Dispatch's SSH forced command (`bin/growth-remote`) and refused anywhere else. See `docs/dispatch-contract.md` |
-| `jura-growth one-pager --no-post` | Print the one-pager: Needs you, approvals waiting, today's slots, yesterday's figures. Reads `growth.db` read-only and never repairs it (ADR 0002) |
+| `jura-growth one-pager [--no-post]` | Post the one-pager to `#mission-control`: Needs you, approvals waiting, today's slots, yesterday's figures, and the 14-day grid as a PNG. It writes the approval lapses that are due first, then reads `growth.db` read-only and never repairs it (ADR 0002). `--no-post` only prints it |
 | `jura-growth run <job>` | Run a scheduled job now. `--dry-run` prints the command, `--ignore-schedule` runs on a weekend or holiday |
 | `jura-growth schedule list\|render\|install\|uninstall [jobs]` | launchd jobs |
 | `jura-growth heartbeat` | Post a heartbeat to `#daily-digest` |
@@ -85,6 +85,7 @@ All times SGT, from `config/settings.yaml`:
 |---|---|---|
 | `app-factory` | 06:30 daily | headless Claude |
 | `social` | 07:00 daily | headless Claude |
+| `one-pager` | 08:00 daily | command |
 | `scout-research` | 09:00 business days | headless Claude |
 | `scout-send` | 09:30–16:30 business days, every 10 minutes | command |
 | `heartbeat` | 12:00 daily | command |
