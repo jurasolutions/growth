@@ -795,3 +795,13 @@ decisions: changes-requested; B1 model or page text reaches the run row, #alerts
 decisions: conductor adopts the crew recommendation: no screenshot file; AC-P6.1 and the stop paragraph amended (reason and run id only); sent as fix round 1
 questions: -
 evidence:  2742 passed; repro_audit and fake-claude run reproduce B1 and B2
+
+## 2026-10-27T05:12+0800 reviewer (bp 03, round 2) via conductor
+status:    done
+persona:   reviewer
+ticket:    bp-03
+artifacts: .scratch/browser-publishing/reviews/code-review-03.md (round 2)
+decisions: changes-requested; round-1 findings all fixed; B3 new: nested JSON in page text raises RecursionError in the audit, after_run fails open (no audit, no pause, model text kept); S-10 planted page JSON passes the tab-address check; caps at commands.py:212 is fine
+decisions: conductor (standing instruction: decide, do not ask): third round with a structural fail-closed fix at the publish after_run boundary instead of escalating; conductor verifies with the reviewer repros
+questions: -
+evidence:  2926 passed; repro_audit_r2 reproduces B3 and S-10
