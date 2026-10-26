@@ -953,3 +953,12 @@ artifacts: .scratch/mission-control/reviews/code-review-final.md
 decisions: adopt the reviewer recommendation: fix on the branch before the PR. One developer fix round for Sp1 (orphaned claim settles and pauses), Sp2 (one-pager escapes model FAIL lines), Sp3 (release-plan answer re-fetchable), St1 (no-NFC wording; drop NFC in releases and group_rules), St2 (.env.example webhooks), St3 (one _normal), St8 (operating card count). Nits St4-St7, Sp4 left as follow-ups; Sp5 PRD text at move to done
 questions: -
 evidence:  3295 passed, 0 skipped
+
+## 2026-10-27T07:44+0800 conductor (final-review fix merge)
+status:    done
+persona:   conductor
+ticket:    final
+artifacts: merge 8d6640e (45987b3 Sp1, 459bcaf Sp2, 6133d10 Sp3, 450822c St1, 6dccdc0 St2, 01bc4ff St3, 47b83fb St8)
+decisions: verified by the conductor: orphaned claims settle unknown, pause and alert under the job lock, three test fixtures corrected to record their claims (not weakened); one untrusted_line escape for run updates and the one-pager; merged. Sp5 already resolved by the 2026-10-27 AC-P1.3 amendment. Next: quality gate and release prep, then the PR
+questions: -
+evidence:  3305 passed, 0 skipped after the merge
