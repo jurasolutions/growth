@@ -25,7 +25,7 @@ from pathlib import Path
 
 import click
 
-from jura_growth import approval_settings, brand_check, cards, db, log, timeutil
+from jura_growth import approval_settings, brand_check, cards, db, handoff_fit, log, timeutil
 from jura_growth.agents.apps import backlog, builds, catalog, factory, inputs, releases
 
 NAME = catalog.NAME
@@ -256,7 +256,7 @@ def handoffs_cmd(as_json) -> None:
     """Build handoffs waiting for a builder, oldest first."""
     with db.session() as conn:
         if as_json:
-            click.echo(json.dumps(builds.handoffs_json(conn), indent=2, ensure_ascii=False))
+            click.echo(handoff_fit.encode(builds.handoffs_json(conn)))  # measured as printed
             return
         waiting = builds.open_handoffs(conn)
     if not waiting:

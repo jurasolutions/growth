@@ -14,7 +14,7 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 
-from jura_growth import brand_check, db, gate, log, paths, timeutil
+from jura_growth import brand_check, db, gate, log, paths, privacy, timeutil
 from jura_growth.agents.apps import backlog, builds, catalog
 from jura_growth.agents.apps import prd as prd_mod
 
@@ -79,6 +79,21 @@ def brand_parts(parsed: prd_mod.AppPrd) -> dict:
     }
 
 
+def private_problems(conn: sqlite3.Connection, text: str) -> list[str]:
+    """The PRD goes to #approvals and, approved, to Dispatch as the build's brief, verbatim. So
+    nothing the privacy filter would change may be in it: a person's name or address, a phone
+    number or a secret-looking value (code review 12, Q1). The problem names lines, never what
+    is on them."""
+    privacy.load_for_masking(conn)
+    if privacy.for_discord(text) == text:
+        return []
+    lines = [str(n) for n, line in enumerate(text.splitlines(), 1) if privacy.for_discord(line) != line]
+    where = f"line{'s' if len(lines) != 1 else ''} {', '.join(lines)}" if lines else "the text as a whole"
+    return [f"{where}: the PRD holds what the privacy filter would mask (a person's name or address, a phone "
+            "number or a secret-looking value). PRDs go to #approvals and to the builder exactly as written, "
+            "so leave it out"]
+
+
 def rejections_today(conn: sqlite3.Connection) -> int:
     return db.scalar(
         conn,
@@ -97,7 +112,7 @@ def submit(conn: sqlite3.Connection, text: str, *, dry_run: bool = False) -> Sub
         return Submission(False, [f"refused: {max_rejections} rejected submissions today; stop and report FAIL"], status="refused")
 
     ctx = context(conn)
-    errors = prd_mod.validate_factory(text, ctx)
+    errors = prd_mod.validate_factory(text, ctx) + private_problems(conn, text)
     parsed = prd_mod.parse(text)
     if errors:
         if not dry_run:

@@ -182,6 +182,13 @@ def _table(conn, world):
         (["approvals"], 0, f"{approval.id} · fake"),
         (["approvals", "fake"], 0, f"{approval.id} · fake"),
         (["approve", approval.id, *ARGS], 0, f"{approval.id} approved."),
+        # MC-11b. Nothing is handed off here; the happy paths are in test_remote_apps.py.
+        (["apps", "built", "APP-999", "--task", "T-0031", "--branch", "claude/T-0031-x", "--sha", "a" * 40,
+          "--preview", "https://x.jura-site.pages.dev"], 1, "pages_project isn't set"),
+        (["apps", "built", "APP-999", "--task", "T-0031"], 2, "refused:"),
+        (["apps", "handoffs"], 0, "No build handoffs are waiting."),
+        (["apps", "release-plan", "APP-999"], 1, "There is no merge to run."),
+        (["apps", "released", "APP-999", "--task", "T-0031"], 1, "APP-999"),
         (["community", "removed", str(group_id)], 0, "is now skip, permanently"),
         (["community", "removed", "999"], 1, "999"),
         # MC-09. Discord is off here, so the one-pager waits in the outbox; AC-M1.6's

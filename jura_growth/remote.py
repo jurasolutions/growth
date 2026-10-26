@@ -23,7 +23,9 @@ This module then:
    context, where `approve` and `skip` find them (ticket 04b);
 6. answers with at most `TEXT_LIMIT` characters of text masked for Discord
    (`privacy.for_discord`), and an exit code. With `--json`, a versioned
-   object (`docs/dispatch-contract.md`);
+   object (`docs/dispatch-contract.md`); for `apps handoffs` it carries the
+   `handoff` Dispatch builds from, verbatim, since the PRD text must hash to
+   what Ting Yu approved;
 7. writes one `remote.command` event with the actor, the words, the ref and
    the answer, never the command's output.
 
@@ -33,6 +35,7 @@ Anything not on the allowlist exits 2 with a line starting "refused:".
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import re
@@ -41,11 +44,11 @@ from typing import Callable
 
 import click
 
-from jura_growth import approvals, approvals_cli, config, db, log, origin, pause, privacy
+from jura_growth import approvals, approvals_cli, config, db, handoff_fit, log, origin, pause, privacy
 
 CONTRACT = 1
 TEXT_LIMIT = 1900  # Dispatch adds its own words; Discord takes 2,000
-JSON_LIMIT = 64 * 1024
+JSON_LIMIT = handoff_fit.JSON_LIMIT  # one limit, measured one way, shared with `apps handoffs --json`
 OK, FAILED, REFUSED = 0, 1, 2  # the exit codes of commands that aren't decisions
 ANSWER_FOR_EXIT = {code: answer for answer, code in approvals_cli.EXIT_CODES.items()}
 _DISCORD_ACTOR = re.compile(r"discord:\d+")
@@ -124,11 +127,50 @@ def _requeue_shadow(words: list[str], ref: str | None) -> list[str]:
     return argv
 
 
+def _with_options(usage: str) -> Entry:
+    """The entry for a command typed as its usage says: one id, then each `--option <…>` of the
+    usage exactly once, as `--option value` or `--option=value`, in any order. The values go over as
+    `--option=value`, so none of them is ever read as an option of its own, and the id goes after
+    `--`."""
+    words = usage.split()
+    name = " ".join(word for word in words[: next(n for n, w in enumerate(words) if w.startswith("<"))])
+    options = tuple(word for word in words if word.startswith("--"))
+
+    def build(words: list[str], ref: str | None) -> list[str]:
+        given: dict[str, str] = {}
+        ids: list[str] = []
+        rest = list(words)
+        while rest:
+            word = rest.pop(0)
+            option, equals, value = word.partition("=")
+            if option in options:
+                if option in given:
+                    raise Refusal(f"`{name}` takes {option} once")
+                if not equals:
+                    if not rest:
+                        raise Refusal(f"{option} needs a value")
+                    value = rest.pop(0)
+                given[option] = value
+            elif word.startswith("-") or ids:
+                raise Refusal(f"say it as `{usage}`, each option once")
+            else:
+                ids.append(word)
+        if len(ids) != 1 or len(given) != len(options):
+            raise Refusal(f"say it as `{usage}`, each option once")
+        return [*name.split(), *(f"{option}={given[option]}" for option in options), "--", ids[0]]
+
+    return Entry(usage, build)
+
+
 # Sorted by command, one entry per line, so tickets 09, 12 and browser-publishing#03 each add
 # their rows in a hunk of their own. `docs/dispatch-contract.md` lists them in the same order.
 ALLOWLIST: dict[str, Entry] = {
     "approvals": Entry("approvals [kind]", _positional("approvals", 0, 1)),
     "approve": Entry("approve <A-nnnn> [key=value …] [note]", _decision("approve"), decision=True),
+    "apps built": _with_options("apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>"),
+    "apps handoffs": Entry("apps handoffs", _none("apps handoffs")),
+    "apps release-plan": Entry("apps release-plan <APP-NNN>", _positional("apps release-plan", 1, 1)),
+    "apps released": _with_options("apps released <APP-NNN> --task <T-nnnn>"),
     "community removed": Entry("community removed <group-id>", _positional("community removed", 1, 1)),
     "one-pager": Entry("one-pager", _none("one-pager")),
     "outreach requeue-shadow": Entry("outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]", _requeue_shadow),
@@ -164,6 +206,7 @@ class Reply:
     answer: str
     text: str
     approvals: list[dict] | None = None
+    handoff: dict | None = None  # `apps handoffs --json`, verbatim (D6)
     origin: str | None = None  # the origin's kind, once it was checked
 
     @property
@@ -205,11 +248,12 @@ def _usage_refusal(text: str) -> str:
 # --- running the command ---------------------------------------------------------------------------
 
 
-def _run(ctx: click.Context, argv: list[str], obj: dict) -> tuple[int, str]:
-    """The real command, in this process, with its output captured."""
+def _run(ctx: click.Context, argv: list[str], obj: dict, *, errors: bool = True) -> tuple[int, str]:
+    """The real command, in this process, with its output captured. With `errors=False`, only
+    what it printed to stdout: a warning on stderr can't then spoil output read as JSON."""
     root = ctx.find_root().command
     buffer = io.StringIO()
-    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer if errors else io.StringIO()):
         try:
             root.main(args=argv, prog_name="jura-growth", standalone_mode=True, obj=obj)
             code = OK
@@ -265,7 +309,43 @@ def handle(ctx: click.Context, words: list[str], *, actor: str | None, ref: str 
         reply.text = reply.text.rstrip() + "\nThe PAUSE file can only be removed on the Mac; until then it pauses everything."
     if name == "approvals" and code == OK:
         reply.approvals = _listed(rest[0] if rest else None)
+    if name == "apps handoffs" and code == OK:
+        reply.handoff = _handoffs(ctx, {"origin": found, "actor": actor})
+        if reply.handoff is None:
+            reply.exit_code, reply.answer = FAILED, approvals.REFUSED
+            reply.text = reply.text.rstrip() + "\nThe handoffs couldn't be read as JSON, so none is handed out."
     return reply
+
+
+def _handoffs(ctx: click.Context, obj: dict) -> dict | None:
+    """What Dispatch polls (D6): the apps plug-in's own `apps handoffs --json`, run in process
+    like every other command, so the core never imports a plug-in. It is a second read after the
+    text listing: a handoff written between the two can appear in one and not the other, which is
+    harmless, since the next poll lists it in both.
+
+    A handoff whose text doesn't hash to its `prd_sha256` is withheld with a problem, whatever
+    changed it on the way out (printing masks secret-looking values): Dispatch only ever gets the
+    bytes Ting Yu approved (code review 12, S2)."""
+    code, output = _run(ctx, ["apps", "handoffs", "--json"], obj, errors=False)
+    try:
+        given = json.loads(output) if code == OK else None
+    except ValueError:
+        return None
+    if not isinstance(given, dict) or not isinstance(given.get("handoffs"), list):
+        return None
+    given["handoffs"] = [_as_approved(entry) for entry in given["handoffs"]]
+    return given
+
+
+def _as_approved(entry: dict) -> dict:
+    handoff = entry.get("handoff") if isinstance(entry, dict) else None
+    if not isinstance(handoff, dict):
+        return entry
+    text, sha = handoff.get("prd_text"), handoff.get("prd_sha256")
+    if isinstance(text, str) and hashlib.sha256(text.encode("utf-8")).hexdigest() == sha:
+        return entry
+    return {**entry, "handoff": None,
+            "problem": "the PRD text doesn't match its approved SHA-256, so it isn't handed out"}
 
 
 def _listed(kind: str | None) -> list[dict]:
@@ -304,17 +384,21 @@ def _masked(reply: Reply) -> Reply:
 
 
 def payload(reply: Reply) -> str:
-    """The `--json` answer: `{contract, ok, answer, exit_code, text, approvals?}`, at most
-    `JSON_LIMIT` bytes. Listed requests are dropped from the end to fit."""
+    """The `--json` answer: `{contract, ok, answer, exit_code, text, approvals?, handoff?}`, at
+    most `JSON_LIMIT` bytes. Listed requests are dropped from the end to fit. Handoffs are fitted
+    by the policy `apps handoffs --json` uses (`handoff_fit.fit`), now beside the text."""
     body: dict = {"contract": CONTRACT, "ok": reply.ok, "answer": reply.answer, "exit_code": reply.exit_code,
                   "text": reply.text}
     if reply.approvals is not None:
         body["approvals"] = list(reply.approvals)
-    encoded = json.dumps(body, ensure_ascii=False)
-    while len(encoded.encode("utf-8")) > JSON_LIMIT and body.get("approvals"):
+    if reply.handoff is not None:
+        given = reply.handoff
+        body["handoff"] = {**given, **handoff_fit.fit(
+            list(given.get("handoffs") or []), more=int(given.get("more") or 0),
+            wrap=lambda fitted: {**body, "handoff": {**given, **fitted}})}
+    while handoff_fit.size(body) > JSON_LIMIT and body.get("approvals"):
         body["approvals"].pop()
-        encoded = json.dumps(body, ensure_ascii=False)
-    return encoded
+    return handoff_fit.encode(body)
 
 
 def _record(words: list[str], actor: str | None, ref: str | None, reply: Reply) -> None:
