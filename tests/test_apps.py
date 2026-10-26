@@ -452,6 +452,34 @@ def test_structural_rejection_does_not_use_the_brand_attempt(tmp_path, conn):
     assert invoke("apps", "submit-prd", str(write(tmp_path, GOOD))).exit_code == 0
 
 
+PRIVATE = {
+    # code review 12, Q1: what the privacy filter would change never goes into a PRD
+    "a named address": "Asked by jane.tan@example.com during a call.",
+    "a phone number": "Call the owner on 9123 4567 to check the wording.",
+    "a secret-looking value": "Test key: sk-ant-abcdefghijklmnop0123",
+}
+
+
+@pytest.mark.parametrize("label", sorted(PRIVATE))
+@pytest.mark.parametrize("dry_run", [False, True], ids=["submit", "dry run"])
+def test_a_prd_the_privacy_filter_would_change_is_rejected_before_the_brand_check(tmp_path, conn, label, dry_run):
+    private = PRIVATE[label]
+    text = GOOD.replace("## 2. Success criteria", f"{private}\n\n## 2. Success criteria")
+    line = text.splitlines().index(private) + 1
+    result = invoke("apps", "submit-prd", *(["--dry-run"] if dry_run else []), str(write(tmp_path, text)))
+    assert result.exit_code == 1, result.output
+    assert "brand check has not run" in result.output and f"line {line}" in result.output
+    assert "a person's name or address, a phone number or a secret-looking value" in result.output
+    assert private not in result.output and "jane.tan" not in result.output and "sk-ant-" not in result.output
+    assert not list((paths.prd_dir() / "pending" / "apps").glob("prd-app-003-*"))
+    assert db.scalar(conn, "SELECT count(*) FROM qa_attempts") == 0
+    assert db.scalar(conn, "SELECT count(*) FROM approvals") == 0
+
+
+def test_the_good_prd_is_unchanged_by_the_privacy_filter(tmp_path):
+    assert invoke("apps", "submit-prd", "--dry-run", str(write(tmp_path, GOOD))).exit_code == 0
+
+
 def test_cited_source_must_be_fetched_in_the_run(tmp_path, monkeypatch, conn):
     from jura_growth import log
 
