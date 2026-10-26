@@ -253,10 +253,16 @@ def get(conn: sqlite3.Connection, approval_id: str) -> Approval | None:
     return _one(conn, "SELECT * FROM approvals WHERE id = ?", (number,))
 
 
-def pending(conn: sqlite3.Connection) -> list[Approval]:
-    """Pending requests, soonest to lapse first. A plain read: deadlines and
-    content are judged by `decide`, `use` and `expire_due`."""
-    rows = conn.execute("SELECT * FROM approvals WHERE status = 'pending' ORDER BY decide_by, id")
+def pending(conn: sqlite3.Connection, kind: str | None = None, subject: str | None = None) -> list[Approval]:
+    """Pending requests, soonest to lapse first, optionally of one `kind` and
+    one `subject`. A plain read: deadlines and content are judged by
+    `decide`, `use` and `expire_due`."""
+    where, params = ["status = 'pending'"], []
+    for column, value in (("kind", kind), ("subject", subject)):
+        if value is not None:
+            where.append(f"{column} = ?")
+            params.append(value)
+    rows = conn.execute(f"SELECT * FROM approvals WHERE {' AND '.join(where)} ORDER BY decide_by, id", params)
     return [Approval.from_row(r) for r in rows]
 
 

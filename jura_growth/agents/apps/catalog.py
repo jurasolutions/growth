@@ -11,7 +11,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from jura_growth import caps, config, db, paths, timeutil
+from jura_growth import approvals, caps, config, db, paths, timeutil
 from jura_growth.agents.apps import prd as prd_mod
 
 NAME = "app-factory"
@@ -108,10 +108,7 @@ def prd_files() -> list[PrdFile]:
 def waiting(conn: sqlite3.Connection) -> list[PrdFile]:
     """The waiting pile (MC §5.9 step 6): PRDs in `prd/pending/apps/` waiting for an `app-build`
     decision. Handed-off builds and Ting Yu's own PRDs, which have no request, don't count."""
-    asked = {
-        row[0]
-        for row in conn.execute("SELECT subject FROM approvals WHERE kind = 'app-build' AND status = 'pending'")
-    }
+    asked = {request.subject for request in approvals.pending(conn, "app-build")}
     return [f for f in prd_files() if f.state == "pending" and f"app:{f.app_id}" in asked]
 
 
