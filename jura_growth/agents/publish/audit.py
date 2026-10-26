@@ -202,7 +202,7 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
             _keyboard(call.input, action, fields, typed, fail)
         if tool == "file_upload":
             for path in _paths(call.input):
-                uploads.attempt(os.path.normpath(path), call.ok, fail)
+                uploads.attempt(os.path.normpath(path), bool(call.ok), fail)
 
         if not call.ok:
             continue
