@@ -64,3 +64,12 @@ Every criterion above passes, `uv run pytest` passes, and the report is in. Ting
 - `.scratch/mission-control/reviews/test-strategy-v3.md`: §4.1 (AC-M9.1 to AC-M9.6, AC-M9.10, AC-M9.11), §4.3 (X2, X3, X7), §3 (D9 app factory), §11.2 row MC-10
 - `jurasolutions/prd/pending/prd-jura-app-factory-2026-10-24.md` §5.6 (superseded in part by this PRD); `jurasolutions/CLAUDE.md` folder map (`prd/skipped/`)
 - Code: `jura_growth/agents/apps/` (`prd.py`, `factory.py`, `backlog.py`), `prompts/app-factory.md`, `tests/test_apps.py`
+
+## Comments
+
+### 2026-10-26 developer: from ticket 04b's fix round
+
+- Posting cards: `apps submit-prd` (and `apps built` in 10b) call `cards.sweep_safely(conn)` as their last step, after their own transaction commits, so the cards go out (A12). There is no decorator; `approvals.raises_requests` was removed (code review 04b, Sp2). Test that the card posts when the command ends.
+- Decisions come only from Dispatch over SSH (ADR 0004 as amended 2026-10-26). AC-M9.2 "from Terminal" now means through `remote`'s in-process seam; there is no Terminal origin, cards carry no code, and tests decide with `aw.dispatch()` and actor `aw.CONTROL`.
+- The deadline settings are read through `approval_settings.deadline("app-build", …)`, and `approval_settings.switch("dispatch_builds")` says whether Dispatch polls the handoffs.
+- A kind may fill the optional `superseded_note(conn, subject)` hook to word the card's "Superseded:" line in its own terms (code review 04b, Sp1).

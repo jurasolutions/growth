@@ -42,3 +42,12 @@ Every criterion above passes, `uv run pytest` passes, and the report is in. Then
 - `.scratch/mission-control/reviews/test-strategy-v3.md`: §4.1 (AC-M10.6), §4.3 (X9), §5, §3 (D10 community), §11.2 row MC-05
 - Blocker ticket `.scratch/growth-blocker-fixes/issues/07-community-negated-day-rules.md`
 - Code: `jura_growth/agents/community/__init__.py`, `groups.py`, `rules.py` (`day_problem`)
+
+## Comments
+
+### 2026-10-26 developer: from ticket 04b's fix round
+
+- Posting cards: every command that raises a request (A11) calls `cards.sweep_safely(conn)` as its last step, after its own transaction commits, so the cards go out (A12). There is no decorator; `approvals.raises_requests` was removed (code review 04b, Sp2). Test that the card posts when the command ends.
+- Decisions come only from Dispatch over SSH (ADR 0004 as amended 2026-10-26). There is no Terminal origin, cards carry no code, and tests decide with `aw.dispatch()` and actor `aw.CONTROL`.
+- **Needs a decision before build:** X9 says `community set … rules_confirmed=yes` from Terminal "creates and decides a `group-rules` approval with the Terminal origin in one step". That origin no longer exists. The recommendation is that `rules_confirmed=yes` from Terminal raises the `group-rules` request, and Ting Yu decides it in `#approvals` with the typed days.
+- A kind may fill the optional `superseded_note(conn, subject)` hook to word the card's "Superseded:" line in its own terms (code review 04b, Sp1).
