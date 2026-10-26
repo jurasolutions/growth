@@ -717,3 +717,14 @@ decisions: approve; B1, B2, S1-S7 fixed; probes p6, p7, p9, p10 hold; R2-S1 (mov
 decisions: reviewer asked Ting Yu to confirm the exact-bytes amendment to A3 and ADR 0003; under Ting Yu standing instruction ("dont ask me questions, just make the decisions") the conductor confirms it (stricter than the signed-off text) and records it here
 questions: -
 evidence:  2586 passed; probes r1-r5, p6-p11 run
+
+## 2026-10-27T03:51+0800 conductor (merge bp 02; next wave)
+status:    done
+persona:   conductor
+ticket:    bp-02, bp-02b, bp-03
+artifacts: merge of bp 02 (15ccdaf .. 94f02a9)
+decisions: fix round 2 verified (p8 and p11 regressions fail before, pass after); merged and pushed
+decisions: bp 01 (Chrome profile setup and checks) is Ting Yu's and gates live posting, not the build: bp 03 is built against the fake claude binary and localhost fixture pages; Ting Yu's rehearsal R1-R4, R6 and live step U12 follow
+decisions: next wave dispatched: bp 02b (community items) and bp 03 (browser job, Facebook Page)
+questions: -
+evidence:  merged branch pytest -rs -> see commit
