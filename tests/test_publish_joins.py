@@ -293,6 +293,18 @@ def test_rules_seen_as_ting_yu_confirmed_them_raise_nothing(conn, world, monkeyp
     assert rules_requests(conn, group_id) == [] and group_row(conn, join)["rules_confirmed"] == 1
 
 
+def test_rules_seen_with_only_whitespace_changed_keep_the_confirmation(conn, world, monkeypatch, tmp_path):
+    """Code review 06, R2: two copies of the same rules differ in line breaks and spacing."""
+    confirmed = "Be kind.\nPromotion only on Saturdays."
+    group_id = pw.not_joined(conn, rules=confirmed, rules_confirmed=1, promo_days="sat", post_days="any")
+    join, _ = claimed_join(conn, monkeypatch, group_id)
+    seen = rules_file(tmp_path, "Be kind.\n\n  Promotion only on   Saturdays. \n")
+    assert pw.invoke("publish", "note-rules", str(group_id), "--file", seen).exit_code == 0
+    group = group_row(conn, join)
+    assert group["rules_confirmed"] == 1 and group["promo_days_confirmed"] == "sat" and group["promo_rules"] == confirmed
+    assert rules_requests(conn, group_id) == []
+
+
 def test_rules_seen_that_differ_from_the_confirmed_ones_clear_the_confirmation(conn, world, monkeypatch, tmp_path):
     group_id = pw.not_joined(conn, rules="Promotion is welcome.", rules_confirmed=1, promo_days="any", post_days="any")
     join, _ = claimed_join(conn, monkeypatch, group_id)

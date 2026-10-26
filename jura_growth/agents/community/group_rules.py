@@ -177,13 +177,20 @@ def note_seen(conn: sqlite3.Connection, group_id: int, text: str, *, run_id: int
         raise groups_mod.GroupError(f"no group {group_id}")
     if group["removed"]:
         raise groups_mod.GroupError(f"group {group_id} was removed, so there are no rules to confirm")
-    if seen == _rules_text(group) and group["rules_confirmed"]:
+    # The same words with other line breaks or spacing are the same rules (code review 06, S3):
+    # two copies taken from a page rarely match byte for byte.
+    same = _collapsed(seen) == _collapsed(_rules_text(group))
+    if same and group["rules_confirmed"]:
         log.event(conn, "community.group.rules_seen", {"id": group_id, "changed": False}, agent=groups_mod.NAME, run_id=run_id)
         return None
-    if seen != _rules_text(group):
+    if not same:
         groups_mod.set_parsed(conn, group_id, [("rules", seen)])
     log.event(conn, "community.group.rules_seen", {"id": group_id, "changed": True}, agent=groups_mod.NAME, run_id=run_id)
     return request(conn, group_id, reason="a publish run saw these rules inside the group", run_id=run_id)
+
+
+def _collapsed(text: str) -> str:
+    return " ".join(text.split())
 
 
 EARLIER = "community.group.rules_confirmed_earlier"
