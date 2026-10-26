@@ -5,8 +5,15 @@ must be `https://`, with no user name, password or port, on exactly one of the p
 Look-alikes (`facebook.com.evil.test`, `https://www.facebook.com@evil.test`,
 `evil.test/www.facebook.com`, `javascript:`) fail.
 
-Facebook's hosts are proved in BP-02a; BP-04 proves Instagram's and LinkedIn's, and BP-03 turns
-the same lists into the publish job's `ClaudeInChromeDomain` rules.
+Facebook's hosts are proved in BP-02a; BP-04 proves Instagram's and LinkedIn's.
+
+`BROWSER_HOSTS` are the hosts a publish run's tab may be on: the publish job's
+`ClaudeInChromeDomain(<host>)` rules (`scope.py`) and the hosts the transcript audit accepts
+(`audit.py`). They are the post-URL hosts plus the ones the page tools need to post as the Page
+(`business.facebook.com`, where a Page admin's composer may open). Each is listed explicitly
+until BP-01's check U18 shows how the domain rule treats subdomains; image CDN hosts are not
+listed, because a run never opens one in its tab. Only the platforms in `BROWSER_PLATFORMS` are
+driven in this build: BP-04 adds Instagram and LinkedIn.
 """
 
 from __future__ import annotations
@@ -17,6 +24,11 @@ HOSTS: dict[str, tuple[str, ...]] = {
     "facebook": ("www.facebook.com", "facebook.com", "m.facebook.com", "web.facebook.com"),
     "instagram": ("www.instagram.com", "instagram.com"),
     "linkedin": ("www.linkedin.com", "linkedin.com"),
+}
+
+BROWSER_PLATFORMS: tuple[str, ...] = ("facebook",)
+BROWSER_HOSTS: dict[str, tuple[str, ...]] = {
+    "facebook": (*HOSTS["facebook"], "business.facebook.com"),
 }
 
 

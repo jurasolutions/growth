@@ -523,7 +523,20 @@ def test_every_job_in_settings_gets_its_slots():
     assert counts["scout-send"] == 43
     assert counts["scout-research"] == 1
     assert counts["community"] == 0  # weekly on Monday; today is Tuesday
-    assert all(n == 1 for job, n in counts.items() if job not in {"scout-send", "scout-research", "community"})
+    assert counts["publish"] == 27  # every 20 minutes, 09:00 to 17:40 (BP-03, X4)
+    assert all(n == 1 for job, n in counts.items() if job not in {"scout-send", "scout-research", "community", "publish"})
+
+
+def test_publish_has_its_27_slots_on_a_weekend_and_a_holiday_too():
+    """`daily_every` runs every day, unlike `business_days_every` (BP-03, X4)."""
+    jobs = {"publish": config.settings()["jobs"]["publish"]}
+    saturday, holiday = date(2026, 11, 7), date(2026, 11, 9)
+
+    result = slots.classify(jobs, [], NOW, [saturday, holiday])
+
+    for day in (saturday, holiday):
+        times = [s.at.strftime("%H:%M") for s in result[("publish", day)]]
+        assert len(times) == 27 and times[0] == "09:00" and times[-1] == "17:40"
 
 
 def test_a_fortnight_of_every_job_is_quick():

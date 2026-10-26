@@ -61,10 +61,14 @@ class Permissions:
         "check"; each one allows its options and arguments.
     disallowed_tools: extra Claude Code deny rules for the job, for example
         "WebFetch(domain:example.com)".
+    allowed_tools: extra Claude Code allow rules for the job, for example the publish job's
+        Chrome tab tools and `ClaudeInChromeDomain(<host>)` rules (ADR 0005). Never a Bash rule:
+        commands are declared in `commands`, so code enforces them too.
     """
 
     commands: tuple[str, ...] = ()
     disallowed_tools: tuple[str, ...] = ()
+    allowed_tools: tuple[str, ...] = ()
 
 
 class Refused(click.ClickException):
@@ -116,8 +120,9 @@ def secret_read_rules() -> list[str]:
 
 def claude_rules(job: str) -> tuple[list[str], list[str]]:
     """(allowed, disallowed) Claude Code rules for a claude job: its own
-    `jura-growth` commands and help, and a denial for every other command,
-    for `NEVER`, for secret files, and for the plug-in's own extra rules.
+    `jura-growth` commands and help, the plug-in's own extra allow rules, and a
+    denial for every other command, for `NEVER`, for secret files, and for the
+    plug-in's own extra deny rules.
 
     Each command is written both bare and with `:*`, so it matches with or
     without arguments.
@@ -130,6 +135,7 @@ def claude_rules(job: str) -> tuple[list[str], list[str]]:
     allowed += [f"Bash(jura-growth {group} --help)" for group in sorted({c.split()[0] for c in commands if " " in c})]
     for command in commands:
         allowed += [f"Bash(jura-growth {command})", f"Bash(jura-growth {command}:*)"]
+    allowed += [rule for rule in declared.allowed_tools if not rule.startswith("Bash")]
 
     disallowed = secret_read_rules()
     for name in NEVER:  # bare too, for the ones not written yet

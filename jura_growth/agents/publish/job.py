@@ -1,22 +1,46 @@
 """The publish job's hooks (browser publishing PRD §5.8).
 
-BP-02a fills in `after_run`'s first duty: a claim the run left open, with neither `publish done`
-nor `publish stopped`, is settled as `unknown` (AC-P10.1), and so is one an earlier run left when
-its process died before its own `after_run`. Publishing never retries, so an
-unknown item is never claimed again; `publish` pauses, and the run fails with the two commands
-that settle it, which the runner posts to #alerts. BP-03 adds the precheck, the transcript audit
-and the run update here. Its precheck must first run `items.sync()` in a committed transaction
-and post the cards it raised (`cards.sweep_safely()`), then ask `claim.claimable()`: otherwise a
-change the heartbeat superseded waits for its new card until something is claimable (code review
-02, B1).
+- `precheck` (before Claude starts): an auth variable that would hide the Chrome tools is a plain
+  skip Ting Yu should see (AC-P9.5). Otherwise it runs `items.sync()` in a committed transaction
+  and posts the cards that raised (`cards.sweep_safely()`), so a changed post gets its new card
+  whether or not anything is due (code review 02, B1), then asks `claim.claimable()`, read-only:
+  nothing claimable is `NothingToDo("nothing due")`, a quiet run with no Claude (AC-P8.2).
+- `setup_gaps`: the same auth variables, by name, for `jura-growth status`.
+- `after_run`: see its docstring.
 """
 
 from __future__ import annotations
 
+import os
 import sqlite3
 
-from jura_growth import db, log, pause, timeutil
-from jura_growth.agents.publish import items
+from jura_growth import agents, cards, db, log, pause, timeutil
+from jura_growth.agents.publish import claim, items
+
+# With either set, Claude Code keeps Chrome integration off, even with --chrome (spike §1).
+AUTH_VARIABLES = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+
+
+def precheck(job: str, conn: sqlite3.Connection):
+    """A skip reason, `NothingToDo`, or None to start the run."""
+    if job != "publish":
+        return None
+    for name in AUTH_VARIABLES:
+        if os.environ.get(name):
+            return (f"{name} is set, so Claude Code would start without the Chrome tools; remove it from the "
+                    f"environment scheduled runs get (the publish job needs the claude.ai login)")
+    with db.transaction(conn):
+        items.sync(conn)
+    cards.sweep_safely(conn)
+    if not claim.claimable(conn):
+        return agents.NothingToDo(claim.NOTHING_DUE)
+    return None
+
+
+def setup_gaps() -> list:
+    from jura_growth.health import Gap
+
+    return [Gap(name, ok=not os.environ.get(name), must_be_unset=True) for name in AUTH_VARIABLES]
 
 
 def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):

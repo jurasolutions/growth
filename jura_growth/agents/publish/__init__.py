@@ -62,6 +62,28 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
             "lines": [f"Publishing: {line}"], "brief": []}
 
 
+def precheck(job: str, conn: sqlite3.Connection):
+    from jura_growth.agents.publish import job as publish_job
+
+    return publish_job.precheck(job, conn)
+
+
+def setup_gaps() -> list:
+    """`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` in the environment (AC-P9.5)."""
+    from jura_growth.agents.publish import job as publish_job
+
+    return publish_job.setup_gaps()
+
+
+def permissions(job: str):
+    """The publish run's commands and Chrome tools (`scope.py`, AC-P9.2)."""
+    if job != "publish":
+        return None
+    from jura_growth.agents.publish import scope
+
+    return scope.permissions()
+
+
 def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
     from jura_growth.agents.publish import job as publish_job
 

@@ -32,19 +32,23 @@ CORE_SETTINGS = ("CONTROL_DISCORD_USER_ID",)
 
 @dataclass(frozen=True)
 class Gap:
-    """One setting the engine checks. `ok` says whether it is set. The core's
-    Discord check also carries how many webhooks are set (`have` of `of`)."""
+    """One setting the engine checks. `ok` says whether it is as it should be:
+    set, or, for a `must_be_unset` setting (one that breaks a job when it is
+    there, such as an API key that hides the publish job's Chrome tools), not
+    set. The core's Discord check also carries how many webhooks are set
+    (`have` of `of`)."""
 
     name: str
     ok: bool = False
     have: int | None = None
     of: int | None = None
+    must_be_unset: bool = False
 
     def __post_init__(self) -> None:
         """Names, booleans and counts only (MC §4.3): anything else would let a
         value into a line that `status` prints as it is."""
-        if not isinstance(self.ok, bool):
-            raise ValueError("a setup gap's ok is True or False")
+        if not isinstance(self.ok, bool) or not isinstance(self.must_be_unset, bool):
+            raise ValueError("a setup gap's ok and must_be_unset are True or False")
         counted = self.of is not None
         if counted and self.name != DISCORD:
             raise ValueError("only the Discord check counts webhooks")
@@ -57,6 +61,8 @@ class Gap:
     def line(self) -> str:
         if self.of is not None:
             return f"{DISCORD}: {self.have} of {self.of} webhooks"
+        if self.must_be_unset:
+            return f"`{self.name}`: {'not set' if self.ok else 'set, and must not be'}"
         return f"`{self.name}`: {'set' if self.ok else 'not set'}"
 
 
