@@ -57,7 +57,7 @@ def test_one_heading_per_item_kind_and_platform_with_the_later_ones_marked():
     for enabled in ("Social post: Facebook Page", "Social post: Instagram", "Social post: LinkedIn company page"):
         found = [h for h in headings if h.startswith(enabled)]
         assert len(found) == 1 and "not yet" not in found[0], enabled
-    for later in ("community post", "join"):
+    for later in ("community post",):
         found = [h for h in headings if later.lower() in h.lower()]
         assert found and all("not yet enabled" in h for h in found), later
 
@@ -169,3 +169,54 @@ def test_every_named_permalink_is_one_publish_done_accepts():
 def test_the_prompt_never_names_a_command_the_run_may_not_use():
     for command in ("publish resolve", "resume", "approve", "skip ", "publish queue"):
         assert f"jura-growth {command}" not in PROMPT
+
+
+# --- the join section (BP-06: AC-P4.1 to AC-P4.3, AC-P11.1 for the joining identity, X10) ------------
+
+
+def join_section() -> str:
+    heading = next(h for h in re.findall(r"^### (.+)$", PROMPT, re.M) if "join" in h.lower())
+    assert "not yet enabled" not in heading
+    return PROMPT.split(f"### {heading}", 1)[1].split("\n### ", 1)[0]
+
+
+def test_the_join_checks_the_page_is_the_joining_identity_before_joining_and_stops_otherwise():
+    section = join_section()
+    identity = section.index("--reason wrong-identity")
+    assert identity < section.index("Join group")
+    assert identity < section.index("--outcome requested")
+
+
+def test_no_way_to_act_as_the_page_is_an_outcome_not_a_stop():
+    section = join_section()
+    assert "jura-growth publish done <A-id> --outcome pages-not-allowed" in section
+    assert re.search(r"not a stop", section, re.I)
+
+
+def test_membership_questions_submit_nothing_and_record_the_drafted_answers():
+    section = join_section()
+    assert re.search(r"submit nothing", section, re.I) and re.search(r"type nothing", section, re.I)
+    assert "jura-growth publish done <A-id> --outcome questions --file" in section
+    assert "q.json" in section
+
+
+def test_approved_answers_are_typed_exactly_and_new_questions_go_back_to_ting_yu():
+    section = join_section()
+    assert re.search(r"exactly", section) and "answers" in section
+    assert section.count("--outcome questions") >= 2  # met at the join, and again if the questions changed
+
+
+def test_every_join_outcome_is_named_and_rules_seen_are_noted():
+    from jura_growth.agents.publish.outcomes import JOIN_OUTCOMES
+
+    section = join_section()
+    for outcome in JOIN_OUTCOMES:
+        assert f"--outcome {outcome}" in section, outcome
+    assert "jura-growth publish note-rules <group> --file" in section
+
+
+def test_the_steps_send_a_join_to_its_own_section():
+    """A join leaves the post's steps before anything is attached, typed or read back."""
+    text = steps()[first(r"join section")]
+    assert first(r"join section") < first(r"--live-text-file")
+    assert text.index("join section") < text.index("file_upload") < text.index("type")

@@ -20,7 +20,7 @@ import sqlite3
 from pathlib import Path
 
 from jura_growth import agents, cards, db, discord, log, pause, timeutil, transcripts
-from jura_growth.agents.publish import audit, claim, commands, fixture, items, scope
+from jura_growth.agents.publish import audit, claim, commands, fixture, items, outcomes, scope
 
 # With either set, Claude Code keeps Chrome integration off, even with --chrome (spike §1).
 AUTH_VARIABLES = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
@@ -32,6 +32,16 @@ ENDINGS = (
     ("claude ", "ended with a Claude Code error"),
 )
 MODEL_FAILED = "ended FAIL:"
+# What a join, or a group screen, came to: in the run update's line, and as its "Produced:" noun.
+OUTCOME_LINES = {
+    "requested": "join requested as the Jura Page",
+    "member": "joined as the Jura Page",
+    "declined": "join declined",
+    "questions": "membership questions; nothing was submitted",
+    "pages-not-allowed": "only personal profiles can join or post; the group is skipped for good",
+}
+OUTCOME_NOUNS = {"requested": "join requested", "member": "join accepted", "declined": "join declined",
+                 "questions": "join with membership questions", "pages-not-allowed": "group for personal profiles only"}
 
 
 def precheck(job: str, conn: sqlite3.Connection):
@@ -113,13 +123,14 @@ def run_update(conn: sqlite3.Connection, run) -> list[str] | None:
         return None
     from jura_growth.run_update import count
 
-    words = {"posted": 0, "stopped": 0, "unknown": 0}
+    words = {"posted": 0, **{outcome: 0 for outcome in OUTCOME_NOUNS}, "stopped": 0, "unknown": 0}
     for item in claimed:
         if item.state == "done":
-            words["posted"] += 1
+            words[item.outcome if item.outcome in OUTCOME_NOUNS else "posted"] += 1
         elif item.state in words:
             words[item.state] += 1
-    return [count(n, "post") if word == "posted" else f"{n} {word}" for word, n in words.items() if n]
+    return [count(n, "post") if word == "posted" else count(n, OUTCOME_NOUNS[word]) if word in OUTCOME_NOUNS
+            else f"{n} {word}" for word, n in words.items() if n]
 
 
 def _claimed_by(conn: sqlite3.Connection, run_id: int) -> list[items.Item]:
@@ -134,14 +145,22 @@ def _shown(conn: sqlite3.Connection, item: items.Item) -> str:
 
 
 def _line(conn: sqlite3.Connection, item: items.Item) -> str:
-    """`A-0001 · Facebook Page · posted · <url>`, from the item's own record."""
+    """`A-0001 · Facebook Page · posted · <url>`, from the item's own record. A community item
+    names its group by the register's id, never by text a page or a run wrote."""
     from jura_growth.agents.social.settings import load
 
     try:
         where = load().platforms[item.platform].label
     except Exception:  # noqa: BLE001 - the label is only for reading
         where = item.platform
-    if item.state == "done":
+    if item.kind in outcomes.GROUP_KINDS:
+        where = f"Facebook group {outcomes.group_of(item)}"
+    if item.state == "done" and item.outcome in OUTCOME_LINES:
+        what = OUTCOME_LINES[item.outcome]
+        if item.outcome == outcomes.QUESTIONS:
+            answers = outcomes.answers_request(conn, item)
+            what += f"; the answers wait for your decision as {answers.id}" if answers else "; no answers were raised"
+    elif item.state == "done":
         what = f"posted · {item.post_url}"
         if item.live_text_matches == 0:
             what += " · the live text doesn't match the approved text; publishing is paused"

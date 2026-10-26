@@ -148,6 +148,14 @@ def _answers(conn: sqlite3.Connection, request: approvals.Approval, found: items
                     f"#approvals; a later run submits them once approved.", made.approval)
 
 
+def answers_request(conn: sqlite3.Connection, found: items.Item) -> approvals.Approval | None:
+    """The request over the answers raised at `found`'s membership questions, if any."""
+    join_id = found.id if found.kind == items.JOIN_ITEM else found.parent_item
+    row = db.one(conn, "SELECT * FROM publish_items WHERE kind = ? AND parent_item = ? AND id != ? ORDER BY id DESC "
+                       "LIMIT 1", (items.ANSWERS_ITEM, join_id, found.id))
+    return items.latest_request(conn, items.Item.from_row(row)) if row else None
+
+
 def claimed_in_group(conn: sqlite3.Connection, run_id: int, group_id: int) -> bool:
     """Whether run `run_id` claimed a community item in the group (`publish note-rules`)."""
     return db.scalar(

@@ -91,7 +91,7 @@ for step in scenario["steps"]:
             handed = json.loads(done.stdout)
             if handed.get("due"):
                 values["{A}"] = handed["approval"]
-                values["{TEXT}"] = handed["text"]
+                values["{TEXT}"] = handed["text"] or ""  # a join has no text
                 values["{IMG1}"] = handed["images"][0] if handed["images"] else ""
                 for number, image in enumerate(handed["images"][1:], start=2):
                     values["{IMG%d}" % number] = image
@@ -148,6 +148,11 @@ class Fake:
     def social(self, change) -> None:
         """Rewrite this test's `social.yaml` (both processes read it)."""
         _rewrite(self.config_dir / "social.yaml", change)
+        config.reset_caches()
+
+    def community(self, change) -> None:
+        """Rewrite this test's `community.yaml` (both processes read it)."""
+        _rewrite(self.config_dir / "community.yaml", change)
         config.reset_caches()
 
 

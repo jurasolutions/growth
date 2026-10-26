@@ -323,6 +323,19 @@ def test_a_rules_file_that_is_empty_or_too_long_is_refused(conn, world, monkeypa
     assert result.exit_code != 0 and approvals.pending(conn) == []
 
 
+@pytest.mark.parametrize("community_browser", [True, False])
+def test_the_facebook_hosts_open_for_group_items_even_with_the_page_in_draft(monkeypatch, community_browser):
+    """A join or a group post needs Facebook's hosts whenever `community.browser` is on, even when
+    the Facebook Page's own posts stay in `draft` mode."""
+    from jura_growth.agents.publish import hosts, scope
+
+    pw.social_config(monkeypatch, browser=())
+    pw.community_config(monkeypatch, browser=community_browser)
+    expected = tuple(hosts.BROWSER_HOSTS["facebook"]) if community_browser else ()
+    assert scope.browser_hosts() == expected
+    assert scope.domain_rules() == [f"ClaudeInChromeDomain({host})" for host in expected]
+
+
 def test_the_publish_run_may_call_note_rules_and_still_nothing_that_decides():
     from jura_growth.agents.publish import scope
 
