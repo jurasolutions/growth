@@ -454,7 +454,8 @@ def test_the_app_build_migrations_change_no_existing_row(tmp_path, monkeypatch):
         )
     tables = [r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
     before = {t: db.rows(conn, f"SELECT * FROM {t}") for t in tables if t != "schema_migrations"}
-    assert db.migrate(conn) == ["app-factory/0002_app_builds.sql", "app-factory/0003_app_prds_slug_reusable.sql"]
+    assert db.migrate(conn) == ["app-factory/0002_app_builds.sql", "app-factory/0003_app_prds_slug_reusable.sql",
+                                "app-factory/0004_app_builds_release.sql"]
     assert {t: db.rows(conn, f"SELECT * FROM {t}") for t in before} == before
     assert db.scalar(conn, "SELECT count(*) FROM app_builds") == 0
     conn.execute(

@@ -9,9 +9,11 @@ the waiting-pile limit, the template's shape, numbering, duplicates, the
 guardrails and the brand gate.
 
 Each filed PRD waits for an `app-build` decision in #approvals; approving it
-writes a build handoff (`builds.py`, MC §5.9).
+writes a build handoff (`builds.py`, MC §5.9). The finished build waits for a
+second, `app-release` decision bound to its commit (`releases.py`).
 
-Commands: `jura-growth apps status | context | backlog | submit-prd | handoffs`.
+Commands: `jura-growth apps status | context | backlog | submit-prd | handoffs
+| built | release-plan | released`.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from pathlib import Path
 import click
 
 from jura_growth import approval_settings, brand_check, cards, db, log, timeutil
-from jura_growth.agents.apps import backlog, builds, catalog, factory, inputs
+from jura_growth.agents.apps import backlog, builds, catalog, factory, inputs, releases
 
 NAME = catalog.NAME
 MIGRATIONS = Path(__file__).parent / "migrations"
@@ -67,7 +69,7 @@ def precheck(job: str, conn: sqlite3.Connection) -> str | None:
 
 
 def approval_kinds() -> dict:
-    return {builds.KIND: builds.AppBuild()}
+    return {builds.KIND: builds.AppBuild(), releases.KIND: releases.AppRelease()}
 
 
 def health(conn: sqlite3.Connection) -> list[str]:
@@ -264,3 +266,23 @@ def handoffs_cmd(as_json) -> None:
         click.echo(f"{build['app_id']} {build['name']} · approval {build['approval_id']} · handed off "
                    f"{build['handed_off_at'][:16].replace('T', ' ')} · {build['prd_path']} · sha256 {build['prd_sha256'][:12]}")
         click.echo("  handed to Dispatch" if dispatch else f"  {builds.build_it(build['prd_path'], build['approval_id'])}")
+
+
+@apps.command("built")
+@click.argument("app_id")
+@click.option("--task", required=True, help="The Dispatch task that built it, e.g. T-0031.")
+@click.option("--branch", required=True, help="The task branch, based on main.")
+@click.option("--sha", required=True, help="The branch's full head commit SHA.")
+@click.option("--preview", required=True, help="The branch's Cloudflare Pages preview link.")
+def built_cmd(app_id, task, branch, sha, preview) -> str:
+    """Report a handed-off build as built, and ask for its release in #approvals."""
+    with db.session() as conn:
+        outcome = releases.report_built(conn, app_id, task=task, branch=branch, sha=sha, preview=preview,
+                                        run_id=log.current_run_id())
+        if outcome.ok:
+            cards.sweep_safely(conn)  # the card goes out once the request is committed (A12)
+    for line in outcome.lines:
+        click.echo(line)
+    if not outcome.ok:
+        sys.exit(1)
+    return outcome.lines[0]

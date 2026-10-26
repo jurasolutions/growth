@@ -1,0 +1,234 @@
+"""App releases wait for a second approval, bound to the commit (ticket MC-10b, MC SC9, §5.7
+`app-release` row, §5.9 steps 3 and 4; test strategy v3 §4.1 AC-M9.7 to AC-M9.9, §4.3 X2, X3).
+
+A handed-off build is reported with `apps built`, which raises an `app-release` request over the
+app id, task id, branch and head commit SHA. `apps release-plan` claims it and prints the merge of
+exactly that SHA; `apps released` records the release only once `main` of the landing-page
+repository (D13, a temp repo at `paths.site_repo()`) contains it. The gate matrix for the kind runs
+through `gate_adapter_app_release.py`.
+"""
+
+import shutil
+
+import pytest
+from click.testing import CliRunner
+
+import approval_world as aw
+import site_repo
+from discord_double import discord_double  # noqa: F401 - the fixture
+from gate_adapter_app_build import file_prd
+from jura_growth import approvals, config, db, paths
+from jura_growth.agents.apps import builds, releases
+from jura_growth.cli import cli
+
+REAL_PRD = paths.JURA_ROOT / "prd"
+TASK = "T-0031"
+BRANCH = "claude/T-0031-paynow-qr"
+PREVIEW = "https://claude-t-0031-paynow-qr.jura-site.pages.dev"
+
+
+def invoke(*args):
+    return CliRunner().invoke(cli, list(args), catch_exceptions=False)
+
+
+@pytest.fixture(autouse=True)
+def world(tmp_path, monkeypatch):
+    """A private prd/ with the template, the landing-page repository (D13), the clock at
+    Tuesday 10 November 10:02 and Ting Yu as the control user."""
+    prd = tmp_path / "prd"
+    (prd / "templates").mkdir(parents=True)
+    (prd / "pending" / "apps").mkdir(parents=True)
+    shutil.copy(REAL_PRD / "templates" / "prd-app-template.md", prd / "templates")
+    monkeypatch.setenv("JURA_PRD_DIR", str(prd))
+    monkeypatch.setenv("CONTROL_DISCORD_USER_ID", aw.CONTROL_ID)
+    aw.at(monkeypatch, aw.NOW)
+    config.reset_caches()
+    site_repo.make()
+    return prd
+
+
+def handed_off(conn, number: int = 101) -> tuple[str, approvals.Approval]:
+    """An approved, handed-off build: a factory PRD, its app-build request, approved."""
+    app_id = file_prd(number)
+    with db.transaction(conn):
+        request = builds.request(conn, app_id, reason="the app factory filed it", run_id=None)
+    assert aw.approve(conn, request, args={}).answer == "recorded"
+    return app_id, aw.get(conn, request.id)
+
+
+def built(app_id: str, sha: str, *, task: str = TASK, branch: str = BRANCH, preview: str = PREVIEW):
+    return invoke("apps", "built", app_id, "--task", task, "--branch", branch, "--sha", sha, "--preview", preview)
+
+
+def release_requests(conn) -> list[approvals.Approval]:
+    return [aw.get(conn, approvals.format_id(r["id"])) for r in conn.execute(
+        "SELECT id FROM approvals WHERE kind = 'app-release' ORDER BY id")]
+
+
+# --- AC-M9.7: `apps built` raises the release request --------------------------------------------
+
+
+def test_built_raises_an_app_release_card_with_the_preview_link_and_the_short_sha(conn, discord_double):
+    app_id, _ = handed_off(conn)
+    sha = site_repo.branch(BRANCH)
+    result = built(app_id, sha)
+    assert result.exit_code == 0, result.output
+    [request] = release_requests(conn)
+    assert request.status == "pending" and request.subject == f"app:{app_id}"
+    assert result.output.count(request.id) == 1
+    [card] = discord_double.posts("approvals")[-1:]
+    first, *rest = card.content.splitlines()
+    assert first.startswith(f"**{request.id} · app release** · decide by ")
+    body = "\n".join(rest)
+    assert PREVIEW in body and sha[:7] in body and sha not in body
+    assert BRANCH in body and TASK in body
+
+
+def test_built_on_a_build_that_was_never_handed_off_exits_1_and_raises_nothing(conn, discord_double):
+    app_id = file_prd(101)  # filed, never approved
+    result = built(app_id, site_repo.branch(BRANCH))
+    assert result.exit_code == 1
+    assert "handed off" in result.output
+    assert release_requests(conn) == []
+    assert discord_double.posts("approvals") == []
+
+
+def test_built_moves_the_handoff_off_the_list_waiting_for_a_builder(conn):
+    app_id, _ = handed_off(conn)
+    assert [b["app_id"] for b in builds.open_handoffs(conn)] == [app_id]
+    assert built(app_id, site_repo.branch(BRANCH)).exit_code == 0
+    assert builds.open_handoffs(conn) == []
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("sha", "1a2b3c4"),  # short: the request binds the full commit
+        ("sha", "z" * 40),
+        ("task", "0031"),
+        ("branch", "claude/T-0031 paynow; rm -rf ~"),
+        ("branch", "-delete"),
+        ("preview", "http://claude-t-0031.jura-site.pages.dev"),
+        ("preview", "https://jurasolutions.sg/apps/paynow-qr"),
+        ("preview", "https://evil.example/?x=.pages.dev"),
+    ],
+)
+def test_built_refuses_what_it_cannot_bind_or_show_safely(conn, field, value):
+    app_id, _ = handed_off(conn)
+    given = {"sha": site_repo.branch(BRANCH), "task": TASK, "branch": BRANCH, "preview": PREVIEW, field: value}
+    result = built(app_id, given["sha"], task=given["task"], branch=given["branch"], preview=given["preview"])
+    assert result.exit_code == 1, result.output
+    assert release_requests(conn) == []
+    assert [b["app_id"] for b in builds.open_handoffs(conn)] == [app_id]  # still waiting for its build
+
+
+def test_built_again_with_the_same_commit_keeps_the_one_request(conn, discord_double):
+    app_id, _ = handed_off(conn)
+    sha = site_repo.branch(BRANCH)
+    assert built(app_id, sha).exit_code == 0
+    again = built(app_id, sha)
+    assert again.exit_code == 0
+    [request] = release_requests(conn)
+    assert request.id in again.output
+    assert len([p for p in discord_double.posts("approvals") if "· app release**" in (p.content or "")]) == 1
+
+
+def test_built_with_a_new_commit_supersedes_the_request_and_raises_one_for_the_new_sha(conn):
+    """N5: the request covers the commit, so commits pushed after it need a request of their own."""
+    app_id, _ = handed_off(conn)
+    first = site_repo.branch(BRANCH)
+    assert built(app_id, first).exit_code == 0
+    later = site_repo.commit_on(BRANCH)
+    assert built(app_id, later).exit_code == 0
+    old, new = release_requests(conn)
+    assert old.status == "superseded" and new.status == "pending" and new.supersedes == old.number
+    assert releases.current_build(conn, app_id)["head_sha"] == later
+
+
+# --- X2 and X3: seven days to decide, fourteen to use ----------------------------------------------
+
+
+@pytest.fixture
+def zone(monkeypatch):
+    import os
+    import time
+
+    before = os.environ.get("TZ")
+
+    def set_zone(name: str) -> None:
+        monkeypatch.setenv("TZ", name)
+        time.tzset()
+
+    yield set_zone
+    if before is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = before
+    time.tzset()
+
+
+@pytest.mark.parametrize("name", ["Asia/Singapore", "UTC", "America/New_York"])
+def test_an_app_release_has_seven_days_to_decide_and_fourteen_to_use(conn, monkeypatch, zone, name):
+    """X2: whatever the machine's time zone."""
+    zone(name)
+    app_id, _ = handed_off(conn)
+    assert built(app_id, site_repo.branch(BRANCH)).exit_code == 0
+    [request] = release_requests(conn)
+    assert request.decide_by == aw.later(aw.NOW, days=7) == "2026-11-17T10:02:15+08:00"
+    aw.at(monkeypatch, "2026-11-12T09:00:00+08:00")
+    assert aw.approve(conn, request, args={}).answer == "recorded"
+    assert aw.get(conn, request.id).use_by == "2026-11-26T09:00:00+08:00"
+
+
+def test_a_configured_app_release_deadline_may_shorten_and_never_lengthen(conn, monkeypatch):
+    """X3 for this kind: the deadlines come from the `approvals:` block, capped by caps.py."""
+    patched = dict(config.settings())
+    patched["approvals"] = {"deadlines": {"app-release": {"decide_by_days": 3, "use_by_days": 30}}}
+    monkeypatch.setattr(config, "settings", lambda: patched)
+    app_id, _ = handed_off(conn)
+    assert built(app_id, site_repo.branch(BRANCH)).exit_code == 0
+    [request] = release_requests(conn)
+    assert request.decide_by == aw.later(aw.NOW, days=3)
+    aw.approve(conn, request, args={})
+    assert aw.get(conn, request.id).use_by == aw.later(aw.NOW, days=14)  # 30 reads as the cap, 14
+
+
+# --- the migration ----------------------------------------------------------------------------------
+
+
+def test_the_release_migration_changes_no_existing_handoff(tmp_path, monkeypatch):
+    """X7-style: a database at ticket 10's schema, with a handoff waiting, migrates through 0004
+    with the row as it was; the new columns start empty."""
+    from jura_growth.agents import apps as apps_plugin
+
+    old = tmp_path / "apps-at-10"
+    old.mkdir()
+    for name in ("0001_app_factory.sql", "0002_app_builds.sql", "0003_app_prds_slug_reusable.sql"):
+        shutil.copy(apps_plugin.MIGRATIONS / name, old / name)
+    with monkeypatch.context() as patch:
+        patch.setattr(apps_plugin, "MIGRATIONS", old)
+        conn = db.connect(tmp_path / "old.db")
+    conn.execute(
+        "INSERT INTO app_builds (app_id, prd_path, prd_sha256, approval_id, approval_at, handed_off_at) "
+        "VALUES ('APP-003', 'prd/pending/apps/x.md', ?, 'A-0007', ?, ?)",
+        ("ab" * 32, aw.NOW, aw.NOW),
+    )
+    before = db.rows(conn, "SELECT * FROM app_builds")
+    assert db.migrate(conn) == ["app-factory/0004_app_builds_release.sql"]
+    after = db.rows(conn, "SELECT * FROM app_builds")
+    assert [{k: row[k] for k in before[0]} for row in after] == before
+    added = set(after[0]) - set(before[0])
+    assert added == {"task_id", "branch", "head_sha", "preview_url", "built_at", "release_planned_at", "released_at"}
+    assert all(after[0][k] is None for k in added)
+    conn.close()
+
+
+def test_one_unreleased_build_per_app(conn):
+    app_id, _ = handed_off(conn)
+    assert built(app_id, site_repo.branch(BRANCH)).exit_code == 0
+    with pytest.raises(Exception, match="UNIQUE"):
+        conn.execute(
+            "INSERT INTO app_builds (app_id, prd_path, prd_sha256, approval_id, approval_at, handed_off_at) "
+            "VALUES (?, 'x', 'y', 'A-9999', ?, ?)",
+            (app_id, aw.NOW, aw.NOW),
+        )
