@@ -16,6 +16,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+import yaml
 
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
@@ -23,7 +24,7 @@ from jura_growth import agents, approvals, cards, config, db, pause, paths, runn
 from jura_growth.agents import community, publish
 from jura_growth.agents.community import groups as community_groups
 from jura_growth.agents.community import plan
-from jura_growth.agents.publish import items, kinds
+from jura_growth.agents.publish import items, kinds, limits
 from sweep import AWKWARD, KEYCHAIN_VALUE, NAMED_ADDRESS, PHONE, RESEND_KEY, assert_clean, outbox_dir, planted
 from sweep import d2_secrets  # noqa: F401 - a fixture
 
@@ -229,6 +230,18 @@ def test_with_community_browser_off_propose_join_raises_nothing(conn, world, mon
     result = pw.invoke("community", "propose-join", str(group))
     assert result.exit_code == 1 and "community.browser is off" in result.output
     assert approvals.pending(conn) == []
+
+
+@pytest.mark.parametrize("configured, cap", [(None, 3), (10, 3), (2, 2), (0, 0)])
+def test_joins_per_week_in_community_yaml_may_only_lower_the_cap(world, monkeypatch, configured, cap):
+    """AC-P5.4 for BP §5.10's `joins_per_week`."""
+    pw.community_config(monkeypatch, joins_per_week=configured)
+    assert limits.community_joins_per_week() == cap
+
+
+def test_the_shipped_community_config_keeps_browser_off_and_the_hard_join_cap():
+    shipped = yaml.safe_load((paths.REPO_ROOT / "config" / "community.yaml").read_text())
+    assert shipped["browser"] is False and shipped["joins_per_week"] == 3
 
 
 # --- AC-P1.3 one field changed at a time (G9's community fields and answers) -------------------------

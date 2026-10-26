@@ -73,9 +73,10 @@ and `community audit-run` proves the run fetched none of them from its transcrip
 | `community context --json` | Records checklist ticks, then the week, limits, register, plannable groups with parsed rules and open days, this week's plan, recent texts, live tools |
 | `community add-group --file <json>` | One group, a list, or `{"groups": [...]}`. Validates, dedupes by URL (and name), rejects Facebook source URLs |
 | `community groups [--fit] [--joined] [--channel] [--json]` | The register |
-| `community set <id> key=value ...` | `joined=yes`, `rules="..."`, `rules_confirmed=yes`, `fit=...`, `fit_reason=...`, `notes=...` (also audience, size_hint, active_hint, name). `rules=` and `rules_confirmed=yes` raise a `group-rules` request; days are typed only in its decision. New rules text clears the confirmation and the days |
+| `community set <id> key=value ...` | `joined=yes`, `joined_as=page` (or `profile`, `none`), `rules="..."`, `rules_confirmed=yes`, `fit=...`, `fit_reason=...`, `notes=...` (also audience, size_hint, active_hint, name). `rules=` and `rules_confirmed=yes` raise a `group-rules` request; days are typed only in its decision. New rules text clears the confirmation and the days |
 | `community plan-add --file <json>` | Weekly plan items, checked in code, then brand-gated |
-| `community publish-plan [--week]` | Writes the checklist and posts it to `#community` |
+| `community publish-plan [--week]` | Writes the checklist and posts it to `#community`. With `browser: true`, each planned post in a group joined as the Jura Page also gets a `community-post` card in `#approvals` |
+| `community propose-join <group-id>` | With `browser: true`: a `group-join` card for a good-fit group not joined as the Jura Page, up to the weekly join cap. Exit 1, with the reason, when the group can't be proposed |
 | `community posted <item-id> [url]` | Records a post (or a used reply idea) |
 | `community sync-ticks` | Records ticked `- [x]` items from every week's checklist |
 | `community removed <group-id>` | Permanent skip |
@@ -160,6 +161,36 @@ recorded on the next run; republishing a week keeps its ticks.
 `community_groups` and `community_posts` per PRD §5.5, plus `slug` (the utm campaign),
 `url_key` (dedupe), `removed`, `source_urls_json`, `run_id`, and on posts `question` and
 `posted_via`. Migration `agents/community/migrations/0001_community.sql`.
+
+Browser publishing (`prd-jura-browser-publishing-2026-10-25.md` §4.3, §5.6) adds three columns in
+`0003_joined_as_the_page.sql`, without changing any existing row:
+
+- `joined_as`: `none`, `profile` or `page`. It is written as `joined_as_set` and read as
+  `joined_as`; a group joined before this build (`joined = 1`, nothing recorded) reads as
+  `profile`, because Ting Yu joined it as himself.
+- `pages_allowed`: `unknown`, `yes` or `no`. `no` means only personal profiles can join or post
+  there, so nothing is raised or claimed for the group.
+- `join_status`: `requested`, `member` or `declined`, once a join item's run records it.
+
+## Posting and joining as the Jura Page (browser publishing)
+
+Off by default: `browser: false` in `config/community.yaml`. With `browser: true`:
+
+- `community publish-plan` raises a `community-post` card for each planned post in a group joined
+  as the Jura Page. Posts in other groups stay on the checklist for you to post by hand.
+- `community propose-join <group-id>` raises a `group-join` card for a good-fit group that isn't
+  joined as the Page, doesn't take only personal profiles, and has no join requested. At most
+  `joins_per_week` (hard cap 3) are proposed in an ISO week; one proposed after Sunday's 18:00
+  counts in the next week. A join is decided by 18:00 on the Sunday of its week.
+- If a group asks membership questions, the answers come to you as their own `group-join` card,
+  decided by 18:00 on the third day after they are raised.
+- `publish next` hands a community post out only on its day, in a good-fit group joined as the
+  Page whose rules and open days you confirmed, on a day they leave open, with one community post
+  a day, three groups an ISO week and 14 days between posts in one group. A join goes out only
+  inside three joins an ISO week. Turning `browser` off again stops every claim without using the
+  approvals.
+- Changing a post's text, image, group or day, a group's URL, or a join's answers supersedes its
+  card and raises a fresh one on the same item.
 
 ## Decisions and open questions
 

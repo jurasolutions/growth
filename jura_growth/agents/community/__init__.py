@@ -398,11 +398,11 @@ def publish_plan_cmd(week) -> str:
     click.echo(f"checklist: {target}")
     click.echo("posted to #community" if posted.delivered else f"#community: {posted.reason}")
     for result in made:
-        if result.approval is not None and result.approval.live:
+        if result.why:
+            click.echo(f"No new approval card: {result.why}")
+        elif result.item is not None and result.approval is not None and result.approval.live:
             click.echo(f"Approval requested: community post item {result.item.ref} ({result.item.label}) as "
                        f"{result.approval.id} in #approvals")
-        elif result.why:
-            click.echo(f"No approval card: {result.why}")
     summary = f"plan published: {posts} posts, {replies} reply ideas ({target.name})"
     click.echo(summary)
     return summary
@@ -421,7 +421,7 @@ def propose_join_cmd(group_id) -> str:
         with db.transaction(conn):
             made = publish_items.create_join(conn, group_id, run_id=log.current_run_id())
         cards.sweep_safely(conn)
-    if made.why or made.approval is None or not made.approval.live:
+    if made.why or made.item is None or made.approval is None or not made.approval.live:
         click.echo(f"no join proposed: {made.why or 'no request raised'}")
         sys.exit(1)
     line = f"join proposed for group {group_id} as {made.approval.id} ({made.item.label}); decide it in #approvals"

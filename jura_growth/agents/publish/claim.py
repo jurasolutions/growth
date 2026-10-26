@@ -134,6 +134,8 @@ def _item_problem(conn: sqlite3.Connection, item: items.Item, today: str) -> str
     if found is None:
         return None  # gone: `use()` supersedes its request and says so
     group = db.one(conn, "SELECT * FROM community_groups WHERE id = ?", (found.content["group"],))
+    if group is None:
+        return "its group isn't in the register"
     if item.kind == items.COMMUNITY_POST_ITEM:
         return _post_problem(conn, item, found.content, group, date.fromisoformat(today))
     return _join_problem(conn, item, group, date.fromisoformat(today))
@@ -162,9 +164,7 @@ def _claimed_posts(conn: sqlite3.Connection, first: str, last: str, *, but: int)
     )
 
 
-def _group_problem(group: dict | None) -> str | None:
-    if group is None:
-        return "its group isn't in the register"
+def _group_problem(group: dict) -> str | None:
     if group["removed"]:
         return "its group was removed after an admin removal or warning"
     if group["pages_allowed"] == "no":
@@ -174,7 +174,7 @@ def _group_problem(group: dict | None) -> str | None:
     return None
 
 
-def _post_problem(conn: sqlite3.Connection, item: items.Item, content: dict, group: dict | None, today: date) -> str | None:
+def _post_problem(conn: sqlite3.Connection, item: items.Item, content: dict, group: dict, today: date) -> str | None:
     """A community post goes out only in a good-fit group joined as the Jura Page, whose rules and
     open days Ting Yu confirmed, on a day they leave open, inside every community cap."""
     from jura_growth.agents.community import groups as groups_mod
@@ -211,7 +211,7 @@ def _post_problem(conn: sqlite3.Connection, item: items.Item, content: dict, gro
     return None
 
 
-def _join_problem(conn: sqlite3.Connection, item: items.Item, group: dict | None, today: date) -> str | None:
+def _join_problem(conn: sqlite3.Connection, item: items.Item, group: dict, today: date) -> str | None:
     """A join, or its answers, goes in only for a good-fit group not yet joined as the Page; a join
     (not its answers) only while no join is requested and inside the weekly join cap."""
     problem = _group_problem(group)

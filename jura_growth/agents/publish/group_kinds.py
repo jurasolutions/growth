@@ -58,8 +58,8 @@ def _group(conn: sqlite3.Connection, group_id) -> dict | None:
     return db.one(conn, "SELECT * FROM community_groups WHERE id = ?", (int(group_id),))
 
 
-def _group_gone(group: dict | None) -> bool:
-    return group is None or bool(group["removed"]) or group["pages_allowed"] == "no"
+def _group_gone(group: dict) -> bool:
+    return bool(group["removed"]) or group["pages_allowed"] == "no"
 
 
 # --- reading the content ------------------------------------------------------------------------
@@ -74,7 +74,7 @@ def read_post(conn: sqlite3.Connection, post_id: int):
     if post is None or post["kind"] != "post" or post["status"] != "planned" or not post["group_id"]:
         return None
     group = _group(conn, post["group_id"])
-    if _group_gone(group):
+    if group is None or _group_gone(group):
         return None
     images, blobs = [], []
     for name in [post["image_path"]] if post["image_path"] else []:
@@ -100,7 +100,7 @@ def read_join(conn: sqlite3.Connection, item: items.Item):
     from jura_growth.agents.publish.kinds import Read
 
     group = _group(conn, item.ref_id)
-    if _group_gone(group):
+    if group is None or _group_gone(group):
         return None
     content = {"group": group["id"], "target_url": group["url"], "posting_identity": identity()}
     if item.kind == items.ANSWERS_ITEM:
