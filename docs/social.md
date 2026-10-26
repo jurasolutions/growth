@@ -229,7 +229,7 @@ exact bytes, with no Unicode normalisation (ADR 0003).
 |---|---|---|
 | `jura-growth publish next [--json]` | the publish run | Claims at most one item, or prints "nothing due" with the reasons |
 | `jura-growth publish done <A-id> --url <url> --live-text-file <f>` | the publish run | Records the post. The URL must be `https://` on the platform's own host. Live text that differs from the approved text (after Unicode NFC, collapsing whitespace and trimming) is recorded, alerts and pauses `publish` |
-| `jura-growth publish stopped <A-id> --reason <r> [--screenshot <f>]` | the publish run | A stop signal (`login`, `captcha`, `checkpoint`, `warning`, `restriction`, `rate-limit`, `removed`, `admin-warning`, `wrong-identity`, `unidentified`): the item stops, `publish` pauses for every item and `#alerts` says why |
+| `jura-growth publish stopped <A-id> --reason <r>` | the publish run | A stop signal (`login`, `captcha`, `checkpoint`, `warning`, `restriction`, `rate-limit`, `removed`, `admin-warning`, `wrong-identity`, `unidentified`): the item stops, `publish` pauses for every item, and `#alerts` gives the reason and the run id |
 | `jura-growth publish queue [--json]` | Ting Yu | Every item, its state and its A-id |
 | `jura-growth publish resolve <A-id> posted --url <url>` or `not-posted` | Ting Yu only (refused in any scheduled run) | Settles an item whose outcome is unknown |
 
@@ -267,16 +267,29 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
   as the posting identity before typing, posts exactly the approved text and images, reads the
   live post back and records it, and closes its tab. Any stop signal ends in `publish stopped`.
 - **After the run** (`after_run`, before the run row is finished): an open claim becomes
-  `unknown`; the transcript audit fails the run and pauses `publish` for a URL off the publish
-  hosts (asked for, or shown as a tab's URL in any later result), a Discord host, a tool call on a
-  tab the run didn't open, typed text that isn't in the approved content, an upload that isn't the
-  approved image, or a never-tool. A tab left open is a warning. A run that found no browser
-  alerts once a day. A run that claimed an item gets its summary from the item's record.
+  `unknown`. The transcript audit fails the run and pauses `publish` for:
+  - a URL off the publish hosts, asked for or shown as a tab's address in any later result, or
+    a tab address it can't read;
+  - a Discord host;
+  - a tool call on a tab the run didn't open;
+  - a field typed with anything but an approved text, judged whole and in order, or typing
+    before the claim;
+  - an upload that isn't the claimed item's own read-only image copy, or a copy that no longer
+    hashes to the approved image;
+  - a click, key, input, upload or navigation after `publish stopped`;
+  - a never-tool.
+
+  A tab left open is a warning. A run that found no browser alerts once a day.
+- **No model text goes out.** Every publish run's summary and error are written from the item's
+  record: the A-id, the platform, what happened, the URL or the closed stop reason, and the run
+  id. The model's own summary and `FAIL:` line stay in the transcript.
 - **Run updates** (`run_update: claimed-only`) post in `#social-drafts` only for a run that
-  claimed an item: the A-id, the platform, what happened and the URL or stop reason, never page
-  text. Stops, mismatches and unknown items also go to `#alerts`.
+  claimed an item. Stops, mismatches and unknown items also go to `#alerts`, once each: a stop's
+  one alert comes from `publish stopped` and names the run, whose transcript keeps what the page
+  showed (there is no screenshot file).
 - **Transcripts** of publish runs hold page text, so they are kept 7 days
-  (`caps.BROWSER_TRANSCRIPT_DAYS`), not 30.
+  (`caps.BROWSER_TRANSCRIPT_DAYS`), not 30, and so are the files a run leaves in
+  `work/publish/` (its read-back live text and its image copies).
 
 ## Digest
 

@@ -15,8 +15,10 @@ never change the text, never add to it, never decide anything.
   tool. Never read, click or close any other tab.
 - **Only the platform's own pages.** Move between pages with `navigate`, only to the target URL
   `publish next` gives you and to the live post's own address. Never type an address anywhere.
-- **Type only the approved text.** Never type a password, a one-time code, a phone number, an
-  email address, a search term or any other word that isn't in the approved text.
+- **Type only the approved text, whole, once.** Type it into its one field in a single call, as
+  given. Never type a password, a one-time code, a phone number, an email address, a search term
+  or any other word that isn't the approved text, and never correct what you typed (no Backspace
+  or arrow keys): if it went wrong, stop with `unidentified`.
 - **No retries.** If something goes wrong on a step that would post, stop: never click Post twice.
 - **Never switch identity.** If the page isn't already acting as the expected posting identity,
   stop. Don't use any "switch profile" or "switch to Page" control yourself.
@@ -25,7 +27,8 @@ never change the text, never add to it, never decide anything.
 
 At every step, look for these. The moment you see one, click nothing more and run
 `jura-growth publish stopped <A-id> --reason <reason>` with the reason below, then close your tab
-and end with `FAIL:` and the reason. If you have no A-id yet (nothing claimed), close your tab and
+and end with `FAIL:` and the reason. After `publish stopped`, the only thing you may do in the
+browser is close your tab: no click, key, typing or navigation. If you have no A-id yet (nothing claimed), close your tab and
 end with `FAIL:` and the reason.
 
 | What the page shows | Reason |

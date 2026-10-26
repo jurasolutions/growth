@@ -398,7 +398,7 @@ happy to leave up, or delete it by hand afterwards. You need:
 
 **D3. A login wall stops everything (must, AC-P6.1)**
 - Do: sign out of Facebook in the engine's profile, then approve that day's card.
-- Expect: the run stops without typing anything. `#alerts` gives the reason and a screenshot path,
+- Expect: the run stops without typing anything. `#alerts` gives the reason and the run id (its transcript keeps what the page showed; no screenshot file, BP-03 fix round 1),
   and publish is paused. Nothing else is attempted until you sign back in and send
   `/growth resume publish`.
 - [ ] Pass  [ ] Fail
