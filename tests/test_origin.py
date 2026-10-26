@@ -1,8 +1,8 @@
-"""Where a decision comes from: `origin.detect()` and `origin.detect_ssh()` (MC §4.6 A8, ADR 0004).
+"""Where a decision comes from: `origin.detect_ssh()` (MC §4.6 A8 as amended 2026-10-26, ADR 0004).
 
-Seam S13. Unit tests here walk canned `ps -o ppid=,comm=` tables (dataset D12) and drive
-`detect()`'s branches in process. `test_origin_processes.py` runs the real checks in real
-processes: no TTY, a pseudo-terminal, and a `claude` ancestor.
+Seam S13. Decisions come only from Dispatch over SSH; Terminal decisions are off. Unit tests here
+walk canned `ps -o ppid=,comm=` tables (dataset D12) and drive `detect_ssh()`'s branches in
+process. `test_origin_processes.py` runs the real refusals in real processes.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from jura_growth import origin
-from jura_growth.origin import NOT_HUMAN, SSH, TERMINAL, Process
+from jura_growth.origin import NOT_HUMAN, SSH, Process
 
 
 def table(rows: dict[int, str], args: dict[int, str] | None = None):
@@ -99,63 +99,13 @@ def test_sshd_and_its_session_process_are_both_found():
         assert origin.sshd_among(origin.ancestry(500, ps=table(rows))), name
 
 
-# --- detect(): Terminal (AC-M7.2 to AC-M7.4) ------------------------------------------
+# --- there is no Terminal origin (MC3 as amended 2026-10-26, ADR 0004) ------------------
 
 
-@pytest.fixture
-def terminal(monkeypatch):
-    """A real terminal, a clean ancestry and Ting Yu typing `typed`."""
-    state = {"ttys": True, "rows": SHELL, "typed": "3f9a1c\n", "prompts": []}
-    monkeypatch.setattr(origin, "_both_ttys", lambda: state["ttys"])
-    monkeypatch.setattr(origin, "_ps", lambda pid, field: table(state["rows"])(pid, field))
-    monkeypatch.setattr(origin, "_start", lambda: 500)
-
-    def read(prompt):
-        state["prompts"].append(prompt)
-        return state["typed"]
-
-    monkeypatch.setattr(origin, "_read_line", read)
-    return state
-
-
-def test_a_terminal_with_the_code_typed_is_a_terminal_origin(terminal):
-    found = origin.detect("Type A-0412's code: ")
-    assert found.kind == TERMINAL and found.code == "3f9a1c" and found.user
-    assert terminal["prompts"] == ["Type A-0412's code: "]
-
-
-def test_no_tty_is_refused_before_anything_is_asked(terminal):
-    terminal["ttys"] = False
-    found = origin.detect("Type A-0412's code: ")
-    assert found.kind == NOT_HUMAN
-    assert found.reason == "decisions need a terminal or the Dispatch link"
-    assert terminal["prompts"] == []
-
-
-def test_a_claude_ancestor_is_refused_before_anything_is_asked(terminal):
-    terminal["rows"] = {500: "  400 /bin/zsh", 400: "  300 claude", 300: "    1 /sbin/launchd"}
-    found = origin.detect("Type A-0412's code: ")
-    assert found.kind == NOT_HUMAN and "Claude" in found.reason
-    assert terminal["prompts"] == []
-
-
-def test_an_ancestry_that_cant_be_checked_is_refused(terminal):
-    terminal["rows"] = {500: "  400 /bin/zsh"}
-    found = origin.detect("Type A-0412's code: ")
-    assert found.kind == NOT_HUMAN and "couldn't be checked" in found.reason
-
-
-def test_no_code_typed_is_refused(terminal):
-    terminal["typed"] = "\n"
-    assert origin.detect("Type A-0412's code: ").kind == NOT_HUMAN
-
-
-def test_the_user_is_the_macos_account_not_an_environment_variable(terminal, monkeypatch):
-    import pwd, os
-
-    monkeypatch.setenv("USER", "someone-else")
-    monkeypatch.setenv("LOGNAME", "someone-else")
-    assert origin.detect("code: ").user == pwd.getpwuid(os.getuid()).pw_name
+def test_terminal_decisions_are_off_so_there_is_no_terminal_check_to_pass():
+    assert not hasattr(origin, "detect") and not hasattr(origin.Origin, "terminal")
+    with pytest.raises(ValueError):
+        origin.Origin("terminal")
 
 
 # --- detect_ssh(): the remote origin (for ticket 11) ---------------------------------
@@ -163,15 +113,39 @@ def test_the_user_is_the_macos_account_not_an_environment_variable(terminal, mon
 
 @pytest.fixture
 def remote(monkeypatch):
+    """Dispatch's forced command, with an sshd ancestor. Claude Code's markers are
+    removed on purpose: this suite may itself run inside a Claude session."""
     state = {"rows": {500: "  400 /bin/sh", 400: "  300 sshd-session", 300: "    1 /sbin/launchd"}}
     monkeypatch.setattr(origin, "_ps", lambda pid, field: table(state["rows"])(pid, field))
     monkeypatch.setattr(origin, "_start", lambda: 500)
     monkeypatch.setenv("SSH_ORIGINAL_COMMAND", "approve A-0412")
+    for name in origin.CLAUDE_MARKERS:
+        monkeypatch.delenv(name, raising=False)
     return state
 
 
 def test_an_sshd_ancestor_with_the_forced_command_is_an_ssh_origin(remote):
     assert origin.detect_ssh().kind == SSH
+
+
+@pytest.mark.parametrize("marker", origin.CLAUDE_MARKERS)
+def test_any_claude_code_marker_is_refused_even_under_sshd(remote, monkeypatch, marker):
+    """Defence in depth (code review 04b, S1): the markers survive a process leaving
+    the session's tree, so they refuse even with a clean ancestry."""
+    monkeypatch.setenv(marker, "1")
+    found = origin.detect_ssh()
+    assert found.kind == NOT_HUMAN and found.reason == origin.IN_CLAUDE
+
+
+def test_an_empty_marker_is_not_a_marker(remote, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "")
+    assert origin.detect_ssh().kind == SSH
+
+
+def test_an_ancestry_that_cant_be_checked_is_refused(remote):
+    remote["rows"] = {500: "  400 /bin/sh"}
+    found = origin.detect_ssh()
+    assert found.kind == NOT_HUMAN and found.reason == origin.UNCHECKED
 
 
 def test_no_forced_command_is_refused(remote, monkeypatch):
@@ -192,10 +166,15 @@ def test_a_claude_ancestor_under_sshd_is_refused(remote):
 # --- structure (test strategy v3 E6) ----------------------------------------------------
 
 
-def test_origin_reads_no_environment_variable_but_the_forced_command_and_no_flag():
+def test_origin_reads_only_the_forced_command_and_the_claude_markers_and_no_flag():
+    """E6: an origin is never granted from a variable an agent could set. The forced
+    command's variable needs an sshd ancestor too, and the markers can only refuse."""
     source = Path(origin.__file__).read_text(encoding="utf-8")
-    reads = re.findall(r"os\.environ[^\n]*|getenv[^\n]*", source)
-    assert reads and all("SSH_ORIGINAL_COMMAND" in line for line in reads), reads
+    reads = [line.strip() for line in source.splitlines() if re.search(r"os\.environ|getenv", line)]
+    assert reads == [
+        "return next((name for name in CLAUDE_MARKERS if os.environ.get(name)), None)",
+        'if not os.environ.get("SSH_ORIGINAL_COMMAND"):',
+    ], reads
     assert "import click" not in source and "click." not in source
 
 

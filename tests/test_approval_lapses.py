@@ -1,7 +1,8 @@
 """Who writes lapses and posts cards on a schedule (MC §4.6 A12, A17; X12, gate case G36; ticket 04b).
 
-The noon heartbeat and the 23:30 backup each call `expire_due()`; the heartbeat also posts unposted
-cards and edits changed ones. (The 08:00 `one-pager` job joins them in ticket 09.)
+The noon heartbeat and the 23:30 backup each call `expire_due()` and edit the cards that changed;
+only the heartbeat posts unposted cards, so nothing new notifies at 23:30. (The 08:00 `one-pager`
+job joins them in ticket 09.)
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from click.testing import CliRunner
 
 import approval_world as aw
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, runner
+from jura_growth import approvals, cards, runner
 from jura_growth.cli import cli
 
 
@@ -26,7 +27,7 @@ def world(conn, monkeypatch):
 def due(conn, world, monkeypatch):
     """A pending request whose decide-by has just passed, its card posted."""
     approval = aw.request(conn, aw.KIND, world.item())
-    approvals.post_unposted(conn)
+    cards.sweep(conn)
     aw.at(monkeypatch, approval.decide_by)
     return approval
 
@@ -54,9 +55,17 @@ def test_the_scheduled_writer_edits_the_lapsed_card(conn, world, monkeypatch, di
 def test_the_heartbeat_posts_a_card_a_crash_left_unposted(conn, world, discord_double):
     approval = aw.request(conn, aw.KIND, world.item())  # committed; the raising command died before posting
     CliRunner().invoke(cli, ["heartbeat"])
-    cards = [p for p in discord_double.posts("approvals")]
-    assert len(cards) == 1 and cards[0].content.startswith(f"**{approval.id} · fake**")
+    posted = discord_double.posts("approvals")
+    assert len(posted) == 1 and posted[0].content.startswith(f"**{approval.id} · fake**")
     assert aw.record(conn, approval.id)["posted_at"] is not None
+
+
+def test_the_backup_posts_no_new_card_at_23_30(conn, world, discord_double):
+    """Code review 04b, Sp3: a new card would notify Ting Yu at night; the heartbeat posts it."""
+    approval = aw.request(conn, aw.KIND, world.item())
+    CliRunner().invoke(cli, ["backup"])
+    assert discord_double.posts("approvals") == []
+    assert aw.record(conn, approval.id)["posted_at"] is None
 
 
 def test_the_scheduled_heartbeat_job_does_the_same(conn, world, monkeypatch, discord_double):
@@ -67,10 +76,11 @@ def test_the_scheduled_heartbeat_job_does_the_same(conn, world, monkeypatch, dis
 
 
 def test_a_failing_sweep_never_stops_the_heartbeat(conn, world, monkeypatch, discord_double):
-    monkeypatch.setattr(approvals, "post_unposted", lambda conn: (_ for _ in ()).throw(RuntimeError("sweep broke")))
+    monkeypatch.setattr(cards, "sweep", lambda conn, post=True: (_ for _ in ()).throw(RuntimeError("sweep broke")))
     result = CliRunner().invoke(cli, ["heartbeat"])
     assert result.exit_code == 0, result.output
     assert any("Heartbeat" in (p.content or "") for p in discord_double.posts("daily-digest"))
+    assert "sweep broke" in aw.events(conn, "approval.cards_error")[0]["error"]
 
 
 def test_a_failing_expiry_never_stops_the_backup(conn, world, monkeypatch, tmp_path):

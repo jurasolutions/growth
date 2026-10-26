@@ -6,7 +6,8 @@ agree on the content. Run as
 
     python tests/origin_child.py approve A-0001
 
-It changes nothing about how the origin is found: the subprocess runs the real `origin.detect()`.
+It changes nothing about how a decision is refused: the subprocess runs the real `approve` and
+`skip`, which refuse in any terminal (ADR 0004).
 """
 
 from __future__ import annotations

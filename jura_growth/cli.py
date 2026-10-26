@@ -11,7 +11,6 @@ import json
 import sys
 import traceback
 from pathlib import Path
-from typing import Callable
 
 import click
 
@@ -20,6 +19,7 @@ from jura_growth import (
     approvals,
     approvals_cli,
     backup as backup_mod,
+    cards,
     brand_check,
     config,
     copy_check,
@@ -187,25 +187,24 @@ def db_path() -> None:
 
 
 def _approval_upkeep(conn, *, post: bool) -> None:
-    """Write the lapses that are due (MC §4.6 A17) and, with `post`, post and
-    edit approval cards (A12). Never stops the job that calls it."""
-    steps: list[tuple[str, Callable[[], object]]] = [("expire_due", lambda: approvals.expire_due(conn))]
-    if post:
-        steps.append(("post_unposted", lambda: approvals.post_unposted(conn)))
-    for name, step in steps:
-        try:
-            step()
-        except Exception as error:  # noqa: BLE001
-            log.event(conn, "approval.upkeep_error", {"step": name, "error": f"{type(error).__name__}: {error}"}, level="error")
+    """Write the lapses that are due (MC §4.6 A17), then edit the cards they
+    changed, and with `post` post the unposted ones (A12). Never stops the
+    job that calls it."""
+    try:
+        approvals.expire_due(conn)
+    except Exception as error:  # noqa: BLE001
+        log.event(conn, "approval.upkeep_error", {"step": "expire_due", "error": f"{type(error).__name__}: {error}"},
+                  level="error")
+    cards.sweep_safely(conn, post=post)
 
 
 @cli.command()
 def backup() -> str:
     """Back up growth.db (kept 14 days) and prune old transcripts; write due approval lapses."""
     with db.session() as conn:
-        # Edits too: a card should say it lapsed. Only the heartbeat and the
-        # raising commands are needed to post (A12); this one catches up.
-        _approval_upkeep(conn, post=True)
+        # Lapsed cards are edited (edits don't notify); new cards wait for
+        # the heartbeat or a raising command, so nothing new posts at 23:30.
+        _approval_upkeep(conn, post=False)
         target = backup_mod.backup(conn)
     click.echo(f"backup written: {target}")
     return f"backup written: {target.name}"

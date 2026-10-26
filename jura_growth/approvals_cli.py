@@ -1,29 +1,30 @@
-"""`jura-growth approvals`, `approve` and `skip` (MC §4.6 A8 to A10, §5.10; ticket 04b).
+"""`jura-growth approvals`, `approve` and `skip` (MC §4.6 A8 to A10 as amended
+2026-10-26, §5.10; ADR 0004).
 
-Ting Yu lists, approves and skips requests from a real terminal by typing
-the request's six-character code. No agent process can:
+Decisions come only from #approvals, through Dispatch over SSH. Typed in
+Terminal, `approve` and `skip` refuse and point there, and nothing is
+recorded: a process started from an interactive Claude session could pass any
+terminal check (ADR 0004). A Touch ID ticket may bring Terminal decisions back.
 
-1. `headless.NEVER` holds all three, so a scheduled run is refused before
-   the command starts, and Claude Code's rules for every claude job deny them.
-2. Each command refuses on its own whenever `JURA_GROWTH_JOB` is set.
-3. `approve` and `skip` take their origin from `origin.detect()` (a TTY, no
-   `claude` ancestor, the typed code), unless the in-process click context
-   carries one (`ctx.obj["origin"]`), which only ticket 11's `remote`
-   dispatcher sets. There is no flag and no environment variable for it.
+`approve` and `skip` decide only when the in-process click context carries an
+origin (`ctx.obj["origin"]` and the Discord `actor`), which only ticket 11's
+`remote` dispatcher sets, after `origin.detect_ssh()`. There is no flag and no
+environment variable for it. Every decision answers one of
+`approvals.ANSWERS`, each with its own exit code (`EXIT_CODES`); ticket 11's
+`docs/dispatch-contract.md` lists them.
 
-Every decision answers one of `approvals.ANSWERS`, each with its own exit
-code (`EXIT_CODES`); ticket 11's `docs/dispatch-contract.md` lists them.
+No scheduled run may use any of the three: `headless.NEVER` refuses them
+before they start, and each refuses again on its own whenever a run's
+`JURA_GROWTH_JOB` is set.
 
-    jura-growth approvals [kind]
-    jura-growth approve A-0412 [key=value ...] [note ...] [--ref <ref>]
-    jura-growth skip A-0412 [note ...] [--ref <ref>]
+`approvals [kind]` is a plain read: the pending requests, the 15 soonest to
+lapse first.
 """
 
 from __future__ import annotations
 
-import os
 import re
-import sys
+from collections import Counter
 
 import click
 
@@ -43,11 +44,11 @@ _ARG = re.compile(r"[a-z][a-z_]*=.*")
 
 
 def refuse_in_a_run(what: str) -> None:
-    """Layer 2: refused whenever a scheduled run's label is set, whatever
-    `NEVER` and the job's permissions say."""
-    job = os.environ.get("JURA_GROWTH_JOB")
+    """Refused whenever a scheduled run's label is set, whatever `NEVER` and
+    the job's permissions say."""
+    job = log.current_job()
     if job:
-        raise headless.Refused(f"refused: a `{job}` run can't {what}; only Ting Yu can, from Terminal or Dispatch")
+        raise headless.Refused(f"refused: a `{job}` run can't {what}; only Ting Yu can, in #approvals")
 
 
 def split_words(words: tuple[str, ...]) -> tuple[dict[str, str], str]:
@@ -64,69 +65,58 @@ def split_words(words: tuple[str, ...]) -> tuple[dict[str, str], str]:
     return args, " ".join(rest)
 
 
-def _origin(ctx: click.Context, shown: str) -> tuple[origin.Origin, str | None]:
-    obj = ctx.obj if isinstance(ctx.obj, dict) else {}
-    if "origin" in obj:  # set only by `remote` (ticket 11), in process
-        return obj["origin"], obj.get("actor")
-    return origin.detect(f"Type {shown}'s code (on its card, or in `jura-growth approvals`): "), None
-
-
 def _decide(ctx: click.Context, approval_id: str, decision: str, words: tuple[str, ...], ref: str | None) -> None:
     refuse_in_a_run("decide an approval request")
+    obj = ctx.obj if isinstance(ctx.obj, dict) else {}
+    if "origin" not in obj:  # only `remote` (ticket 11) puts one there, in process
+        click.echo(f"refused: {origin.TERMINAL_OFF}.")
+        ctx.exit(EXIT_CODES[approvals.REFUSED])
     if decision == "approve":
         args, note = split_words(words)
     else:
         args, note = {}, " ".join(words)
-    number = approvals.parse_id(approval_id)
-    shown = approvals.format_id(number) if number is not None else approval_id
-    found, actor = _origin(ctx, shown)
     with db.session() as conn:
-        answer = approvals.decide(conn, approval_id, decision, actor=actor, origin=found, source_ref=ref, args=args)
+        answer = approvals.decide(conn, approval_id, decision, actor=obj.get("actor"), origin=obj["origin"],
+                                  source_ref=ref, args=args)
         if answer.answer == approvals.RECORDED and note and answer.approval is not None:
             log.event(conn, "approval.note", {"approval": answer.approval.id, "decision": decision, "note": note,
                                               "actor": answer.approval.decided_by})
-        try:
-            approvals.post_unposted(conn)
-        except Exception as error:  # noqa: BLE001 - the decision stands; the next sweep edits the card
-            print(f"warning: the card was not edited: {type(error).__name__}: {error}", file=sys.stderr)
+        cards.sweep_safely(conn)
     click.echo(answer.text)
     ctx.exit(EXIT_CODES[answer.answer])
 
 
 def _listing(conn, kind: str | None) -> list[str]:
     now = timeutil.now_sgt()
-    waiting = [a for a in approvals.pending(conn) if kind is None or a.kind == kind]
-    # A plain read: a request past its decide-by is no longer offered, though
-    # its lapse is written later (A17), and content is judged on decision.
-    lapsed = [a for a in waiting if timeutil.parse(a.decide_by) <= now]
-    live = [a for a in waiting if timeutil.parse(a.decide_by) > now]
+    waiting = [(a, timeutil.parse(a.decide_by)) for a in approvals.pending(conn) if kind is None or a.kind == kind]
     if not waiting:
         return [f"No {cards.label(kind)} requests are waiting." if kind else "No requests are waiting."]
+    # A plain read: a request past its decide-by is no longer offered, though
+    # its lapse is written later (A17), and content is judged on decision.
+    live = [(a, due) for a, due in waiting if due > now]
+    lapsed = len(waiting) - len(live)
     registry = approvals.kinds()
     lines = []
-    for approval in live[:LIST_LIMIT]:
+    for approval, due in live[:LIST_LIMIT]:
         registered = registry.get(approval.kind)
         try:
             title = registered.kind.preview(conn, approval.subject).title if registered else "(its plug-in isn't loaded)"
         except Exception as error:  # noqa: BLE001
             title = f"(no preview: {type(error).__name__})"
-        lines.append(f"{approval.id} · {cards.label(approval.kind)} · decide by {cards.when(approval.decide_by)} · "
-                     f"code {approval.code} · {title}")
-    hidden = live[LIST_LIMIT:]
-    if hidden:
-        by_kind: dict[str, int] = {}
-        for approval in hidden:
-            by_kind[approval.kind] = by_kind.get(approval.kind, 0) + 1
-        if kind is not None:
-            lines.append(f"and {len(hidden)} more: decide these first, then /growth approvals {kind} again")
-        elif len(by_kind) == 1:
-            lines.append(f"and {len(hidden)} more: /growth approvals {next(iter(by_kind))}")
-        else:
-            listed = ", ".join(f"/growth approvals {name} ({count})" for name, count in sorted(by_kind.items()))
-            lines.append(f"and {len(hidden)} more: {listed}")
+        lines.append(f"{approval.id} · {cards.label(approval.kind)} · decide by {cards.when_at(due)} · {title}")
     if lapsed:
-        many = len(lapsed) != 1
-        lines.append(f"{len(lapsed)} more passed {'their' if many else 'its'} decide-by and expire{'' if many else 's'} unanswered.")
+        lines.append(f"{lapsed} more passed {'their' if lapsed != 1 else 'its'} decide-by and "
+                     f"expire{'' if lapsed != 1 else 's'} unanswered.")
+    hidden = Counter(approval.kind for approval, _ in live[LIST_LIMIT:])
+    total = sum(hidden.values())
+    if total:
+        if kind is not None:
+            lines.append(f"and {total} more: decide these first, then /growth approvals {kind} again")
+        elif len(hidden) == 1:
+            lines.append(f"and {total} more: /growth approvals {next(iter(hidden))}")
+        else:
+            listed = ", ".join(f"/growth approvals {name} ({count})" for name, count in sorted(hidden.items()))
+            lines.append(f"and {total} more: {listed}")
     return lines
 
 
@@ -145,7 +135,7 @@ def register(cli: click.Group) -> None:
     @click.option("--ref", help="Dispatch's delivery reference; the same one twice answers once.")
     @click.pass_context
     def approve_command(ctx, approval_id, words, ref) -> None:
-        """Approve A-nnnn, typing its code. Then any key=value arguments, then a note."""
+        """Approve A-nnnn from #approvals (through Dispatch). Refused in Terminal."""
         _decide(ctx, approval_id, "approve", words, ref)
 
     @cli.command("skip")
@@ -154,5 +144,5 @@ def register(cli: click.Group) -> None:
     @click.option("--ref", help="Dispatch's delivery reference; the same one twice answers once.")
     @click.pass_context
     def skip_command(ctx, approval_id, words, ref) -> None:
-        """Skip A-nnnn, typing its code. Allowed until it is used. Then a note."""
+        """Skip A-nnnn from #approvals (through Dispatch). Refused in Terminal."""
         _decide(ctx, approval_id, "skip", words, ref)

@@ -40,6 +40,12 @@ def current_agent() -> str | None:
     return os.environ.get("JURA_GROWTH_AGENT")
 
 
+def current_job() -> str | None:
+    """The scheduled job this process runs under (the runner sets it), or None
+    outside a run. A label, not a credential: it can only restrict."""
+    return os.environ.get("JURA_GROWTH_JOB") or None
+
+
 def event(
     conn: sqlite3.Connection | None,
     kind: str,

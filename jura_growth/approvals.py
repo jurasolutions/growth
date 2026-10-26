@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Protocol
 
 from jura_growth import agents, caps, config, db, log, pause, timeutil
-from jura_growth.origin import TERMINAL, Origin
+from jura_growth.origin import NOT_DISPATCH, Origin
 
 PENDING, APPROVED, SKIPPED, EXPIRED, SUPERSEDED = "pending", "approved", "skipped", "expired", "superseded"
 
@@ -104,6 +104,12 @@ class ApprovalKind(Protocol):
             `use()` refuses without claiming
         on_skip, on_expire (pending past decide-by), on_lapse (approved,
             unclaimed, past use-by): (conn, subject) -> None
+        superseded_note(conn, subject) -> str | None  why the item changed
+            or went away, in Ting Yu's words ("lead unsubscribed"), for the
+            card's edited first line; asked after the record is superseded,
+            so it reads the item's own state. None keeps the core's reason
+            ("the item is gone", "the content changed"). MC-06 fills it for
+            outreach-email.
     """
 
     name: str
@@ -144,11 +150,6 @@ class Approval:
     @property
     def id(self) -> str:
         return format_id(self.number)
-
-    @property
-    def code(self) -> str:
-        """The six hex characters Ting Yu types in Terminal."""
-        return self.content_hash[:6]
 
     @property
     def live(self) -> bool:
@@ -535,15 +536,10 @@ def _closed_answer(conn, approval: Approval) -> Answer:
 
 
 def _attribution(origin: Origin, actor: str | None) -> tuple[str | None, str | None]:
-    """(decided_by, None) for a human origin whose attribution holds, or
-    (None, why it is refused)."""
+    """(decided_by, None) for the SSH origin whose attribution holds, or
+    (None, why it is refused). Terminal decisions are off (ADR 0004)."""
     if not isinstance(origin, Origin) or not origin.human:
-        return None, getattr(origin, "reason", None) or "decisions need a terminal or the Dispatch link"
-    if origin.kind == TERMINAL:
-        decided_by = f"terminal:{origin.user}"
-        if actor is not None and actor != decided_by:
-            return None, f"a Terminal decision is recorded as {decided_by}, not {actor}"
-        return decided_by, None
+        return None, getattr(origin, "reason", None) or NOT_DISPATCH
     # SSH: the Discord user id is attribution, checked for consistency with
     # .env. The guard is the SSH key and Dispatch's own allowlist (A8).
     if not actor or not _DISCORD_ACTOR.fullmatch(actor):
@@ -585,9 +581,9 @@ def decide(
 ) -> Answer:
     """Record Ting Yu's approve or skip on one request (A7 to A10).
 
-    `origin` comes from `origin.py` (ticket 04b's `detect()`, or 11's
-    `remote`): a Terminal origin must carry the request's code, and an SSH
-    origin's `actor` must be the control user. `source_ref` is Dispatch's
+    `origin` comes from `origin.py`, through ticket 11's `remote`: only an
+    SSH origin decides, and its `actor` must be the control user. Terminal
+    decisions are off (ADR 0004). `source_ref` is Dispatch's
     delivery reference: the same one twice returns the first answer.
     Deadlines are judged by growth's clock. A skip is allowed until the
     request is claimed. On approve, the kind's `on_approve` runs inside the
@@ -643,9 +639,6 @@ def _decide_locked(conn, number: int, decision: str, decided_by: str, origin: Or
     if registered is None:
         why = f"the plug-in for {approval.kind} isn't loaded, so {approval.id} can't be decided"
         return _refuse(conn, approval.id, approval, None, actor=decided_by, origin=origin, ref=source_ref, why=why)
-    if origin.kind == TERMINAL and str(origin.code).strip().lower() != approval.code:
-        why = f"that isn't {approval.id}'s code"
-        return _refuse(conn, approval.id, approval, registered.agent, actor=decided_by, origin=origin, ref=source_ref, why=why)
     if not approval.live:
         return _closed_answer(conn, approval)
     now = timeutil.now_sgt()
@@ -690,35 +683,34 @@ def _decide_locked(conn, number: int, decision: str, decided_by: str, origin: Or
     return Answer(RECORDED, text, _reload(conn, number))
 
 
-# --- cards in #approvals (A12, ticket 04b) -----------------------------------
+# --- cards in #approvals (A12) ------------------------------------------------
+#
+# `cards.sweep()` posts and edits the cards (A12's `post_unposted`); these are
+# the reads and the one write it needs, kept here with the rest of the state.
 
 
-def post_unposted(conn: sqlite3.Connection) -> int:
-    """Post every pending request's card that isn't posted yet, and edit the
-    first line of every card whose record was decided, lapsed, superseded or
-    used since (A12). Call it after the transaction that raised or changed
-    the records has committed. Returns the number of cards posted. The rules
-    are in `cards.py`."""
-    from jura_growth import cards
-
-    return cards.sweep(conn)
+def unposted(conn: sqlite3.Connection) -> list[Approval]:
+    """Pending requests whose card hasn't gone out, oldest first. Only a
+    pending request gets a card: one decided first never posts."""
+    rows = conn.execute("SELECT * FROM approvals WHERE status = 'pending' AND posted_at IS NULL ORDER BY id")
+    return [Approval.from_row(r) for r in rows]
 
 
-def raises_requests(command):
-    """Decorate a raising command's callback (A11): when it ends, however it
-    ends, its cards are posted (A12). A sweep that fails is reported on
-    stderr and never changes what the command returns or raises."""
-    import functools
+def successor(conn: sqlite3.Connection, approval: Approval) -> Approval | None:
+    """The request raised over new content in place of `approval`, if any."""
+    return _successor(conn, approval)
 
-    @functools.wraps(command)
-    def run(*args, **kwargs):
-        try:
-            return command(*args, **kwargs)
-        finally:
-            try:
-                with db.session() as conn:
-                    post_unposted(conn)
-            except Exception as error:  # noqa: BLE001
-                print(f"warning: approval cards not posted: {type(error).__name__}: {error}", file=sys.stderr)
 
-    return run
+def mark_posted(conn: sqlite3.Connection, approval: Approval, message_id: str | None) -> None:
+    """Record that `approval`'s card went out, once (the trigger allows
+    `posted_at` and `message_id` to be set once, on an unused record). Call
+    it inside the caller's `db.transaction(conn)`; it writes
+    `approval.posted` (A16)."""
+    at = timeutil.stamp()
+    conn.execute(
+        "UPDATE approvals SET posted_at = ?, message_id = ? WHERE id = ? AND posted_at IS NULL AND used_at IS NULL",
+        (at, message_id, approval.number),
+    )
+    registered = _kind(approval.kind)
+    _audit(conn, "approval.posted", approval, registered.agent if registered else None, actor="engine", at=at,
+           message_id=message_id)

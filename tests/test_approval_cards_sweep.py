@@ -12,7 +12,7 @@ import pytest
 
 import approval_world as aw
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, paths, timeutil
+from jura_growth import approvals, cards, paths, timeutil
 from sweep import NAMED_ADDRESS, SOURCE_PAGE, assert_clean, d2_secrets, outbox_dir, planted  # noqa: F401
 
 
@@ -57,19 +57,19 @@ def world(conn, monkeypatch):
 
 def test_a_posted_card_carries_nothing_planted(conn, world, discord_double):
     aw.request(conn, aw.KIND, world.item(planted().text()))
-    assert approvals.post_unposted(conn) == 1
+    assert cards.sweep(conn) == 1
     assert_clean(discord_double, outbox_dir(), planted())
 
 
 def test_an_edited_card_and_a_follow_up_line_carry_nothing_planted(conn, world, discord_double, monkeypatch):
     first = aw.request(conn, aw.KIND, world.item(planted().text()))
     second = aw.request(conn, aw.KIND, world.item(planted().text() + " (two)"))
-    approvals.post_unposted(conn)
+    cards.sweep(conn)
     aw.approve(conn, first)
-    approvals.post_unposted(conn)  # an edit
+    cards.sweep(conn)  # an edit
     discord_double.mode = "edit-fails"
     aw.skip(conn, second)
-    approvals.post_unposted(conn)  # a follow-up line
+    cards.sweep(conn)  # a follow-up line
     methods = [r.method for r in discord_double.requests]
     assert methods.count("PATCH") == 2 and methods.count("POST") == 3
     assert_clean(discord_double, outbox_dir(), planted())
@@ -78,6 +78,6 @@ def test_an_edited_card_and_a_follow_up_line_carry_nothing_planted(conn, world, 
 def test_a_card_that_failed_to_post_leaves_nothing_planted_in_the_outbox(conn, world, discord_double):
     aw.request(conn, aw.KIND, world.item(planted().text()))
     discord_double.mode = "500"
-    approvals.post_unposted(conn)
+    cards.sweep(conn)
     assert list(outbox_dir().glob("*.jsonl"))
     assert_clean(discord_double, outbox_dir(), planted())

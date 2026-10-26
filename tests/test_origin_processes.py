@@ -1,16 +1,16 @@
-"""The human origin, checked in real processes (seam S13; AC-M7.2 to AC-M7.4, AC-M6.4's real path).
+"""Decisions refused in real processes (seam S13; MC3 as amended 2026-10-26; code review 04b S1).
 
-Each test raises a request in process, then runs `jura-growth approve` as a real subprocess: with
-stdin from `/dev/null`, or under a real pseudo-terminal from the standard library's `pty`, with
-and without an ancestor whose command name is `claude`. See `pty_driver.py` for why the
-pseudo-terminal runs outside the test's own process tree.
+Terminal decisions are off: `jura-growth approve` and `skip` refuse whatever terminal they run in.
+The regression is the reviewer's own probe: an orphaned `/usr/bin/expect`, adopted by launchd so no
+`claude` process is above it, gives `approve` a real terminal and types the first six hex
+characters of the content hash. It used to record a Terminal decision. It must now be refused,
+with Claude Code's environment markers set and with them stripped.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import pwd
 import subprocess
 import sys
 import time
@@ -20,11 +20,10 @@ import pytest
 
 import approval_world as aw
 import origin_child
-from jura_growth import agents, db
+from jura_growth import agents, db, origin
 
-TESTS = Path(__file__).parent
-CHILD = str(TESTS / "origin_child.py")
-DRIVER = str(TESTS / "pty_driver.py")
+CHILD = str(Path(__file__).parent / "origin_child.py")
+REFUSAL = f"refused: {origin.TERMINAL_OFF}."
 
 
 @pytest.fixture
@@ -41,57 +40,75 @@ def status(approval) -> dict:
         return aw.record(fresh, approval.id)
 
 
-def under_pty(tmp_path, words, *, typed, under_claude=False) -> dict:
-    result = tmp_path / f"pty-{time.monotonic_ns()}.json"
-    spec = {"argv": [sys.executable, CHILD, *words], "type": typed, "result": str(result), "under_claude": under_claude}
-    subprocess.run([sys.executable, DRIVER, json.dumps(spec)], check=True, env=dict(os.environ), timeout=30)
+def environment(*, markers: bool) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k not in origin.CLAUDE_MARKERS}
+    if markers:
+        env.update(CLAUDECODE="1", CLAUDE_CODE_ENTRYPOINT="cli")
+    return env
+
+
+def orphaned_expect(tmp_path: Path, words: list[str], typed: str, *, markers: bool) -> dict:
+    """The probe from code review 04b, step 4: `( expect … & )`. Returns the command's exit
+    status, what it printed, and the parent pid expect had once the subshell was gone."""
+    log, ppid, done = tmp_path / "probe.log", tmp_path / "probe.ppid", tmp_path / "probe.status"
+    script = tmp_path / "probe.exp"
+    spawn = " ".join(f"{{{word}}}" for word in [sys.executable, CHILD, *words])
+    script.write_text(
+        "set timeout 30\n"
+        "log_user 0\n"
+        f"for {{set i 0}} {{$i < 250}} {{incr i}} {{ if {{[string trim [exec /bin/ps -o ppid= -p [pid]]] == 1}} break; after 20 }}\n"
+        f"set f [open {{{ppid}}} w]; puts $f [string trim [exec /bin/ps -o ppid= -p [pid]]]; close $f\n"
+        f"log_file -a -noappend {{{log}}}\n"  # -a: log what log_user 0 keeps off the screen
+        f"spawn {spawn}\n"
+        f'expect {{ "code (" {{ send "{typed}\\r"; exp_continue }} eof }}\n'
+        "set result [wait]\n"
+        "log_file\n"  # closes the log, so it is complete before the status appears
+        f"set f [open {{{done}.part}} w]; puts $f [lindex $result 3]; close $f\n"
+        f"file rename {{{done}.part}} {{{done}}}\n"
+    )
+    subprocess.run(["/bin/sh", "-c", f"( /usr/bin/expect -f '{script}' & )"], env=environment(markers=markers), check=True, timeout=30)
     end = time.time() + 60
-    while not result.exists():
-        assert time.time() < end, "the pseudo-terminal run never finished"
+    while not done.exists():
+        assert time.time() < end, "the orphaned expect never finished"
         time.sleep(0.05)
-    return json.loads(result.read_text())
+    return {"exit": int(done.read_text().strip()), "output": log.read_text(), "ppid": ppid.read_text().strip()}
 
 
-def test_without_a_terminal_a_decision_is_refused_and_the_request_stays_pending(item):
+def test_without_a_terminal_a_decision_is_refused_and_points_to_approvals(item):
     ran = subprocess.run(
-        [sys.executable, "-m", "jura_growth", "approve", item.id],
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        env=dict(os.environ),
-        timeout=60,
+        [sys.executable, CHILD, "approve", item.id],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, env=environment(markers=False), timeout=60,
     )
     assert ran.returncode == 2, ran.stdout + ran.stderr
-    assert "decisions need a terminal or the Dispatch link" in ran.stdout
+    assert ran.stdout.strip() == REFUSAL
     assert status(item)["status"] == "pending"
 
 
-def test_under_a_real_terminal_a_wrong_code_is_refused(item, tmp_path):
-    ran = under_pty(tmp_path, ["approve", item.id], typed="000000")
+@pytest.mark.parametrize("markers", [True, False], ids=["claude-markers", "markers-stripped"])
+@pytest.mark.parametrize("decision", ["approve", "skip"])
+def test_the_orphaned_expect_probe_is_refused(item, tmp_path, markers, decision):
+    ran = orphaned_expect(tmp_path, [decision, item.id], item.content_hash[:6], markers=markers)
+    assert ran["ppid"] == "1", "the probe didn't leave the test's process tree, so it proves nothing"
     assert ran["exit"] == 2, ran["output"]
-    assert "refused:" in ran["output"] and "code" in ran["output"]
-    assert status(item)["status"] == "pending"
-
-
-def test_under_a_real_terminal_the_right_code_records_the_terminal_decision(item, tmp_path):
-    ran = under_pty(tmp_path, ["approve", item.id], typed=item.code)
-    assert ran["exit"] == 0, ran["output"]
-    assert f"{item.id} approved." in ran["output"]
+    assert REFUSAL in ran["output"]
+    assert "code (" not in ran["output"], "nothing asks for a code any more"
     record = status(item)
-    assert record["status"] == "approved"
-    assert record["decided_origin"] == "terminal"
-    assert record["decided_by"] == f"terminal:{pwd.getpwuid(os.getuid()).pw_name}"
+    assert record["status"] == "pending" and record["decided_by"] is None
 
 
-def test_under_a_real_terminal_skip_with_the_right_code_records_the_skip(item, tmp_path):
-    ran = under_pty(tmp_path, ["skip", item.id, "wrong", "one"], typed=item.code)
-    assert ran["exit"] == 0, ran["output"]
-    assert status(item)["status"] == "skipped"
-
-
-def test_under_a_real_terminal_a_claude_ancestor_is_refused_before_any_code_is_asked(item, tmp_path):
-    ran = under_pty(tmp_path, ["approve", item.id], typed=item.code, under_claude=True)
-    assert ran["exit"] == 2, ran["output"]
-    assert "a decision can't come from inside a Claude session" in ran["output"]
-    assert "code (" not in ran["output"]
-    assert status(item)["status"] == "pending"
+@pytest.mark.parametrize("markers", [True, False], ids=["claude-markers", "markers-stripped"])
+def test_the_forced_command_variable_alone_is_not_the_dispatch_origin(tmp_path, markers):
+    """`detect_ssh()` in a real process with `SSH_ORIGINAL_COMMAND` set but no sshd above it."""
+    env = environment(markers=markers)
+    env["SSH_ORIGINAL_COMMAND"] = "approve A-0001"
+    ran = subprocess.run(
+        [sys.executable, "-c", "import json; from jura_growth import origin; o = origin.detect_ssh(); print(json.dumps([o.kind, o.reason]))"],
+        capture_output=True, text=True, env=env, timeout=60,
+    )
+    kind, reason = json.loads(ran.stdout)
+    assert kind == origin.NOT_HUMAN
+    if markers:
+        assert reason == origin.IN_CLAUDE
+    else:
+        # Stripped, the ancestry decides: a `claude` above this suite, or no sshd at all.
+        assert reason in (origin.IN_CLAUDE, origin.NOT_DISPATCH)
