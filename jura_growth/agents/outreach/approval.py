@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-import unicodedata
 from datetime import date, datetime, time
 
 from jura_growth import approval_settings, approvals, caps, db, log, pause, timeutil
@@ -50,8 +49,15 @@ def _message(conn: sqlite3.Connection, subject: str) -> dict | None:
 
 
 def _canonical(value: dict) -> bytes:
-    normalised = {k: unicodedata.normalize("NFC", str(v)) for k, v in value.items()}
-    return json.dumps(normalised, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    """JSON with sorted keys over the exact strings that go out. No Unicode
+    normalisation: two drafts with different bytes never hash alike (code
+    review 06, Sec2); compose stores the draft as it will be sent."""
+    return json.dumps({k: str(v) for k, v in value.items()}, sort_keys=True, ensure_ascii=False).encode("utf-8")
+
+
+def content_hash_of(to: str, subject: str, body: str) -> str:
+    """The hash an `outreach-email` request carries, for these exact values."""
+    return approvals.content_hash(_canonical({"to": to, "subject": subject, "body": body}))
 
 
 def _at_cutoff(day: date) -> datetime:
@@ -316,7 +322,3 @@ def claimed(conn: sqlite3.Connection, message: int) -> approvals.Approval | None
     return approvals.Approval.from_row(row) if row else None
 
 
-def still_matches(conn: sqlite3.Connection, record: approvals.Approval) -> bool:
-    """A retry sends only what was approved: the content hash is unchanged."""
-    content = OutreachEmail().content(conn, record.subject)
-    return content is not None and approvals.content_hash(content) == record.content_hash

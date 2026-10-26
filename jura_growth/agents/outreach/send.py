@@ -22,11 +22,14 @@ Every rule is code. In order:
  8. Live only: the claim (mission control §5.8, ADR 0003). Live mode considers
     only emails Ting Yu approved in #approvals (`due(approved_only=True)`,
     which also feeds the spacing in step 5). After every check above, one
-    `BEGIN IMMEDIATE` transaction claims the email's `outreach-email`
-    approval and counts the attempt; then Resend is called under
-    `Idempotency-Key: jura-outreach-<id>`; then the email is marked sent. A
-    claimed email that Resend errored on, or that the process lost before the
-    mark, is retried under the same key with no second claim.
+    `BEGIN IMMEDIATE` transaction re-reads the email, checks that what will go
+    out hashes to the approval, claims the `outreach-email` approval and
+    counts the attempt; then exactly that email goes to Resend under
+    `Idempotency-Key: jura-outreach-<id>`; then it is marked sent. A claimed
+    email that Resend errored on, or that the process lost before the mark,
+    is retried under the same key with no second claim, but only within
+    `caps.OUTREACH_RETRY_WINDOW_HOURS` of the claim; after that it is marked
+    `uncertain`, Ting Yu is alerted, and sending again needs a fresh approval.
 
 In live mode each run also tops up the approval requests (`approval.raise_due`)
 and posts or edits their cards when it ends. Live mode waits for
@@ -482,34 +485,75 @@ class _NotClaimed(Exception):
     """Live: the email's approval couldn't be claimed, so it isn't sent."""
 
 
-def _claim(conn: sqlite3.Connection, message: dict) -> str | None:
-    """The claim (MC §4.6 A6, §5.8): in one `BEGIN IMMEDIATE` transaction,
-    claim the email's approval and count the attempt (the in-flight marker),
-    so the claim is committed before Resend is called. Returns why it was
-    refused, or None.
+@dataclass
+class _Claimed:
+    """What the claim checked, and so exactly what goes out."""
+
+    message: dict  # the message row, read inside the claim
+    row: dict  # the recipient's contact row, read inside the claim
+    email: compose.Email  # built from those rows; its hash is the approval's
+    attempts: int  # counted by the claim, before the call
+
+
+def _claim(conn: sqlite3.Connection, message: dict, gated: compose.Email) -> _Claimed:
+    """The claim (MC §4.6 A6, §5.8). In one `BEGIN IMMEDIATE` transaction it
+    re-reads the email and its recipient, builds the email from those rows,
+    refuses unless that is the email the brand gate just passed and its hash
+    is the approval's `content_hash`, then claims the approval and counts the
+    attempt (the in-flight marker). The commit comes before Resend is called,
+    and only the email built here is sent. Raises `_NotClaimed`.
 
     An email whose approval an earlier attempt already claimed (Resend
     errored, or the process died before the mark) is the same action
     instance: it is retried under its `Idempotency-Key` without a second
-    claim, as long as what goes out is still what was approved."""
-    refusal = None
-    with db.transaction(conn):
-        claimed = approval.claimed(conn, message["id"])
-        if claimed is None:
-            try:
-                approvals.use(conn, approval.KIND, approval.subject_of(message["id"]), run_id=log.current_run_id())
-            except approvals.NotApproved as error:
-                refusal = error.text  # a lapse or supersede it wrote commits with the block
-        elif not approval.still_matches(conn, claimed):
-            refusal = f"changed after {claimed.id} was used, so it isn't sent again"
-            conn.execute("UPDATE outreach_messages SET status = 'failed', error = ? WHERE id = ? AND status = 'queued'",
-                         (refusal, message["id"]))
-        if refusal is None:
-            conn.execute("UPDATE outreach_messages SET attempts = attempts + 1 WHERE id = ?", (message["id"],))
-        else:
-            log.event(conn, "outreach.not_claimed", {"message": message["id"], "why": store.mask(refusal)},
-                      level="warning", agent=store.AGENT)
-    return refusal
+    claim, if it still hashes to what was approved, and only inside
+    `caps.OUTREACH_RETRY_WINDOW_HOURS` of the claim (Resend's key lasts 24
+    hours). Past that it may already have gone out, so it is marked
+    `uncertain` and needs a fresh approval."""
+    refusal, alert, claimed = None, None, None
+    try:
+        with db.transaction(conn):
+            current = db.one(conn, "SELECT * FROM outreach_messages WHERE id = ? AND status = 'queued'", (message["id"],))
+            if current is None:
+                raise approvals.NotApproved("gone", "it is no longer queued")
+            lead, row = queue.recipient(conn, current["lead_id"])
+            email = queue.build(conn, lead, row, subject=current["subject"], body=current["draft_body"])
+            if (email.to, email.subject, email.draft) != (gated.to, gated.subject, gated.draft):
+                raise approvals.NotApproved("changed", "it changed during this run, so it isn't sent; the next slot reads it again")
+            sending = approval.content_hash_of(row["email"], email.subject, email.draft)
+            earlier = approval.claimed(conn, current["id"])
+            if earlier is None:
+                used = approvals.use(conn, approval.KIND, approval.subject_of(current["id"]), run_id=log.current_run_id())
+                if used.content_hash != sending:
+                    raise approvals.NotApproved("mismatch", f"what would go out isn't what {used.id} approved, so it isn't sent")
+            elif sending != earlier.content_hash:
+                refusal = f"it changed after {earlier.id} was used, so it isn't sent again"
+                conn.execute("UPDATE outreach_messages SET status = 'failed', error = ? WHERE id = ?", (refusal, current["id"]))
+            elif timeutil.now_sgt() - timeutil.parse(earlier.used_at) >= timedelta(hours=caps.OUTREACH_RETRY_WINDOW_HOURS):
+                refusal = (f"it may already have gone out: Resend was called under {earlier.id} more than "
+                           f"{caps.OUTREACH_RETRY_WINDOW_HOURS} hours ago and the send was never confirmed")
+                conn.execute(
+                    "UPDATE outreach_messages SET status = 'uncertain', error = ? WHERE id = ?",
+                    (refusal + ". Check Resend's log; it won't be retried, and sending again needs a fresh approval",
+                     current["id"]),
+                )
+                alert = f"Message {current['id']} {refusal}. It won't be retried; sending again needs a fresh approval."
+            if refusal is None:
+                conn.execute("UPDATE outreach_messages SET attempts = attempts + 1 WHERE id = ?", (current["id"],))
+                claimed = _Claimed(current, row, email, current["attempts"] + 1)
+    except approvals.NotApproved as error:
+        # Nothing is claimed. A lapse or supersede `use()` wrote is rolled back
+        # with it, and written again at the next read.
+        refusal = error.text
+    except queue.QueueError as error:
+        refusal = str(error)
+    if claimed is not None:
+        return claimed
+    log.event(conn, "outreach.not_claimed", {"message": message["id"], "why": store.mask(refusal or "")},
+              level="warning", agent=store.AGENT)
+    if alert:
+        discord.alert(conn, alert, agent=store.AGENT)
+    raise _NotClaimed(refusal or "not claimed")
 
 
 def _send_one(conn, message: dict, lead: dict, row: dict, mode: str, client) -> str:
@@ -540,9 +584,11 @@ def _send_one(conn, message: dict, lead: dict, row: dict, mode: str, client) -> 
         )
         return f"SHADOW message {message['id']} to {domain}"
 
-    refusal = _claim(conn, message)
-    if refusal:
-        raise _NotClaimed(f"message {message['id']} ({lead['domain']}): {refusal}")
+    try:
+        claimed = _claim(conn, message, email)
+    except _NotClaimed as refused:
+        raise _NotClaimed(f"message {message['id']} ({lead['domain']}): {refused}") from None
+    message, row, email = claimed.message, claimed.row, claimed.email
     outcome, detail = _resend(conn, message, row, email, client)
     if outcome == "sent":
         with db.transaction(conn):
@@ -559,7 +605,7 @@ def _send_one(conn, message: dict, lead: dict, row: dict, mode: str, client) -> 
         conn.execute("UPDATE outreach_messages SET error = ? WHERE id = ?", (detail[:500], message["id"]))
         store.auto_pause(conn, f"Resend refused the send: {detail}")
         return f"Resend error, outreach paused: {detail}"
-    attempts = message["attempts"] + 1  # counted by the claim, before the call
+    attempts = claimed.attempts
     if outcome == "retry" and attempts < 3:
         conn.execute("UPDATE outreach_messages SET attempts = ?, error = ? WHERE id = ?", (attempts, detail[:500], message["id"]))
         log.event(conn, "outreach.retry", {"message": message["id"], "error": detail}, level="warning", agent=store.AGENT)

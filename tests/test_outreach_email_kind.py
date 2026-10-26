@@ -80,13 +80,14 @@ def test_one_character_changed_in_recipient_subject_or_draft_doesnt_match(conn, 
     assert hash_of(conn, message) not in (None, before)
 
 
-def test_unicode_forms_hash_the_same(conn, monkeypatch):
+def test_the_hash_covers_the_exact_bytes_so_unicode_forms_differ(conn, monkeypatch):
+    """Code review 06, Sec2: no normalisation, so different bytes never match."""
     at(monkeypatch, MONDAY_10AM)
     message = seed(conn, 1)["message_id"]
     conn.execute("UPDATE outreach_messages SET subject = ? WHERE id = ?", ("Café quotes", message))
     composed = hash_of(conn, message)
     conn.execute("UPDATE outreach_messages SET subject = ? WHERE id = ?", ("Café quotes", message))
-    assert hash_of(conn, message) == composed
+    assert hash_of(conn, message) != composed
 
 
 @pytest.mark.parametrize("status", ["cancelled", "skipped", "dropped", "sent", "failed"])

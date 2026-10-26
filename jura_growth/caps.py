@@ -18,6 +18,11 @@ OUTREACH_PER_SEND_RUN = 1
 # `send-due` is called. Counted in whole clock minutes, so the seconds a send
 # takes never block the next 10-minute slot. A floor, so not configurable.
 OUTREACH_MINUTES_BETWEEN_LIVE_SENDS = 10
+# A claimed email whose send didn't complete is retried under the same
+# Idempotency-Key only this long after its claim. Resend keeps a key for 24
+# hours; past that a retry could be a second email, so the email is marked
+# uncertain and needs a fresh approval instead (code review 06, Sp1).
+OUTREACH_RETRY_WINDOW_HOURS = 23
 # Warm-up by days since the first live send: (until day, daily cap).
 OUTREACH_WARMUP = ((7, 5), (14, 10))
 OUTREACH_WORDS_MAX = 120
