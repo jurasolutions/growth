@@ -884,3 +884,13 @@ decisions: approve; B1 fixed (22 path probes); S7 groups.validate accepts any fa
 decisions: conductor: S7, N10, N11 fixed before merge in a short fix round 2
 questions: -
 evidence:  3230 passed, 0 skipped
+
+## 2026-10-27T06:30+0800 conductor (merge bp 06; last code ticket)
+status:    done
+persona:   conductor
+ticket:    bp-06, bp-05
+artifacts: merge of bp 06 (through 65c4035)
+decisions: fix round 2 verified (group_url_problem accepts only /groups/<one segment>, no query, fragment or dot segment; old rows fail closed); merged and pushed
+decisions: bp 05 (community posts as the Page) dispatched: the last code ticket
+questions: -
+evidence:  merged branch pytest -rs -> 3253 passed, 0 skipped
