@@ -101,3 +101,21 @@ questions: -
 evidence:  render.py to a temp folder -> MC 80/80, BP 36/36 placed once, exit 0
 evidence:  cmp -> exactly the 7 named tickets differ
 evidence:  git diff --stat -> 7 issue files, 11+/3-, no code
+
+## 2026-10-27T03:40+0800 business-analyst (amendment: publish queue sync() raises replacement social-post requests)
+status:    done
+persona:   business-analyst
+ticket:    -
+artifacts: jurasolutions/prd/pending/prd-jura-mission-control-2026-10-25.md (§4.6 A11, header); prd-jura-browser-publishing-2026-10-25.md (§5.4, §5.5 social-post row, header); all marked "Amended 2026-10-27"
+decisions: the publish queue's sync() is a request raiser. When a queued social post's content changes, it raises a fresh social-post request for the new content and supersedes the old one, and it never withdraws an item without raising its replacement. No AC ids changed; no in-repo doc other than this log needed a change
+questions: -
+evidence:  grep "sync()" -> MC 2, BP 3; AC counts MC 80, BP 36 unchanged; closing lines intact
+
+## 2026-10-27T03:41+0800 business-analyst (correction to the sync() amendment)
+status:    needs-human
+persona:   business-analyst
+ticket:    -
+artifacts: MC PRD §4.6 A11; BP PRD §5.4 social bullet and §5.5 social-post row (still marked "Amended 2026-10-27")
+decisions: corrects the previous entry to match the code (BP-02a fix round 1, the G9 harness). sync() raises a fresh social-post request on the same item (subject publish_item:<id>) and supersedes that item's old request. It creates no new item and never leaves the item without a live request
+questions: BP AC-P1.3 still says a content change raises "a new item and request". For a queued social post the code keeps the item. Reword AC-P1.3 to "a fresh request on the same item (social posts); a new item for other kinds", keeping its id? rec yes
+evidence:  grep -> "fresh item" 0 in BP; same-item wording present in MC A11 and BP §5.4/§5.5
