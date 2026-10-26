@@ -112,3 +112,37 @@ def test_the_forced_command_variable_alone_is_not_the_dispatch_origin(tmp_path, 
     else:
         # Stripped, the ancestry decides: a `claude` above this suite, or no sshd at all.
         assert reason in (origin.IN_CLAUDE, origin.NOT_DISPATCH)
+
+
+DETECT = (
+    "import json, os, subprocess\n"
+    "from jura_growth import origin\n"
+    "o = origin.detect_ssh()\n"
+    "parent = subprocess.run(['/bin/ps', '-o', 'ppid=,uid=,comm=', '-p', str(os.getppid())], capture_output=True, text=True).stdout.strip().split(None, 2)\n"
+    "print(json.dumps({'kind': o.kind, 'reason': o.reason, 'parent': parent}))\n"
+)
+
+
+@pytest.mark.parametrize("markers", [True, False], ids=["claude-markers", "markers-stripped"])
+def test_a_symlink_named_sshd_is_not_the_dispatch_origin(tmp_path, markers):
+    """The probe from code review 11: an orphaned shell run through a symlink called `sshd`,
+    with the forced command's variable set. It shows in `ps` as `sshd`, but as Ting Yu's
+    user, not root, so `detect_ssh()` refuses it."""
+    fake = tmp_path / "fake" / "sshd"
+    fake.parent.mkdir()
+    fake.symlink_to("/bin/sh")
+    script, out = tmp_path / "detect.py", tmp_path / "detect.json"
+    script.write_text(DETECT)
+    env = environment(markers=markers)
+    env["SSH_ORIGINAL_COMMAND"] = "status"
+    inner = f"sleep 0.3; '{sys.executable}' '{script}' > '{out}.part' 2>&1; mv '{out}.part' '{out}'; true"
+    subprocess.run(["/bin/sh", "-c", f"( '{fake}' -c \"{inner}\" & )"], env=env, check=True, timeout=30)
+    end = time.time() + 60
+    while not out.exists():
+        assert time.time() < end, "the probe never finished"
+        time.sleep(0.05)
+    found = json.loads(out.read_text())
+    ppid, uid, comm = found["parent"]
+    assert ppid == "1" and Path(comm).name == "sshd" and uid != "0", "the probe didn't look like an orphaned sshd, so it proves nothing"
+    assert found["kind"] == origin.NOT_HUMAN
+    assert found["reason"] == (origin.IN_CLAUDE if markers else origin.NOT_DISPATCH)
