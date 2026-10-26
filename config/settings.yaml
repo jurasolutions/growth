@@ -48,6 +48,8 @@ auto_pause_after_failures: 3
 retention:
   backups_days: 14
   transcripts_days: 30
+  # Publish transcripts hold page text: at most 7 days (caps.BROWSER_TRANSCRIPT_DAYS); may only be lower.
+  browser_transcripts_days: 7
   one_pager_days: 14 # the one-pager's grid PNGs in data/growth/one-pager/
 
 # Jobs `pause all` leaves running: housekeeping, and the digest that reports

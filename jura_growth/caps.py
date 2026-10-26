@@ -38,6 +38,8 @@ NO_REPEAT_DAYS = 14
 # the moment a run claims it, whatever happens next, so a run that crashes
 # mid-post still uses up its slot.
 BROWSER_JOBS = frozenset({"publish"})  # the only jobs that may drive Chrome
+# Days a browser job's transcript is kept: it holds third-party page text (BP §4.7).
+BROWSER_TRANSCRIPT_DAYS = 7
 COMMUNITY_POSTS_PER_DAY = 1
 COMMUNITY_JOINS_PER_WEEK = 3  # ISO week, SGT
 PUBLISH_ITEMS_PER_RUN = 1
