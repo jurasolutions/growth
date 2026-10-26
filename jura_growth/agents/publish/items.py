@@ -285,10 +285,7 @@ def create_join(conn: sqlite3.Connection, group_id: int, *, run_id: int | None, 
     waiting = _existing(conn, JOIN_ITEM, group_id, states=OPEN)
     if waiting is not None:
         return Made(waiting, latest_request(conn, waiting), why=f"group {group_id} already has a join waiting ({waiting.label})")
-    today = timeutil.today()
-    if _too_late(JOIN_ITEM, today.isoformat(), {}):
-        # Past this week's last window (Sunday 18:00): the proposal belongs to the next ISO week.
-        today += timedelta(days=7 - today.weekday())
+    today = _proposal_day()
     cap = limits.community_joins_per_week()
     if proposals_in_week(conn, today) >= cap:
         return Made(why=f"{cap} joins proposed in {timeutil.iso_week(today)} already; the cap is {cap} a week")
@@ -297,6 +294,36 @@ def create_join(conn: sqlite3.Connection, group_id: int, *, run_id: int | None, 
         return Made(why=f"group {group_id} can't be joined now")
     return _make(conn, JOIN_ITEM, COMMUNITY_PLATFORM, group_id, found.content, today.isoformat(), run_id=run_id,
                  request=request)
+
+
+def _proposal_day() -> date:
+    """The day a join proposed now is for: today, or, past this week's last window (Sunday
+    18:00), the next ISO week's Monday."""
+    today = timeutil.today()
+    if _too_late(JOIN_ITEM, today.isoformat(), {}):
+        today += timedelta(days=7 - today.weekday())
+    return today
+
+
+def join_room(conn: sqlite3.Connection) -> dict:
+    """What the Monday community run may propose (`community context`): the week's join cap, the
+    proposals already made in it, the room left, and the groups `create_join` would accept now.
+    With `community.browser` off there is no room and no candidate."""
+    from jura_growth.agents.community import groups as groups_mod
+    from jura_growth.agents.publish import group_kinds
+
+    on = group_kinds.browser_on()
+    day = _proposal_day()
+    cap = limits.community_joins_per_week()
+    proposed = proposals_in_week(conn, day)
+    candidates = []
+    if on:
+        for group in groups_mod.all_groups(conn):
+            waiting = _existing(conn, JOIN_ITEM, group["id"], states=OPEN)
+            if group_kinds.problem(group, group_kinds.JOIN) is None and waiting is None:
+                candidates.append({key: group[key] for key in ("id", "name", "url", "audience", "fit_reason", "joined_as")})
+    return {"browser": on, "week": timeutil.iso_week(day), "cap": cap, "proposed_this_week": proposed,
+            "left": max(cap - proposed, 0) if on else 0, "candidates": candidates}
 
 
 def create_join_answers(conn: sqlite3.Connection, join: Item, answers: list[dict], *, run_id: int | None,

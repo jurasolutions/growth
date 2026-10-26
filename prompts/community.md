@@ -59,10 +59,23 @@ planned this week, recent post texts, and the live toolbox tools.
    leave it out.
 6. Run `jura-growth community summary` to post the register summary to `#community`.
 
+## Part 1b. Joins as the Jura Page (every run)
+
+Groups are joined as the Jura Solutions Facebook Page, never as Ting Yu, and only with his
+approval. You only propose; a later publish run joins once he approves the card. You never open
+the group's page yourself.
+
+1. Read `joins` from the context. If `joins.browser` is false or `joins.left` is 0, skip this part.
+2. From `joins.candidates`, pick up to `joins.left` groups, best fit first: the clearest Singapore
+   SME audience and the most helpful fit reason. Don't propose a group just to fill the room.
+3. For each, run `jura-growth community propose-join <id>`. It raises a `group-join` card in
+   `#approvals`. If it refuses (the week's cap is reached, or the group can't be joined now),
+   stop proposing; never retry a refused group.
+
 ## Part 2. This week's plan (only for joined, good-fit groups)
 
 If `eligible` is empty, nobody has joined a group yet: finish with
-`SKIP: no joined good-fit groups yet, so no plan this week. Register: <total> groups (<good fit> good fit), <new> new this run.`
+`SKIP: no joined good-fit groups yet, so no plan this week. Register: <total> groups (<good fit> good fit), <new> new this run, <n> joins proposed.`
 
 Otherwise:
 
@@ -121,4 +134,4 @@ Otherwise:
 
 Your final message is one to three lines and its **very first characters** are `OK:` (register
 updated and plan published), `SKIP:` (no joined good-fit groups, as above) or `FAIL:` (anything
-stopped you), with the counts. The scheduler reads only that prefix to record the run.
+stopped you), with the counts, including the joins proposed. The scheduler reads only that prefix to record the run.
