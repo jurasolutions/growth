@@ -296,8 +296,13 @@ def _record(conn: sqlite3.Connection | None, channel: str, digest: str, *, deliv
     )
 
 
+def outbox_dir(data: Path | None = None) -> Path:
+    """Where messages wait when Discord didn't take them: one JSONL file per SGT day."""
+    return (data or paths.data_dir()) / "discord-outbox"
+
+
 def _outbox(channel: str, content: str, files: list[str], username: str | None) -> None:
-    path = paths.writable(paths.data_dir() / "discord-outbox" / f"{timeutil.today_str()}.jsonl")
+    path = paths.writable(outbox_dir() / f"{timeutil.today_str()}.jsonl")
     record = {
         "ts": timeutil.stamp(),
         "channel": channel,

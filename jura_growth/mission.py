@@ -30,7 +30,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
-from jura_growth import agents, health, paths, privacy, schedule, slots
+from jura_growth import agents, discord, health, paths, privacy, schedule, slots, timeutil
 from jura_growth.timeutil import SGT
 
 OK, MISSING, UNFINISHED_WRITE, UNREADABLE = "ok", "missing", "unfinished write", "unreadable"
@@ -133,6 +133,8 @@ class Request:
 
 # The one-pager job's own schedule (ticket 09 adds the job); until then, its planned 08:00.
 ONE_PAGER_JOB, ONE_PAGER_DEFAULT = "one-pager", {"daily": "08:00"}
+ONE_PAGER_GRACE = timedelta(hours=1)  # a slot this recent is the one-pager being built now
+ONE_PAGER_LOOKBACK = timedelta(days=7)  # "since the last one-pager" never reaches further back
 
 
 def open_read_only(path: Path) -> sqlite3.Connection:
@@ -148,27 +150,32 @@ def read(source: Source) -> Snapshot:
     database's state: that is `db_state`."""
     now = source.now.astimezone(SGT)
     days = tuple(now.date() - timedelta(days=n) for n in reversed(range(source.days)))
-    last, following = one_pager_around(now, source.jobs)
+    scheduled, following = one_pager_times(now, source.jobs)
+    installs = health.install_states(source.jobs, source.installed)
     conn, state, error = _connect(Path(source.db))
     try:
         privacy.load_for_masking(conn)  # the rows and files were written by other processes
-        base: dict[str, Any] = {
-            "days": days,
-            "installs": health.install_states(source.jobs, source.installed),
-            "last_one_pager": last,
-            "next_one_pager": following,
-            "pause_file": _pause_file(),
-            "gaps": tuple(health.setup_gaps()),
-            "broken": tuple(_clean(f"{name} ({problem[:120]})") for name, problem in agents.BROKEN.items()),
-            "outbox": _outbox(Path(source.data) / "discord-outbox", last),
-        }
-        if conn is None:
-            return Snapshot(now, state, error, **base)
-        try:
-            facts = _from_db(conn, source, now, days, base["installs"], last)
-        except sqlite3.Error as failure:
-            return Snapshot(now, _state_of(failure), _error_name(failure), **base)
-        return Snapshot(now, OK, **base, **facts)
+        last, facts = scheduled, {}
+        if conn is not None:
+            try:
+                last = _last_one_pager(conn, now, scheduled)
+                facts = _from_db(conn, source, now, days, installs, last)
+            except sqlite3.Error as failure:
+                last, facts, state, error = scheduled, {}, _state_of(failure), _error_name(failure)
+        return Snapshot(
+            now,
+            state,
+            error,
+            days=days,
+            installs=installs,
+            last_one_pager=last,
+            next_one_pager=following,
+            pause_file=_pause_file(),
+            gaps=tuple(health.setup_gaps()),
+            broken=tuple(_clean(f"{name} ({problem[:120]})") for name, problem in agents.BROKEN.items()),
+            outbox=_outbox(discord.outbox_dir(Path(source.data)), last),
+            **facts,
+        )
     finally:
         if conn is not None:
             conn.close()
@@ -212,26 +219,13 @@ def _pause_file() -> str | None:
 def _outbox(folder: Path, since: datetime) -> int:
     """Messages saved to the Discord outbox since the last one-pager."""
     after = since.isoformat(timespec="seconds")
-    count = 0
-    try:
-        files = sorted(folder.glob("*.jsonl"))
-    except OSError:
-        return 0
-    for path in files:
-        if path.stem < since.date().isoformat():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for raw in text.splitlines():
-            try:
-                line = json.loads(raw)
-            except ValueError:
-                continue
-            if isinstance(line, dict) and str(line.get("ts", "")) > after:
-                count += 1
-    return count
+    return sum(
+        1
+        for day, path in _day_files(folder)
+        if day >= since.date()
+        for line in _jsonl(path)
+        if str(line.get("ts", "")) > after
+    )
 
 
 def _tables(conn: sqlite3.Connection) -> set[str]:
@@ -312,21 +306,37 @@ def _plugin_lines(conn: sqlite3.Connection) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def one_pager_around(now: datetime, jobs: Mapping[str, Mapping[str, Any]]) -> tuple[datetime, datetime]:
-    """The scheduled one-pagers just before and just after `now`. An
-    on-request one-pager reports since the last scheduled one, like the next
-    scheduled one will."""
-    shape = dict((jobs.get(ONE_PAGER_JOB) or {}).get("schedule") or ONE_PAGER_DEFAULT)
-    times = sorted(
-        datetime(day.year, day.month, day.day, hour, minute, tzinfo=SGT)
-        for offset in range(-8, 9)
-        for day in [now.date() + timedelta(days=offset)]
-        for weekday, hour, minute in schedule.sgt_slots(shape)
-        if weekday is None or weekday == schedule.launchd_weekday(day)
-    )
-    before = [at for at in times if at < now]
+def one_pager_times(now: datetime, jobs: Mapping[str, Mapping[str, Any]]) -> tuple[datetime, datetime]:
+    """From the schedule alone: the one-pager this one reports since, and the
+    next scheduled one.
+
+    A scheduled one-pager always starts a little after its slot (launchd,
+    start-up, `expire_due()`), so a slot less than `ONE_PAGER_GRACE` ago is
+    this one-pager itself and the window starts at the slot before it (code
+    review 08, B-1). An on-request one-pager later in the day reports since
+    that morning's."""
+    shape = (jobs.get(ONE_PAGER_JOB) or {}).get("schedule") or ONE_PAGER_DEFAULT
+    times = [at for offset in range(-8, 9) for at in slots.slot_times(shape, now.date() + timedelta(days=offset))]
+    before = [at for at in times if at <= now - ONE_PAGER_GRACE]
     after = [at for at in times if at > now]
     return (before[-1] if before else now - timedelta(days=1)), (after[0] if after else now + timedelta(days=1))
+
+
+def _last_one_pager(conn: sqlite3.Connection, now: datetime, scheduled: datetime) -> datetime:
+    """When the last one-pager went out: the start of the latest `one-pager`
+    run that finished ok, so a day the Mac slept through doesn't drop what
+    happened then. Without one in the last week, the scheduled time. The run
+    still going (this one) isn't ok yet, so it never counts."""
+    if "runs" not in _tables(conn):
+        return scheduled
+    found = conn.execute(
+        "SELECT max(started_at) FROM runs WHERE job = ? AND status = 'ok' AND started_at < ?",
+        (ONE_PAGER_JOB, now.isoformat(timespec="seconds")),
+    ).fetchone()[0]
+    if not found:
+        return scheduled
+    ran = _at(found)
+    return ran if ran >= now - ONE_PAGER_LOOKBACK else scheduled
 
 
 # --- approval requests ----------------------------------------------------------------
@@ -377,8 +387,7 @@ def _at_or_none(value: str | None) -> datetime | None:
 
 
 def _at(value: str) -> datetime:
-    moment = datetime.fromisoformat(value)
-    return (moment if moment.tzinfo else moment.replace(tzinfo=SGT)).astimezone(SGT)
+    return timeutil.parse(value).astimezone(SGT)
 
 
 # --- records for the slot classifier (MC §4.5) -------------------------------------
@@ -419,7 +428,7 @@ def _records(conn: sqlite3.Connection, tables: set[str], mirror: Path, jobs: set
     for line in _mirror_since(mirror, first):
         add(slots.Record.from_event, line)
 
-    covered = {record.job for record in found.values() if record.at < _midnight(first)}
+    covered = {record.job for record in found.values() if record.at < timeutil.midnight(first)}
     for line in _mirror_before(mirror, first, jobs - covered):
         add(slots.Record.from_event, line)
     return list(found.values())
@@ -434,7 +443,7 @@ def _record(make: Callable[[Any], slots.Record], row: Any) -> slots.Record | Non
         return None
 
 
-def _mirror_files(folder: Path) -> list[tuple[date, Path]]:
+def _day_files(folder: Path) -> list[tuple[date, Path]]:
     found = []
     try:
         for path in folder.glob("*.jsonl"):
@@ -447,9 +456,9 @@ def _mirror_files(folder: Path) -> list[tuple[date, Path]]:
     return sorted(found)
 
 
-def _lines(path: Path) -> Iterator[dict]:
-    """The trace lines of one mirror file. A line cut short by a crash, or
-    anything else that isn't a trace, is skipped."""
+def _jsonl(path: Path) -> Iterator[dict]:
+    """The JSON objects in a JSONL file (the mirror, the outbox). A line cut
+    short by a crash is skipped."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -459,19 +468,21 @@ def _lines(path: Path) -> Iterator[dict]:
             line = json.loads(raw)
         except ValueError:
             continue
-        if (
-            isinstance(line, dict)
-            and line.get("kind") in TRACES
-            and isinstance(line.get("payload"), dict)
-            and isinstance(line.get("ts"), str)
-        ):
+        if isinstance(line, dict):
+            yield line
+
+
+def _lines(path: Path) -> Iterator[dict]:
+    """The trace lines of one mirror file."""
+    for line in _jsonl(path):
+        if line.get("kind") in TRACES and isinstance(line.get("payload"), dict) and isinstance(line.get("ts"), str):
             yield line
 
 
 def _mirror_since(folder: Path, first: date) -> Iterator[dict]:
     """Trace lines in the files from `first` on. A line lands in a later
     day's file when its transaction commits after midnight, never an earlier one."""
-    for day, path in _mirror_files(folder):
+    for day, path in _day_files(folder):
         if day >= first:
             yield from _lines(path)
 
@@ -480,7 +491,7 @@ def _mirror_before(folder: Path, first: date, wanted: set[str]) -> Iterator[dict
     """The latest trace before `first` for each job in `wanted`, reading
     older files newest first and stopping once every job has one."""
     wanted = set(wanted)
-    for day, path in reversed(_mirror_files(folder)):
+    for day, path in reversed(_day_files(folder)):
         if not wanted:
             return
         if day >= first:
@@ -494,12 +505,8 @@ def _mirror_before(folder: Path, first: date, wanted: set[str]) -> Iterator[dict
         wanted -= set(latest)
 
 
-def _midnight(day: date) -> datetime:
-    return datetime(day.year, day.month, day.day, tzinfo=SGT)
-
-
 def _stamp(day: date) -> str:
-    return _midnight(day).isoformat(timespec="seconds")
+    return timeutil.midnight(day).isoformat(timespec="seconds")
 
 
 # --- redaction ------------------------------------------------------------------------

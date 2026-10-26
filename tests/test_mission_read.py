@@ -252,6 +252,60 @@ def test_only_live_requests_and_those_closed_since_the_last_one_pager_are_read(c
     assert list(requests(snapshot)) == ["A-0003"]
 
 
+def window_world(conn) -> None:
+    """Things that happened on Mon 9 Nov after its 08:00 one-pager."""
+    world.approval(conn, 160, "outreach-email", status="expired", decided_at="2026-11-09T10:00:00+08:00", decided_origin="ssh",
+                   use_by="2026-11-09T16:30:00+08:00", closed_at="2026-11-09T16:31:00+08:00", close_reason="approved but not used in time")
+    conn.execute("INSERT INTO discord_posts (channel, ts, content_hash, delivered) VALUES ('alerts', '2026-11-09T12:00:00+08:00', 'h', 0)")
+    outbox = paths.data_dir() / "discord-outbox"
+    outbox.mkdir(parents=True, exist_ok=True)
+    (outbox / "2026-11-09.jsonl").write_text('{"ts": "2026-11-09T12:00:00+08:00", "content": "x"}\n')
+
+
+def one_pager_run(conn, started_at: str, status: str = "ok") -> None:
+    conn.execute("INSERT INTO runs (agent, job, started_at, status) VALUES ('digest', 'one-pager', ?, ?)", (started_at, status))
+
+
+@pytest.mark.parametrize("now", ["2026-11-10T08:00:05+08:00", "2026-11-10T08:04:00+08:00"])
+def test_the_scheduled_one_pager_running_late_still_reports_since_the_one_before(conn, now):
+    window_world(conn)
+    one_pager_run(conn, "2026-11-09T08:00:03+08:00")
+    one_pager_run(conn, "2026-11-10T08:00:02+08:00", status="running")  # this run itself
+    snapshot = mission.read(world.source(now))
+    assert snapshot.last_one_pager.isoformat() == "2026-11-09T08:00:03+08:00"
+    assert snapshot.next_one_pager.isoformat() == "2026-11-11T08:00:00+08:00"
+    assert requests(snapshot)["A-0160"].state == mission.LAPSED_UNUSED
+    assert (snapshot.undelivered, snapshot.outbox) == (1, 1)
+
+
+def test_without_a_recorded_one_pager_the_window_starts_at_the_slot_before_this_one(conn):
+    window_world(conn)
+    snapshot = mission.read(world.source("2026-11-10T08:00:05+08:00"))
+    assert snapshot.last_one_pager.isoformat() == "2026-11-09T08:00:00+08:00"
+    assert "A-0160" in requests(snapshot)
+    assert (snapshot.undelivered, snapshot.outbox) == (1, 1)
+
+
+def test_an_on_request_one_pager_reports_since_this_mornings(conn):
+    assert mission.read(world.source("2026-11-10T11:05:00+08:00")).last_one_pager.isoformat() == "2026-11-10T08:00:00+08:00"
+    one_pager_run(conn, "2026-11-10T08:00:02+08:00")
+    assert mission.read(world.source("2026-11-10T11:05:00+08:00")).last_one_pager.isoformat() == "2026-11-10T08:00:02+08:00"
+
+
+def test_after_a_missed_day_the_window_starts_at_the_last_one_pager_that_ran(conn):
+    window_world(conn)
+    one_pager_run(conn, "2026-11-09T08:00:03+08:00")  # Mon ran; Tue's was slept through
+    snapshot = mission.read(world.source("2026-11-11T08:00:05+08:00"))
+    assert snapshot.last_one_pager.isoformat() == "2026-11-09T08:00:03+08:00"
+    assert "A-0160" in requests(snapshot)
+    assert (snapshot.undelivered, snapshot.outbox) == (1, 1)
+
+
+def test_a_one_pager_run_from_long_ago_does_not_stretch_the_window_past_a_week(conn):
+    one_pager_run(conn, "2026-10-01T08:00:03+08:00")
+    assert mission.read(world.source("2026-11-10T08:00:05+08:00")).last_one_pager.isoformat() == "2026-11-09T08:00:00+08:00"
+
+
 def test_an_unposted_card_is_read_as_unposted(conn):
     world.approval(conn, 1, "fake", posted_at=None)
     assert requests(mission.read(world.source()))["A-0001"].posted is False

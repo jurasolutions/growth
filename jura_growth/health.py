@@ -22,8 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
 
-from jura_growth import agents, config, discord, holidays, schedule
-from jura_growth.timeutil import SGT
+from jura_growth import agents, config, discord, holidays, schedule, timeutil
 
 _SETTING = re.compile(r"[A-Z][A-Z0-9_]*")
 DISCORD = "Discord"
@@ -129,7 +128,7 @@ def previous_business_day_start(now: datetime) -> datetime:
         if holidays.is_business_day(day):
             break
         day -= timedelta(days=1)
-    return datetime(day.year, day.month, day.day, tzinfo=SGT)
+    return timeutil.midnight(day)
 
 
 def strip(snapshot) -> list[str]:

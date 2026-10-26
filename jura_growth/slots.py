@@ -170,6 +170,19 @@ def classify(
     return result
 
 
+def slot_times(shape: Mapping[str, Any], day: date, business_day: BusinessDay = holidays.is_business_day) -> list[datetime]:
+    """A schedule's slots on one SGT day. A job with any business-day shape
+    has none on a weekend or public holiday, as the runner skips it."""
+    if schedule.business_days_only(dict(shape)) and not business_day(day):
+        return []
+    weekday = schedule.launchd_weekday(day)
+    return sorted(
+        datetime(day.year, day.month, day.day, hour, minute, tzinfo=SGT)
+        for launchd_day, hour, minute in schedule.sgt_slots(dict(shape))
+        if launchd_day is None or launchd_day == weekday
+    )
+
+
 class _Job:
     """One job's records, sorted and set against its schedule."""
 
@@ -188,16 +201,7 @@ class _Job:
         return [self._status(at) for at in self.slot_times(day)]
 
     def _slot_times(self, day: date) -> list[datetime]:
-        """The job's slots on one SGT day. A job with any business-day shape
-        has none on a weekend or public holiday, as the runner skips it."""
-        if schedule.business_days_only(dict(self.shape)) and not self.business_day(day):
-            return []
-        weekday = schedule.launchd_weekday(day)
-        return sorted(
-            datetime(day.year, day.month, day.day, hour, minute, tzinfo=SGT)
-            for launchd_day, hour, minute in schedule.sgt_slots(dict(self.shape))
-            if launchd_day is None or launchd_day == weekday
-        )
+        return slot_times(self.shape, day, self.business_day)
 
     def _next_slot(self, after: datetime) -> datetime | None:
         """The first slot of the job later than `after`: where its window ends."""
