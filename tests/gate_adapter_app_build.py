@@ -18,7 +18,7 @@ from jura_growth.agents.apps import backlog, builds
 import approval_world as aw
 from test_apps import GOOD
 
-DAY = "2026-10-26"
+DAY = "2026-10-20"  # before the tests' "today", so one-a-day never counts these
 
 
 def prd_text(number: int, *, name: str | None = None, slug: str | None = None, day: str = DAY) -> str:

@@ -4,9 +4,11 @@ Seeded from the app factory PRD §5.7 (`backlog-seed.yaml` beside this file).
 `jura-growth apps submit-prd` marks the row it used, or adds one for a new
 idea. Ting Yu may edit the file by hand; keep the keys.
 
-Statuses: idea, prd-pending (PRD written, waiting for "approved, build"),
-prd-done (built; PRD moved to prd/done/apps), live (in the site registry),
-dropped (not to be picked).
+Statuses: idea, prd-pending (PRD written, waiting for its `app-build`
+decision in #approvals, or handed off to be built), prd-done (built; PRD moved
+to prd/done/apps), live (in the site registry), dropped (not to be picked;
+Ting Yu skipped its PRD). An idea whose PRD expired unanswered keeps status
+idea with a `reopens` date, and shows as `resting` until then (MC §5.9 step 5).
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ HEADER = """\
 # adds a row for a new idea. You can edit it by hand; keep the keys.
 #
 # status: idea | prd-pending | prd-done | live | dropped
+#   An idea with a `reopens` date had its PRD expire unanswered: it shows as
+#   `resting`, and the factory may offer it again from that date.
 #   (`jura-growth apps backlog` also shows the status worked out from the PRD
 #   folders and the site registry, which wins if this file is behind.)
 # tier: browser | ai. Category: Sales, Finance, Admin, HR, Marketing, Documents.
@@ -139,6 +143,8 @@ def effective(rows: list[dict], *, prd_files: list, live: list[dict]) -> list[di
     for row in rows:
         slug = row.get("slug") or prd_mod.slugify(row["name"])
         status = row.get("status") or "idea"
+        if resting(row):
+            status = "resting"
         app_id = row.get("app_id")
         if slug in files:
             f = files[slug]

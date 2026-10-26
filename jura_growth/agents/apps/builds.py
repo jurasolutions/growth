@@ -53,7 +53,7 @@ def pending_file(app_id: str) -> catalog.PrdFile | None:
 
 
 def skipped_dir() -> Path:
-    return paths.prd_dir() / "skipped" / "apps"
+    return catalog.skipped_dir()
 
 
 # --- the kind -----------------------------------------------------------------

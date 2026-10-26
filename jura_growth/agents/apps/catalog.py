@@ -144,8 +144,17 @@ def live_apps() -> list[dict]:
     return [e for e in entries if e.get("status") == "live"]
 
 
+def skipped_dir() -> Path:
+    return paths.prd_dir() / "skipped" / "apps"
+
+
 def numbers_in_use(conn: sqlite3.Connection | None = None) -> set[int]:
     used = {f.number for f in prd_files()}
+    if skipped_dir().is_dir():  # a skipped or expired PRD keeps its number
+        for path in skipped_dir().glob("prd-app-*.md"):
+            m = prd_mod.FILENAME_RE.match(path.name)
+            if m:
+                used.add(int(m["num"]))
     entries, _ = registry()
     for entry in entries:
         m = re.match(r"^APP-(\d+)$", str(entry.get("prd", "")))
@@ -188,16 +197,28 @@ def taken(conn: sqlite3.Connection | None = None) -> tuple[dict[str, str], dict[
     from jura_growth.agents.apps import backlog
 
     for row in backlog.load():
-        if row.get("status") in (None, "idea"):
+        if row.get("status") in (None, "idea") and not backlog.resting(row):
             continue
         where = f"backlog: {row.get('app_id') or row.get('status')}"
         slugs.setdefault(str(row.get("slug") or prd_mod.slugify(row["name"])), where)
         names.setdefault(prd_mod.normalise_name(row["name"]), where)
     if conn is not None:
-        for row in db.rows(conn, "SELECT app_id, slug, name FROM app_prds"):
+        for row in db.rows(conn, _NOT_EXPIRED):
             slugs.setdefault(row["slug"], f"{row['app_id']}, written by the factory")
             names.setdefault(prd_mod.normalise_name(row["name"]), f"{row['app_id']}, written by the factory")
     return slugs, names
+
+
+# The factory's PRDs, less those whose latest `app-build` request expired unanswered: those
+# ideas may be proposed again once their backlog row stops resting (MC §5.9 step 5).
+_NOT_EXPIRED = """
+SELECT p.app_id, p.slug, p.name FROM app_prds p
+WHERE NOT EXISTS (
+  SELECT 1 FROM approvals a
+  WHERE a.kind = 'app-build' AND a.subject = 'app:' || p.app_id AND a.status = 'expired' AND a.used_at IS NULL
+    AND a.id = (SELECT max(b.id) FROM approvals b WHERE b.kind = a.kind AND b.subject = a.subject)
+)
+"""
 
 
 def factory_prd_on(conn: sqlite3.Connection, day: str) -> list[dict]:

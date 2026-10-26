@@ -17,6 +17,7 @@ from click.testing import CliRunner
 import approval_world as aw
 import mission_world as mw
 from discord_double import discord_double  # noqa: F401 - the fixture
+from sweep import d2_secrets  # noqa: F401 - the fixture
 from gate_adapter_app_build import DispatchDouble, file_prd, prd_path
 from jura_growth import approvals, config, db, log, mission, one_pager, pause, paths
 from jura_growth.agents.apps import builds
@@ -229,6 +230,237 @@ def test_an_app_build_takes_no_decision_arguments(tmp_path, conn):
     assert answer.answer == "refused" and "doesn't take post_days" in answer.text
     assert aw.get(conn, request.id).status == "pending" and db.scalar(conn, "SELECT count(*) FROM app_builds") == 0
     assert aw.events(conn, "approval.approved") == []
+
+
+def test_a_prd_changed_by_one_byte_is_not_handed_off_and_a_new_request_is_raised(tmp_path, prd_tree, conn):
+    """AC-M9.4 (G9 for app-build)."""
+    request = filed(tmp_path, conn)
+    target = prd_tree / "pending" / "apps" / FILED
+    target.write_bytes(target.read_bytes() + b" ")
+    assert aw.approve(conn, request, args={}).answer == "superseded"
+    assert aw.get(conn, request.id).status == "superseded"
+    assert db.scalar(conn, "SELECT count(*) FROM app_builds") == 0 and aw.claims(conn) == 0
+    fresh = filed_request(conn)
+    assert fresh.supersedes == request.number and fresh.subject == "app:APP-003"
+    assert fresh.content_hash == hashlib.sha256(target.read_bytes()).hexdigest()
+
+
+# --- AC-M9.5 and AC-M9.6: skipped for good, or unanswered and back after 30 days ---------------
+
+
+def good_on(day: str, number: int = 3) -> str:
+    """GOOD as the factory would write it on `day`, as APP-<number>."""
+    return GOOD.replace("2026-10-26", day).replace("APP-003", f"APP-{number:03d}").replace("prd-app-003", f"prd-app-{number:03d}")
+
+
+def at(monkeypatch, moment: str) -> None:
+    monkeypatch.setenv("JURA_GROWTH_NOW", moment)
+
+
+def backlog_row(slug: str) -> dict:
+    view = json.loads(invoke("apps", "context", "--json").output)
+    return next(r for r in view["backlog"] if r["slug"] == slug)
+
+
+def test_a_skipped_prd_moves_to_skipped_and_its_idea_never_comes_back(tmp_path, prd_tree, conn, monkeypatch):
+    """AC-M9.5."""
+    at(monkeypatch, "2026-11-10T06:30:00+08:00")
+    assert submit(tmp_path, good_on("2026-11-10")).exit_code == 0
+    request = filed_request(conn)
+    at(monkeypatch, "2026-11-10T09:15:00+08:00")
+    assert aw.skip(conn, request).answer == "recorded"
+    name = "prd-app-003-delivery-order-maker-2026-11-10.md"
+    moved = prd_tree / "skipped" / "apps" / name
+    assert not (prd_tree / "pending" / "apps" / name).exists()
+    first, blank, *rest = moved.read_text().splitlines()
+    assert first.startswith("Skipped by Ting Yu on 2026-11-10") and blank == ""
+    assert "\n".join(rest) + "\n" == good_on("2026-11-10")
+    at(monkeypatch, "2026-11-11T06:30:00+08:00")
+    assert backlog_row("delivery-order-maker")["effective_status"] == "dropped"
+    again = submit(tmp_path, good_on("2026-11-11", number=4))
+    assert again.exit_code == 1 and "delivery-order-maker" in again.output
+
+
+def test_an_unanswered_prd_expires_and_its_idea_is_offered_again_from_day_30(tmp_path, prd_tree, conn, monkeypatch):
+    """AC-M9.6: not offered on day 29 after the expiry, offered and filed again on day 30."""
+    at(monkeypatch, "2026-11-10T06:30:00+08:00")
+    assert submit(tmp_path, good_on("2026-11-10")).exit_code == 0
+    request = filed_request(conn)
+    expired = aw.at(monkeypatch, request.decide_by)  # 2026-11-17 06:30
+    approvals.expire_due(conn, expired)
+    assert aw.get(conn, request.id).status == "expired"
+    moved = prd_tree / "skipped" / "apps" / "prd-app-003-delivery-order-maker-2026-11-10.md"
+    assert moved.read_text().startswith("Expired unanswered on 2026-11-17")
+    at(monkeypatch, "2026-12-16T06:30:00+08:00")  # day 29
+    assert backlog_row("delivery-order-maker")["effective_status"] != "idea"
+    assert submit(tmp_path, good_on("2026-12-16", number=4)).exit_code == 1
+    at(monkeypatch, "2026-12-17T06:30:00+08:00")  # day 30
+    assert backlog_row("delivery-order-maker")["effective_status"] == "idea"
+    result = submit(tmp_path, good_on("2026-12-17", number=4))
+    assert result.exit_code == 0, result.output
+    assert [a.subject for a in approvals.pending(conn) if a.kind == "app-build"] == ["app:APP-004"]
+
+
+# --- AC-M9.10: the waiting pile, and AC-M9.11: the one-off pass ------------------------------
+
+
+def raise_for(conn, app_id: str) -> approvals.Approval:
+    with db.transaction(conn):
+        raised = builds.request(conn, app_id, reason="the app factory filed it", run_id=None)
+    assert raised is not None
+    return raised
+
+
+def test_seven_prds_waiting_for_a_decision_stop_the_factory(tmp_path, conn):
+    """AC-M9.10."""
+    from jura_growth import runner
+    from jura_growth.agents import apps as apps_plugin
+
+    requests = [raise_for(conn, file_prd(number)) for number in range(101, 108)]
+    reason = apps_plugin.precheck("app-factory", conn)
+    assert reason and reason.startswith("7 app PRDs waiting for an app-build decision")
+    assert runner.run("app-factory", ignore_schedule=True).status == "skipped"
+    refused = submit(tmp_path)
+    assert refused.exit_code == 1 and "waiting for an app-build decision" in refused.output
+    assert aw.approve(conn, requests[0], args={}).answer == "recorded"  # handed off: no longer waiting
+    assert apps_plugin.precheck("app-factory", conn) is None
+
+
+def test_the_one_off_pass_raises_one_request_for_each_factory_prd_already_pending(conn, discord_double):
+    """AC-M9.11: Ting Yu's own PRDs (APP-001, APP-002) get none, and a second pass raises none,
+    even after one of them is handed off."""
+    from jura_growth.agents import apps as apps_plugin
+
+    file_prd(3, slug="pdf-merge-and-split", name="PDF merge and split")
+    file_prd(4, slug="payslip-maker", name="Payslip maker")
+    assert apps_plugin.precheck("app-factory", conn) is None
+    raised = [a for a in approvals.pending(conn) if a.kind == "app-build"]
+    assert sorted(a.subject for a in raised) == ["app:APP-003", "app:APP-004"]
+    assert len(discord_double.posts("approvals")) == 2
+    aw.approve(conn, raised[0], args={})
+    apps_plugin.precheck("app-factory", conn)
+    assert builds.raise_waiting(conn) == []
+    assert db.scalar(conn, "SELECT count(*) FROM approvals WHERE kind = 'app-build'") == 2
+    assert len(discord_double.posts("approvals")) == 2
+
+
+# --- X2, X3 and X7 for this kind ------------------------------------------------------------------
+
+
+@pytest.fixture
+def zone(monkeypatch):
+    import os
+    import time
+
+    before = os.environ.get("TZ")
+
+    def set_zone(name: str) -> None:
+        monkeypatch.setenv("TZ", name)
+        time.tzset()
+
+    yield set_zone
+    if before is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = before
+    time.tzset()
+
+
+@pytest.mark.parametrize("name", ["Asia/Singapore", "UTC", "America/New_York"])
+def test_an_app_build_has_seven_days_to_decide_and_one_day_to_use(conn, monkeypatch, zone, name):
+    """X2: whatever the machine's time zone."""
+    zone(name)
+    aw.at(monkeypatch, aw.NOW)
+    request = raise_for(conn, file_prd(101))
+    assert request.decide_by == aw.later(aw.NOW, days=7) == "2026-11-17T10:02:15+08:00"
+    approved_at = "2026-11-12T09:00:00+08:00"
+    aw.at(monkeypatch, approved_at)
+    aw.approve(conn, request, args={})
+    assert aw.get(conn, request.id).use_by == "2026-11-13T09:00:00+08:00"
+
+
+def test_a_configured_app_build_deadline_may_shorten_and_never_lengthen(conn, monkeypatch):
+    """X3 for this kind: the deadlines come from the `approvals:` block, capped by caps.py."""
+    aw.at(monkeypatch, aw.NOW)
+    patched = dict(config.settings())
+    patched["approvals"] = {"deadlines": {"app-build": {"decide_by_days": 3, "use_by_days": 5}}}
+    monkeypatch.setattr(config, "settings", lambda: patched)
+    shorter = raise_for(conn, file_prd(101))
+    assert shorter.decide_by == aw.later(aw.NOW, days=3)
+    aw.approve(conn, shorter, args={})
+    assert aw.get(conn, shorter.id).use_by == aw.later(aw.NOW, days=1)  # 5 reads as the cap, 1
+    patched["approvals"] = {"deadlines": {"app-build": {"decide_by_days": 30}}}
+    assert raise_for(conn, file_prd(102)).decide_by == aw.later(aw.NOW, days=7)
+
+
+def test_the_app_build_migrations_change_no_existing_row(tmp_path, monkeypatch):
+    """X7: a database at main's app-factory schema migrates through `app_builds` and the
+    reusable slug with every row as it was."""
+    from jura_growth.agents import apps as apps_plugin
+
+    old = tmp_path / "apps-at-main"
+    old.mkdir()
+    shutil.copy(apps_plugin.MIGRATIONS / "0001_app_factory.sql", old / "0001_app_factory.sql")
+    with monkeypatch.context() as patch:
+        patch.setattr(apps_plugin, "MIGRATIONS", old)
+        conn = db.connect(tmp_path / "old.db")
+    for n, slug in ((3, "pdf-merge-and-split"), (4, "payslip-maker")):
+        conn.execute(
+            "INSERT INTO app_prds (app_id, slug, name, tier, category, path, day, run_id, created_at) VALUES (?, ?, ?, 'browser', 'Documents', ?, '2026-10-24', NULL, ?)",
+            (f"APP-{n:03d}", slug, slug.replace("-", " ").capitalize(), f"prd/pending/apps/prd-app-{n:03d}-{slug}-2026-10-24.md", aw.NOW),
+        )
+    tables = [r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
+    before = {t: db.rows(conn, f"SELECT * FROM {t}") for t in tables if t != "schema_migrations"}
+    assert db.migrate(conn) == ["app-factory/0002_app_builds.sql", "app-factory/0003_app_prds_slug_reusable.sql"]
+    assert {t: db.rows(conn, f"SELECT * FROM {t}") for t in before} == before
+    assert db.scalar(conn, "SELECT count(*) FROM app_builds") == 0
+    conn.execute(
+        "INSERT INTO app_prds (app_id, slug, name, tier, category, path, day, created_at) VALUES ('APP-005', 'payslip-maker', 'Payslip maker', 'browser', 'HR', 'x', '2026-12-17', ?)",
+        (aw.NOW,),
+    )  # the slug can be proposed again under a new number
+    conn.close()
+
+
+def test_no_plugin_migration_names_a_decision_column():
+    """G31 for this kind: approval state lives only in `approvals` (MC §4.6 A2)."""
+    import re
+
+    from jura_growth.agents import apps as apps_plugin
+
+    for path in apps_plugin.MIGRATIONS.glob("*.sql"):
+        assert not re.search(r"decided|approved|approver|decide_by|use_by|used_at", path.read_text()), path.name
+
+
+# --- the sweep over app-build cards (AC-M11.1, AC-M12.1) ----------------------------------------------
+
+
+def test_an_app_build_card_and_its_edit_carry_nothing_planted(conn, discord_double, d2_secrets, monkeypatch):
+    from sweep import MARKER, NAMED_ADDRESS, PHONE, RESEND_KEY, SOURCE_PAGE, assert_clean, outbox_dir, planted
+    from jura_growth import cards, timeutil
+
+    conn.execute(
+        "INSERT INTO leads (id, company, display_name, domain, website, industry, score, score_reasons, channel,"
+        " status, created_at, updated_at) VALUES (233, 'Example Pte Ltd', 'Example', 'example.com.sg',"
+        " 'https://example.com.sg', 'logistics', 78, '[]', 'email', 'new', ?, ?)",
+        (timeutil.stamp(), timeutil.stamp()),
+    )
+    conn.execute(
+        "INSERT INTO contacts (lead_id, email, email_hash, source_url, kind, mx_ok, verified_at, created_at)"
+        " VALUES (233, ?, 'h', ?, 'named', 1, ?, ?)",
+        (NAMED_ADDRESS, SOURCE_PAGE, timeutil.stamp(), timeutil.stamp()),
+    )
+    app_id = file_prd(101)
+    path = prd_path(app_id)
+    inline = f"{MARKER} for Jane Tan at {NAMED_ADDRESS} or {PHONE}, key {RESEND_KEY}"
+    text = path.read_text().replace("Make a delivery order with your logo", f"{inline}. Make a delivery order with your logo", 1)
+    text = text.replace("Who has this problem:** owners", f"Who has this problem:** {inline}, owners", 1)
+    path.write_text(text.replace("## 6. Open questions\n", "## 6. Open questions\n\n" + planted().text() + "\n"))
+    request = raise_for(conn, app_id)
+    assert cards.sweep(conn) == 1
+    aw.approve(conn, request, args={})
+    cards.sweep(conn)  # the card's first line, edited
+    assert [r.method for r in discord_double.requests].count("PATCH") == 1
+    assert_clean(discord_double, outbox_dir(), planted())
 
 
 @pytest.mark.parametrize("brake", ["PAUSE file", "paused agent"])
