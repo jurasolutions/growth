@@ -707,3 +707,13 @@ artifacts: crew/mission-control-12-remote-apps-commands (063c7ec)
 decisions: remote handoff JSON for Dispatch; prd_text unmasked by design (hash), for the brief only; 64 KB spill; sent to review with focus on prd_text exposure
 questions: -
 evidence:  2448 passed, 0 skipped
+
+## 2026-10-27T03:45+0800 reviewer (bp 02, round 2) via conductor
+status:    done
+persona:   reviewer
+ticket:    bp-02
+artifacts: .scratch/browser-publishing/reviews/code-review-02.md (round 2)
+decisions: approve; B1, B2, S1-S7 fixed; probes p6, p7, p9, p10 hold; R2-S1 (moved-to-today post waits for the next heartbeat) and R2-N1 sent as fix round 2, conductor verifies
+decisions: reviewer asked Ting Yu to confirm the exact-bytes amendment to A3 and ADR 0003; under Ting Yu standing instruction ("dont ask me questions, just make the decisions") the conductor confirms it (stricter than the signed-off text) and records it here
+questions: -
+evidence:  2586 passed; probes r1-r5, p6-p11 run

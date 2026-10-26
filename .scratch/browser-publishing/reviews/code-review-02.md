@@ -1,10 +1,71 @@
-# Code review 02: BP-02a, the publish queue for social posts (no browser)
+# Code review 02: BP-02a, the publish queue for social posts (no browser), rounds 1 and 2
 
 - **Branch:** `crew/browser-publishing-02-publish-queue` (d15bf73, f54e934, e15bc3e), compared with its merge-base 4cc477e
 - **Ticket:** `.scratch/browser-publishing/issues/02-publish-queue-no-browser.md`. **Spec:** `prd/pending/prd-jura-browser-publishing-2026-10-25.md` (signed off, amended 2026-10-26) §2, §4.2 to §4.7, §5.4 to §5.7, §5.10, §3.3; MC §4.6 A1 to A17 and SC4; test strategy v3 §4.2, §4.3, §5
 - **Reviewed:** 2026-10-27. I read every changed file in the diff: the publish plug-in (`__init__`, `claim`, `commands`, `hosts`, `items`, `job`, `kinds`, `limits`, migration 0001), `caps.py`, `headless.py`, `config/publish.yaml`, `config/social.yaml`, the social `__init__`, `plan`, `settings` and `submit`, `docs/social.md`, `tests/publish_world.py`, `tests/gate_adapter_social_post.py`, the four new publish test files, `tests/uat/seed.py`, and the changes to `test_headless`, `test_mission_health`, `test_run_update` and `test_social`. For context I also read `approvals.py` (`request`, `use`, `_lapse_if_due`) and the `after_run` call in `runner.py`.
 
-## Verdict: changes-requested
+## Round 2 verdict: approve
+
+**Reviewed:** 2026-10-27, after fix round 1. The branch was rebased onto `crew/mission-control` d0b0119 and is now e5110e3, f74e3a5, cf4b5ac and 26754fd. I read the whole fix commit 26754fd: `claim.py`, `items.py`, `kinds.py`, `job.py`, `commands.py`, the publish `__init__`, `social/history.py`, `social/settings.py`, `social/submit.py`, `caps.py`, `runner.py`, `docs/social.md`, `tests/test_publish_queue.py` and the new `tests/test_publish_regressions.py`.
+
+Both blocking findings are fixed, and my round-1 repros now pass in the fixed form:
+
+- **B1 is fixed.** A changed post always ends in a new card over the new content, with deadlines from the new content's day. `deadlines()` reads the live content's day (`kinds.py:145-151`). Whichever path sees the change first, `items.sync()` raises the card and freezes the content into the item. The item is withdrawn only when nothing can replace it.
+  - r1: the new request for a post moved to 11-11 has decide-by 11-11 18:00, and the item's day is 11-11.
+  - r2: a change the heartbeat finds first gets its card, and the item stays `ready`.
+  - Keeping the change on the same subject is a reasonable reading of G9. The item's frozen columns now follow its live request, so AC-P1.3's point holds: a new approval over the new content, with the right day.
+- **B2 is fixed.** After `use()`, `_hand_out` (`claim.py:213-229`) reads the draft once, checks exactly those bytes against `approval.content_hash`, and writes those same bytes as the copies and the printed text.
+  - r3: an image swapped after `use()` leaves nothing claimed, the approval unused and the item `ready`.
+
+The round-1 should-fix findings are also fixed:
+
+- **S1.** There are no conflicts with the current head: `git merge-tree` against 7ff0ae2 is clean.
+- **S2.** `runner.py:314` uses `headless.never()`.
+- **S3.** `_mark_published` goes through `history.mark_published(how=…)`. `claimable()` now runs the claim's own `_select` inside a transaction it always rolls back, and the JSONL mirror waits for the commit, so nothing leaks.
+- **S4.** The page URL is checked in one place, `hosts.problem` in `create_social`.
+- **S5.** Pyright on `social/submit.py` plus `agents/publish/` reports 6 errors, all in `submit.py`, which is the base count. That means 0 new.
+- **S6.** `after_run` settles claims from dead runs, and `resolve` settles stale and Terminal claims.
+  - r4: a claim from a run marked abandoned is settled as `unknown` by the next run's `after_run`. `resolve` refuses while the run is still `running`.
+  - r5: a Terminal claim is resolvable.
+- **S7.** The digest counts skips made by hand.
+
+### Round 2 evidence
+
+- `uv run pytest -p no:cacheprovider` in the developer worktree (26754fd, clean) printed **2586 passed in 120.22s**. It ran with `JURA_ROOT`, temp data and outputs folders, the Discord double only and no browser.
+- The publish, regression, headless, gate and seed files printed **301 passed**.
+- Reviewer probes in a scratch copy of `tests/` outside the repo (`<session scratchpad>/probe02r2/tests/test_reviewer_probe_r2.py`) printed **11 passed**:
+  - r1 to r5 now assert the fixed behaviour.
+  - **p6, two changes in a row through the heartbeat:** each change gets one new request. The last one is claimed, and it hands out the last text.
+  - **p7, a change after approval but before the claim:** `use()` supersedes A1 unused, A2 is raised, and sync freezes the edit into the item.
+  - **p9, two `publish next` calls racing after a change the heartbeat superseded:** no claim, no error, and exactly one live request.
+  - **p10, `claimable()` while sync would raise a card:** no row is added to `approvals` or `events`.
+  - P8 and P11 below assert two narrow edges that still exist.
+- `git diff main crew/browser-publishing-02-publish-queue -- jura_growth/caps.py`: the only removed line is the module docstring. Every value is unchanged, and the docstring now says that config may only tighten a limit.
+- `git merge-tree --write-tree crew/mission-control crew/browser-publishing-02-publish-queue` against 7ff0ae2 reports no conflicts.
+- Blocked paths: none touched.
+
+### Round 2 findings
+
+**Blocking:** none.
+
+**Should fix (a follow-up ticket is fine):**
+
+- **R2-S1. A live request over changed content waits for the core to supersede it** (`items.py` `sync()`, the `latest.live` branch only refreezes when the hashes match).
+  - **p8:** I approved a post for 11-11, then moved it to 11-10 (today). `publish next` neither supersedes A1 nor raises a card, because `_ready` filters on the item's old day and sync skips a live request whose hash no longer matches.
+  - The card arrives only at the next transition (the noon heartbeat, 23:30 or 08:00). A post moved to today after noon misses its day.
+  - Nothing unapproved can go out, because `use()` still refuses a mismatch.
+  - Fix: in that branch, call `raise_request()` (`approvals.request` supersedes and raises in one step), then refreeze.
+
+**Nit:**
+
+- **R2-N1. A post whose request was superseded as gone, and whose content then comes back unchanged, is withdrawn with no card** (`sync()` falls through to `withdraw` when the hash equals the superseded one).
+  - **p11:** an image file goes missing at the heartbeat, then comes back with the same bytes. Ting Yu loses that day's card, and the draft stays `draft`.
+  - This only happens through a hand deletion. Re-raising when `content is not None` would cover it.
+- **R2-N2.** BP-03 must follow `job.py`'s note: the precheck commits `items.sync()` and posts its cards before it calls `claimable()`. Otherwise a card raised by sync is rolled back with the dry run.
+
+**Process note.** MC §4.6 A3 and ADR 0003 were amended on 2026-10-27 to say "exact bytes, no Unicode normalisation". That settles round 1's NFC nit, and the code and the contract now agree. But the amendment changes a signed-off PRD, and the crew log records it as a conductor decision with no answer from Ting Yu. It goes back to him as a question.
+
+## Round 1 verdict: changes-requested
 
 There are two blocking findings. Both go against the brief's first check, that nothing can be claimed without an approval of its exact content, or against AC-P1.3. I reproduced both.
 
