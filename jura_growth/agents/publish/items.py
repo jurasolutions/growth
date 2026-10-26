@@ -17,12 +17,13 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass, fields
+from datetime import date
 
 from jura_growth import approvals, db, log, timeutil
 from jura_growth.agents.publish import hosts, limits
 
 AGENT = "publish"
-SOCIAL = "social_post"
+SOCIAL_ITEM = "social_post"  # publish_items.kind; its approval kind is SOCIAL_KIND
 SOCIAL_KIND = "social-post"
 _SUBJECT = re.compile(r"publish_item:([0-9]+)")
 OPEN = ("ready", "claimed")
@@ -135,7 +136,7 @@ def create_social(conn: sqlite3.Connection, post_id: int, *, run_id: int | None,
     wrong = hosts.problem(platform.name, platform.page_url)
     if wrong:
         return Made(why=f"{platform.name}'s page_url won't do: {wrong}")
-    day = timeutil.parse(post["date"] + "T00:00:00").date()
+    day = date.fromisoformat(post["date"])
     _, closes = limits.window_on(day)
     if timeutil.now_sgt() >= closes:
         return Made(why=f"the posting window for {day} has closed ({closes:%H:%M} SGT)")
@@ -146,12 +147,12 @@ def create_social(conn: sqlite3.Connection, post_id: int, *, run_id: int | None,
         cursor = conn.execute(
             "INSERT INTO publish_items (label, kind, platform, ref, target_url, posting_identity, content_json, day, created_at)"
             " VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?)",
-            (SOCIAL, platform.name, str(post_id), content["target_url"], content["posting_identity"],
+            (SOCIAL_ITEM, platform.name, str(post_id), content["target_url"], content["posting_identity"],
              json.dumps(content, ensure_ascii=False, sort_keys=True), post["date"], timeutil.stamp()),
         )
         number = int(cursor.lastrowid or 0)
         conn.execute("UPDATE publish_items SET label = ? WHERE id = ?", (label_of(number), number))
-        log.event(conn, "publish.item_created", {"item": label_of(number), "kind": SOCIAL, "platform": platform.name,
+        log.event(conn, "publish.item_created", {"item": label_of(number), "kind": SOCIAL_ITEM, "platform": platform.name,
                                                   "day": post["date"]}, agent=AGENT, run_id=run_id)
         item = get(conn, number)
         assert item is not None  # inserted above, in this transaction
@@ -171,6 +172,16 @@ def label_of(number: int) -> str:
     return f"P-{number:04d}"
 
 
+def stale_claim(conn: sqlite3.Connection, item: Item) -> bool:
+    """A claim no run will close: claimed in Terminal (no run), or by a run that has ended."""
+    if item.state != "claimed":
+        return False
+    if item.run_id is None:
+        return True
+    status = db.scalar(conn, "SELECT status FROM runs WHERE id = ?", (item.run_id,))
+    return status != "running"
+
+
 # --- the lifecycle ----------------------------------------------------------------------------
 
 
@@ -185,16 +196,50 @@ def withdraw(conn: sqlite3.Connection, item: Item, why: str) -> bool:
     return bool(changed)
 
 
-def sync(conn: sqlite3.Connection) -> int:
-    """Withdraw every ready item whose request can no longer be claimed: skipped, expired or
-    superseded with no newer request (the item is gone). Writes the item's lifecycle only; it
-    reads `approvals` and changes nothing there. Returns how many it withdrew."""
-    withdrawn = 0
+def refreeze(conn: sqlite3.Connection, item: Item, content: dict) -> None:
+    """Freeze `content` into the item: the content its live request now covers."""
+    conn.execute(
+        "UPDATE publish_items SET day = ?, target_url = ?, posting_identity = ?, content_json = ? WHERE id = ?",
+        (content["day"], content["target_url"], content["posting_identity"],
+         json.dumps(content, ensure_ascii=False, sort_keys=True), item.id),
+    )
+
+
+def sync(conn: sqlite3.Connection, *, run_id: int | None = None) -> list[approvals.Approval]:
+    """Bring every ready item in line with its requests, and return the requests it raised.
+
+    - A live request over content that differs from the item's frozen copy (the core raised
+      it over new content): the new content is frozen into the item.
+    - A request superseded because the post changed (by `expire_due()`, which raises nothing):
+      a request is raised over the new content and the content frozen into the item, so a
+      change never leaves Ting Yu without a card (A3, AC-P1.3). Only when the new content's
+      posting window has already closed is the item withdrawn instead.
+    - A request skipped or expired, or superseded because the draft is gone (skipped or posted
+      by hand): the item is withdrawn.
+
+    Call it inside the caller's transaction; post the raised cards with `cards.sweep_safely()`
+    once that has committed."""
+    from jura_growth.agents.publish import kinds
+
+    raised: list[approvals.Approval] = []
     for row in conn.execute("SELECT * FROM publish_items WHERE state = 'ready' ORDER BY id").fetchall():
         item = Item.from_row(row)
         latest = latest_request(conn, item)
-        if latest is None or latest.live or latest.used_at:
+        if latest is None or latest.used_at:
+            continue  # not yet raised, or claimed
+        content = kinds.social_content(conn, item.ref_id)
+        digest = approvals.content_hash(kinds.hashed(content)) if content is not None else None
+        if latest.live:
+            if content is not None and digest == latest.content_hash and content != item.content:
+                refreeze(conn, item, content)
             continue
-        if withdraw(conn, item, latest.status):
-            withdrawn += 1
-    return withdrawn
+        if latest.status == approvals.SUPERSEDED and content is not None and digest != latest.content_hash:
+            _, closes = limits.window_on(date.fromisoformat(content["day"]))
+            if timeutil.now_sgt() < closes:
+                refreeze(conn, item, content)
+                fresh = raise_request(conn, item, run_id=run_id)
+                if fresh is not None and fresh.live:
+                    raised.append(fresh)
+                    continue
+        withdraw(conn, item, latest.status)
+    return raised

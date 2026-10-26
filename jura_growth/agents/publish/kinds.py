@@ -1,17 +1,17 @@
 """The `social-post` approval kind (browser publishing PRD §5.5; MC §4.6).
 
-The subject is one publish item, `publish_item:<id>`.
+The subject is one publish item, `publish_item:<id>`: one platform's post for one draft.
 
 - **Content** is what the browser would post now: the platform, the posting identity, the page
   it posts to, the day, the exact text and the image bytes in order (each image's SHA-256). It is
   read live from the `social_posts` draft, its image files and `config/social.yaml`, so a change
-  to any one field supersedes the request and raises one over the new content (A3, AC-P1.3).
-  The text is hashed byte for byte, with no Unicode normalisation, so two drafts that differ at
-  all never hash alike (as for `outreach-email`, code review 06). The item is gone (`None`) once
-  its draft is skipped or posted by hand, a skip is recorded for its day and platform, its page
-  URL is unset, or an image is missing.
-- **Deadlines:** decide by and use by the end of the posting window on the item's day (18:00
-  SGT, or earlier when `config/publish.yaml` narrows the window).
+  to any one field supersedes the request and raises one over the new content (A3, AC-P1.3). The
+  hash covers the exact bytes, with no Unicode normalisation (MC §4.6 A3 and ADR 0003, amended
+  2026-10-27). The item is gone (`None`) once its draft is skipped or posted by hand, a skip is
+  recorded for its day and platform, its page URL is unset, or an image is missing.
+- **Deadlines:** decide by and use by the end of the posting window on the day of the content
+  being asked about (18:00 SGT, or earlier when `config/publish.yaml` narrows the window). A
+  request raised because the day changed therefore lapses at the new day's end, not the old one's.
 - **Switch:** the platform's `publish_mode`. In `draft` mode a valid approval is refused and not
   claimed (A13, AC-P5.3).
 - **Skip** withdraws the item and records `social skip <date> <platform>`. Expiry and lapse
@@ -24,6 +24,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
@@ -34,19 +35,22 @@ KIND = items.SOCIAL_KIND
 _LINK = re.compile(r"https?://[^\s<>()\"']+")
 
 
+@dataclass(frozen=True)
+class Read:
+    """One read of a draft: its content, and each image's bytes exactly as hashed."""
+
+    content: dict
+    blobs: tuple[bytes, ...]
+
+
 def _canonical(value: dict) -> bytes:
     return json.dumps(value, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
 
-def _sha256(path: Path) -> str | None:
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError:
-        return None
-
-
-def social_content(conn: sqlite3.Connection, post_id: int) -> dict | None:
-    """What a browser run would post for this draft now, or None when it can't be posted."""
+def read_social(conn: sqlite3.Connection, post_id: int) -> Read | None:
+    """What a browser run would post for this draft now, read once, or None when it can't be
+    posted. Each image's hash is of the bytes in `blobs`, so a caller can hand out exactly what
+    it checked."""
     from jura_growth.agents.social.settings import load
 
     post = db.one(conn, "SELECT * FROM social_posts WHERE id = ?", (post_id,))
@@ -58,13 +62,15 @@ def social_content(conn: sqlite3.Connection, post_id: int) -> dict | None:
     platform = load().platforms.get(post["platform"])
     if platform is None or not platform.page_url:
         return None
-    images = []
+    images, blobs = [], []
     for name in json.loads(post["image_paths"] or "[]"):
-        digest = _sha256(Path(name))
-        if digest is None:
+        try:
+            blob = Path(name).read_bytes()
+        except OSError:
             return None
-        images.append({"path": name, "sha256": digest})
-    return {
+        images.append({"path": name, "sha256": hashlib.sha256(blob).hexdigest()})
+        blobs.append(blob)
+    content = {
         "platform": platform.name,
         "posting_identity": platform.identity,
         "target_url": platform.page_url,
@@ -72,15 +78,17 @@ def social_content(conn: sqlite3.Connection, post_id: int) -> dict | None:
         "text": post["text"],
         "images": images,
     }
+    return Read(content, tuple(blobs))
+
+
+def social_content(conn: sqlite3.Connection, post_id: int) -> dict | None:
+    found = read_social(conn, post_id)
+    return found.content if found else None
 
 
 def hashed(content: dict) -> bytes:
     """The bytes a request's hash covers: everything but where the images sit on disk."""
     return _canonical({**content, "images": [image["sha256"] for image in content["images"]]})
-
-
-def _day(item: items.Item) -> date:
-    return date.fromisoformat(item.day)
 
 
 def _item(conn: sqlite3.Connection, subject: str) -> items.Item:
@@ -98,7 +106,7 @@ class SocialPost:
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         item = items.of(conn, subject)
-        if item is None or item.kind != items.SOCIAL or item.state not in items.OPEN:
+        if item is None or item.kind != items.SOCIAL_ITEM or item.state not in items.OPEN:
             return None
         content = social_content(conn, item.ref_id)
         return hashed(content) if content is not None else None
@@ -135,7 +143,11 @@ class SocialPost:
         )
 
     def deadlines(self, conn: sqlite3.Connection, subject: str, now: datetime) -> approvals.Deadlines:
-        _, closes = limits.window_on(_day(_item(conn, subject)))
+        """The end of the posting window on the day of the content asked about now."""
+        item = _item(conn, subject)
+        content = social_content(conn, item.ref_id)
+        day = date.fromisoformat(content["day"] if content else item.day)
+        _, closes = limits.window_on(day)
         return approvals.Deadlines(decide_by=closes, use_by=closes)
 
     def switched_off(self, conn: sqlite3.Connection, subject: str) -> str | None:
@@ -152,7 +164,7 @@ class SocialPost:
         item = _item(conn, subject)
         items.withdraw(conn, item, "skipped")
         try:
-            history.skip(conn, _day(item), item.platform, "skipped by Ting Yu in #approvals")
+            history.skip(conn, date.fromisoformat(item.day), item.platform, "skipped by Ting Yu in #approvals")
         except ValueError:
             pass  # already published by hand: nothing left to skip
 
@@ -164,17 +176,25 @@ class SocialPost:
 
     def superseded_note(self, conn: sqlite3.Connection, subject: str) -> str | None:
         item = items.of(conn, subject)
-        if item is None:
-            return None
-        post = db.one(conn, "SELECT status FROM social_posts WHERE id = ?", (item.ref_id,))
-        skipped = db.scalar(conn, "SELECT 1 FROM social_skips WHERE date = ? AND platform = ?", (item.day, item.platform))
-        if post and post["status"] == "published":
-            return "posted by hand"
-        if skipped or (post and post["status"] == "skipped"):
-            return "skipped by hand"
-        if social_content(conn, item.ref_id) is not None:
-            return "the post changed"
-        return None
+        return note(conn, item) if item else None
+
+
+def skipped_by_hand(conn: sqlite3.Connection, item: items.Item) -> bool:
+    post = db.one(conn, "SELECT status FROM social_posts WHERE id = ?", (item.ref_id,))
+    skip = db.scalar(conn, "SELECT 1 FROM social_skips WHERE date = ? AND platform = ?", (item.day, item.platform))
+    return bool(skip) or bool(post and post["status"] == "skipped")
+
+
+def note(conn: sqlite3.Connection, item: items.Item) -> str | None:
+    """Why an item's request was superseded, in Ting Yu's words."""
+    post = db.one(conn, "SELECT status FROM social_posts WHERE id = ?", (item.ref_id,))
+    if post and post["status"] == "published":
+        return "posted by hand"
+    if skipped_by_hand(conn, item):
+        return "skipped by hand"
+    if social_content(conn, item.ref_id) is not None:
+        return "the post changed"
+    return None
 
 
 def kinds() -> dict[str, SocialPost]:

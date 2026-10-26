@@ -617,10 +617,17 @@ def test_with_the_publish_plug_in_missing_a_social_post_approval_fails_closed(co
 # --- claimable(): the read-only form, for BP-03's precheck ----------------------------------------
 
 
+def everything(conn) -> dict:
+    return {table: db.rows(conn, f"SELECT * FROM {table} ORDER BY rowid") for table in ("approvals", "publish_items", "events")}
+
+
 def test_claimable_lists_what_publish_next_would_claim_and_writes_nothing(conn, world, monkeypatch):
-    _, pending = pw.item(conn, "facebook", day=date(2026, 11, 11))
+    pw.item(conn, "facebook", day=date(2026, 11, 11))
     found, request = pw.approved(conn, monkeypatch)
+    before = everything(conn)
     assert [i.id for i in claim.claimable(conn)] == [found.id]
+    assert everything(conn) == before
+    assert not (paths.work_dir("publish") / request.id).exists()
     pw.at(monkeypatch, "2026-11-10T08:59:00+08:00")
     assert claim.claimable(conn) == []
     pw.at(monkeypatch, pw.TEN)
@@ -628,7 +635,7 @@ def test_claimable_lists_what_publish_next_would_claim_and_writes_nothing(conn, 
     assert claim.claimable(conn) == []
     pw.invoke("resume", "publish")
     conn.execute("UPDATE social_posts SET text = text || ' (changed)' WHERE id = ?", (found.ref_id,))
-    before = conn.total_changes
-    assert claim.claimable(conn) == []
-    assert conn.total_changes == before
+    before = everything(conn)
+    assert claim.claimable(conn) == []  # use() would supersede it: rolled back
+    assert everything(conn) == before
     assert approvals.get(conn, request.id).status == "approved"

@@ -174,9 +174,7 @@ def load() -> Settings:
         mode = str(spec.get("publish_mode", "draft"))
         if mode not in PUBLISH_MODES:
             raise SettingsError(f"platforms.{name}.publish_mode must be draft or browser, not {mode!r}")
-        page_url = spec.get("page_url") or None
-        if page_url is not None and not str(page_url).startswith("https://"):
-            raise SettingsError(f"platforms.{name}.page_url must be an https:// address")
+        page_url = spec.get("page_url") or None  # checked against the platform's hosts when an item is made
         links = spec.get("links", "post")
         if links not in ("post", "bio"):
             raise SettingsError(f"platforms.{name}.links must be 'post' or 'bio'")

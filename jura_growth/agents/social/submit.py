@@ -324,8 +324,10 @@ def _raise_publish_items(conn, day, passing, settings, notes) -> dict:
     raised = {}
     with db.transaction(conn):
         for platform in browser:
-            post = db.scalar(conn, "SELECT id FROM social_posts WHERE date = ? AND platform = ?", (day.isoformat(), platform))
-            made = publish_items.create_social(conn, int(post), run_id=log.current_run_id())
+            post = db.one(conn, "SELECT id FROM social_posts WHERE date = ? AND platform = ?", (day.isoformat(), platform))
+            if post is None:
+                continue  # every passing platform has its row (_log_rows), so this never happens
+            made = publish_items.create_social(conn, post["id"], run_id=log.current_run_id())
             if made.approval is not None and made.approval.status == "pending":
                 raised[platform] = made.approval
             else:
@@ -343,7 +345,7 @@ def _post(conn, day, theme, settings, passing, sub, images, out, dropped, result
                 conn, CHANNEL,
                 f"**{rules.label}** · {when} · {theme.label}\n"
                 f"Waiting for your decision in #approvals: {requests[platform].id}. "
-                f"Once you approve it, the publish job posts it as {rules.identity}, by 18:00 SGT.",
+                f"Approve it there by 18:00 SGT to queue it for posting through the browser as {rules.identity}.",
                 username=USERNAME,
             )
             continue

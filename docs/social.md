@@ -210,14 +210,20 @@ works from Terminal and the tests; the scheduled `publish` job that drives Chrom
 2. Ting Yu approves or skips in `#approvals`. A skip, until the item is claimed, withdraws it and
    records `social skip <date> <platform>`. Unanswered or unclaimed by the end of the posting
    window (18:00 SGT on its day), the request expires and the draft stays as it is.
-3. `publish next` claims at most one approved item inside one `BEGIN IMMEDIATE` transaction,
-   copies its images into `data/growth/work/publish/<A-id>/`, and prints exactly what to post.
+3. `publish next` claims at most one approved item inside one `BEGIN IMMEDIATE` transaction. In
+   that transaction it reads the text and every image once, refuses unless exactly those bytes
+   hash to the approval, writes those bytes to `data/growth/work/publish/<A-id>/`, and prints
+   that text.
 4. The run then records `publish done <A-id> --url <url> --live-text-file <f>`, which marks the
    draft published with its URL, or `publish stopped <A-id> --reason <r>` on a stop signal.
 
 Any change to the text, the images or their order, the page, the posting identity or the day
-supersedes the request and raises a new one. Posting the draft by hand (`social published`) or
-skipping it (`social skip`) supersedes it too.
+supersedes the request and raises a new card over the new content, with deadlines from the new
+content's day, and the item freezes the new content. A claim or a decision that finds the change
+raises the card at once; one the heartbeat finds is raised by the next `publish next` (and, from
+BP-03, by the publish job's precheck, which runs the same `items.sync()` every slot). Posting the draft by hand (`social published`) or skipping it (`social skip`)
+supersedes the request too, and then the item is withdrawn with no new card. The hash covers the
+exact bytes, with no Unicode normalisation (ADR 0003).
 
 | Command | Who | Does |
 |---|---|---|
@@ -236,7 +242,9 @@ approval stays unused.
 
 **A claim left open.** If a run ends having claimed an item without `done` or `stopped`, the
 item becomes `unknown`: it is never claimed again, `publish` pauses, and `#alerts` names
-`/growth publish resolve A-nnnn posted --url <url>` and `… not-posted`.
+`/growth publish resolve A-nnnn posted --url <url>` and `… not-posted`. A claim left by a run
+whose process died is settled the same way by the next run, and `publish resolve` also settles a
+claim nobody will close: one whose run has ended, or one made in Terminal with no run.
 
 ## Digest
 

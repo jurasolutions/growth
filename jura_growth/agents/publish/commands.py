@@ -20,6 +20,7 @@ import json
 import re
 import sqlite3
 import unicodedata
+from datetime import date
 from pathlib import Path
 
 import click
@@ -68,14 +69,22 @@ def _where(found: items.Item) -> str:
 
 
 def _mark_published(conn: sqlite3.Connection, found: items.Item, url: str, how: str) -> None:
-    now = timeutil.stamp()
-    conn.execute(
-        "UPDATE social_posts SET status = 'published', published_url = ?, published_at = coalesce(published_at, ?), "
-        "updated_at = ? WHERE id = ?",
-        (url, now, now, found.ref_id),
-    )
-    log.event(conn, "social.published", {"date": found.day, "platform": found.platform, "url": url, "how": how},
-              agent="social")
+    """The draft is published, through the social agent's own record. The post is live whatever
+    the draft says now (skipped by hand after the claim, say), so that is logged, not refused."""
+    from jura_growth.agents.social import history
+
+    try:
+        history.mark_published(conn, date.fromisoformat(found.day), found.platform, url, how=how)
+    except ValueError as error:
+        log.event(conn, "publish.draft_not_marked", {"item": found.label, "why": str(error)}, level="warning",
+                  agent=items.AGENT)
+
+
+def _post_cards(conn: sqlite3.Connection) -> None:
+    """Post any card `publish next`'s sync raised, once its transaction has committed (A12)."""
+    from jura_growth import cards
+
+    cards.sweep_safely(conn)
 
 
 @click.group("publish")
@@ -89,6 +98,7 @@ def next_cmd(as_json) -> str:
     """Claim the next approved item, if one is due, and print exactly what to post."""
     with db.session() as conn:
         handed = claim.next_item(conn, run_id=log.current_run_id())
+        _post_cards(conn)
     if handed.item is None or handed.approval is None:
         if as_json:
             click.echo(json.dumps({"due": False, "reasons": handed.why}, indent=2, ensure_ascii=False))
@@ -229,11 +239,15 @@ def queue(as_json) -> None:
 @click.argument("outcome", type=click.Choice(["posted", "not-posted"]))
 @click.option("--url", help="With posted: the live post's address.")
 def resolve(approval_id, outcome, url) -> str:
-    """Settle an item whose outcome is unknown: it was posted (with its URL), or it wasn't."""
+    """Settle an item whose outcome is unknown: it was posted (with its URL), or it wasn't.
+
+    Also a claim nobody will close: one whose run has ended without `after_run` settling it (the
+    process was killed), or one made in Terminal with no run."""
     with db.session() as conn:
         record, found = _item_for(conn, approval_id)
-        if found.state != "unknown":
+        if not (found.state == "unknown" or items.stale_claim(conn, found)):
             raise click.ClickException(f"{record.id}'s item isn't unknown (it is {found.state}); nothing to settle")
+        settles = found.state
         if outcome == "posted":
             wrong = hosts.problem(found.platform, url)
             if wrong:
@@ -241,11 +255,11 @@ def resolve(approval_id, outcome, url) -> str:
         with db.transaction(conn):
             if outcome == "posted":
                 conn.execute("UPDATE publish_items SET state = 'done', outcome = 'posted', post_url = ?, finished_at = ? "
-                             "WHERE id = ? AND state = 'unknown'", (url, timeutil.stamp(), found.id))
+                             "WHERE id = ? AND state = ?", (url, timeutil.stamp(), found.id, settles))
                 _mark_published(conn, found, url, "browser, settled by Ting Yu")
             else:
                 conn.execute("UPDATE publish_items SET state = 'withdrawn', outcome = 'not-posted', finished_at = ? "
-                             "WHERE id = ? AND state = 'unknown'", (timeutil.stamp(), found.id))
+                             "WHERE id = ? AND state = ?", (timeutil.stamp(), found.id, settles))
             log.event(conn, "publish.resolved", {"item": found.label, "approval": record.id, "outcome": outcome, "url": url},
                       agent=items.AGENT)
     click.echo(f"{record.id}: settled as {outcome}" + (f" ({url})" if url and outcome == "posted" else ""))

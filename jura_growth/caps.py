@@ -1,4 +1,6 @@
-"""Hard limits. Config may lower any of these; raising one is a code change.
+"""Hard limits. Config may only tighten any of these: lower a count, narrow the
+publish window, or lengthen a minimum gap (PUBLISH_MINUTES_BETWEEN_ACTIONS).
+Loosening one is a code change.
 
 The outreach caps sit below the Spam Control Act's bulk thresholds (more than
 100 similar messages in 24 hours, 1,000 in 30 days, or 10,000 in a year):

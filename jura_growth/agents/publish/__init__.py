@@ -38,7 +38,7 @@ def register(cli) -> None:
 
 def digest(conn: sqlite3.Connection, day: str) -> dict:
     """The day's posted, skipped, expired and stopped items (AC-P8.3), by the items' own day."""
-    from jura_growth.agents.publish import items
+    from jura_growth.agents.publish import items, kinds
 
     found = [items.Item.from_row(r) for r in conn.execute("SELECT * FROM publish_items WHERE day = ?", (day,))]
     if not found:
@@ -49,10 +49,12 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
             counts["posted"] += 1
         elif item.state == "stopped":
             counts["stopped"] += 1
-        elif item.state == "withdrawn" and item.outcome is None:
+        elif item.state in ("ready", "withdrawn") and item.outcome is None:  # ready: not yet synced
             latest = items.latest_request(conn, item)
-            if latest is not None and latest.status in ("skipped", "expired"):
-                counts[latest.status] += 1
+            if (latest is not None and latest.status == "skipped") or kinds.skipped_by_hand(conn, item):
+                counts["skipped"] += 1  # in #approvals, or by hand with `social skip`
+            elif latest is not None and latest.status == "expired":
+                counts["expired"] += 1
     line = ", ".join(f"{number} {word}" for word, number in counts.items())
     return {"figures": {f"publish_{word}": number for word, number in counts.items()},
             "lines": [f"Publishing: {line}"], "brief": []}

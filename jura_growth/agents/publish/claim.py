@@ -3,9 +3,15 @@
 `next_item()` is what `publish next` runs. Inside one `BEGIN IMMEDIATE` transaction it
 re-checks everything and claims at most one item: the approval is claimed with
 `approvals.use()` (`used_at` and `used_by_run` set, MC §4.6 A6) and the item becomes `claimed`
-in the same transaction, which commits before the command prints anything. Its images are
-copied into the run's scratch folder and checked against the approved bytes inside that
-transaction too, so a copy that doesn't match leaves nothing claimed.
+in the same transaction, which commits before the command prints anything. Inside that
+transaction the claim then reads the draft's text and every image once, hashes exactly those
+bytes, and refuses (rolling the claim back) unless the hash is the approval's own. The bytes it
+hands out, the text printed and the image copies written to the run's scratch folder, are those
+same bytes, so nothing Ting Yu didn't approve can be handed out, even if a file changes after
+`use()` read it (code review 02, B2).
+
+Before any of that, `items.sync()` brings every ready item in line with its requests: a post that
+changed gets its new request and card (AC-P1.3), and one that is gone is withdrawn.
 
 The checks, in order:
 
@@ -23,18 +29,18 @@ The checks, in order:
 A cap counts an item from its claim, whatever happens next, so a stopped or unknown item still
 uses its platform's day (AC-P5.2).
 
-`claimable(conn, now)` answers the same question read-only, for the publish job's precheck
-(BP-03): it never writes.
+`claimable(conn, now)` answers the same question for the publish job's precheck (BP-03) by
+running the very same steps, `use()` included, in a transaction it always rolls back: nothing is
+written, and the answer can't drift from the real gate.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from jura_growth import approvals, caps, db, log, paths, pause, timeutil
@@ -100,11 +106,11 @@ def _per_run_problem(conn: sqlite3.Connection, run_id: int | None) -> str | None
 def _item_problem(conn: sqlite3.Connection, item: items.Item, today: str) -> str | None:
     if item.day != today:
         return f"{item.label} is for {item.day}"
-    if item.kind == items.SOCIAL:
+    if item.kind == items.SOCIAL_ITEM:
         used = db.scalar(
             conn,
             "SELECT count(*) FROM publish_items WHERE kind = ? AND platform = ? AND day = ? AND claimed_at IS NOT NULL",
-            (items.SOCIAL, item.platform, item.day),
+            (items.SOCIAL_ITEM, item.platform, item.day),
         ) or 0
         if used >= caps.SOCIAL_POSTS_PER_PLATFORM_PER_DAY:
             return f"{item.platform} already had its post claimed for {item.day}"
@@ -112,7 +118,7 @@ def _item_problem(conn: sqlite3.Connection, item: items.Item, today: str) -> str
 
 
 def _past(item: items.Item, now: datetime) -> bool:
-    _, closes = limits.window_on(datetime.fromisoformat(item.day).date())
+    _, closes = limits.window_on(date.fromisoformat(item.day))
     return now >= closes
 
 
@@ -128,105 +134,112 @@ def _blocked(conn: sqlite3.Connection) -> str | None:
 # --- the claim -------------------------------------------------------------------------------
 
 
+class _DryRun(Exception):
+    """Rolls `claimable()`'s transaction back, carrying what it found."""
+
+    def __init__(self, found: "Claim"):
+        super().__init__("dry run")
+        self.found = found
+
+
 def next_item(conn: sqlite3.Connection, *, run_id: int | None = None, now: datetime | None = None) -> Claim:
-    """Claim at most one item, or say why nothing is due. See the module docstring."""
+    """Claim at most one item, or say why nothing is due. See the module docstring. Post any card
+    `items.sync()` raised with `cards.sweep_safely()` afterwards (the command does)."""
     now = now or timeutil.now_sgt()
     blocked = _blocked(conn)
     if blocked:
         return Claim(why=[blocked])
+    try:
+        with db.transaction(conn):
+            return _select(conn, now, run_id, _run_start(conn, run_id, now), hand_out=True)
+    except CopyFailed as refusal:  # rolled back: nothing claimed
+        log.event(conn, "publish.claim_refused", {"why": str(refusal)}, level="warning", agent=items.AGENT, run_id=run_id)
+        return Claim(why=[str(refusal)])
+
+
+def claimable(conn: sqlite3.Connection, now: datetime | None = None, *, run_id: int | None = None,
+              run_start: datetime | None = None) -> list[items.Item]:
+    """The item `next_item()` would claim now, if any, found by running its very steps in a
+    transaction that is always rolled back: nothing is written or posted."""
+    now = now or timeutil.now_sgt()
+    if _blocked(conn):
+        return []
+    try:
+        with db.transaction(conn):
+            raise _DryRun(_select(conn, now, run_id, run_start or _run_start(conn, run_id, now), hand_out=False))
+    except _DryRun as dry:
+        return [dry.found.item] if dry.found.item is not None else []
+    except CopyFailed:
+        return []
+
+
+def _select(conn: sqlite3.Connection, now: datetime, run_id: int | None, run_start: datetime, *, hand_out: bool) -> Claim:
+    """Every check and the claim, inside the caller's transaction."""
     today = now.astimezone(timeutil.SGT).date().isoformat()
     why: list[str] = []
-    with db.transaction(conn):
-        candidates = []
-        for item in _ready(conn, today):
-            if item.day < today or _past(item, now):
-                # Past its deadline: `use()` refuses it and writes the expiry (A5, A17).
-                try:
-                    approvals.use(conn, kinds.KIND, item.subject, run_id=run_id)
-                except approvals.NotApproved as refusal:
-                    why.append(f"{_name(item)}: {refusal.text}")
-                    continue
-                raise RuntimeError(f"{item.label} was claimed after its deadline")  # rolls back
-            candidates.append(item)
-        items.sync(conn)
-        general = None
-        if not limits.in_window(now):
-            start, end = limits.window()
-            general = f"outside the posting window ({start:%H:%M} to {end:%H:%M} SGT)"
-        general = general or _per_run_problem(conn, run_id) or _gap_problem(conn, _run_start(conn, run_id, now))
-        if general:
-            return Claim(why=[general, *why])
-        for item in candidates:
-            problem = _item_problem(conn, item, today)
-            if problem:
-                why.append(f"{_name(item)}: {problem}")
-                continue
+    items.sync(conn, run_id=run_id)
+    candidates = []
+    for item in _ready(conn, today):
+        if item.day < today or _past(item, now):
+            # Past its deadline: `use()` refuses it and writes the expiry (A5, A17).
             try:
-                approval = approvals.use(conn, kinds.KIND, item.subject, run_id=run_id)
+                approvals.use(conn, kinds.KIND, item.subject, run_id=run_id)
             except approvals.NotApproved as refusal:
                 why.append(f"{_name(item)}: {refusal.text}")
                 continue
-            content = kinds.social_content(conn, item.ref_id)
-            if content is None:  # use() matched the content a moment ago in this transaction
-                raise RuntimeError(f"{item.label}'s content vanished inside its claim")
-            copies = _copy_images(content, approval)
-            stamp = timeutil.stamp(now)
-            conn.execute(
-                "UPDATE publish_items SET state = 'claimed', run_id = ?, claimed_at = ?, content_json = ? WHERE id = ? "
-                "AND state = 'ready'",
-                (run_id, stamp, json.dumps({**content, "copies": [str(c) for c in copies]}, ensure_ascii=False,
-                                           sort_keys=True), item.id),
-            )
-            log.event(conn, "publish.claimed", {"item": item.label, "approval": approval.id, "platform": item.platform,
-                                                 "day": item.day}, agent=items.AGENT, run_id=run_id)
-            return Claim(items.get(conn, item.id), approval, copies)
+            raise RuntimeError(f"{item.label} was claimed after its deadline")  # rolls back
+        candidates.append(item)
+    general = None
+    if not limits.in_window(now):
+        start, end = limits.window()
+        general = f"outside the posting window ({start:%H:%M} to {end:%H:%M} SGT)"
+    general = general or _per_run_problem(conn, run_id) or _gap_problem(conn, run_start)
+    if general:
+        items.sync(conn, run_id=run_id)
+        return Claim(why=[general, *why])
+    for item in candidates:
+        problem = _item_problem(conn, item, today)
+        if problem:
+            why.append(f"{_name(item)}: {problem}")
+            continue
+        try:
+            approval = approvals.use(conn, kinds.KIND, item.subject, run_id=run_id)
+        except approvals.NotApproved as refusal:
+            why.append(f"{_name(item)}: {refusal.text}")
+            continue
+        return _hand_out(conn, item, approval, run_id, now, write_copies=hand_out)
+    items.sync(conn, run_id=run_id)  # freeze any request `use()` just raised over new content
     return Claim(why=why or ["no item is waiting"])
 
 
-def _copy_images(content: dict, approval: approvals.Approval) -> list[Path]:
-    """Copy the approved images, in order, into the run's scratch folder, and check each copy's
-    bytes against the approved hash. A mismatch raises, which rolls the claim back."""
+def _hand_out(conn: sqlite3.Connection, item: items.Item, approval: approvals.Approval, run_id: int | None,
+              now: datetime, *, write_copies: bool) -> Claim:
+    """Read the draft once, check exactly those bytes against the approval's hash, and hand
+    out those bytes. A mismatch raises `CopyFailed`, which rolls the claim back."""
+    found = kinds.read_social(conn, item.ref_id)
+    if found is None or approvals.content_hash(kinds.hashed(found.content)) != approval.content_hash:
+        raise CopyFailed(f"{item.label}'s post changed while it was being claimed; nothing was handed out")
+    copies = _copy_images(found, approval) if write_copies else []
+    conn.execute(
+        "UPDATE publish_items SET state = 'claimed', run_id = ?, claimed_at = ?, content_json = ? WHERE id = ? "
+        "AND state = 'ready'",
+        (run_id, timeutil.stamp(now), json.dumps({**found.content, "copies": [str(c) for c in copies]},
+                                                 ensure_ascii=False, sort_keys=True), item.id),
+    )
+    log.event(conn, "publish.claimed", {"item": item.label, "approval": approval.id, "platform": item.platform,
+                                         "day": item.day}, agent=items.AGENT, run_id=run_id)
+    return Claim(items.get(conn, item.id), approval, copies)
+
+
+def _copy_images(found: kinds.Read, approval: approvals.Approval) -> list[Path]:
+    """Write the checked bytes, in order, into the run's scratch folder, and read each copy back
+    to make sure it holds them."""
     folder = paths.work_dir("publish") / approval.id
     copies = []
-    for number, image in enumerate(content["images"], start=1):
-        source = Path(image["path"])
-        target = paths.writable(folder / f"{number}-{source.name}")
-        shutil.copyfile(source, target)
+    for number, (image, blob) in enumerate(zip(found.content["images"], found.blobs), start=1):
+        target = paths.writable(folder / f"{number}-{Path(image['path']).name}")
+        target.write_bytes(blob)
         if hashlib.sha256(target.read_bytes()).hexdigest() != image["sha256"]:
-            raise CopyFailed(f"{target.name} doesn't match the approved image")
+            raise CopyFailed(f"{target.name} doesn't hold the approved image")
         copies.append(target)
     return copies
-
-
-# --- read-only ------------------------------------------------------------------------------
-
-
-def claimable(conn: sqlite3.Connection, now: datetime | None = None, *, run_start: datetime | None = None) -> list[items.Item]:
-    """The items `next_item()` could claim now, judged without writing anything: the precheck
-    for the publish job (BP-03). Approval states are read as they stand, deadlines by growth's
-    clock, and the content compared through the kind."""
-    now = now or timeutil.now_sgt()
-    if _blocked(conn) or not limits.in_window(now):
-        return []
-    if _gap_problem(conn, run_start or now):
-        return []
-    today = now.astimezone(timeutil.SGT).date().isoformat()
-    kind = kinds.SocialPost()
-    found = []
-    for item in _ready(conn, today):
-        if _past(item, now) or _item_problem(conn, item, today) or kind.switched_off(conn, item.subject):
-            continue
-        record = conn.execute(
-            "SELECT * FROM approvals WHERE kind = ? AND subject = ? AND status = 'approved' AND used_at IS NULL",
-            (kinds.KIND, item.subject),
-        ).fetchone()
-        if record is None:
-            continue
-        approval = approvals.Approval.from_row(record)
-        content = kind.content(conn, item.subject)
-        if approval.use_by and now >= timeutil.parse(approval.use_by):
-            continue
-        if content is None or approvals.content_hash(content) != approval.content_hash:
-            continue
-        found.append(item)
-    return found
