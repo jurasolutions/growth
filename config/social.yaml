@@ -69,9 +69,14 @@ themes:
 
 # --- platforms (PRD §5.3) ----------------------------------------------------
 #
-# publish_mode is `draft` (Ting Yu posts by hand from #social-drafts) or, once
-# block 3 is built and signed off, `auto`. Block 3 is not built: any other
-# value is treated as `draft` and the run says so.
+# publish_mode is `draft` (Ting Yu posts by hand from #social-drafts) or
+# `browser` (browser publishing PRD §5.10): each draft that passes the brand
+# gate becomes a publish item with its own approval card in #approvals, and the
+# publish job posts it through Chrome once he approves, by 18:00 on its day.
+# `browser` also needs page_url, the page the run posts to; without it the
+# draft is posted to #social-drafts for posting by hand. identity is the
+# posting identity the run checks before typing (defaults to the Jura Solutions
+# page or account). Facebook first, then Instagram, then LinkedIn (BP §5.1).
 platforms:
   linkedin:
     label: LinkedIn page
@@ -81,6 +86,7 @@ platforms:
     links: post
     image: {width: 1200, height: 627}
     publish_mode: draft
+    page_url: null
 
   facebook:
     label: Facebook Page
@@ -90,6 +96,7 @@ platforms:
     links: post
     image: {width: 1200, height: 630}
     publish_mode: draft
+    page_url: null
 
   instagram:
     label: Instagram
@@ -100,6 +107,7 @@ platforms:
     image: {width: 1080, height: 1350}
     carousel: {days: [mon, thu], max_slides: 5}
     publish_mode: draft
+    page_url: null
 
 # --- brand rules specific to social posts (PRD §4) ---------------------------
 

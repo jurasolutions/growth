@@ -15,7 +15,16 @@ from jura_growth import config, images
 PLATFORMS = ("linkedin", "facebook", "instagram")
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 LAYOUTS = ("headline", "list", "tool")
-PUBLISH_MODES = ("draft", "auto")
+# `draft`: Ting Yu posts by hand from #social-drafts. `browser`: each draft that
+# passes the brand gate becomes a publish item with its own approval request, and
+# the publish job posts it once he approves (browser publishing PRD §5.10). The
+# old `auto` (API publishing) was dropped (BP §3.3).
+PUBLISH_MODES = ("draft", "browser")
+DEFAULT_IDENTITIES = {
+    "linkedin": "the Jura Solutions LinkedIn company page",
+    "facebook": "the Jura Solutions Facebook Page",
+    "instagram": "the Jura Solutions Instagram account",
+}
 DEFAULT_CHROME = images.DEFAULT_CHROME  # one path for the cards and the one-pager grid
 
 
@@ -49,6 +58,12 @@ class Platform:
     carousel_days: tuple[str, ...] = ()
     carousel_max: int = 1
     publish_mode: str = "draft"
+    page_url: str | None = None  # the page a browser run posts to, once Ting Yu sets it
+    identity: str = ""  # the posting identity the run must see before typing
+
+    @property
+    def browser(self) -> bool:
+        return self.publish_mode == "browser"
 
     @property
     def size(self) -> str:
@@ -56,11 +71,6 @@ class Platform:
 
     def carousel_on(self, day: date) -> bool:
         return self.carousel_max > 1 and WEEKDAYS[day.weekday()] in self.carousel_days
-
-    @property
-    def effective_publish_mode(self) -> str:
-        # Block 3 (auto-publishing) is not built or signed off.
-        return "draft"
 
 
 @dataclass(frozen=True)
@@ -163,11 +173,8 @@ def load() -> Settings:
         carousel = spec.get("carousel") or {}
         mode = str(spec.get("publish_mode", "draft"))
         if mode not in PUBLISH_MODES:
-            raise SettingsError(f"platforms.{name}.publish_mode must be one of {PUBLISH_MODES}")
-        if mode != "draft":
-            warnings.append(
-                f"{name}: publish_mode is {mode!r}, but auto-publishing (PRD block 3) is not built; staying in draft"
-            )
+            raise SettingsError(f"platforms.{name}.publish_mode must be draft or browser, not {mode!r}")
+        page_url = spec.get("page_url") or None  # checked against the platform's hosts when an item is made
         links = spec.get("links", "post")
         if links not in ("post", "bio"):
             raise SettingsError(f"platforms.{name}.links must be 'post' or 'bio'")
@@ -183,6 +190,8 @@ def load() -> Settings:
             carousel_days=tuple(carousel.get("days", ())),
             carousel_max=max(1, min(int(carousel.get("max_slides", 1)), 10)),
             publish_mode=mode,
+            page_url=str(page_url) if page_url else None,
+            identity=str(spec.get("identity") or DEFAULT_IDENTITIES[name]),
         )
 
     render = raw.get("render") or {}

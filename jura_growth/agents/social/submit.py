@@ -17,6 +17,12 @@ In order:
 6. Images, the output folder, `social_posts` rows, and one #social-drafts
    message per platform with its images. If nothing passes, "No draft today"
    with the reason.
+7. For each platform in `browser` mode, a publish item and its `social-post`
+   approval card in #approvals (browser publishing PRD §5.4). That platform's
+   #social-drafts message then points at the card instead of repeating the
+   post. A platform in browser mode that can't get an item (no page_url set,
+   or its posting window has closed) is posted for posting by hand, with a
+   note saying why.
 
 Steps 1 to 4 refuse without using up the regeneration; they are mistakes to
 correct, not brand failures.
@@ -212,17 +218,23 @@ def submit(
     status = "partial" if dropped or card_result.status != "pass" else "delivered"
     _write_outputs(out, sub, card, theme, passing, results, card_result, images, attempt, fonts, link_notes, notes_for_ting)
     _log_rows(conn, day, theme.id, passing, sub, results, images, tool.slug if tool else None, attempt, theme.id != today_theme.id, fonts)
+    requests = _raise_publish_items(conn, day, passing, settings, notes_for_ting)
     history.record_submission(conn, day, attempt=attempt, status=status, theme=theme.id, issues=issues)
     log.event(
         conn, "social.delivered",
         {"date": day.isoformat(), "theme": theme.id, "platforms": passing, "dropped": dropped, "folder": str(out)},
         agent="social",
     )
-    _post(conn, day, theme, settings, passing, sub, images, out, dropped, results, notes_for_ting)
+    _post(conn, day, theme, settings, passing, sub, images, out, dropped, results, notes_for_ting, requests)
+    if requests:
+        from jura_growth import cards
+
+        cards.sweep_safely(conn)  # A12: the cards go out once their requests have committed
     if dropped:
         discord.alert(conn, _alert_text(day, {p: results[p] for p in dropped}, "dropped"), agent="social")
 
     lines = [f"Delivered to #{CHANNEL}: {', '.join(passing)} ({theme.label}) in {out}"]
+    lines += [f"Approval requested: {platform} as {approval.id} in #approvals" for platform, approval in requests.items()]
     if dropped:
         lines.append(f"Dropped after the brand check: {', '.join(dropped)}")
     lines += _verdict_lines(every)
@@ -302,10 +314,41 @@ def _log_rows(conn, day, theme_id, passing, sub, results, images, tool_slug, att
             )
 
 
-def _post(conn, day, theme, settings, passing, sub, images, out, dropped, results, notes) -> None:
+def _raise_publish_items(conn, day, passing, settings, notes) -> dict:
+    """{platform: its pending request} for each passing platform in browser mode."""
+    browser = [p for p in passing if settings.platforms[p].browser]
+    if not browser:
+        return {}
+    from jura_growth.agents.publish import items as publish_items
+
+    raised = {}
+    with db.transaction(conn):
+        for platform in browser:
+            post = db.one(conn, "SELECT id FROM social_posts WHERE date = ? AND platform = ?", (day.isoformat(), platform))
+            if post is None:
+                continue  # every passing platform has its row (_log_rows), so this never happens
+            made = publish_items.create_social(conn, post["id"], run_id=log.current_run_id())
+            if made.approval is not None and made.approval.status == "pending":
+                raised[platform] = made.approval
+            else:
+                notes.append(f"{platform} is in browser mode but got no approval card: {made.why or 'no request raised'}")
+    return raised
+
+
+def _post(conn, day, theme, settings, passing, sub, images, out, dropped, results, notes, requests=None) -> None:
     when = day.strftime("%A %-d %B %Y")
+    requests = requests or {}
     for platform in passing:
         rules = settings.platforms[platform]
+        if platform in requests:
+            discord.post(
+                conn, CHANNEL,
+                f"**{rules.label}** · {when} · {theme.label}\n"
+                f"Waiting for your decision in #approvals: {requests[platform].id}. "
+                f"Approve it there by 18:00 SGT to queue it for posting through the browser as {rules.identity}.",
+                username=USERNAME,
+            )
+            continue
         files = images.get(platform, [])
         size = f"{rules.width}×{rules.height}"
         if len(files) > 1:

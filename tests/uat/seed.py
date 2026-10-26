@@ -31,6 +31,15 @@ A scenario never inserts approval rows. The outreach requests come from the outr
 themselves, as they would live; `note-rules` raises its request through the kind's own code. Any
 card a scenario raised is posted once its transaction commits. The other kinds' tickets add their
 own scenarios to `SCENARIOS`.
+
+Part C's publish scenarios (BP-02a) put Facebook in `browser` mode in `$UAT/config` and seed the
+day's Facebook draft through the same code `social submit` uses, which raises its card:
+
+- `social-post` (C1): one pending `social-post` card, decide by 18:00 on the seeded day.
+- `social-approved` (C2): that card approved through the Dispatch origin, not yet claimed.
+- `claimed-not-closed` (C2): claimed by a publish run that recorded neither done nor stopped, so
+  it is `unknown`, publish is paused and #alerts says how to settle it. Seed it between 09:00 and
+  18:00.
 """
 
 from __future__ import annotations
@@ -429,12 +438,116 @@ def note_rules(conn) -> None:
     group_rules.request(conn, group, reason="the rules as seen inside the group (UAT seed, as publish note-rules will record them)")
 
 
+# --- the publish scenarios (BP-02a; uat.md Part C) -------------------------------------------
+#
+# They manage their own transactions (`own_transactions`): raising, deciding and claiming each
+# commit on their own, as they do live.
+
+UAT_PAGE_URL = "https://www.facebook.com/jura-uat-test-page"
+SOCIAL_DRAFT = (
+    "Chasing late invoices by hand? Your accounting software can send the first reminder for you.\n\n"
+    "More small automations like this: https://jurasolutions.sg\n\n#SmallBusiness #Automation\n"
+)
+
+
+def _browser_facebook() -> None:
+    folder = os.environ.get("JURA_GROWTH_CONFIG_DIR")
+    if not folder:
+        raise Refused("JURA_GROWTH_CONFIG_DIR isn't set: the publish scenarios write browser mode into $UAT/config, never config/")
+
+    def browser(social: dict) -> None:
+        social["platforms"]["facebook"].update(publish_mode="browser", page_url=UAT_PAGE_URL)
+
+    _rewrite_yaml(Path(folder) / "social.yaml", browser)
+    config.reset_caches()
+
+
+def _png() -> bytes:
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1200, 630, 8, 2, 0, 0, 0)) + chunk(b"IEND", b"")
+
+
+def _facebook_item(conn):
+    """The seeded day's Facebook draft, past the brand gate, with its item, request and card."""
+    from jura_growth import cards
+    from jura_growth.agents.publish import items
+
+    _browser_facebook()
+    day = today()
+    image = paths.outputs_dir() / "social" / day.isoformat() / "facebook-1200x630.png"
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.write_bytes(_png())
+    with db.transaction(conn):
+        cursor = conn.execute(
+            "INSERT INTO social_posts (date, theme, platform, text, image_paths, qa_json, status, created_at)"
+            " VALUES (?, 'automation-tip', 'facebook', ?, ?, ?, 'draft', ?)",
+            (day.isoformat(), SOCIAL_DRAFT, json.dumps([str(image)]), json.dumps({"passed": True, "attempt": 1}),
+             timeutil.stamp()),
+        )
+        made = items.create_social(conn, int(cursor.lastrowid or 0), run_id=None)
+    if made.approval is None:
+        raise Refused(f"no Facebook card could be raised: {made.why}")
+    cards.sweep_safely(conn)
+    return made
+
+
+def _approve(conn, approval) -> None:
+    """Approve through the only origin that decides, as Dispatch delivers it."""
+    from jura_growth import approvals, cards
+    from jura_growth.origin import Origin
+
+    control = config.secret("CONTROL_DISCORD_USER_ID")
+    answer = approvals.decide(conn, approval.id, "approve", actor=f"discord:{control}", origin=Origin.ssh(),
+                              source_ref=None, args={})
+    if answer.answer != "recorded":
+        raise Refused(f"{approval.id} couldn't be approved: {answer.text}")
+    cards.sweep_safely(conn)
+
+
+def social_post(conn) -> None:
+    """C1: one pending social-post card for Facebook."""
+    _facebook_item(conn)
+
+
+def social_approved(conn) -> None:
+    """C2: the Facebook card, approved and not yet claimed."""
+    _approve(conn, _facebook_item(conn).approval)
+
+
+def claimed_not_closed(conn) -> None:
+    """C2: a publish run claimed the Facebook item and ended without done or stopped, so
+    `after_run` settled it as unknown, paused publish, and the run's alert says how to settle it."""
+    from jura_growth import discord, log, runner
+    from jura_growth.agents.publish import claim, job
+
+    _approve(conn, _facebook_item(conn).approval)
+    run_id = log.start_run(conn, "publish", "publish")
+    handed = claim.next_item(conn, run_id=run_id)
+    if handed.item is None:
+        raise Refused("nothing could be claimed: " + "; ".join(handed.why) + " (seed this between 09:00 and 18:00)")
+    outcome = job.after_run(conn, "publish", run_id, runner.Outcome("ok"))
+    log.finish_run(conn, run_id, outcome.status, summary=outcome.summary, error=outcome.error)
+    discord.alert(conn, f"`publish` failed: {outcome.error[:500]}", agent="publish")
+
+
+for _scenario in (social_post, social_approved, claimed_not_closed):
+    _scenario.own_transactions = True  # type: ignore[attr-defined]
+
+
 SCENARIOS: dict[str, Callable] = {
     "base": base,
     "outreach-live": outreach_live,
     "edit-draft": edit_draft,
     "shadow-trial": shadow_trial,
     "note-rules": note_rules,
+    "social-post": social_post,
+    "social-approved": social_approved,
+    "claimed-not-closed": claimed_not_closed,
 }
 
 
@@ -463,6 +576,8 @@ def seed(folder: str | os.PathLike[str], scenario: str = "base", *, today: date 
         with db.session() as conn:
             if scenario == "base" and db.scalar(conn, "SELECT count(*) FROM runs"):
                 raise Refused(f"{folder} is already seeded: start again from a fresh `mktemp -d`")
+            if getattr(build, "own_transactions", False):
+                return list(build(conn) or [])
             with db.transaction(conn):
                 notes = list(build(conn) or [])
             cards.sweep_safely(conn)  # any request a scenario raised posts its card (A12)

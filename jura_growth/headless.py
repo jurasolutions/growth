@@ -38,10 +38,19 @@ import click
 from jura_growth import agents, config, log, paths, timeutil
 
 # Commands no run may use, whatever a plug-in declares: starting, resuming or
-# scheduling jobs, posting or uploading to Discord directly, and deciding an
-# approval or sending a control command, which only a human may do. Not
-# `one-pager`: that is a scheduled job's own command.
-NEVER = ("run", "resume", "schedule", "discord", "approve", "skip", "approvals", "remote")
+# scheduling jobs, posting or uploading to Discord directly, deciding an
+# approval or sending a control command, which only a human may do, and
+# settling a publish item whose outcome is unknown (browser publishing §5.7).
+# Not `one-pager`: that is a scheduled job's own command. An entry of several
+# words matches a command that starts with those words.
+NEVER = ("run", "resume", "schedule", "discord", "approve", "skip", "approvals", "remote", "publish resolve")
+
+
+def never(command: str) -> bool:
+    """Whether `command` ("publish resolve A-0001 posted") starts with an entry of `NEVER`,
+    matched word by word, so "publish resolve" refuses it and "publish next" doesn't."""
+    words = command.split()
+    return any(words[: len(entry.split())] == entry.split() for entry in NEVER)
 
 
 @dataclass(frozen=True)
@@ -75,7 +84,7 @@ def permissions(job: str) -> Permissions:
 
 
 def may_use(job: str, command: str) -> bool:
-    if command.split()[0] in NEVER:
+    if never(command):
         return False
     return command in permissions(job).commands
 
@@ -116,7 +125,7 @@ def claude_rules(job: str) -> tuple[list[str], list[str]]:
     from jura_growth.cli import cli
 
     declared = permissions(job)
-    commands = [c for c in declared.commands if c.split()[0] not in NEVER]
+    commands = [c for c in declared.commands if not never(c)]
     allowed = ["Bash(jura-growth --help)"]
     allowed += [f"Bash(jura-growth {group} --help)" for group in sorted({c.split()[0] for c in commands if " " in c})]
     for command in commands:

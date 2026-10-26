@@ -59,7 +59,7 @@ def build(conn: sqlite3.Connection, day: date, settings: Settings | None = None)
                 "image": p.size,
                 "carousel_today": p.carousel_on(day),
                 "carousel_max": p.carousel_max,
-                "publish_mode": p.effective_publish_mode,
+                "publish_mode": p.publish_mode,
                 "to_draft": name in active,
             }
             for name, p in settings.platforms.items()

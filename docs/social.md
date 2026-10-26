@@ -1,11 +1,15 @@
 # Social content agent
 
 Daily drafts for Jura's LinkedIn page, Facebook Page and Instagram, with branded image cards,
-delivered to `#social-drafts` for Ting Yu to post by hand.
+delivered to `#social-drafts`. A platform in `draft` mode is posted by Ting Yu by hand; a platform
+in `browser` mode is posted through Chrome once he approves that day's post in `#approvals`.
 
 PRD: `jurasolutions/prd/pending/prd-jura-social-content-2026-10-24.md`. Blocks 1 (drafts and
-images) and 2 (schedule and history) are built. Block 3 (auto-publishing) is not: `publish_mode`
-is `draft` for every platform and any other value is treated as `draft`.
+images) and 2 (schedule and history) are built. Block 3 is replaced by browser publishing
+(`prd-jura-browser-publishing-2026-10-25.md`, which supersedes the social PRD's §1 last sentence,
+§2 criterion 5, the "Later block", §5.6 block 3 and §6 question 3; see its §3.3): the Graph API,
+the Posts API, `publish_mode: auto` and the two-hour skip window are dropped. `publish_mode` is
+`draft` (the default, and every platform today) or `browser`.
 
 ## How a day runs
 
@@ -17,7 +21,8 @@ is `draft` for every platform and any other value is treated as `draft`.
    `data/growth/work/social/YYYY-MM-DD/`, then `jura-growth social submit`.
 3. `submit` enforces the rules in code (below), renders the cards, writes
    `outputs/growth/social/YYYY-MM-DD/`, logs `social_posts` and posts to `#social-drafts`.
-4. Ting Yu copies each post, or skips one, and can record that it went out.
+4. For a platform in `draft` mode, Ting Yu copies the post, or skips it, and can record that it
+   went out. For a platform in `browser` mode, see "Publishing through the browser" below.
 
 ## Commands
 
@@ -163,7 +168,7 @@ post says the images use fallback fonts. `--offline` blocks the network (the tes
 | `weekends` | `true` | `false` makes the 07:00 job skip Saturday and Sunday (PRD open question 2) |
 | `rhythm` | PRD §5.2 | Weekday to theme. Fallbacks are the following days' themes, in order |
 | `themes.<id>` | | `label`, `brief`, `layout`, `news`, `min_sources`, `max_sources`, `max_source_age_days`, `needs_tool` |
-| `platforms.<name>` | PRD §5.3 | `label`, `enabled`, `words`, `hashtags_max`, `links` (`post` or `bio`), `image`, `carousel`, `publish_mode` |
+| `platforms.<name>` | PRD §5.3 | `label`, `enabled`, `words`, `hashtags_max`, `links` (`post` or `bio`), `image`, `carousel`, `publish_mode` (`draft` or `browser`), `page_url` (the page a browser run posts to; `https://` on the platform's own host), `identity` (the posting identity the run must see; defaults to the Jura Solutions page or account) |
 | `eligibility_line` | "Check the official page for current eligibility." | |
 | `max_quote_words` | 12 | |
 | `blocked_topics` | elections, parties, tragedies | Whole words or phrases |
@@ -185,11 +190,70 @@ created_at, updated_at. Unique on (date, platform).
 `social_submissions`: each gated submission and each "No draft today", for the one-regeneration
 rule and the digest.
 
+`publish_items` (the publish plug-in's migration): one row per publish item, with its frozen
+content, its day and its lifecycle (`ready`, `claimed`, `done`, `stopped`, `unknown`,
+`withdrawn`), the live URL and whether the live text matched. It holds no approval state: that
+lives only in `approvals`, under the subject `publish_item:<id>`.
+
+## Publishing through the browser (browser publishing PRD, BP-02a)
+
+Nothing posts without Ting Yu's approval of that exact post (MC §4.6). The queue is built and
+works from Terminal and the tests; the scheduled `publish` job that drives Chrome is BP-03.
+
+1. `social submit` makes a **publish item** for each platform in `browser` mode whose variant
+   passed the brand gate, and raises one `social-post` approval request for it. The card in
+   `#approvals` shows the A-id, the page and its URL, the day, the exact text, the image, the
+   links in the text, the brand-gate result and "decide by <day>, 18:00 SGT". That platform's
+   `#social-drafts` message points at the card instead of repeating the post. Drafts written
+   before a platform moved to `browser` mode get no item. A platform in `browser` mode without
+   `page_url` set is posted by hand as before, with a note.
+2. Ting Yu approves or skips in `#approvals`. A skip, until the item is claimed, withdraws it and
+   records `social skip <date> <platform>`. Unanswered or unclaimed by the end of the posting
+   window (18:00 SGT on its day), the request expires and the draft stays as it is.
+3. `publish next` claims at most one approved item inside one `BEGIN IMMEDIATE` transaction. In
+   that transaction it reads the text and every image once, refuses unless exactly those bytes
+   hash to the approval, writes those bytes to `data/growth/work/publish/<A-id>/`, and prints
+   that text.
+4. The run then records `publish done <A-id> --url <url> --live-text-file <f>`, which marks the
+   draft published with its URL, or `publish stopped <A-id> --reason <r>` on a stop signal.
+
+Any change to the text, the images or their order, the page, the posting identity or the day
+supersedes the request and raises a new card over the new content, with deadlines from the new
+content's day, and the item freezes the new content. A claim or a decision that finds the change
+raises the card at once; one the heartbeat finds is raised by the next `publish next` (and, from
+BP-03, by the publish job's precheck, which runs the same `items.sync()` every slot). Posting the draft by hand (`social published`) or skipping it (`social skip`)
+supersedes the request too, and then the item is withdrawn with no new card. The hash covers the
+exact bytes, with no Unicode normalisation (ADR 0003).
+
+| Command | Who | Does |
+|---|---|---|
+| `jura-growth publish next [--json]` | the publish run | Claims at most one item, or prints "nothing due" with the reasons |
+| `jura-growth publish done <A-id> --url <url> --live-text-file <f>` | the publish run | Records the post. The URL must be `https://` on the platform's own host. Live text that differs from the approved text (after Unicode NFC, collapsing whitespace and trimming) is recorded, alerts and pauses `publish` |
+| `jura-growth publish stopped <A-id> --reason <r> [--screenshot <f>]` | the publish run | A stop signal (`login`, `captcha`, `checkpoint`, `warning`, `restriction`, `rate-limit`, `removed`, `admin-warning`, `wrong-identity`, `unidentified`): the item stops, `publish` pauses for every item and `#alerts` says why |
+| `jura-growth publish queue [--json]` | Ting Yu | Every item, its state and its A-id |
+| `jura-growth publish resolve <A-id> posted --url <url>` or `not-posted` | Ting Yu only (refused in any scheduled run) | Settles an item whose outcome is unknown |
+
+**Limits, in `jura_growth/caps.py`**, which `config/publish.yaml` may only tighten: one post per
+platform per day, one item per run, 20 minutes between the start times of the runs that claim two
+items, and claims only from 09:00 to 18:00 SGT. A cap counts an item from its claim, so a stopped
+or unknown item still uses its platform's day. The PAUSE file, `pause publish`, `pause all`,
+auto-pause after three failed runs and `publish_mode: draft` each stop every claim, and the
+approval stays unused.
+
+**A claim left open.** If a run ends having claimed an item without `done` or `stopped`, the
+item becomes `unknown`: it is never claimed again, `publish` pauses, and `#alerts` names
+`/growth publish resolve A-nnnn posted --url <url>` and `… not-posted`. A claim left by a run
+whose process died is settled the same way by the next run, and `publish resolve` also settles a
+claim nobody will close: one whose run has ended, or one made in Terminal with no run.
+
 ## Digest
 
 `social.digest(conn, day)` gives `social_drafts_waiting`, `social_skipped` and
 `social_published` (published by `published_at` day), a `#daily-digest` line, and a brief
 fragment such as "3 social drafts waiting" or "no social draft today".
+
+`publish.digest(conn, day)` adds the day's publish items: `publish_posted`, `publish_skipped`,
+`publish_expired` and `publish_stopped`, and a "Publishing: …" line, on days that had items.
 
 ## Toolbox registry
 

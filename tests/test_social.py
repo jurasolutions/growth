@@ -246,12 +246,12 @@ def test_carousel_days_and_publish_mode(monkeypatch):
     assert not ig.carousel_on(date(2026, 10, 27))
     assert not settings.platforms["linkedin"].carousel_on(date(2026, 10, 26))
     assert all(p.publish_mode == "draft" for p in settings.platforms.values())
+    # `auto` was dropped for `browser` (browser publishing PRD §3.3); see test_publish_items.py.
     platforms = dict(config.agent_config("social")["platforms"])
     platforms["facebook"] = {**platforms["facebook"], "publish_mode": "auto"}
     set_config(monkeypatch, platforms=platforms)
-    settings = load()
-    assert settings.platforms["facebook"].effective_publish_mode == "draft"
-    assert any("not built" in w for w in settings.warnings)
+    with pytest.raises(ValueError, match="draft or browser"):
+        load()
 
 
 def test_today_plan(env, conn):

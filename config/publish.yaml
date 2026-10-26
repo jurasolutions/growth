@@ -1,0 +1,20 @@
+# Browser publishing (prd/pending/prd-jura-browser-publishing-2026-10-25.md §5.10).
+#
+# The hard limits live in jura_growth/caps.py. A value here may only tighten one:
+# a count may go down, the gap may grow, and the window may narrow. A looser
+# value reads as the hard one. There is no approver setting here: the approver
+# is CONTROL_DISCORD_USER_ID in .env, as for every other approval.
+
+# The posting window, SGT. A post's decide-by and use-by are its end on the
+# post's day. Hard: 09:00 to 18:00.
+window: {start: "09:00", end: "18:00"}
+
+# Minutes between the start times of the runs that claim two items. Hard: 20.
+minutes_between_actions: 20
+
+# Items one publish run may claim. Hard: 1.
+items_per_run: 1
+
+# Community limits (BP-02b and later). Hard: 1 post a day, 3 joins a week.
+community_posts_per_day: 1
+community_joins_per_week: 3

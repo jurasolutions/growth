@@ -311,7 +311,7 @@ def _preamble(name: str, spec: dict, run_id: int | None) -> str:
 def _commands_line(name: str) -> str:
     """The job's own `jura-growth` commands, the only ones this run may use
     (headless.permissions), so the preamble never invites a refused call."""
-    commands = [c for c in headless.permissions(name).commands if c.split()[0] not in headless.NEVER]
+    commands = [c for c in headless.permissions(name).commands if not headless.never(c)]
     if not commands:
         return "- This job may run no jura-growth commands; anything you try is refused.\n"
     listed = ", ".join(f"`jura-growth {command}`" for command in commands)
