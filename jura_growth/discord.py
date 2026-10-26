@@ -155,12 +155,18 @@ def post(
     client: httpx.Client | None = None,
     own_copy: list[str] | tuple[str, ...] = (),
     wait: bool = False,
+    components: list[dict] | None = None,
 ) -> PostResult:
     """Post `content` (and `files`) to a channel, or save it to the outbox.
 
     With `wait`, each piece is posted with `?wait=true` and the result lists
     the message ids Discord gave back and the text each piece carried, so the
     message can be edited later (`edit()`; approval cards, MC §4.6 A12).
+
+    `components` (Approve and Skip buttons, MC §4.8 D5) go on the first
+    piece only, the one a card edits, with `?with_components=true`: Discord
+    takes them only through a webhook its application owns (Dispatch's).
+    The approval cards decide when to send them (`approvals.post_buttons`).
 
     The last line of defence (MC §4.3, §4.4): the content, username, file names
     and text files go through `privacy.for_discord()`, after `privacy.learn()`
@@ -205,7 +211,8 @@ def post(
         with _using(client) as http:
             for index, piece in enumerate(pieces):
                 last = index == len(pieces) - 1
-                response = _send(http, url, piece, uploads if last else [], username, suppress_embeds, wait=wait)
+                response = _send(http, url, piece, uploads if last else [], username, suppress_embeds, wait=wait,
+                                 components=components if index == 0 else None)
                 if wait:
                     message_ids.append(_message_id(response))
     except DiscordError as error:
@@ -228,8 +235,11 @@ def edit(
     content: str,
     *,
     client: httpx.Client | None = None,
+    components: list[dict] | None = None,
 ) -> PostResult:
     """Replace the text of a message this channel's webhook posted.
+    `components` replaces its buttons too (`[]` removes them); None leaves
+    them as they are.
 
     Masked like a post, mentioning nobody, never split (an edited card's
     first piece stays one message) and never saved to the outbox: an edit
@@ -244,7 +254,10 @@ def edit(
     target = f"{url.rstrip('/')}/messages/{message_id}"
     try:
         with _using(client) as http:
-            _deliver(http, "PATCH", target, {"content": content, "allowed_mentions": {"parse": []}}, [])
+            payload: dict = {"content": content, "allowed_mentions": {"parse": []}}
+            if components is not None:
+                payload["components"] = components
+            _deliver(http, "PATCH", target, payload, [], params={"with_components": "true"} if components is not None else None)
     except DiscordError as error:
         log.event(conn, "discord.edit_failed", {"channel": channel, "error": str(error)}, level="warning")
         return PostResult(channel, delivered=False, reason=str(error))
@@ -303,13 +316,20 @@ def _send(
     suppress_embeds: bool = False,
     *,
     wait: bool = False,
+    components: list[dict] | None = None,
 ) -> httpx.Response:
-    payload = {"content": content, "allowed_mentions": {"parse": []}}
+    payload: dict = {"content": content, "allowed_mentions": {"parse": []}}
     if suppress_embeds:
         payload["flags"] = SUPPRESS_EMBEDS
     if username:
         payload["username"] = username[:80]
-    return _deliver(client, "POST", url, payload, files, params={"wait": "true"} if wait else None)
+    params = {}
+    if wait:
+        params["wait"] = "true"
+    if components is not None:
+        payload["components"] = components
+        params["with_components"] = "true"
+    return _deliver(client, "POST", url, payload, files, params=params or None)
 
 
 def _deliver(
