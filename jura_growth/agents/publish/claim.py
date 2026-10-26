@@ -4,8 +4,8 @@
 re-checks everything and claims at most one item: the approval is claimed with
 `approvals.use()` (`used_at` and `used_by_run` set, MC §4.6 A6) and the item becomes `claimed`
 in the same transaction, which commits before the command prints anything. Inside that
-transaction the claim then reads the draft's text and every image once, hashes exactly those
-bytes, and refuses (rolling the claim back) unless the hash is the approval's own. The bytes it
+transaction the claim then reads the item's content (text, images, answers) once, hashes exactly
+those bytes, and refuses (rolling the claim back) unless the hash is the approval's own. The bytes it
 hands out, the text printed and the image copies written to the run's scratch folder, are those
 same bytes, so nothing Ting Yu didn't approve can be handed out, even if a file changes after
 `use()` read it (code review 02, B2).
@@ -22,12 +22,26 @@ The checks, in order:
 4. One item per run (`caps.PUBLISH_ITEMS_PER_RUN`).
 5. The gap: 20 minutes between the start times of the runs that claimed two items
    (`caps.PUBLISH_MINUTES_BETWEEN_ACTIONS`).
-6. Per item: its day is today, its platform has no claimed item yet today
-   (`caps.SOCIAL_POSTS_PER_PLATFORM_PER_DAY`), and `use()` agrees: approved, before its use-by,
-   unused, its content unchanged, and its platform in `browser` mode.
+6. Per item, by kind:
+   - a social post: its day is today and its platform has no claimed item yet today
+     (`caps.SOCIAL_POSTS_PER_PLATFORM_PER_DAY`);
+   - a community post (BP §4.5): its day is today; its group is a good fit, not removed, joined
+     as the Jura Page and not one that takes only personal profiles; Ting Yu confirmed its rules
+     and its open days (a group with its rules confirmed but its days not is refused, "open days
+     not confirmed"), and today is open under them (`rules.day_problem`, promotional when the
+     text carries a link or names Jura); one community post a day
+     (`caps.COMMUNITY_POSTS_PER_DAY`), three groups an ISO week in SGT
+     (`caps.COMMUNITY_GROUPS_PER_WEEK`), and none in a group posted to in the last 14 days
+     (`caps.NO_REPEAT_DAYS`). Posts made by hand count as well as claims;
+   - a join or its membership answers: proposed on or before today; the group a good fit, not
+     removed, not Page-less and not already joined as the Page; for the join itself, no join
+     requested yet and three joins an ISO week (`caps.COMMUNITY_JOINS_PER_WEEK`). The answers are
+     the second step of a join already counted, so they don't count again;
+   - and `use()` agrees: approved, before its use-by, unused, its content unchanged, and its
+     switch on (the platform's `publish_mode`, or `browser` in `config/community.yaml`).
 
 A cap counts an item from its claim, whatever happens next, so a stopped or unknown item still
-uses its platform's day (AC-P5.2).
+uses its platform's day, its group's week and its join (AC-P5.2).
 
 `claimable(conn, now)` answers the same question for the publish job's precheck (BP-03) by
 running the very same steps, `use()` included, in a transaction it always rolls back: nothing is
@@ -44,6 +58,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from jura_growth import approvals, caps, db, log, paths, pause, timeutil
+from jura_growth.agents.community import rules as rules_mod
 from jura_growth.agents.publish import items, kinds, limits
 
 NOTHING_DUE = "nothing due"
@@ -104,7 +119,7 @@ def _per_run_problem(conn: sqlite3.Connection, run_id: int | None) -> str | None
 
 
 def _item_problem(conn: sqlite3.Connection, item: items.Item, today: str) -> str | None:
-    if item.day != today:
+    if kinds.opens(item) > today or (item.kind in (items.SOCIAL_ITEM, items.COMMUNITY_POST_ITEM) and item.day != today):
         return f"{item.label} is for {item.day}"
     if item.kind == items.SOCIAL_ITEM:
         used = db.scalar(
@@ -114,12 +129,112 @@ def _item_problem(conn: sqlite3.Connection, item: items.Item, today: str) -> str
         ) or 0
         if used >= caps.SOCIAL_POSTS_PER_PLATFORM_PER_DAY:
             return f"{item.platform} already had its post claimed for {item.day}"
+        return None
+    found = kinds.read(conn, item)
+    if found is None:
+        return None  # gone: `use()` supersedes its request and says so
+    group = db.one(conn, "SELECT * FROM community_groups WHERE id = ?", (found.content["group"],))
+    if item.kind == items.COMMUNITY_POST_ITEM:
+        return _post_problem(conn, item, found.content, group, date.fromisoformat(today))
+    return _join_problem(conn, item, group, date.fromisoformat(today))
+
+
+# --- the community checks (BP §4.5) -------------------------------------------------------------
+
+
+def _week(day: date) -> tuple[str, str, str]:
+    """(label, Monday, Sunday) of `day`'s ISO week, SGT."""
+    monday = day - timedelta(days=day.weekday())
+    return timeutil.iso_week(day), monday.isoformat(), (monday + timedelta(days=6)).isoformat()
+
+
+def _claimed_posts(conn: sqlite3.Connection, first: str, last: str, *, but: int) -> list[dict]:
+    """Community posts that went out, or may have, between two days (SGT): claimed by a run, or
+    posted by hand. A claim counts whatever happened after it (AC-P5.2)."""
+    return db.rows(
+        conn,
+        "SELECT CAST(p.ref AS INTEGER) AS post, json_extract(p.content_json, '$.group') AS grp, "
+        "substr(p.claimed_at, 1, 10) AS day FROM publish_items p WHERE p.kind = ? AND p.id != ? "
+        "AND p.claimed_at IS NOT NULL AND substr(p.claimed_at, 1, 10) BETWEEN ? AND ? "
+        "UNION SELECT c.id, c.group_id, substr(c.posted_at, 1, 10) FROM community_posts c "
+        "WHERE c.kind = 'post' AND c.status = 'posted' AND substr(c.posted_at, 1, 10) BETWEEN ? AND ?",
+        (items.COMMUNITY_POST_ITEM, but, first, last, first, last),
+    )
+
+
+def _group_problem(group: dict | None) -> str | None:
+    if group is None:
+        return "its group isn't in the register"
+    if group["removed"]:
+        return "its group was removed after an admin removal or warning"
+    if group["pages_allowed"] == "no":
+        return "only personal profiles can join or post in its group"
+    if group["fit"] != "good fit":
+        return f"its group isn't a good fit (fit: {group['fit']})"
+    return None
+
+
+def _post_problem(conn: sqlite3.Connection, item: items.Item, content: dict, group: dict | None, today: date) -> str | None:
+    """A community post goes out only in a good-fit group joined as the Jura Page, whose rules and
+    open days Ting Yu confirmed, on a day they leave open, inside every community cap."""
+    from jura_growth.agents.community import groups as groups_mod
+    from jura_growth.agents.community import plan as plan_mod
+
+    problem = _group_problem(group)
+    if problem:
+        return problem
+    if group["joined_as"] != "page":
+        return "its group isn't joined as the Jura Page"
+    if not group["rules_confirmed"]:
+        return "the group's rules aren't confirmed by Ting Yu"
+    rules = groups_mod.rules_for(group)
+    if not rules.days_confirmed:
+        return "open days not confirmed"
+    closed = rules_mod.day_problem(rules, today.weekday(), promotional=plan_mod.is_promotional(content["text"]))
+    if closed:
+        return f"{today:%a %d %b} breaks the group's rules: {closed}"
+    per_day = limits.community_posts_per_day()
+    if len(_claimed_posts(conn, today.isoformat(), today.isoformat(), but=item.id)) >= per_day:
+        return f"a community post already went out today; the cap is {per_day} a day"
+    label, monday, sunday = _week(today)
+    groups = {row["grp"] for row in _claimed_posts(conn, monday, sunday, but=item.id)}
+    cap = plan_mod.groups_per_week()
+    if group["id"] not in groups and len(groups) >= cap:
+        return f"{len(groups)} groups posted to in {label} already; the cap is {cap} a week"
+    gap = plan_mod.no_repeat_days()
+    since = (today - timedelta(days=gap - 1)).isoformat()
+    recent = [row["day"] for row in _claimed_posts(conn, since, today.isoformat(), but=item.id) if row["grp"] == group["id"]]
+    if group["last_posted_at"] and group["last_posted_at"][:10] >= since:
+        recent.append(group["last_posted_at"][:10])
+    if recent:
+        return f"the group was posted to on {max(recent)}; no group within {gap} days of its last post"
+    return None
+
+
+def _join_problem(conn: sqlite3.Connection, item: items.Item, group: dict | None, today: date) -> str | None:
+    """A join, or its answers, goes in only for a good-fit group not yet joined as the Page; a join
+    (not its answers) only while no join is requested and inside the weekly join cap."""
+    problem = _group_problem(group)
+    if problem:
+        return problem
+    if group["joined_as"] == "page":
+        return "its group is already joined as the Jura Page"
+    if group["join_status"] == "member" or (item.kind == items.JOIN_ITEM and group["join_status"] == "requested"):
+        return f"its group's join is already {group['join_status']}"
+    if item.kind == items.JOIN_ITEM:
+        label, monday, sunday = _week(today)
+        joins = db.scalar(
+            conn, "SELECT count(*) FROM publish_items WHERE kind = ? AND claimed_at IS NOT NULL "
+                  "AND substr(claimed_at, 1, 10) BETWEEN ? AND ?", (items.JOIN_ITEM, monday, sunday),
+        ) or 0
+        cap = limits.community_joins_per_week()
+        if joins >= cap:
+            return f"{joins} joins claimed in {label} already; the cap is {cap} a week"
     return None
 
 
 def _past(item: items.Item, now: datetime) -> bool:
-    _, closes = limits.window_on(date.fromisoformat(item.day))
-    return now >= closes
+    return now >= kinds.closes(item)
 
 
 def _name(item: items.Item) -> str:
@@ -180,10 +295,10 @@ def _select(conn: sqlite3.Connection, now: datetime, run_id: int | None, run_sta
     items.sync(conn, run_id=run_id)
     candidates = []
     for item in _ready(conn, today):
-        if item.day < today or _past(item, now):
+        if _past(item, now):
             # Past its deadline: `use()` refuses it and writes the expiry (A5, A17).
             try:
-                approvals.use(conn, kinds.KIND, item.subject, run_id=run_id)
+                approvals.use(conn, kinds.kind_of(item), item.subject, run_id=run_id)
             except approvals.NotApproved as refusal:
                 why.append(f"{_name(item)}: {refusal.text}")
                 continue
@@ -203,7 +318,7 @@ def _select(conn: sqlite3.Connection, now: datetime, run_id: int | None, run_sta
             why.append(f"{_name(item)}: {problem}")
             continue
         try:
-            approval = approvals.use(conn, kinds.KIND, item.subject, run_id=run_id)
+            approval = approvals.use(conn, kinds.kind_of(item), item.subject, run_id=run_id)
         except approvals.NotApproved as refusal:
             why.append(f"{_name(item)}: {refusal.text}")
             continue
@@ -216,9 +331,9 @@ def _hand_out(conn: sqlite3.Connection, item: items.Item, approval: approvals.Ap
               now: datetime, *, write_copies: bool) -> Claim:
     """Read the draft once, check exactly those bytes against the approval's hash, and hand
     out those bytes. A mismatch raises `CopyFailed`, which rolls the claim back."""
-    found = kinds.read_social(conn, item.ref_id)
+    found = kinds.read(conn, item)
     if found is None or approvals.content_hash(kinds.hashed(found.content)) != approval.content_hash:
-        raise CopyFailed(f"{item.label}'s post changed while it was being claimed; nothing was handed out")
+        raise CopyFailed(f"{item.label}'s content changed while it was being claimed; nothing was handed out")
     copies = _copy_images(found, approval) if write_copies else []
     conn.execute(
         "UPDATE publish_items SET state = 'claimed', run_id = ?, claimed_at = ?, content_json = ? WHERE id = ? "
@@ -236,7 +351,7 @@ def _copy_images(found: kinds.Read, approval: approvals.Approval) -> list[Path]:
     to make sure it holds them."""
     folder = paths.work_dir("publish") / approval.id
     copies = []
-    for number, (image, blob) in enumerate(zip(found.content["images"], found.blobs), start=1):
+    for number, (image, blob) in enumerate(zip(found.content.get("images", []), found.blobs), start=1):
         target = paths.writable(folder / f"{number}-{Path(image['path']).name}")
         target.write_bytes(blob)
         if hashlib.sha256(target.read_bytes()).hexdigest() != image["sha256"]:

@@ -96,6 +96,12 @@ def resolve_day(value: str, week: str) -> date:
     raise ValueError(f"day must be YYYY-MM-DD or a weekday name, not {value!r}")
 
 
+def is_promotional(text: str) -> bool:
+    """A post is promotional when it carries a link or mentions Jura: the group's promotion days
+    apply to it (`rules.day_problem`). Plans and the publish claim read it the same way."""
+    return bool(brand_check.find_links(text)) or bool(JURA_MENTION.search(text))
+
+
 def word_count(text: str) -> int:
     return len(re.findall(r"\S+", text))
 
@@ -355,7 +361,7 @@ def prepare(conn: sqlite3.Connection, plan: dict, week: str | None = None) -> tu
 
         # rules: links, promotion, day
         links = brand_check.find_links(text)
-        promotional = bool(links) or bool(JURA_MENTION.search(text))
+        promotional = is_promotional(text)
         if links:
             if not rules.known or not group["rules_confirmed"]:
                 errors.append(

@@ -26,7 +26,7 @@ from pathlib import Path
 import click
 
 from jura_growth import approvals, db, discord, log, pause, paths, timeutil
-from jura_growth.agents.publish import claim, hosts, items
+from jura_growth.agents.publish import claim, hosts, items, kinds
 
 # What the run may report as a stop signal (BP §4.6). A closed list, so a page's own words
 # never reach an alert through the reason.
@@ -43,6 +43,9 @@ STOP_REASONS = {
     "unidentified": "something it couldn't identify on a step that would post",
 }
 RESUME = "`jura-growth resume publish` or /growth resume publish"
+# What `publish next` tells the run to do with each kind of item.
+STEPS = {items.SOCIAL_ITEM: "social post", items.COMMUNITY_POST_ITEM: "community post",
+         items.JOIN_ITEM: "join the group", items.ANSWERS_ITEM: "submit the membership answers"}
 
 
 def same_text(approved: str, live: str) -> bool:
@@ -55,11 +58,15 @@ def _normal(text: str) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFC", text)).strip()
 
 
+SOCIAL_ONLY = ("for social posts only so far; a community post or join is recorded by the community "
+               "publishing steps that follow (browser publishing#05 and #06)")
+
+
 def _item_for(conn: sqlite3.Connection, typed: str) -> tuple[approvals.Approval, items.Item]:
-    """The request `typed` names (A-nnnn only) and its publish item."""
+    """The request `typed` names (A-nnnn only) and its publish item, of any kind."""
     record = approvals.get(conn, typed)
     found = items.of(conn, record.subject) if record else None
-    if record is None or found is None or record.kind != items.SOCIAL_KIND:
+    if record is None or found is None or record.kind != items.APPROVAL_KINDS.get(found.kind):
         raise click.ClickException(f"there is no approval request {typed} for a publish item (type its A-nnnn)")
     return record, found
 
@@ -112,26 +119,31 @@ def next_cmd(as_json) -> str:
         "due": True,
         "approval": handed.approval.id,
         "item": found.label,
-        "kind": items.SOCIAL_KIND,
+        "kind": kinds.kind_of(found),
+        "step": STEPS[found.kind],
         "platform": found.platform,
+        "group": content.get("group"),
         "target_url": content["target_url"],
         "posting_identity": content["posting_identity"],
-        "day": content["day"],
-        "text": content["text"],
+        "day": content.get("day", found.day),
+        "text": content.get("text"),
         "images": [str(path) for path in handed.images],
-        "answers": None,
+        "answers": content.get("answers"),
     }
     if as_json:
         click.echo(json.dumps(out, indent=2, ensure_ascii=False))
     else:
-        click.echo(f"{out['approval']} · social post · {out['item']}")
-        click.echo(f"Platform: {out['platform']}\nPost as: {out['posting_identity']}\nOpen: {out['target_url']}\nDay: {out['day']}")
-        click.echo("Images, in order:" if out["images"] else "No image.")
-        for path in out["images"]:
-            click.echo(f"  {path}")
-        click.echo("Text, exactly as approved, between the lines:\n---")
-        click.echo(out["text"].rstrip("\n"))
-        click.echo("---")
+        click.echo(f"{out['approval']} · {out['step']} · {out['item']}")
+        click.echo(f"Platform: {out['platform']}\nAct as: {out['posting_identity']}\nOpen: {out['target_url']}\nDay: {out['day']}")
+        if out["text"] is not None:
+            click.echo("Images, in order:" if out["images"] else "No image.")
+            for path in out["images"]:
+                click.echo(f"  {path}")
+            click.echo("Text, exactly as approved, between the lines:\n---")
+            click.echo(out["text"].rstrip("\n"))
+            click.echo("---")
+        for pair in out["answers"] or []:
+            click.echo(f"Question: {pair['question']}\nAnswer, exactly as approved: {pair['answer']}")
     return f"claimed {out['approval']}"
 
 
@@ -145,6 +157,8 @@ def done(approval_id, url, live_text_file) -> str:
     live = live_text_file.read_text(encoding="utf-8")
     with db.session() as conn:
         record, found = _item_for(conn, approval_id)
+        if found.kind != items.SOCIAL_ITEM:
+            raise click.ClickException(f"refused: publish done --url is {SOCIAL_ONLY}")
         if found.state != "claimed":
             raise click.ClickException(f"{record.id}'s item isn't claimed (it is {found.state})")
         wrong = hosts.problem(found.platform, url)
@@ -248,6 +262,9 @@ def resolve(approval_id, outcome, url) -> str:
         if not (found.state == "unknown" or items.stale_claim(conn, found)):
             raise click.ClickException(f"{record.id}'s item isn't unknown (it is {found.state}); nothing to settle")
         settles = found.state
+        if outcome == "posted" and found.kind != items.SOCIAL_ITEM:
+            raise click.ClickException(f"refused: resolve posted is {SOCIAL_ONLY}. Check the group, then settle "
+                                       f"{record.id} as not-posted, or record what happened by hand")
         if outcome == "posted":
             wrong = hosts.problem(found.platform, url)
             if wrong:
