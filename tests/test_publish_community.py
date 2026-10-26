@@ -718,7 +718,8 @@ def test_publish_done_with_a_post_url_isnt_taken_for_a_join(conn, world, monkeyp
     result = pw.invoke("publish", "done", request.id, "--url", f"{found.target_url}/posts/1",
                        "--live-text-file", str(live))
     assert result.exit_code == 1 and "for posts only" in result.output
-    assert items.get(conn, found.id).state == "claimed"
+    still = items.get(conn, found.id)
+    assert still is not None and still.state == "claimed"
 
 
 def test_an_unknown_community_item_is_settled_as_not_posted(conn, world, monkeypatch):

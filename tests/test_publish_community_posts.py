@@ -104,6 +104,7 @@ def test_other_stops_in_a_group_leave_the_group_as_it_was(conn, world, monkeypat
 def test_a_removal_on_the_page_itself_removes_no_group(conn, world, monkeypatch):
     group_id = pw.group(conn)
     _, request = pw.approved(conn, monkeypatch)
+    assert request is not None
     pw.run(conn, monkeypatch=monkeypatch)
     assert next_json()["approval"] == request.id
 
