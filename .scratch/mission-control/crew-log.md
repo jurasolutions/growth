@@ -835,3 +835,14 @@ decisions: changes-requested; B1 fixture URL with a backslash (http://evil.com\\
 decisions: conductor: WHATWG-style host validation; AC3 stays Ting Yu R1 step, recorded before close; sent as fix round 1
 questions: -
 evidence:  2989 passed; WHATWG parse reproduces B1
+
+## 2026-10-27T05:56+0800 reviewer (bp 06) via conductor
+status:    done
+persona:   reviewer
+ticket:    bp-06
+artifacts: .scratch/browser-publishing/reviews/code-review-06.md
+decisions: changes-requested; B1 audit is host-only: a claimed join for group A can join group B or post answers on the Page timeline and end ok; S1 merge guard with bp 04 B1; cap holds; note-rules only clears confirmations
+decisions: known limit recorded for Ting Yu: personal-profile joins cannot be made impossible in code (the Chrome profile is his own account administering the Page); guarded by the prompt identity check, never-switch rule, wrong-identity stop, rehearsals R5/R6 and live step U15
+decisions: conductor (crew recommendation): declined groups never re-proposed automatically and take no cap slot; refused Page recorded as pages-not-allowed; sent as fix round 1
+questions: -
+evidence:  2996 passed; repros R1-R5 reproduce
