@@ -253,6 +253,9 @@ def test_a_join_made_in_another_group_fails_the_run_and_pauses(conn, fake, appro
     assert outcome.status == "failed"
     assert pause.is_paused(conn, "publish")
     assert "outside the claimed item's own page" in outcome.error and "some-other-group" not in outcome.error
+    group = group_of(conn, join.ref_id)  # N11: the run's own record of the join is set back
+    assert group["join_status"] is None and group["pages_allowed"] == "unknown" and group["joined_as"] == "none"
+    assert f"group {join.ref_id}" in outcome.error
 
 
 def test_answers_posted_on_the_page_timeline_fail_the_run_and_pause(conn, fake, approved_join, monkeypatch):
@@ -269,6 +272,8 @@ def test_answers_posted_on_the_page_timeline_fail_the_run_and_pause(conn, fake, 
 
     assert outcome.status == "failed" and pause.is_paused(conn, "publish")
     assert "outside the claimed item's own page" in outcome.error
+    group = group_of(conn, join.ref_id)  # N11: no joined_as = page left behind by a failed run
+    assert group["joined_as"] == "none" and group["join_status"] is None
 
 
 def test_a_join_outcome_url_must_be_the_items_own_group(conn, fake, approved_join):

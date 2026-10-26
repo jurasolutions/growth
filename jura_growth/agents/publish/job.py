@@ -79,11 +79,15 @@ def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
     claimed = _claimed_by(conn, run_id)
     found = _audit(run_id, claimed)
     failures = found.failures + _copy_problems(conn, claimed)
+    undone: list[int] = []
     if failures:
+        from jura_growth.agents.community import groups as groups_mod
+
         with db.transaction(conn):
             log.event(conn, "publish.audit_failed", {"failures": failures}, level="error", agent=items.AGENT,
                       run_id=run_id)
             pause.pause(conn, items.AGENT, f"the audit of run {run_id} failed", notify=False)
+            undone = groups_mod.undo_joins(conn, run_id)
     if found.no_browser and not claimed:
         _no_browser(conn, run_id)
 
@@ -97,6 +101,9 @@ def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
     if failures:
         errors.append(f"The audit of run {run_id} failed: {'; '.join(failures)}. Publishing is paused for every "
                       f"item until you resume it: {commands.RESUME}.")
+        if undone:
+            named = ", ".join(f"group {group_id}" for group_id in undone)
+            errors.append(f"What the run recorded for the join of {named} was set back: check the group by hand.")
     stops = [item for item in claimed if item.state == "stopped"]
     if model_failed and not errors:
         errors = [_failure(conn, item, run_id) for item in claimed] or [_ending(outcome.error, run_id)]

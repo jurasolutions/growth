@@ -297,13 +297,14 @@ def _joined_as(value: str) -> dict[str, object]:
 
 
 def _write(conn: sqlite3.Connection, group_id: int, updates: dict[str, object], event: str, *,
-           run_id: int | None = None) -> dict:
-    """Write `updates` (fixed column names; every value a parameter) and log `event` with them."""
+           run_id: int | None = None, extra: dict | None = None) -> dict:
+    """Write `updates` (fixed column names; every value a parameter) and log `event` with them,
+    and with `extra`."""
     updates = {**updates, "updated_at": timeutil.stamp()}
     assignments = ", ".join(f"{k} = ?" for k in updates)
     conn.execute(f"UPDATE community_groups SET {assignments} WHERE id = ?", (*updates.values(), group_id))
-    log.event(conn, event, {"id": group_id, **{k: v for k, v in updates.items() if k != "updated_at"}}, agent=NAME,
-              run_id=run_id)
+    log.event(conn, event, {"id": group_id, **{k: v for k, v in updates.items() if k != "updated_at"}, **(extra or {})},
+              agent=NAME, run_id=run_id)
     group = get(conn, group_id)
     assert group is not None  # written above
     return group
@@ -349,14 +350,38 @@ def record_join(conn: sqlite3.Connection, group_id: int, status: str, *, run_id:
     still need Ting Yu's `group-rules` decision (AC-P4.4)."""
     if status not in JOIN_STATUSES:
         raise GroupError(f"join status must be {', '.join(JOIN_STATUSES)}")
-    if get(conn, group_id) is None:
+    group = get(conn, group_id)
+    if group is None:
         raise GroupError(f"no group {group_id}")
     updates: dict[str, object] = {"join_status": status}
     if status in ("requested", "member"):
         updates["pages_allowed"] = "yes"
     if status == "member":
         updates.update(_joined_as("page"))
-    return _write(conn, group_id, updates, "community.group.join", run_id=run_id)
+    before = {column: group[column] for column in JOIN_COLUMNS}
+    return _write(conn, group_id, updates, JOIN_EVENT, run_id=run_id, extra={"before": before})
+
+
+JOIN_EVENT = "community.group.join"
+JOIN_COLUMNS = ("join_status", "pages_allowed", "joined_as_set", "joined")
+
+
+def undo_joins(conn: sqlite3.Connection, run_id: int) -> list[int]:
+    """Set back every join record run `run_id` wrote (`record_join`), newest first, to what it
+    was before: the run's audit failed, so its word for what the join came to can't stand (code
+    review 06, N11). Returns the groups set back. Call it inside a transaction."""
+    undone = []
+    rows = db.rows(conn, "SELECT payload_json FROM events WHERE kind = ? AND run_id = ? ORDER BY id DESC",
+                   (JOIN_EVENT, run_id))
+    for row in rows:
+        payload = json.loads(row["payload_json"] or "{}")
+        before = payload.get("before") or {}
+        if not isinstance(payload.get("id"), int) or set(before) != set(JOIN_COLUMNS):
+            continue
+        _write(conn, payload["id"], {column: before[column] for column in JOIN_COLUMNS}, "community.group.join_undone",
+               run_id=run_id)
+        undone.append(payload["id"])
+    return list(dict.fromkeys(undone))
 
 
 def pages_not_allowed(conn: sqlite3.Connection, group_id: int, *, run_id: int | None = None) -> dict:
