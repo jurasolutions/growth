@@ -548,3 +548,14 @@ decisions: 17 is test-only, verified by the conductor (diff limited to tests/) a
 decisions: crew recommendations adopted: new ticket 18 (loopback-only D1 stub for UAT); QA lead amends uat.md (JURA_GROWTH_RESEND_BASE_URL, JURA_INPUTS_DIR, A4 wording)
 questions: -
 evidence:  dev: 2207 passed, 0 skipped; seed refuses Saturday and live data
+
+## 2026-10-27T02:54+0800 qa-lead (uat.md: UAT environment and A4 fix after ticket 17)
+status:    done
+persona:   qa-lead
+ticket:    -
+artifacts: .scratch/mission-control/uat.md
+decisions: environment block and the UAT forced-command entry gain JURA_INPUTS_DIR="$UAT/inputs" and JURA_GROWTH_RESEND_BASE_URL=http://127.0.0.1:8025 (the stub's port); JURA_GROWTH_D1_BASE_URL left commented until ticket 18
+decisions: A4's waiting count read from send-due's answer ("5 waiting for a decision, 12 waiting for a request slot"), not queue-list
+decisions: new "Before you start" step 6 and an A4 note: live-mode steps need ticket 18's loopback D1 stub; the Resend stub runs in a second window with the same variables
+questions: -
+evidence:  uv run pytest tests/test_uat_seed_outreach.py -> passed; its assertion matches the 5/12 text now in A4
