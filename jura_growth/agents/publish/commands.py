@@ -61,8 +61,8 @@ def _normal(text: str) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFC", text)).strip()
 
 
-SOCIAL_ONLY = ("for social posts only so far; a community post or join is recorded by the community "
-               "publishing steps that follow (browser publishing#05 and #06)")
+SOCIAL_ONLY = ("for social posts only so far: a join is recorded with --outcome, and a community post by the "
+               "community publishing step that follows (browser publishing#05)")
 
 
 def _item_for(conn: sqlite3.Connection, typed: str) -> tuple[approvals.Approval, items.Item]:

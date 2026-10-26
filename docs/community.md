@@ -23,13 +23,16 @@ and `community audit-run` proves the run fetched none of them from its transcrip
 3. **Register (block 1).** Web search for groups; facts only from search results and
    non-Facebook pages. `community add-group --file` records them; `community summary` posts the
    register to `#community`.
-4. **Plan (block 2)**, only for groups marked joined and good fit: up to 3 posts written fresh
+4. **Joins (block 1b)**, only with `browser: true`: the run proposes joins as the Jura Page for
+   good-fit groups from `context`'s `joins.candidates`, up to `joins.left` (the weekly cap less
+   the week's proposals), with `community propose-join <id>`. It never opens a group itself.
+5. **Plan (block 2)**, only for groups marked joined and good fit: up to 3 posts written fresh
    per group and 2–3 reply ideas, through `community plan-add --file`, then
    `community publish-plan` writes `outputs/growth/community/YYYY-Www.md` and posts it.
    With no joined good-fit group the run ends `SKIP:`.
-5. **During the week** Ting Yu posts by hand and ticks the checklist or runs
+6. **During the week** Ting Yu posts by hand and ticks the checklist or runs
    `community posted <item-id> [url]`.
-6. The **digest** reports the register, joined count, posts planned and posted this week, and
+7. The **digest** reports the register, joined count, posts planned and posted this week, and
    audits that day's community run for Facebook fetches.
 
 ## What Ting Yu does
@@ -186,8 +189,31 @@ Off by default: `browser: false` in `config/community.yaml`. With `browser: true
   counts in the next week. A proposal you skip, or leave to expire, still counts toward its week's
   three, so the pace never goes above three a week. A join is decided by 18:00 on the Sunday of its
   week.
-- If a group asks membership questions, the answers come to you as their own `group-join` card,
-  decided by 18:00 on the third day after they are raised. A fresh card for changed answers, or for
+- **How a join goes** (the publish run, `prompts/publish.md`, after you approve the card). The run
+  opens the group and checks that the Jura Page is the identity the join would use. Another
+  identity selected is a stop (`publish stopped --reason wrong-identity`): `publish` pauses and
+  `#alerts` says so. A screen with no way to join as a Page is not a stop: the run records
+  `publish done <A-id> --outcome pages-not-allowed`. Otherwise it clicks Join once and records
+  `--outcome requested` (waiting for an admin), `member` or `declined`, which sets the group's
+  `join_status`; `member` also sets `joined_as = page`. Posting there still waits for your
+  `group-rules` decision on its rules and open days.
+- **Only personal profiles.** `pages-not-allowed`, from a join, its answers or (BP-05) a post
+  composer, sets `pages_allowed = no` and `fit = skip` ("only personal profiles can join or post"),
+  supersedes every card still waiting for that group, and the group is never proposed again. It
+  neither alerts nor pauses.
+- **Rules seen inside a group.** When the run sees the group's rules on the join screen, in the
+  questions or in its About panel, it records them with `publish note-rules <group-id> --file
+  <rules.txt>`, which raises one `group-rules` card. Rules you already confirmed, seen unchanged,
+  raise nothing; rules that differ replace the researched text and clear the old confirmation and
+  days. Only the publish run that claimed an item in that group may record them; researched rules
+  never raise a card.
+- If a group asks membership questions, the run submits nothing: it closes the form and records
+  `publish done <A-id> --outcome questions --file q.json` with the questions and its drafted
+  answers. The answers pass the brand gate first (a failure raises nothing; the run may fix them
+  once, and a second failure drops them). Then they come to you as their own `group-join` card,
+  decided by 18:00 on the third day after they are raised. Only once you approve it does a later
+  run submit exactly those answers; if the form's questions have changed by then, it submits
+  nothing and sends the new questions back to you the same way. A fresh card for changed answers, or for
   a group whose address changed, gets its own three days.
 - `publish next` hands a community post out only on its day, in a good-fit group joined as the
   Page whose rules and open days you confirmed, on a day they leave open, with one community post
