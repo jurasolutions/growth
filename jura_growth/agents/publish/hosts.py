@@ -64,7 +64,13 @@ PAGE_NAMES = {"instagram": "an Instagram account's profile (/<account>/)",
 
 
 def problem(platform: str, url: str | None) -> str | None:
-    """Why `url` isn't an address on `platform`, or None when it is."""
+    """Why `url` isn't an address on `platform`, or None when it is. While the fixture platform is
+    on (`fixture.py`, BP-07), every platform's only address is the fixture site."""
+    from jura_growth.agents.publish import fixture
+
+    site = fixture.active()
+    if site is not None:
+        return site.url_problem(url)
     allowed = HOSTS.get(platform)
     if not allowed:
         return f"{platform} has no known hosts"

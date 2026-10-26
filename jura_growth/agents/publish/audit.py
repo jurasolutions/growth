@@ -11,7 +11,8 @@ did. It walks the calls in transcript order:
   `hosts.url_problem`: `https://`, no user name or port, on one of the hosts. So a click that
   lands on another site fails the run even without a `navigate`. A Discord host is named as
   such. A new tab's own `chrome://newtab/` and `about:blank` are fine. An attempt fails even when
-  it was denied (rehearsal R3). URLs inside page text are not tab URLs, and are ignored.
+  it was denied (rehearsal R3). URLs inside page text are not tab URLs, and are ignored. While
+  the fixture platform is on (`site`, BP-07), every address must be on the fixture site instead.
 - **Tab addresses fail closed.** Every page-tool result on a tab this run opened must report that
   tab's address in the extension's own tab context, which ends the result: a JSON block with
   `tabId` and `url` starting on a line of its own, or trailing `tabId <n>: "<title>" (<url>)`
@@ -61,6 +62,7 @@ from typing import Iterator
 
 from jura_growth import transcripts
 from jura_growth.agents.publish import hosts as hosts_mod
+from jura_growth.agents.publish.fixture import Fixture
 from jura_growth.agents.publish.scope import CHROME, DENIED_TOOLS
 
 NO_BROWSER = re.compile(r"no browsers are connected|browser extension is not connected", re.I)
@@ -138,7 +140,9 @@ class _Uploads:
 
 
 def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[str], approved: list[str],
-          images: list[str]) -> Audit:
+          images: list[str], site: Fixture | None = None) -> Audit:
+    """`site`: the fixture platform, when it is on (BP-07). Then every address must be on the
+    fixture site (`Fixture.url_problem`) in place of `hosts`."""
     found = Audit()
     allowed = tuple(h.lower() for h in hosts)
     texts = [_normal(text) for text in approved if text and text.strip()]
@@ -153,7 +157,7 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
             found.failures.append(text)
 
     def check_url(url: str, where: str) -> None:
-        problem = _url_problem(url, allowed)
+        problem = _url_problem(url, allowed, site)
         if problem:
             fail(f"{where}: {problem}")
 
@@ -277,12 +281,14 @@ def _keyboard(given: dict, action: str, fields: _Fields, typed, fail) -> None:
             typed(key, "computer", fields.key())
 
 
-def _url_problem(url: str, allowed: tuple[str, ...]) -> str | None:
+def _url_problem(url: str, allowed: tuple[str, ...], site: Fixture | None = None) -> str | None:
     text = url.strip().rstrip(".,;")
     if text in BLANK_TABS:
         return None
     if transcripts.on_domains(text, DISCORD):
         return f"a Discord host ({transcripts.host_of(text)})"
+    if site is not None:
+        return site.url_problem(text)
     return hosts_mod.url_problem(text, allowed, "the publish hosts")
 
 

@@ -1,6 +1,7 @@
 """The publish job's hooks (browser publishing PRD §5.8).
 
-- `precheck` (before Claude starts) runs `items.sync()` in a committed transaction and posts the
+- `precheck` (before Claude starts) raises when the fixture platform is set but refused (BP-07),
+  so the run fails before anything is read. Then it runs `items.sync()` in a committed transaction and posts the
   cards that raised (`cards.sweep_safely()`), so a changed post gets its new card whether or not
   anything is due (code review 02, B1). Then an auth variable that would hide the Chrome tools is
   a plain skip Ting Yu should see (AC-P9.5), and nothing claimable (`claim.claimable()`,
@@ -19,7 +20,7 @@ import sqlite3
 from pathlib import Path
 
 from jura_growth import agents, cards, db, discord, log, pause, timeutil, transcripts
-from jura_growth.agents.publish import audit, claim, commands, items, scope
+from jura_growth.agents.publish import audit, claim, commands, fixture, items, scope
 
 # With either set, Claude Code keeps Chrome integration off, even with --chrome (spike §1).
 AUTH_VARIABLES = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
@@ -34,7 +35,9 @@ MODEL_FAILED = "ended FAIL:"
 
 
 def precheck(job: str, conn: sqlite3.Connection):
-    """A skip reason, `NothingToDo`, or None to start the run."""
+    """A skip reason, `NothingToDo`, or None to start the run. A fixture platform its guard
+    refuses (`fixture.py`, BP-07) raises before anything is read, so the run fails and alerts."""
+    fixture.active()
     with db.transaction(conn):
         items.sync(conn)
     cards.sweep_safely(conn)
@@ -174,8 +177,10 @@ def _audit(run_id: int, claimed: list[items.Item]) -> audit.Audit:
     approved = [text for item in claimed for text in _approved_texts(item)]
     images = [str(copy) for item in claimed for copy in item.content.get("copies", [])]
     # Only the claimed item's own platform: an item posted on another enabled platform fails (B1).
+    # While the fixture platform is on, only the fixture site (BP-07).
     own = tuple(dict.fromkeys(item.platform for item in claimed)) or None
-    return audit.audit(transcripts.read(path), hosts=scope.browser_hosts(own), approved=approved, images=images)
+    return audit.audit(transcripts.read(path), hosts=scope.browser_hosts(own), approved=approved, images=images,
+                       site=fixture.active())
 
 
 def _approved_texts(item: items.Item) -> list[str]:
