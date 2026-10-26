@@ -913,3 +913,12 @@ artifacts: crew/browser-publishing-05-community-posts-as-the-page (4 commits)
 decisions: removal or admin warning removes the group in the stop transaction; done URLs limited to the own group post path; conductor adopts the crew recommendation: posts held for admin approval stop as unidentified (publish pauses) until U14 shows how often, then add a pending outcome; sent to review
 questions: -
 evidence:  3292 passed, 0 skipped
+
+## 2026-10-27T06:56+0800 reviewer (bp 05) via conductor
+status:    done
+persona:   reviewer
+ticket:    bp-05
+artifacts: .scratch/browser-publishing/reviews/code-review-05.md
+decisions: Approve; S1 (audit-failed post keeps posted record unflagged) and S2 (permalink group segment unproven, add to U14) should-fix; conductor sends S1, S2 and N8 to the developer as fix round 1; other nits left
+questions: -
+evidence:  3292 passed, 0 skipped; repro probes R1-R10 10 passed; no blocked paths; merge-tree clean
