@@ -30,6 +30,8 @@ from pathlib import Path
 
 NAME = "publish"
 MIGRATIONS = Path(__file__).parent / "migrations"
+# Social posts are the only kind this build publishes; BP-05's community posts report to #community.
+RUN_UPDATE_DISCORD_CHANNEL = "social-drafts"
 
 
 def register(cli) -> None:
@@ -82,6 +84,13 @@ def permissions(job: str):
     from jura_growth.agents.publish import scope
 
     return scope.permissions()
+
+
+def run_update(conn: sqlite3.Connection, run) -> list[str] | None:
+    """Only a run that claimed an item posts an update (`run_update: claimed-only`, AC-P8.1)."""
+    from jura_growth.agents.publish import job as publish_job
+
+    return publish_job.run_update(conn, run)
 
 
 def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):

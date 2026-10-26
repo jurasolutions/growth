@@ -465,7 +465,9 @@ def test_after_run_leaves_a_closed_claim_and_a_quiet_run_alone(conn, world, monk
     run = pw.run(conn, monkeypatch=monkeypatch)
     next_json()
     pw.invoke("publish", "done", request.id, "--url", "https://www.facebook.com/jura/posts/9", "--live-text-file", live_file(pw.TEXT))
-    assert publish.after_run(conn, "publish", run, runner.Outcome("ok")) is None
+    final = publish.after_run(conn, "publish", run, runner.Outcome("ok"))
+    # BP-03: a run that claimed gets its summary from the item's record; the status stands.
+    assert final.status == "ok" and final.summary == f"{request.id} · Facebook Page · posted · https://www.facebook.com/jura/posts/9"
     assert pw.item_row(conn, found.id)["state"] == "done" and not pause.is_paused(conn, "publish")
 
 
