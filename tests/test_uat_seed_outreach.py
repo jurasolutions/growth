@@ -19,9 +19,9 @@ import yaml
 import resend_stub
 from discord_double import discord_double  # noqa: F401 - a fixture
 from mission_world import stat_snapshot
-from jura_growth import brand_check, config, db, paths
+from jura_growth import brand_check, cloudflare, config, db, paths
 from jura_growth.agents.outreach import approval, queue, requeue, send
-from test_scout_support import CONTROL_ID, REGISTRY, d1_env, decide, fake_d1, fake_resend, outreach_requests
+from test_scout_support import CONTROL_ID, REGISTRY, decide, fake_d1, fake_resend, outreach_requests
 from uat import seed
 
 TUESDAY = date(2026, 11, 17)  # a business day; the business day before it is Mon 16 Nov
@@ -100,7 +100,8 @@ BUTTONS = "approval buttons not set up"
 @pytest.fixture
 def window(uat, tmp_path, monkeypatch):
     """`uat.md`'s window for A4: the config and inputs folders in the UAT folder too, the UAT env
-    file's settings, Resend pointed at the stub, and D1 and Resend behind doubles."""
+    file's settings with no Cloudflare credentials, Resend and D1 pointed at the stub, and D1 and
+    Resend behind doubles."""
     monkeypatch.setenv("JURA_GROWTH_CONFIG_DIR", str(uat / "config"))
     monkeypatch.setenv("JURA_INPUTS_DIR", str(uat / "inputs"))
     site = tmp_path / "site" / "src" / "apps"
@@ -110,8 +111,8 @@ def window(uat, tmp_path, monkeypatch):
     monkeypatch.setenv("RESEND_API_KEY_OUTREACH", seed.RESEND_KEY)
     monkeypatch.setenv("UNSUBSCRIBE_SECRET", "uat-unsubscribe-secret")
     monkeypatch.setenv("CONTROL_DISCORD_USER_ID", CONTROL_ID)
-    d1_env(monkeypatch)
     monkeypatch.setenv(send.RESEND_BASE_ENV, STUB)
+    monkeypatch.setenv(cloudflare.BASE_ENV, STUB)
     monkeypatch.setattr(send, "chance", lambda: 0.0)
     return uat
 
@@ -161,7 +162,7 @@ def test_send_due_refuses_until_the_buttons_are_set_up(live, monkeypatch):
     assert live == []
 
 
-@pytest.mark.parametrize("variable", ["JURA_GROWTH_CONFIG_DIR", send.RESEND_BASE_ENV])
+@pytest.mark.parametrize("variable", ["JURA_GROWTH_CONFIG_DIR", send.RESEND_BASE_ENV, cloudflare.BASE_ENV])
 def test_outreach_live_refuses_without_its_folder_or_the_stub(window, monkeypatch, variable):
     monkeypatch.delenv(variable)
     with pytest.raises(seed.Refused, match=variable):
@@ -176,9 +177,13 @@ def test_outreach_live_refuses_a_config_folder_outside_the_uat_folder(window, mo
     assert not (tmp_path / "elsewhere").exists()
 
 
-def test_outreach_live_refuses_a_stub_that_isnt_on_this_mac(window, monkeypatch):
-    monkeypatch.setenv(send.RESEND_BASE_ENV, "https://api.resend.com")
-    with pytest.raises(seed.Refused, match="stub"):
+@pytest.mark.parametrize("variable, url", [
+    (send.RESEND_BASE_ENV, "https://api.resend.com"),
+    (cloudflare.BASE_ENV, "https://api.cloudflare.com/client/v4"),
+])
+def test_outreach_live_refuses_a_stub_that_isnt_on_this_mac(window, monkeypatch, variable, url):
+    monkeypatch.setenv(variable, url)
+    with pytest.raises(seed.Refused, match=f"{variable} must point at the local UAT stub"):
         seed.seed(window, "outreach-live", today=TUESDAY)
 
 

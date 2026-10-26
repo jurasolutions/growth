@@ -19,8 +19,8 @@ stamps decisions with the real clock, so deadlines must line up with the day the
   runs), S4 (the queued emails for leads 233, 240 to 254 and 260), S5 and S6 (the planted reply,
   phone number and Resend key), S7 (APP-014's PRD) and S8 (groups G4 and G7).
 - `outreach-live` (S3) puts live mode in `$UAT/config` with every pre-condition met but the
-  buttons switch. It needs `JURA_GROWTH_RESEND_BASE_URL` pointed at the stub
-  (`uv run python -m tests.resend_stub`), and writes `do-not-contact.csv` when `JURA_INPUTS_DIR`
+  buttons switch. It needs `JURA_GROWTH_RESEND_BASE_URL` and `JURA_GROWTH_D1_BASE_URL` pointed at
+  the stub (`uv run python -m tests.resend_stub`, ticket 18), and writes `do-not-contact.csv` when `JURA_INPUTS_DIR`
   is inside `$UAT`. It prints any pre-condition the window must still supply.
 - `edit-draft --lead <id>` (S9) changes that lead's queued draft by hand.
 - `shadow-trial` (S10) holds 40 shadow-sent emails for `requeue-shadow`.
@@ -43,7 +43,7 @@ from typing import Callable
 
 import yaml
 
-from jura_growth import config, db, holidays, paths, schedule, suppression, timeutil
+from jura_growth import cloudflare, config, db, holidays, paths, schedule, suppression, timeutil
 from jura_growth.agents.outreach import send, store
 
 FOLDERS = ("JURA_GROWTH_DATA_DIR", "JURA_GROWTH_OUTPUTS_DIR", "JURA_PRD_DIR")
@@ -336,16 +336,17 @@ def _rewrite_yaml(path: Path, change: Callable[[dict], None]) -> None:
 def outreach_live(conn) -> list[str]:
     """S3: `outreach.mode: live` in `$UAT/config` with every live pre-condition met except the
     buttons switch (`approvals.discord_buttons: false`, which A4 turns on), warm-up day 3, and
-    Resend pointed at the stub. Returns any pre-condition the window still has to supply."""
+    Resend and D1 pointed at the stub. Returns any pre-condition the window still has to supply."""
     folder = os.environ.get("JURA_GROWTH_CONFIG_DIR")
     if not folder:
         raise Refused("JURA_GROWTH_CONFIG_DIR isn't set: outreach-live writes live mode into $UAT/config, never config/")
-    if not os.environ.get(send.RESEND_BASE_ENV):
-        raise Refused(f"{send.RESEND_BASE_ENV} isn't set: start the stub (`uv run python -m tests.resend_stub`) and "
-                      f"export {send.RESEND_BASE_ENV}=http://127.0.0.1:{8025}, so no email can reach Resend")
-    problem = send.resend_stub_problem()
-    if problem:
-        raise Refused(problem)
+    for variable, problem, service in ((send.RESEND_BASE_ENV, send.resend_stub_problem, "no email can reach Resend"),
+                                       (cloudflare.BASE_ENV, cloudflare.stub_problem, "no query can reach Cloudflare")):
+        if not os.environ.get(variable):
+            raise Refused(f"{variable} isn't set: start the stub (`uv run python -m tests.resend_stub`) and "
+                          f"export {variable}=http://127.0.0.1:{8025}, so {service}")
+        if problem():
+            raise Refused(problem())
 
     def live(scout: dict) -> None:
         scout.update(mode="live", legal_review_done=True, sending_domain=LIVE_SENDING_DOMAIN)

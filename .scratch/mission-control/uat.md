@@ -47,7 +47,8 @@ Only you can do these steps. Each one touches your accounts or your Mac.
    UNSUBSCRIBE_SECRET=uat-unsubscribe-secret
    ```
    The Resend key is a fake planted value. It is used to check masking, and it must never work.
-   Don't copy anything from the real `.env`.
+   Don't copy anything from the real `.env`, and leave the Cloudflare and D1 lines out: D1 is the
+   local stub (ticket 18).
 3. **A second Discord account**, or a friend willing to tap one button, for B4.
 4. **The UAT route through Dispatch.** Dispatch must reach the UAT folder, never the live one. Bind
    "Jura HQ UAT"'s `#approvals` and `#control` in Dispatch to a UAT-only SSH key whose
@@ -55,17 +56,15 @@ Only you can do these steps. Each one touches your accounts or your Mac.
    itself (`JURA_GROWTH_DATA_DIR=/tmp/jura-uat/data`, `JURA_GROWTH_OUTPUTS_DIR=/tmp/jura-uat/outputs`,
    `JURA_PRD_DIR=/tmp/jura-uat/prd`, `JURA_GROWTH_CONFIG_DIR=/tmp/jura-uat/config`,
    `JURA_GROWTH_PAUSE_FILE=/tmp/jura-uat/PAUSE`, `JURA_GROWTH_ENV_FILE=~/jura-uat/uat.env`,
-   `JURA_INPUTS_DIR=/tmp/jura-uat/inputs`, `JURA_GROWTH_RESEND_BASE_URL=http://127.0.0.1:8025`, and
-   once ticket 18 lands `JURA_GROWTH_D1_BASE_URL` at its loopback stub). Remove
+   `JURA_INPUTS_DIR=/tmp/jura-uat/inputs`, `JURA_GROWTH_RESEND_BASE_URL=http://127.0.0.1:8025` and
+   `JURA_GROWTH_D1_BASE_URL=http://127.0.0.1:8025`). Remove
    that key and binding when you finish. *The exact form of this entry is waiting on the tech lead
    (QA lead's question, crew-log 2026-10-27); until it is settled, Parts A to C can't be run.*
 5. **The harness.** `uv run python -m tests.uat.seed <folder> [--scenario <name>] [--today <date>]`
-   seeds the data, and `uv run python -m tests.resend_stub` records what would have gone to Resend.
-   The scenarios each step needs are listed under "Seed data". Ticket 17 added the outreach ones;
-   the rest come with the tickets named there.
-6. **A local D1 stand-in (ticket 18).** Live mode also checks D1, and the first approved send would
-   otherwise call Cloudflare. Until ticket 18's loopback D1 stub exists, `jura-growth status` lists
-   "D1 is not configured" and Part A's live-mode steps (A4) can't run. Every other step can.
+   seeds the data, and `uv run python -m tests.resend_stub` records what would have gone to Resend
+   and answers D1 queries from an empty local copy of the site's tables (ticket 18), so nothing
+   reaches Resend or Cloudflare. The scenarios each step needs are listed under "Seed data". Ticket
+   17 added the outreach ones; the rest come with the tickets named there.
 
 ### The window for Parts A and C
 
@@ -84,7 +83,7 @@ export JURA_GROWTH_PAUSE_FILE="$UAT/PAUSE"
 export JURA_GROWTH_ENV_FILE="$HOME/jura-uat/uat.env"
 export JURA_INPUTS_DIR="$UAT/inputs"                        # never the real inputs/
 export JURA_GROWTH_RESEND_BASE_URL="http://127.0.0.1:8025"  # the loopback Resend stub
-# export JURA_GROWTH_D1_BASE_URL="http://127.0.0.1:<port>"  # ticket 18's D1 stub, once it lands
+export JURA_GROWTH_D1_BASE_URL="http://127.0.0.1:8025"      # the same stub stands in for D1
 export TODAY="$(TZ=Asia/Singapore date +%Y-%m-%d)"
 uv run python -m tests.uat.seed "$UAT" --today "$TODAY"
 ```
@@ -92,6 +91,19 @@ uv run python -m tests.uat.seed "$UAT" --today "$TODAY"
 The seed refuses any folder that isn't a temporary one, so nothing here can touch
 `jurasolutions/data/` or your real `.env`. Don't run `schedule install` or `schedule render` in this
 window.
+
+Then start the stub in a second window and leave it running until you finish:
+
+```bash
+cd /Users/tingy/OneDrive/Desktop/projects/jurasolutions/repos/growth
+JURA_GROWTH_DATA_DIR=/tmp/jura-uat/data uv run python -m tests.resend_stub
+```
+
+It stands in for Resend and D1 on `http://127.0.0.1:8025`, and prints one line for every email and
+D1 query it receives. The two base URLs above point at it. The engine accepts them only for a
+loopback address while the data folder is temporary, and refuses any other value rather than reach
+Resend or Cloudflare. While the stub is stopped, D1 reads fail and the suppression sync pauses
+outreach, so keep it running.
 
 **The clock.** Steps run on the real clock unless they set `JURA_GROWTH_NOW` for one command. A step
 that jumps the clock forward (to 16:31, or to a later day) comes last in its part, after every
@@ -103,7 +115,7 @@ decision in that part, because a decision is always stamped with the real time.
 |---|---|---|---|
 | S1 | Run history for every job from eight days before `--today`, with one business day's scout-send traces missing two slots and carrying a quiet run six minutes late | `base` (in `tests/uat/seed.py`; `--today` is ticket 17) | A1 |
 | S2 | Today: app-factory ok at 06:31 (US$1.20, filed APP-014); social ok at 07:00 (4m 12s, US$0.41). Social in `browser` mode for Facebook only, in `$UAT/config` | `base` | A1, A2, C1 |
-| S3 | `outreach.mode: live` with every live pre-condition met in `$UAT/config`, warm-up day 3 (cap 5), Resend pointed at the stub, and `approvals.discord_buttons: false` (A4 turns it on) | `outreach-live` (ticket 17) | A4 |
+| S3 | `outreach.mode: live` with every live pre-condition met in `$UAT/config`, warm-up day 3 (cap 5), Resend and D1 pointed at the stub (ticket 18), and `approvals.discord_buttons: false` (A4 turns it on) | `outreach-live` (ticket 17) | A4 |
 | S4 | Queued first emails: lead 233 (Example Pte Ltd, `info@example.com.sg`, queued the previous business day 09:12); leads 240 to 254 (15 emails, queued today 09:05); lead 260 (named address `jane.tan@example.com.sg`). Requests over them are raised by the outreach commands themselves, never by the seed | rows: `base`; requests: by the first `send-due` of the day once S3 is set (ticket 17 checks this works from the seed) | A3, A4 |
 | S5 | The reply text "Please take us off your list" and the phone number `+65 9123 4567` planted in an outreach reply record and a transcript | `base` | A6 |
 | S6 | `RESEND_API_KEY_OUTREACH`'s value planted in a run summary, an error, a transcript and an email draft | `base` | A6 |
@@ -152,10 +164,8 @@ decision in that part, because a decision is always stamped with the real time.
 
 **A4. The email gate (must, AC-M5.1, AC-M8.1 to AC-M8.9, AC-M8.11)**
 
-Needs ticket 18's D1 stub (see "Before you start", step 6). Start the Resend stub in a second
-window with the same variables set: `uv run python -m tests.resend_stub` (port 8025, matching
-`JURA_GROWTH_RESEND_BASE_URL`). It prints every request it receives and refuses to start against a
-folder that isn't temporary. Then seed S3: `uv run python -m tests.uat.seed "$UAT" --scenario outreach-live --today
+Check the stub is still running in its window (see "The window for Parts A and C"). It prints
+every request it receives. Then seed S3: `uv run python -m tests.uat.seed "$UAT" --scenario outreach-live --today
 "$TODAY"`.
 
 - *Live waits for the buttons switch.*
