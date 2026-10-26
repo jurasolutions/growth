@@ -37,7 +37,7 @@ from urllib.parse import urlsplit
 from jura_growth import uat_stub
 
 ENV = "JURA_GROWTH_PUBLISH_FIXTURE_URL"
-HOSTS = ("publish-fixture.localhost", "127.0.0.1", "::1")
+ALLOWED_HOSTS = ("publish-fixture.localhost", "127.0.0.1", "::1")
 
 
 class FixtureRefused(RuntimeError):
@@ -61,7 +61,7 @@ class Fixture:
 def problem() -> str | None:
     """Why the fixture in `ENV` may not be used, or None (also None when it is unset)."""
     return uat_stub.loopback_problem(
-        ENV, hosts=HOSTS, bare=True, purpose="the rehearsal",
+        ENV, hosts=ALLOWED_HOSTS, bare=True, purpose="the rehearsal",
         expected="the local fixture site on a loopback host (http://publish-fixture.localhost:<port>)",
     )
 

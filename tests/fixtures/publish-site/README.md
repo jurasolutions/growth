@@ -23,6 +23,7 @@ The publish job reaches these pages through the fixture platform (BP-07,
 address, for example `http://publish-fixture.localhost:8765`, with a temporary data folder. While
 it is set, the fixture host is the run's only `ClaudeInChromeDomain` rule, and the publish commands
 and the audit accept no other address. The engine accepts only `publish-fixture.localhost` or a
-loopback address literal (`127.0.0.1`, `[::1]`), and refuses it with the live data folder. `uv run python -m tests.uat.seed "$UAT" --scenario fixture-post --page <page>` (or
-`fixture-join` for the join pages) seeds an approved item on one page. The steps are in
+loopback address literal (`127.0.0.1`, `[::1]`), and refuses it with the live data folder.
+`uv run python -m tests.uat.seed "$UAT" --scenario fixture-post --page <page>` (or `fixture-join`
+for the join pages) seeds an approved item on one page. The steps are in
 `.scratch/mission-control/uat.md`, Part R.

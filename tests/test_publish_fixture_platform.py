@@ -136,9 +136,12 @@ def test_the_prompt_takes_the_permalink_on_the_target_urls_host():
     step = prompt[prompt.index("8. Read it back."):prompt.index("9. Record it")]
     assert "same host as the target URL" in " ".join(step.split())
     assert "the platform's own host" not in " ".join(prompt.split())
-    facebook = prompt[prompt.index("### Social post: Facebook Page"):]
-    facebook = facebook[:facebook.index("\n### ", 1)]
-    assert "same host as the target URL" in " ".join(facebook.split())
+    for heading in ("### Social post: Facebook Page", "### Social post: Instagram", "### Social post: LinkedIn"):
+        section = prompt[prompt.index(heading):]
+        section = section[:section.index("\n### ", 1)]
+        permalink = section[section.index("- **Permalink:**"):]
+        permalink = permalink[:permalink.index("\n- **", 1)]
+        assert "same host as the target URL" in " ".join(permalink.split()), heading
 
 
 # --- the publish commands: only fixture addresses ------------------------------------------------
