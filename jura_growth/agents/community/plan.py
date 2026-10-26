@@ -603,7 +603,7 @@ def render(conn: sqlite3.Connection, week: str) -> str:
         "WHERE p.week = ? AND p.kind = 'reply_idea' AND p.status != 'skipped' ORDER BY p.id",
         (week,),
     )
-    post_as = settings().get("post_as", "Ting Yu personally")
+    post_as = settings().get("post_as", "the Jura Solutions Facebook Page")
     by_page = any(through_page(p) for p in posts)
     out = [
         f"# Community plan, {week}",

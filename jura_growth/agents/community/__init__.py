@@ -270,9 +270,11 @@ def removed_cmd(group_id, reason) -> None:
     """A group's admin removed a post or warned you: skip it for good."""
     with db.session() as conn:
         try:
-            group = groups_mod.remove(conn, group_id, reason)
+            with db.transaction(conn):
+                group = groups_mod.remove_for_good(conn, group_id, reason)
         except groups_mod.GroupError as error:
             raise click.ClickException(str(error)) from None
+        cards.sweep_safely(conn)  # the superseded cards, after the commit (MC §4.6 A12)
     click.echo(f"group {group['id']} {group['name']} is now skip, permanently; its planned posts are skipped")
 
 

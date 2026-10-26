@@ -1,12 +1,15 @@
 # Community scout
 
 Finds Singapore SME groups (mostly Facebook groups) by web search and drafts a weekly plan of
-value-first posts that Ting Yu posts himself. Built against
-`prd/pending/prd-jura-community-scout-2026-10-24.md`, blocks 1 and 2.
+value-first posts, written in the Jura voice ("we") and posted as the Jura Solutions Facebook
+Page. Built against `prd/pending/prd-jura-community-scout-2026-10-24.md`, blocks 1 and 2, as
+amended by `prd/pending/prd-jura-browser-publishing-2026-10-25.md` §3.3.
 
-**Nothing is posted by code.** Meta removed the Groups API's publishing permission in April 2024,
-and driving an account with browser automation breaks Meta's terms. The run never fetches
-facebook.com either. The domains it may not fetch have one list, `blocked_fetch_domains` in
+**The research run never posts and never opens Facebook.** Posts and joins go out only through
+the separate `publish` job, item by item, after Ting Yu approves each card in `#approvals` (see
+"Posting and joining as the Jura Page" below). Meta's terms prohibit automated posting, and Ting
+Yu has accepted that risk for approved items only (browser publishing PRD §4.1). The community
+run never fetches facebook.com either. The domains it may not fetch have one list, `blocked_fetch_domains` in
 `config/community.yaml` (Facebook's own domains are always on it). The community plug-in turns
 each domain into two Claude Code rules for this job, `WebFetch(domain:facebook.com)` for the
 domain and `WebFetch(domain:*.facebook.com)` for every subdomain, so adding a domain to the list
@@ -30,16 +33,18 @@ and `community audit-run` proves the run fetched none of them from its transcrip
    per group and 2–3 reply ideas, through `community plan-add --file`, then
    `community publish-plan` writes `outputs/growth/community/YYYY-Www.md` and posts it.
    With no joined good-fit group the run ends `SKIP:`.
-6. **During the week** Ting Yu posts by hand and ticks the checklist or runs
-   `community posted <item-id> [url]`.
+6. **During the week** the `publish` job posts each approved post in a group joined as the Jura
+   Page, on its day. Anything else on the checklist Ting Yu posts by hand, as the Page, and ticks
+   the checklist or runs `community posted <item-id> [url]`.
 7. The **digest** reports the register, joined count, posts planned and posted this week, and
    audits that day's community run for Facebook fetches.
 
 ## What Ting Yu does
 
-- Join the good-fit groups you want, as yourself (see "Open questions"). Read each group's real
-  rules inside, then:
-  `jura-growth community set <id> joined=yes rules="<the rules as stated>" rules_confirmed=yes`
+- Groups are joined as the Jura Page (decision TY1). Approve the `group-join` cards in
+  `#approvals`, or join as the Page by hand and run `community set <id> joined_as=page`. Read each
+  group's real rules inside, then:
+  `jura-growth community set <id> rules="<the rules as stated>" rules_confirmed=yes`
   That records the rules and raises a `group-rules` card in #approvals (MC §5.7). Nothing in
   Terminal confirms rules or sets open days. Confirm the card from Discord, typing the open days:
   `/growth approve A-nnnn promo_days=<days> post_days=<days>`. Every group needs both day fields,
@@ -64,10 +69,11 @@ and `community audit-run` proves the run fetched none of them from its transcrip
   days and stays closed: run `community set <id> rules_confirmed=yes` and confirm its card with
   the days. `jura-growth community groups --joined` lists them, with "no post until Ting Yu
   confirms the open days".
-- Post the plan's items yourself, then tick `- [x]` in the checklist or run
-  `jura-growth community posted <item-id> [url]`.
-- If an admin removes a post or warns you: `jura-growth community removed <group-id>`. The group
-  becomes `skip` for good and its planned posts are skipped.
+- Approve or skip each `community-post` card. Post any item with a box yourself, as the Jura
+  Page, then tick `- [x]` in the checklist or run `jura-growth community posted <item-id> [url]`.
+- If an admin removes a post or warns the Page: `jura-growth community removed <group-id>`. The
+  group becomes `skip` for good and its planned posts are skipped. A publish run that meets a
+  removal or an admin warning in a group does this itself (below).
 
 ## Commands
 
@@ -198,7 +204,29 @@ Off by default: `browser: false` in `config/community.yaml`. With `browser: true
   request down), which sets the group's `join_status`; `member` also sets `joined_as = page`. A
   group that declined is never proposed again on its own, so it never takes one of a week's three. Posting there still waits for your
   `group-rules` decision on its rules and open days.
-- **Only personal profiles.** `pages-not-allowed`, from a join, its answers or (BP-05) a post
+- **How a community post goes** (BP-05; the publish run, after you approve its card, on its day
+  and only if the group's confirmed days leave that day open). The run opens the group's
+  composer and checks that it posts as the Jura Page before typing anything. Another identity
+  selected is a stop (`wrong-identity`); a composer with no way to post as a Page records
+  `--outcome pages-not-allowed`, below. Otherwise it attaches the image, types the approved text
+  once, posts, reads the post back on its own address inside the group
+  (`/groups/<group>/posts/<n>/` or `/permalink/<n>/`) and records
+  `publish done <A-id> --url <that address> --live-text-file <f>`. That address must be a post
+  inside the item's own group, or the command refuses it. The planned post becomes `posted`, with
+  `posted_url`, `posted_at` and `posted_via = browser`, and the group's `last_posted_at` is set.
+  Live text that differs from what you approved alerts and pauses `publish`, as for a social post.
+  The run's update goes to `#community`. A post the group holds for an admin's approval has no
+  address to read back: the run stops as `unidentified`, `publish` pauses, and you check the group
+  and record it with `community posted <item-id> [url]` once it is up.
+- **A removal or an admin warning in a group** stops the run (`publish stopped --reason removed`
+  or `admin-warning`), which pauses `publish` and alerts once, and also does what
+  `community removed` does for that group: `skip` for good, its planned posts skipped and its
+  waiting cards superseded (AC-P6.2). The alert names the group by its register id and the run;
+  it never quotes the page.
+- An item left `unknown` (the run ended without `done` or `stopped`) is settled with
+  `/growth publish resolve A-nnnn posted --url <the post's own address in the group>` or
+  `… not-posted`.
+- **Only personal profiles.** `pages-not-allowed`, from a join, its answers or a post
   composer, sets `pages_allowed = no` and `fit = skip` ("only personal profiles can join or post"),
   supersedes every card still waiting for that group, and the group is never proposed again. It
   neither alerts nor pauses.
@@ -230,10 +258,10 @@ Off by default: `browser: false` in `config/community.yaml`. With `browser: true
 
 ## Decisions and open questions
 
-- **Open question 1, to be confirmed by Ting Yu:** posts go up as Ting Yu personally,
-  mentioning Jura Solutions in the closing line (`post_as` in `config/community.yaml`). If he
-  decides on the Jura Facebook Page instead, change `post_as` and the prompt's closing-line
-  example; nothing else depends on it.
+- **Open question 1, decided (TY1, browser publishing PRD §3.3):** posts and joins go out as the
+  Jura Solutions Facebook Page (`post_as` in `config/community.yaml`), only in groups that allow
+  Pages; groups that only let personal profiles post are skipped. Drafts speak as Jura ("we"),
+  per `design-system/README.md` §3, and the closing line says who we are.
 - **Open question 2:** 3 groups a week to start (`groups_per_week: 3`, the hard cap).
 - **Links need confirmed rules.** Rules found by web search are recorded as stated, but a link
   goes in only after Ting Yu has read the group's real rules and approved their `group-rules`

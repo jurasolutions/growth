@@ -575,6 +575,20 @@ happy to leave up, or delete it by hand afterwards. You need:
   `#approvals`. Approve a planned post for the open day, and one for a closed day.
 - Expect: the open-day post goes live in the test group as the Jura Page, with its URL in
   `#community`. The closed-day item is never claimed.
+- Before the open-day post (code review 05, S2): check that the post-address rule matches
+  Facebook's real addresses. Use a test group whose register URL (`jura-growth community groups`)
+  holds the form its post addresses may not: if the register has its name in the address
+  (`/groups/<name>/`), see whether its posts' timestamps link to `/groups/<number>/posts/<n>/`,
+  or the other way round. Record here which form Facebook shows for the group page and for a
+  post:
+  - Group page: `______________`  Post timestamp link: `______________`
+  - Expect: both use the same group segment as the register's URL, so `publish done` accepts the
+    post's address and the audit passes the run.
+  - If they differ: the run's `publish done` is refused and the item goes `unknown`. Record the
+    group's number alongside its name in the register, and raise a fix so the address rule and
+    the audit accept either form for that group. Until then, settle the item with
+    `/growth publish resolve A-nnnn not-posted` and record the post with
+    `jura-growth community posted <item-id> <url>`.
 - Do: approve the join card for the second test group.
 - Expect: the run joins as the Jura Page, sees the questions, submits nothing, and a second card
   shows the questions and drafted answers. Approve it. A later run submits exactly those answers.

@@ -323,7 +323,9 @@ def _check_days_confirmed(group: dict) -> None:
         )
 
 
-def remove(conn: sqlite3.Connection, group_id: int, reason: str) -> dict:
+def remove(conn: sqlite3.Connection, group_id: int, reason: str, *, run_id: int | None = None) -> dict:
+    """An admin removed a post or warned: the group is skipped for good, and its planned posts
+    are skipped (`community removed`, or a publish run's removal or admin-warning stop)."""
     group = get(conn, group_id)
     if group is None:
         raise GroupError(f"no group {group_id}")
@@ -335,8 +337,23 @@ def remove(conn: sqlite3.Connection, group_id: int, reason: str) -> dict:
     skipped = conn.execute(
         "UPDATE community_posts SET status = 'skipped' WHERE group_id = ? AND status = 'planned'", (group_id,)
     ).rowcount
-    log.event(conn, "community.group.removed", {"id": group_id, "reason": reason, "planned_skipped": skipped}, level="warning", agent=NAME)
-    return get(conn, group_id)
+    log.event(conn, "community.group.removed", {"id": group_id, "reason": reason, "planned_skipped": skipped},
+              level="warning", agent=NAME, run_id=run_id)
+    removed = get(conn, group_id)
+    assert removed is not None  # written above
+    return removed
+
+
+def remove_for_good(conn: sqlite3.Connection, group_id: int, reason: str, *, run_id: int | None = None) -> dict:
+    """`remove()`, then every publish item still waiting for the group is withdrawn and its card
+    superseded in the same transaction (`publish.items.sync`). The one path for `community
+    removed` and for a publish run's removal or admin-warning stop (code review 05, N8). Call it
+    inside a transaction; post the cards with `cards.sweep_safely()` once that has committed."""
+    from jura_growth.agents.publish import items as publish_items
+
+    group = remove(conn, group_id, reason, run_id=run_id)
+    publish_items.sync(conn, run_id=run_id)
+    return group
 
 
 JOIN_STATUSES = ("requested", "member", "declined")

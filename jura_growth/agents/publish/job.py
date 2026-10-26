@@ -64,6 +64,8 @@ def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
        `publish`. A Terminal claim (no run) is left to Ting Yu, who can `publish resolve` it.
     2. Audit the run's transcript (`audit.py`), and hash each claimed item's image copies again
        against its approval (code review 03, S-8): any failure fails the run and pauses `publish`.
+       A join the run recorded is set back; a community post it recorded as posted is kept (it may
+       be live) and named, in the error and on its summary line, as a record to check.
     3. A run that found no browser and claimed nothing alerts once a day (AC-P9.4).
     4. Replace the summary and the error with words of our own (code review 03, B1): the A-id,
        the platform, what happened, the URL or the closed stop reason, and the run id. The
@@ -91,7 +93,11 @@ def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
     if found.no_browser and not claimed:
         _no_browser(conn, run_id)
 
-    lines = [_line(conn, item) for item in claimed] + [f"Warning: {w}" for w in found.warnings]
+    # A post recorded by a run whose audit failed stays posted (it may be live, and `planned`
+    # would invite a repost), but it is named as a record to check (code review 05, S1).
+    doubted = [item for item in claimed if failures and _posted_in_group(item)]
+    lines = [_line(conn, item) + (" · the audit failed" if item in doubted else "") for item in claimed]
+    lines += [f"Warning: {w}" for w in found.warnings]
     if claimed:
         summary = "\n".join(lines)
     else:
@@ -104,6 +110,8 @@ def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
         if undone:
             named = ", ".join(f"group {group_id}" for group_id in undone)
             errors.append(f"What the run recorded for the join of {named} was set back: check the group by hand.")
+        errors += [f"{_shown(conn, item)}'s posted record for group {outcomes.group_of(item)} may be wrong: check the "
+                   f"group, and the Page's own timeline." for item in doubted]
     stops = [item for item in claimed if item.state == "stopped"]
     if model_failed and not errors:
         errors = [_failure(conn, item, run_id) for item in claimed] or [_ending(outcome.error, run_id)]
@@ -140,6 +148,11 @@ def _claimed_by(conn: sqlite3.Connection, run_id: int) -> list[items.Item]:
     rows = conn.execute("SELECT * FROM publish_items WHERE run_id = ? AND claimed_at IS NOT NULL ORDER BY id",
                         (run_id,)).fetchall()
     return [items.Item.from_row(r) for r in rows]
+
+
+def _posted_in_group(item: items.Item) -> bool:
+    """A community post this run recorded as posted."""
+    return item.kind == items.COMMUNITY_POST_ITEM and item.state == "done" and item.outcome == "posted"
 
 
 def _shown(conn: sqlite3.Connection, item: items.Item) -> str:
