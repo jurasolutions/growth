@@ -323,7 +323,9 @@ def _check_days_confirmed(group: dict) -> None:
         )
 
 
-def remove(conn: sqlite3.Connection, group_id: int, reason: str) -> dict:
+def remove(conn: sqlite3.Connection, group_id: int, reason: str, *, run_id: int | None = None) -> dict:
+    """An admin removed a post or warned: the group is skipped for good, and its planned posts
+    are skipped (`community removed`, or a publish run's removal or admin-warning stop)."""
     group = get(conn, group_id)
     if group is None:
         raise GroupError(f"no group {group_id}")
@@ -335,8 +337,11 @@ def remove(conn: sqlite3.Connection, group_id: int, reason: str) -> dict:
     skipped = conn.execute(
         "UPDATE community_posts SET status = 'skipped' WHERE group_id = ? AND status = 'planned'", (group_id,)
     ).rowcount
-    log.event(conn, "community.group.removed", {"id": group_id, "reason": reason, "planned_skipped": skipped}, level="warning", agent=NAME)
-    return get(conn, group_id)
+    log.event(conn, "community.group.removed", {"id": group_id, "reason": reason, "planned_skipped": skipped},
+              level="warning", agent=NAME, run_id=run_id)
+    removed = get(conn, group_id)
+    assert removed is not None  # written above
+    return removed
 
 
 JOIN_STATUSES = ("requested", "member", "declined")

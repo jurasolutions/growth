@@ -61,8 +61,8 @@ def _normal(text: str) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFC", text)).strip()
 
 
-SOCIAL_ONLY = ("for social posts only so far: a join is recorded with --outcome, and a community post by the "
-               "community publishing step that follows (browser publishing#05)")
+POSTS = (items.SOCIAL_ITEM, items.COMMUNITY_POST_ITEM)
+POSTS_ONLY = "for posts only: a join is recorded with --outcome"
 
 
 def _item_for(conn: sqlite3.Connection, typed: str) -> tuple[approvals.Approval, items.Item]:
@@ -74,10 +74,15 @@ def _item_for(conn: sqlite3.Connection, typed: str) -> tuple[approvals.Approval,
     return record, found
 
 
-def _host_problem(platform: str, url: str) -> str | None:
-    """`hosts.post_problem`, with a refused fixture platform (BP-07) as a reason, not a traceback."""
+def _host_problem(found: items.Item, url: str | None) -> str | None:
+    """Why `url` isn't the live address of `found`'s post: one post on its platform
+    (`hosts.post_problem`), or, for a community post, one post inside its own group
+    (`hosts.group_post_problem`, BP-05). A refused fixture platform (BP-07) is a reason, not a
+    traceback."""
     try:
-        return hosts.post_problem(platform, url)
+        if found.kind == items.COMMUNITY_POST_ITEM:
+            return hosts.group_post_problem(url, found.target_url)
+        return hosts.post_problem(found.platform, url)
     except fixture.FixtureRefused as refused:
         return str(refused)
 
@@ -87,12 +92,18 @@ def _where(found: items.Item) -> str:
 
 
 def _mark_published(conn: sqlite3.Connection, found: items.Item, url: str, how: str) -> None:
-    """The draft is published, through the social agent's own record. The post is live whatever
-    the draft says now (skipped by hand after the claim, say), so that is logged, not refused."""
+    """The draft is published, through its agent's own record: the social draft, or the planned
+    community post (`posted`, with `posted_url`, `posted_at` and `posted_via = 'browser'`, BP §5.6).
+    The post is live whatever the draft says now (skipped by hand after the claim, say), so that
+    is logged, not refused."""
+    from jura_growth.agents.community import plan as plan_mod
     from jura_growth.agents.social import history
 
     try:
-        history.mark_published(conn, date.fromisoformat(found.day), found.platform, url, how=how)
+        if found.kind == items.COMMUNITY_POST_ITEM:
+            plan_mod.mark_posted(conn, found.ref_id, url, via="browser")
+        else:
+            history.mark_published(conn, date.fromisoformat(found.day), found.platform, url, how=how)
     except ValueError as error:
         log.event(conn, "publish.draft_not_marked", {"item": found.label, "why": str(error)}, level="warning",
                   agent=items.AGENT)
@@ -178,11 +189,11 @@ def done(approval_id, url, live_text_file, outcome, answers_file) -> str:
     live = live_text_file.read_text(encoding="utf-8")
     with db.session() as conn:
         record, found = _item_for(conn, approval_id)
-        if found.kind != items.SOCIAL_ITEM:
-            raise click.ClickException(f"refused: publish done --url is {SOCIAL_ONLY}")
+        if found.kind not in POSTS:
+            raise click.ClickException(f"refused: publish done --url is {POSTS_ONLY}")
         if found.state != "claimed":
             raise click.ClickException(f"{record.id}'s item isn't claimed (it is {found.state})")
-        wrong = _host_problem(found.platform, url)
+        wrong = _host_problem(found, url)
         if wrong:
             raise click.ClickException(f"refused: {wrong}")
         matches = same_text(found.content["text"], live)
@@ -259,8 +270,13 @@ def stopped(approval_id, reason) -> str:
             log.event(conn, "publish.stopped", {"item": found.label, "approval": record.id, "reason": reason},
                       level="warning", agent=items.AGENT, run_id=run_id)
             pause.pause(conn, items.AGENT, f"{record.id} stopped: {reason}", notify=False)
+            removed = outcomes.remove_group(conn, found, reason, run_id=run_id)
+        _post_cards(conn)
         where = f"in run {run_id}" if run_id is not None else "outside a run"
         text = f"Publishing stopped at {record.id} ({_where(found)}) {where}: {STOP_REASONS[reason]}."
+        if removed is not None:
+            text += (f" Group {removed} is now skipped for good, as `community removed` does: its planned posts "
+                     f"are skipped and its waiting cards superseded.")
         if run_id is not None:
             text += f" The run's transcript keeps what the page showed for {caps.BROWSER_TRANSCRIPT_DAYS} days."
         text += f"\nNothing more is posted or joined until you resume it: {RESUME}."
@@ -353,11 +369,11 @@ def resolve(approval_id, outcome, url) -> str:
         if not (found.state == "unknown" or items.stale_claim(conn, found)):
             raise click.ClickException(f"{record.id}'s item isn't unknown (it is {found.state}); nothing to settle")
         settles = found.state
-        if outcome == "posted" and found.kind != items.SOCIAL_ITEM:
-            raise click.ClickException(f"refused: resolve posted is {SOCIAL_ONLY}. Check the group, then settle "
+        if outcome == "posted" and found.kind not in POSTS:
+            raise click.ClickException(f"refused: resolve posted is {POSTS_ONLY}. Check the group, then settle "
                                        f"{record.id} as not-posted, or record what happened by hand")
         if outcome == "posted":
-            wrong = _host_problem(found.platform, url)
+            wrong = _host_problem(found, url)
             if wrong:
                 raise click.ClickException(f"refused: posted needs --url, the post's own address on {found.platform}: {wrong}")
         with db.transaction(conn):

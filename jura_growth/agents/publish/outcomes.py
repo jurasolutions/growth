@@ -191,6 +191,27 @@ def group_of(found: items.Item) -> int:
     return int(found.content["group"])
 
 
+# The stop reasons that, in a group, mean an admin removed the Page's post or warned it (BP §4.6).
+GROUP_REMOVALS = ("removed", "admin-warning")
+
+
+def remove_group(conn: sqlite3.Connection, found: items.Item, reason: str, *, run_id: int | None) -> int | None:
+    """A stop for a removal or an admin warning in a group also runs `community removed` for that
+    group, so it stays skipped (AC-P6.2): its planned posts are skipped, and every item still
+    waiting for it is superseded, its card saying why. Returns the group, or None when the stop
+    wasn't one of those in a group. The reason recorded is ours, never the page's words. Call it
+    inside the stop's transaction."""
+    from jura_growth.agents.community import groups as groups_mod
+
+    if found.kind not in GROUP_KINDS or reason not in GROUP_REMOVALS:
+        return None
+    group_id = group_of(found)
+    where = f"in run {run_id}" if run_id is not None else "outside a run"
+    groups_mod.remove(conn, group_id, f"the publish job stopped at {found.label} {where} ({reason})", run_id=run_id)
+    items.sync(conn, run_id=run_id)
+    return group_id
+
+
 def _finish(conn: sqlite3.Connection, found: items.Item, outcome: str, url: str | None) -> None:
     conn.execute(
         "UPDATE publish_items SET state = 'done', outcome = ?, post_url = ?, finished_at = ? WHERE id = ? "

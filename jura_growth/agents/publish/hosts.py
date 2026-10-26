@@ -101,6 +101,28 @@ def group_url_problem(url: str | None) -> str | None:
     return None
 
 
+# One post's own address inside a group (BP-05): `/groups/<group>/posts/<n>` or
+# `/groups/<group>/permalink/<n>`, with an optional trailing slash. The query and fragment don't count.
+_GROUP_POST_PATH = re.compile(r"/groups/([A-Za-z0-9._-]+)/(?:posts|permalink)/([0-9]+)/?")
+GROUP_POST_SHAPE = "one post's own address in the item's group, /groups/<group>/posts/<number>/"
+
+
+def group_post_problem(url: str | None, group_url: str) -> str | None:
+    """Why `url` isn't one post's own address inside the group at `group_url` (`publish done` and
+    `publish resolve` for a community post), or None when it is: on Facebook's hosts (the fixture
+    site while it is on), and in the shape `/groups/<that group>/posts/<number>/` or
+    `/permalink/<number>/`. Another group's post, the group's own page, the Page's timeline and a
+    path with `.` or `..` are all refused. Names the host, never the path."""
+    wrong = problem("facebook", url)
+    if wrong:
+        return wrong
+    parts = urlsplit((url or "").strip())
+    match = _GROUP_POST_PATH.fullmatch(parts.path)
+    if match is None or not within(url or "", group_url) or match.group(1) in (".", ".."):
+        return f"the address on {(parts.hostname or '').lower()} isn't {GROUP_POST_SHAPE}"
+    return None
+
+
 def within(url: str, place: str) -> bool:
     """Whether `url` is `place` or a page under it, on any of the same platform's hosts: a group's
     own address (`/groups/<id>`), its posts, members or About. The query and fragment don't count;

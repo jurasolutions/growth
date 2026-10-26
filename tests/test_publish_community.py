@@ -707,15 +707,17 @@ def test_a_stop_signal_on_a_community_item_stops_it_and_pauses_publish(conn, wor
     assert any(request.id in post.content for post in discord_double.posts("alerts"))
 
 
-def test_publish_done_isnt_taken_for_a_community_item_yet(conn, world, monkeypatch, tmp_path):
-    found, request = pw.community_item(conn)
+def test_publish_done_with_a_post_url_isnt_taken_for_a_join(conn, world, monkeypatch, tmp_path):
+    """A join is recorded with --outcome. A community post's --url is BP-05's
+    (`test_publish_community_posts.py`)."""
+    found, request = pw.join_item(conn)
     pw.decide(conn, request)
     next_json()
     live = tmp_path / "live.txt"
     live.write_text(pw.GROUP_TEXT)
-    result = pw.invoke("publish", "done", request.id, "--url", "https://www.facebook.com/groups/x/posts/1",
+    result = pw.invoke("publish", "done", request.id, "--url", f"{found.target_url}/posts/1",
                        "--live-text-file", str(live))
-    assert result.exit_code == 1 and "social posts only" in result.output
+    assert result.exit_code == 1 and "for posts only" in result.output
     assert items.get(conn, found.id).state == "claimed"
 
 
