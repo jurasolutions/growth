@@ -1,21 +1,32 @@
-"""The UAT harness for `.scratch/mission-control/uat.md` Part A (ticket 04b; X13).
+"""The UAT harness for `.scratch/mission-control/uat.md` (tickets 04b and 17; X13).
 
-Seeds the Part A data into a temporary folder, for Ting Yu to run the script against a test
-Discord server. From the repo root, in the Part A window (`uat.md`, "The window for Parts A and C"):
+Seeds the UAT data into a temporary folder, for Ting Yu to run the script against a test Discord
+server. From the repo root, in the window `uat.md` sets up ("The window for Parts A and C"):
 
-    uv run python -m tests.uat.seed "$UAT" [--scenario base]
+    uv run python -m tests.uat.seed "$UAT" [--scenario base] [--today YYYY-MM-DD] [--lead <id>]
 
 It refuses unless `$UAT` is a temporary folder (made with `mktemp -d`) outside `jurasolutions/`, and
-`JURA_GROWTH_DATA_DIR`, `JURA_GROWTH_OUTPUTS_DIR` and `JURA_PRD_DIR` all sit inside it. So it can
-never write to the live `data/growth/`, `outputs/growth/` or PRD folders. It also refuses a folder
-it has already seeded.
+`JURA_GROWTH_DATA_DIR`, `JURA_GROWTH_OUTPUTS_DIR` and `JURA_PRD_DIR` all sit inside it, as does
+`JURA_GROWTH_CONFIG_DIR` when it is set. So it can never write to the live `data/growth/`,
+`outputs/growth/`, PRD or `config/` folders. It also refuses a folder it has already seeded. A
+config folder inside `$UAT` starts as a copy of the repo's `config/`.
 
-The `base` scenario holds what today's schema can: S1 (run history from Mon 2 Nov, Deepavali's
-observed Monday without business-day runs, and the 6 Nov scout-send traces), S2 (today's
-app-factory and social runs), S4 (the queued emails for leads 233, 240 to 254 and 260), S5 and S6
-(the planted reply, phone number and Resend key), S7 (APP-014's PRD) and S8 (groups G4 and G7).
-The approval requests over them, and S3's live-mode config, are raised by the kinds' own tickets
-(06 for `outreach-email`, 10 for `app-build`, 05 for `group-rules`), each adding to `SCENARIOS`.
+Every row is dated from `--today` (default: today in SGT), which must be a business day: Dispatch
+stamps decisions with the real clock, so deadlines must line up with the day the UAT runs.
+
+- `base` holds S1 (eight days of run history, with the previous business day's scout-send
+  traces missing slots and a quiet run six minutes late), S2 (today's app-factory and social
+  runs), S4 (the queued emails for leads 233, 240 to 254 and 260), S5 and S6 (the planted reply,
+  phone number and Resend key), S7 (APP-014's PRD) and S8 (groups G4 and G7).
+- `outreach-live` (S3) puts live mode in `$UAT/config` with every pre-condition met but the
+  buttons switch. It needs `JURA_GROWTH_RESEND_BASE_URL` pointed at the stub
+  (`uv run python -m tests.resend_stub`), and writes `do-not-contact.csv` when `JURA_INPUTS_DIR`
+  is inside `$UAT`. It prints any pre-condition the window must still supply.
+- `edit-draft --lead <id>` (S9) changes that lead's queued draft by hand.
+- `shadow-trial` (S10) holds 40 shadow-sent emails for `requeue-shadow`.
+
+The seed never raises an approval request: the outreach commands raise them, as they would live.
+The other kinds' tickets add their own scenarios to `SCENARIOS`.
 """
 
 from __future__ import annotations
@@ -23,17 +34,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
+import yaml
+
 from jura_growth import config, db, holidays, paths, schedule, suppression, timeutil
+from jura_growth.agents.outreach import send, store
 
 FOLDERS = ("JURA_GROWTH_DATA_DIR", "JURA_GROWTH_OUTPUTS_DIR", "JURA_PRD_DIR")
-FIRST_DAY = date(2026, 11, 2)
-TODAY = date(2026, 11, 10)
+# Folders the seed writes to only when they are set, and then only inside the UAT folder.
+OPTIONAL_FOLDERS = ("JURA_GROWTH_CONFIG_DIR",)
+HISTORY_DAYS = 8  # S1: run history from eight days before the seeded day
 
 # Datasets D2 and D3 (test strategy v3 §3), as uat.md S5 and S6 plant them.
 RESEND_KEY = "re_uat_9Xq7Lm2Pz"
@@ -44,6 +60,44 @@ NAMED_ADDRESS = "jane.tan@example.com.sg"
 
 class Refused(RuntimeError):
     pass
+
+
+# --- the seeded day (`--today`) -------------------------------------------------------------
+#
+# Dispatch stamps every decision with the real clock (ADR 0004 as amended 2026-10-26), so the
+# seed dates its rows from the day the UAT runs: `--today`, by default today in SGT. Scenarios
+# read it through `today()` and `previous_business_day()`, never a fixed date.
+
+_day: date | None = None
+_folder: Path | None = None  # the UAT folder being seeded
+_options: dict = {}  # the scenario's own options, such as `--lead`
+
+
+def option(name: str, flag: str | None = None):
+    """A scenario's option, or Refused naming the flag that sets it."""
+    if name not in _options:
+        raise Refused(f"this scenario needs {flag or '--' + name}")
+    return _options[name]
+
+
+def today() -> date:
+    """The day being seeded."""
+    return _day if _day is not None else timeutil.today()
+
+
+def previous_business_day(day: date | None = None) -> date:
+    candidate = (day or today()) - timedelta(days=1)
+    while not holidays.is_business_day(candidate):
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def day_refusal(day: date) -> str | None:
+    """Why `day` can't be the seeded day, or None."""
+    if holidays.is_business_day(day):
+        return None
+    why = holidays.holiday(day) or "weekend"
+    return f"{day.isoformat()} is not a business day ({why}): run the UAT on a business day"
 
 
 # --- the refusal ----------------------------------------------------------------------------
@@ -65,7 +119,19 @@ def refusal(folder: str | os.PathLike[str]) -> str | None:
             return f"{variable} isn't set: point it inside {folder}"
         if not paths.is_within(value, folder):
             return f"{variable} ({value}) is outside {folder}"
+    for variable in OPTIONAL_FOLDERS:
+        value = os.environ.get(variable)
+        if value and not paths.is_within(value, folder):
+            return f"{variable} ({value}) is outside {folder}"
     return None
+
+
+def _prepare_config() -> None:
+    """A `JURA_GROWTH_CONFIG_DIR` inside the UAT folder starts as a copy of the repo's `config/`,
+    which is only read, so every command in the window has its settings."""
+    value = os.environ.get("JURA_GROWTH_CONFIG_DIR")
+    if value and not (Path(value) / "settings.yaml").exists():
+        shutil.copytree(paths.REPO_ROOT / "config", value, dirs_exist_ok=True)
 
 
 # --- building blocks ------------------------------------------------------------------------
@@ -110,16 +176,16 @@ def _runs_on(spec: dict, day: date) -> list[str]:
 
 def s1_history(conn) -> None:
     jobs = config.settings()["jobs"]
-    day = FIRST_DAY
-    while day < TODAY:
+    day = today() - timedelta(days=HISTORY_DAYS)
+    while day < today():
         for name, spec in jobs.items():
             for clock in _runs_on(spec, day):
                 cost = 0.50 if spec["kind"] == "claude" else None
                 run_row(conn, spec["agent"], name, at(day, clock), cost=cost, summary=f"OK: {name} on {day.isoformat()}")
         day += timedelta(days=1)
-    # Fri 6 Nov: scout-send's quiet traces, with 10:00, 10:10 and 10:20 slept through and a
-    # quiet run at 10:26.
-    friday = date(2026, 11, 6)
+    # The previous business day: scout-send's quiet traces, with 10:00, 10:10 and 10:20 slept
+    # through and a quiet run at 10:26.
+    friday = previous_business_day()
     minute = 9 * 60 + 30
     while minute <= 16 * 60 + 30:
         clock = f"{minute // 60:02d}:{minute % 60:02d}"
@@ -132,9 +198,9 @@ def s1_history(conn) -> None:
 
 
 def s2_today(conn) -> None:
-    run_row(conn, "app-factory", "app-factory", at(TODAY, "06:31"), minutes=6, cost=1.20,
+    run_row(conn, "app-factory", "app-factory", at(today(), "06:31"), minutes=6, cost=1.20,
             summary="OK: filed APP-014 PayNow QR for small shops")
-    run_row(conn, "social", "social", at(TODAY, "07:00"), minutes=4.2, cost=0.41,
+    run_row(conn, "social", "social", at(today(), "07:00"), minutes=4.2, cost=0.41,
             summary="OK: drafted LinkedIn, Facebook and Instagram for \"PayNow QR for small shops\"")
 
 
@@ -143,48 +209,76 @@ def _lead(conn, lead_id: int, company: str, domain: str, *, industry: str = "log
         "INSERT INTO leads (id, company, display_name, domain, website, industry, score, score_reasons, channel, status,"
         " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, '[\"runs dispatch by hand\"]', 'email', 'queued', ?, ?)",
         (lead_id, company, company.removesuffix(" Pte Ltd"), domain, f"https://{domain}", industry, score,
-         at(date(2026, 11, 5), "09:00"), at(date(2026, 11, 5), "09:00")),
+         _found(), _found()),
     )
+
+
+def _found() -> str:
+    """When the seeded leads were found: the day before the previous business day, 09:00."""
+    return at(previous_business_day() - timedelta(days=1), "09:00")
 
 
 def _contact(conn, lead_id: int, email: str, kind: str, source: str) -> int:
     cursor = conn.execute(
         "INSERT INTO contacts (lead_id, email, email_hash, source_url, kind, mx_ok, verified_at, created_at)"
         " VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
-        (lead_id, email, suppression.email_hash(email), source, kind, at(date(2026, 11, 5), "09:00"), at(date(2026, 11, 5), "09:00")),
+        (lead_id, email, suppression.email_hash(email), source, kind, _found(), _found()),
     )
     return int(cursor.lastrowid or 0)
 
 
-def _queued(conn, lead_id: int, contact_id: int, queued_at: str, send_after: date, body: str) -> None:
-    conn.execute(
-        "INSERT INTO outreach_messages (lead_id, contact_id, kind, subject, draft_body, body_text, body_html, send_after,"
-        " queued_at, status) VALUES (?, ?, 'first', 'Quotes that write themselves', ?, ?, ?, ?, ?, 'queued')",
-        (lead_id, contact_id, body, body, f"<p>{body}</p>", send_after.isoformat(), queued_at),
+NAMES = ("Alder", "Birch", "Cedar", "Dove", "Elm", "Fern", "Grove", "Hazel", "Iris", "Juniper", "Kestrel", "Linden",
+         "Maple", "Nutmeg", "Olive", "Pine", "Quill", "Rowan", "Sage", "Teak")
+SUBJECT = "Quotes that write themselves"
+TOOL = "quote-builder"  # live in the site registry, so a draft linking it passes the send-time brand gate
+
+
+def draft(company: str) -> str:
+    """A first email that passes the `email` brand channel as it stands, so an approved one sends."""
+    return (
+        f"I saw on the {company} site that each quote is still typed up by hand. We've made a free quote "
+        f"builder that turns a job into a clean PDF quote: jurasolutions.sg/apps/{TOOL}\n\n"
+        "It sits with our other small tools at jurasolutions.sg/apps. There's nothing to install, and what you "
+        "enter stays in your browser.\n\n"
+        "If quotes eat into your evenings, reply and tell me how they work today. That's the kind of work we "
+        "help Singapore teams automate."
     )
 
 
+def _queued(conn, lead_id: int, contact_id: int, queued_at: str, send_after: date, body: str) -> int:
+    cursor = conn.execute(
+        "INSERT INTO outreach_messages (lead_id, contact_id, kind, tool_slug, subject, draft_body, body_text, body_html,"
+        " send_after, queued_at, status) VALUES (?, ?, 'first', ?, ?, ?, ?, ?, ?, ?, 'queued')",
+        (lead_id, contact_id, TOOL, SUBJECT, body, body, f"<p>{body}</p>", send_after.isoformat(), queued_at),
+    )
+    return int(cursor.lastrowid or 0)
+
+
 def s4_queued_emails(conn) -> None:
-    body = "Your team still types quotes by hand. We can automate 80%+ of the manual steps."
     _lead(conn, 233, "Example Pte Ltd", "example.com.sg", score=78)
     contact = _contact(conn, 233, "info@example.com.sg", "role", "https://example.com.sg/contact")
-    _queued(conn, 233, contact, at(date(2026, 11, 6), "09:12"), date(2026, 11, 6), body)
-    for lead_id in range(240, 255):
+    previous = previous_business_day()
+    _queued(conn, 233, contact, at(previous, "09:12"), previous, draft("Example"))
+    for lead_id, name in zip(range(240, 255), NAMES):
         domain = f"lead{lead_id}.example.sg"
-        _lead(conn, lead_id, f"Lead {lead_id} Pte Ltd", domain)
+        # Word names: a figure in a company name fails the numbers rule at send time.
+        _lead(conn, lead_id, f"{name} Freight Pte Ltd", domain)
         contact = _contact(conn, lead_id, f"hello@{domain}", "role", f"https://{domain}/contact")
         planted = f" (draft notes: key {RESEND_KEY})" if lead_id == 254 else ""  # S6
-        _queued(conn, lead_id, contact, at(TODAY, "09:05"), TODAY, body + planted)
-    _lead(conn, 260, "Tan Logistics Pte Ltd", "tanlogistics.example.sg")
-    contact = _contact(conn, 260, NAMED_ADDRESS, "named", "https://tanlogistics.example.sg/enquiries")
-    _queued(conn, 260, contact, at(TODAY, "09:05"), TODAY, body)
+        _queued(conn, lead_id, contact, at(today(), "09:05"), today(), draft(f"{name} Freight") + planted)
+    # Not "Tan Logistics": a company name holding the named recipient's surname reads as greeting
+    # the person, and the `email` brand channel drops it (AC-M12.2).
+    _lead(conn, 260, "Harbourline Logistics Pte Ltd", "harbourline.example.sg")
+    contact = _contact(conn, 260, NAMED_ADDRESS, "named", "https://harbourline.example.sg/enquiries")
+    _queued(conn, 260, contact, at(today(), "09:05"), today(), draft("Harbourline Logistics"))
 
 
 def s5_s6_planted(conn) -> None:
-    run_row(conn, "scout", "scout-research", at(date(2026, 11, 6), "09:00:30"), summary=f"OK: 3 leads (token {RESEND_KEY})")
-    failed = run_row(conn, "outreach", "scout-sync", at(date(2026, 11, 6), "16:45:30"), status="failed",
+    previous = previous_business_day()
+    run_row(conn, "scout", "scout-research", at(previous, "09:00:30"), summary=f"OK: 3 leads (token {RESEND_KEY})")
+    failed = run_row(conn, "outreach", "scout-sync", at(previous, "16:45:30"), status="failed",
                      error=f"ResendError: 401 for key {RESEND_KEY}")
-    folder = paths.data_dir() / "transcripts" / TODAY.isoformat()
+    folder = paths.data_dir() / "transcripts" / today().isoformat()
     folder.mkdir(parents=True, exist_ok=True)
     lines = [
         {"type": "assistant", "text": f"Reply from lead 233: {REPLY}. Call {PHONE}."},
@@ -196,7 +290,7 @@ def s5_s6_planted(conn) -> None:
 def s7_factory_prd(conn) -> None:
     folder = paths.prd_dir() / "pending" / "apps"
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / "prd-app-014-paynow-qr-2026-11-10.md").write_text(
+    (folder / f"prd-app-014-paynow-qr-{today().isoformat()}.md").write_text(
         "# APP-014 PayNow QR for small shops\n\n"
         "Pitch: a shop prints one PayNow QR per invoice, so payments match themselves.\n"
         "Tier: free tool. Lead types: retail, food and beverage.\n"
@@ -204,7 +298,7 @@ def s7_factory_prd(conn) -> None:
 
 
 def _group(conn, name: str, slug: str, *, joined: int, rules: str | None) -> None:
-    now = at(date(2026, 11, 2), "07:30")
+    now = at(today() - timedelta(days=HISTORY_DAYS), "07:30")
     url = f"https://www.facebook.com/groups/{slug}"
     conn.execute(
         "INSERT INTO community_groups (name, slug, url, url_key, promo_rules, fit, fit_reason, joined, rules_confirmed,"
@@ -223,38 +317,154 @@ def base(conn) -> None:
         step(conn)
 
 
-SCENARIOS: dict[str, Callable] = {"base": base}
+# --- the outreach scenarios (ticket 17) ----------------------------------------------------
+#
+# A4 and B6 run against these. None of them raises an approval request: requests come only from
+# the outreach commands themselves (`send-due`, `requeue-shadow`), as they would live.
+
+LIVE_SENDING_DOMAIN = "hello.jurasolutions.sg"  # only ever reaches the stub
+WARM_UP_DAY = 3  # cap 5 (caps.OUTREACH_WARMUP)
+
+
+def _rewrite_yaml(path: Path, change: Callable[[dict], None]) -> None:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    change(data)
+    path.write_text("# Written by tests/uat/seed.py for the UAT folder only.\n"
+                    + yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+def outreach_live(conn) -> list[str]:
+    """S3: `outreach.mode: live` in `$UAT/config` with every live pre-condition met except the
+    buttons switch (`approvals.discord_buttons: false`, which A4 turns on), warm-up day 3, and
+    Resend pointed at the stub. Returns any pre-condition the window still has to supply."""
+    folder = os.environ.get("JURA_GROWTH_CONFIG_DIR")
+    if not folder:
+        raise Refused("JURA_GROWTH_CONFIG_DIR isn't set: outreach-live writes live mode into $UAT/config, never config/")
+    if not os.environ.get(send.RESEND_BASE_ENV):
+        raise Refused(f"{send.RESEND_BASE_ENV} isn't set: start the stub (`uv run python -m tests.resend_stub`) and "
+                      f"export {send.RESEND_BASE_ENV}=http://127.0.0.1:{8025}, so no email can reach Resend")
+    problem = send.resend_stub_problem()
+    if problem:
+        raise Refused(problem)
+
+    def live(scout: dict) -> None:
+        scout.update(mode="live", legal_review_done=True, sending_domain=LIVE_SENDING_DOMAIN)
+
+    def buttons_off(settings: dict) -> None:
+        settings.setdefault("approvals", {})["discord_buttons"] = False
+
+    _rewrite_yaml(Path(folder) / "scout.yaml", live)
+    _rewrite_yaml(Path(folder) / "settings.yaml", buttons_off)
+    inputs = os.environ.get("JURA_INPUTS_DIR")
+    if inputs and _folder is not None and paths.is_within(inputs, _folder):  # never the real inputs/
+        dnc = Path(inputs) / "do-not-contact.csv"
+        dnc.parent.mkdir(parents=True, exist_ok=True)
+        if not dnc.exists():
+            dnc.write_text("company,domain,reason\n", encoding="utf-8")
+    first_live_send = today() - timedelta(days=WARM_UP_DAY - 1)
+    store.set_state(conn, "first_live_send_at", at(first_live_send, "10:00"))
+    config.reset_caches()
+    return [p for p in send.live_problems() if not p.startswith("approval buttons not set up")]
+
+
+EDITED = "\n\nP.S. A short note added by hand after the first read."
+
+
+def edit_draft(conn) -> None:
+    """S9: change one lead's queued `draft_body`, as a hand edit would, so the next read or claim
+    supersedes its request and raises one for the new text."""
+    lead = option("lead")
+    message = db.one(conn, "SELECT id, draft_body FROM outreach_messages WHERE lead_id = ? AND status = 'queued'", (lead,))
+    if message is None:
+        raise Refused(f"lead {lead} has no queued email to edit")
+    conn.execute("UPDATE outreach_messages SET draft_body = ? WHERE id = ?", (message["draft_body"] + EDITED, message["id"]))
+
+
+SHADOW_LEADS = range(300, 340)  # S10: 40 shadow-trial emails
+SHADOW_TRADES = ("Aircon", "Renovation")
+
+
+def shadow_trial(conn) -> None:
+    """S10: 40 first emails shadow-sent over the business days before today, five a day, in the
+    shape `requeue-shadow` reads: the message `shadow`, its lead `shadow_sent`."""
+    if db.scalar(conn, "SELECT 1 FROM leads WHERE id = ?", (SHADOW_LEADS[0],)):
+        raise Refused("shadow-trial is already seeded in this folder")
+    day = today()
+    for index, lead_id in enumerate(SHADOW_LEADS):
+        if index % 5 == 0:
+            day = previous_business_day(day)
+        name = f"{NAMES[index % len(NAMES)]} {SHADOW_TRADES[index // len(NAMES)]}"
+        domain = f"shadow{lead_id}.example.sg"
+        _lead(conn, lead_id, f"{name} Pte Ltd", domain)
+        contact = _contact(conn, lead_id, f"hello@{domain}", "role", f"https://{domain}/contact")
+        message = _queued(conn, lead_id, contact, at(day, "09:05"), day, draft(name))
+        sent = at(day, f"{10 + index % 5}:00")
+        conn.execute("UPDATE outreach_messages SET status = 'shadow', mode = 'shadow', sent_at = ?, qa_json = '{}' WHERE id = ?",
+                     (sent, message))
+        conn.execute("UPDATE leads SET status = 'shadow_sent' WHERE id = ?", (lead_id,))
+
+
+SCENARIOS: dict[str, Callable] = {
+    "base": base,
+    "outreach-live": outreach_live,
+    "edit-draft": edit_draft,
+    "shadow-trial": shadow_trial,
+}
 
 
 # --- seeding --------------------------------------------------------------------------------
 
 
-def seed(folder: str | os.PathLike[str], scenario: str = "base") -> None:
+def seed(folder: str | os.PathLike[str], scenario: str = "base", *, today: date | None = None, **options) -> list[str]:
+    """Seed `scenario` into `folder`, dating it from `today` (default: today in SGT). A scenario
+    reads its own `options` (`--lead`) through `option()`. Returns notes for Ting Yu: anything
+    the window must still supply before the scenario's steps."""
+    global _day, _folder, _options
     problem = refusal(folder)
     if problem:
         raise Refused(problem)
     build = SCENARIOS.get(scenario)
     if build is None:
         raise Refused(f"no scenario {scenario!r}; known: {', '.join(SCENARIOS)}")
+    _prepare_config()
     config.reset_caches()
-    with db.session() as conn:
-        if scenario == "base" and db.scalar(conn, "SELECT count(*) FROM runs"):
-            raise Refused(f"{folder} is already seeded: start again from a fresh `mktemp -d`")
-        with db.transaction(conn):
-            build(conn)
+    day = today or timeutil.today()
+    problem = day_refusal(day)
+    if problem:
+        raise Refused(problem)
+    _day, _folder, _options = day, Path(folder).resolve(), {k: v for k, v in options.items() if v is not None}
+    try:
+        with db.session() as conn:
+            if scenario == "base" and db.scalar(conn, "SELECT count(*) FROM runs"):
+                raise Refused(f"{folder} is already seeded: start again from a fresh `mktemp -d`")
+            with db.transaction(conn):
+                return list(build(conn) or [])
+    finally:
+        _day, _folder, _options = None, None, {}
+
+
+def _day_argument(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a date (YYYY-MM-DD)") from None
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Seed uat.md Part A into a temporary folder.")
+    parser = argparse.ArgumentParser(description="Seed uat.md's scenarios into a temporary folder.")
     parser.add_argument("folder")
     parser.add_argument("--scenario", default="base")
+    parser.add_argument("--today", type=_day_argument, help="the day to date the rows from (default: today in SGT)")
+    parser.add_argument("--lead", type=int, help="edit-draft: the lead whose queued draft to change")
     options = parser.parse_args(argv)
     try:
-        seed(options.folder, options.scenario)
+        notes = seed(options.folder, options.scenario, today=options.today, lead=options.lead)
     except Refused as refused:
         print(f"refused: {refused}")
         return 2
     print(f"seeded {options.scenario} into {paths.data_dir()}")
+    for note in notes:
+        print(f"still needed: {note}")
     return 0
 
 
