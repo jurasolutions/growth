@@ -50,7 +50,7 @@ GOOD = """\
 *Domain: `jurasolutions/` | Created: 2026-10-26 | Author: app factory (for Ting Yu)*
 *Status: **PENDING SIGN-OFF** | Tier: browser | Category: Documents*
 *Follows: `prd/pending/prd-jura-app-factory-2026-10-24.md` (toolbox shell, limiter, conventions).*
-*To build: "approved, build prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md"*
+*To build: approve its app-build request in #approvals (prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md)*
 
 ---
 
@@ -137,9 +137,10 @@ None.
 
 **Do not start building. This PRD requires explicit sign-off before any code is written.**
 
-To proceed: reply "approved, build prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md".
-Claude Code builds in one pass, shows the tool locally, and deploys only after Ting Yu's
-go-ahead. Once live, this file moves to `prd/done/apps/` with the ship date recorded at the top.
+To proceed: approve its app-build request in #approvals. Approving hands this PRD to a builder,
+who builds it on its own branch from `main` with a preview. Going live is a second approval, of
+the exact commit. Once released, this file moves to `prd/done/apps/` with the ship date and both
+approvals recorded.
 
 Signed off by: ________________  Date: ____________
 """
@@ -208,8 +209,14 @@ BROKEN = {
     "missing subsection": lambda t: t.replace("### 5.4 Done-check", "Done-check:"),
     "bad tier": lambda t: t.replace("Tier: browser", "Tier: web"),
     "bad category": lambda t: t.replace("Category: Documents", "Category: Logistics"),
-    "no to-build line": lambda t: t.replace('*To build: "approved, build prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md"*\n', ""),
-    "to-build wrong number": lambda t: t.replace("build prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md\"*", "build prd/pending/apps/prd-app-004-delivery-order-maker-2026-10-26.md\"*"),
+    "no to-build line": lambda t: t.replace('*To build: approve its app-build request in #approvals (prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md)*\n', ""),
+    "to-build wrong number": lambda t: t.replace("(prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md)*", "(prd/pending/apps/prd-app-004-delivery-order-maker-2026-10-26.md)*"),
+    "old to-build line": lambda t: t.replace(
+        "*To build: approve its app-build request in #approvals (prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md)*",
+        '*To build: "approved, build prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md"*'),
+    "old sign-off reply": lambda t: t.replace(
+        "To proceed: approve its app-build request in #approvals.",
+        'To proceed: reply "approved, build prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md".'),
     "to-build wrong date": lambda t: t.replace("Created: 2026-10-26", "Created: 2026-10-25"),
     "slug not from name": lambda t: t.replace("# PRD — APP-003 Delivery order maker", "# PRD — APP-003 Delivery note maker"),
     "no gate sentence": lambda t: t.replace("**Do not start building. This PRD requires explicit sign-off before any code is written.**", "Build when ready."),
@@ -230,6 +237,28 @@ def test_broken_variants_fail(label):
     broken = BROKEN[label](GOOD)
     assert broken != GOOD, "the mutation must change the text"
     assert prd_mod.validate_shape(broken, strict=True), label
+
+
+def test_the_template_says_a_build_starts_with_its_app_build_request_not_a_typed_reply():
+    """Ticket 10b: the template's "To build:" header and §7 point at the `app-build` request in
+    #approvals, so the PRD attached to its card no longer says "approved, build …" (AC-M9.1)."""
+    template = (REAL_PRD / "templates" / "prd-app-template.md").read_text()
+    assert "approved, build" not in template
+    assert "*To build: approve its app-build request in #approvals (prd/pending/apps/prd-app-NNN-<slug>-YYYY-MM-DD.md)*" in template
+    assert "To proceed: approve its app-build request in #approvals." in template
+    assert "approved, build" not in GOOD
+
+
+def test_a_prd_filed_before_the_new_header_still_reads_but_the_factory_needs_the_new_one():
+    """APP-001 to APP-003 keep the old header (their bytes are what was asked about); the parser
+    still reads it, and only a new factory PRD must use the template's new wording."""
+    old = BROKEN["old sign-off reply"](BROKEN["old to-build line"](GOOD))
+    parsed = prd_mod.parse(old)
+    assert parsed.build_path == "prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md"
+    assert parsed.slug == "delivery-order-maker"
+    assert prd_mod.validate_shape(old) == []
+    assert any("To build" in e for e in prd_mod.validate_shape(old, strict=True))
+    assert any("§7" in e for e in prd_mod.validate_shape(BROKEN["old sign-off reply"](GOOD), strict=True))
 
 
 def test_strict_mode_needs_the_template_wording():

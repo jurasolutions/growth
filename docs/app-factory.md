@@ -145,5 +145,7 @@ one byte supersedes it and raises a new one.
   <date>". The backlog idea goes back to `idea` with a `reopens` date 30 days on, shows as
   `resting` until then, and may be proposed again from that date under a new number.
 
-The PRD template's "To build:" header line and its sign-off section are unchanged, because
-`prd.py` checks the template's shape; the request in #approvals is what counts.
+The PRD template's "To build:" header line and its §7 say the same thing: approve the PRD's
+`app-build` request in #approvals. `prd.py` checks that wording on every new factory PRD, and still
+reads the old header, which asked for a typed reply, on the PRDs filed before it changed (APP-001
+to APP-003), whose bytes are what their requests cover.
