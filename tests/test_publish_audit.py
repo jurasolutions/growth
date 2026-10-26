@@ -388,5 +388,23 @@ def test_a_group_item_that_navigates_out_of_its_group_fails_even_when_denied(tmp
     assert failed_with(judged_in_group(tmp_path, steps), LEFT)
 
 
+@pytest.mark.parametrize("path, ok", [("/groups/rehearsal-1", True), ("/groups/rehearsal-1/members", True),
+                                      ("/groups/rehearsal-2", False), ("/jura-test-page", False)])
+def test_on_the_fixture_site_a_group_item_stays_in_its_own_group_too(tmp_path, path, ok):
+    """BP-07's fixture replaces the hosts, never the group-path rule: the rehearsal's group
+    addresses are fixture paths, held to the same check."""
+    from jura_growth.agents.publish.fixture import Fixture
+
+    site = Fixture("http", "publish-fixture.localhost", 8765)
+    group = site.base + "/groups/rehearsal-1"
+    steps = [*start(), t.created(), t.opened(group),
+             t.page("computer", {"action": "left_click", "ref": "ref_7"}, "Clicked.", url=site.base + path), t.closed()]
+    found = audit.audit(transcripts.read(t.write(tmp_path / "run.jsonl", steps)), hosts=HOSTS, approved=[], images=[],
+                        site=site, places=[group])
+    assert (found.failures == []) is ok, found.failures
+    if not ok:
+        assert failed_with(found, LEFT)
+
+
 def test_a_blank_new_tab_is_fine_for_a_group_item(tmp_path):
     assert judged_in_group(tmp_path, in_group()).failures == []
