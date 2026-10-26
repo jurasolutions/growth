@@ -8,6 +8,7 @@ repository (D13, a temp repo at `paths.site_repo()`) contains it. The gate matri
 through `gate_adapter_app_release.py`.
 """
 
+import re
 import shutil
 
 import pytest
@@ -143,6 +144,62 @@ def test_built_with_a_new_commit_supersedes_the_request_and_raises_one_for_the_n
     old, new = release_requests(conn)
     assert old.status == "superseded" and new.status == "pending" and new.supersedes == old.number
     assert releases.current_build(conn, app_id)["head_sha"] == later
+
+
+# --- AC-M9.8: `apps release-plan` claims, then prints the merge of exactly that commit ---------------
+
+
+def approved_release(conn) -> tuple[str, str, approvals.Approval]:
+    app_id, _ = handed_off(conn)
+    sha = site_repo.branch(BRANCH)
+    assert built(app_id, sha).exit_code == 0
+    [request] = release_requests(conn)
+    assert aw.approve(conn, request, args={}).answer == "recorded"
+    return app_id, sha, aw.get(conn, request.id)
+
+
+HEX40 = re.compile(r"\b[0-9a-f]{40}\b")
+
+
+def test_release_plan_claims_the_approval_and_prints_the_merge_of_the_approved_sha_only(conn):
+    app_id, sha, request = approved_release(conn)
+    later = site_repo.commit_on(BRANCH)  # pushed after the approval: never part of the plan
+    result = invoke("apps", "release-plan", app_id)
+    assert result.exit_code == 0, result.output
+    assert aw.get(conn, request.id).used_at  # claimed
+    merges = [line.strip() for line in result.output.splitlines() if "git merge" in line]
+    assert merges == [f'git merge --no-ff -m "Release {app_id} (approval {request.id})" {sha}']
+    assert set(HEX40.findall(result.output)) == {sha} and later not in result.output
+    assert f"jura-growth apps released {app_id} --task {TASK}" in result.output
+    assert str(paths.site_repo()) in result.output
+    assert releases.current_build(conn, app_id)["release_planned_at"]
+
+
+def test_release_plan_with_no_approved_release_exits_1_and_prints_nothing_to_run(conn):
+    app_id, _ = handed_off(conn)
+    assert built(app_id, site_repo.branch(BRANCH)).exit_code == 0  # pending, not approved
+    for target in (app_id, "APP-999"):
+        result = invoke("apps", "release-plan", target)
+        assert result.exit_code == 1
+        assert "git " not in result.output and "refused" in result.output
+    assert aw.claims(conn) == 1  # only the app-build handoff's claim
+
+
+def test_release_plan_a_second_time_refuses_and_prints_no_merge(conn):
+    app_id, sha, request = approved_release(conn)
+    assert invoke("apps", "release-plan", app_id).exit_code == 0
+    again = invoke("apps", "release-plan", app_id)
+    assert again.exit_code == 1 and "git merge" not in again.output and sha not in again.output
+    assert request.id in again.output
+
+
+def test_release_plan_refuses_a_release_whose_branch_moved_on_after_the_approval(conn):
+    """G9 through the command: a newer commit reported for the build supersedes the approval."""
+    app_id, _, request = approved_release(conn)
+    assert built(app_id, site_repo.commit_on(BRANCH)).exit_code == 0
+    result = invoke("apps", "release-plan", app_id)
+    assert result.exit_code == 1 and "git merge" not in result.output
+    assert aw.get(conn, request.id).status == "superseded"
 
 
 # --- X2 and X3: seven days to decide, fourteen to use ----------------------------------------------

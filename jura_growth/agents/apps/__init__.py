@@ -286,3 +286,17 @@ def built_cmd(app_id, task, branch, sha, preview) -> str:
     if not outcome.ok:
         sys.exit(1)
     return outcome.lines[0]
+
+
+@apps.command("release-plan")
+@click.argument("app_id")
+def release_plan_cmd(app_id) -> str:
+    """Claim the approved release and print the merge of exactly its commit into main."""
+    with db.session() as conn:
+        outcome = releases.plan_release(conn, app_id, run_id=log.current_run_id(), emit=click.echo)
+        cards.sweep_safely(conn, post=False)  # the card's first line says it was claimed
+    if not outcome.ok:
+        for line in outcome.lines:
+            click.echo(line)
+        sys.exit(1)
+    return outcome.lines[0]

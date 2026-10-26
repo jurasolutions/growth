@@ -25,11 +25,13 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sqlite3
 import subprocess
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Callable
 from urllib.parse import urlsplit
 
 from jura_growth import approval_settings, approvals, db, log, paths, timeutil
@@ -228,6 +230,56 @@ def report_built(conn: sqlite3.Connection, app_id: str, *, task: str, branch: st
     else:
         follow = "Approve it in #approvals to release it; until then it stays on its preview."
     return Outcome(True, [f"{request.id}: release of {app_id} at {short(sha)} from {branch} ({task}). {follow}"], request)
+
+
+# --- `apps release-plan` -----------------------------------------------------------------------------
+
+
+def plan_release(conn: sqlite3.Connection, app_id: str, *, run_id: int | None,
+                 emit: Callable[[str], None]) -> Outcome:
+    """`apps release-plan`, the gated action (A6). In one transaction it claims the approved
+    `app-release` request and stamps `release_planned_at` on the build; only after that commits
+    does `emit` get the merge of exactly the approved commit. On a refusal nothing is emitted, and
+    any lapse or supersede the claim found is kept."""
+    refusal: str | None = None
+    try:
+        with db.transaction(conn):
+            try:
+                approval = approvals.use(conn, KIND, subject(app_id), run_id=run_id)
+            except approvals.NotApproved as refused:
+                refusal = refused.text
+            else:
+                row = _built(conn, app_id)
+                assert row is not None  # use() just matched its content
+                conn.execute("UPDATE app_builds SET release_planned_at = ? WHERE id = ?", (timeutil.stamp(), row["id"]))
+                log.event(conn, "apps.release.planned", {"app_id": app_id, "approval": approval.id, "sha": row["head_sha"]},
+                          agent=catalog.NAME)
+    except sqlite3.Error as error:
+        refusal = f"the release plan couldn't be recorded ({error}), so nothing was claimed"
+    if refusal is not None:
+        return Outcome(False, [f"refused: {refusal}. There is no merge to run."])
+    lines = merge_plan(app_id, row, approval)
+    for line in lines:
+        emit(line)
+    return Outcome(True, lines, approval)
+
+
+def merge_plan(app_id: str, row: dict, approval: approvals.Approval) -> list[str]:
+    """The commands Ting Yu runs by hand (until Dispatch D7): fetch the task branch, then merge
+    exactly the approved commit into `main`, never the branch, whose head may have moved."""
+    repo = shlex.quote(str(paths.site_repo()))
+    branch = shlex.quote(row["branch"])
+    return [
+        f"{approval.id} claimed: release {app_id} at {short(row['head_sha'])} from {row['branch']} ({row['task_id']}).",
+        "Merge exactly this commit into main of the landing-page repository, then record the release:",
+        f"  cd {repo}",
+        f"  git fetch origin {branch}",
+        "  git switch main",
+        "  git pull --ff-only origin main",
+        f'  git merge --no-ff -m "Release {app_id} (approval {approval.id})" {row["head_sha"]}',
+        "  git push origin main",
+        f"  jura-growth apps released {app_id} --task {row['task_id']}",
+    ]
 
 
 def claimed_release(conn: sqlite3.Connection, app_id: str) -> approvals.Approval | None:
