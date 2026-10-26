@@ -107,6 +107,13 @@ def read(conn: sqlite3.Connection, item: items.Item) -> Read | None:
     return group_kinds.read_join(conn, item)
 
 
+def switched_off(conn: sqlite3.Connection, item: items.Item) -> str | None:
+    """The item's kind's own switch (`switched_off`), as `use()` reads it: why nothing goes out."""
+    registered = approvals.kinds().get(kind_of(item))
+    hook = getattr(registered.kind, "switched_off", None) if registered else None
+    return hook(conn, item.subject) if hook is not None else None
+
+
 def kind_of(item: items.Item) -> str:
     """The approval kind of an item's requests."""
     return items.APPROVAL_KINDS[item.kind]

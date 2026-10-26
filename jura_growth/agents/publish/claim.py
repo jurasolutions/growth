@@ -29,7 +29,10 @@ The checks, in order:
      as the Jura Page and not one that takes only personal profiles; Ting Yu confirmed its rules
      and its open days (a group with its rules confirmed but its days not is refused, "open days
      not confirmed"), and today is open under them (`rules.day_problem`, promotional when the
-     text carries a link or names Jura); one community post a day
+     text carries a link or names Jura); a promotional post only where the rules allow promotion
+     (promotion days of `none` allow none), and a post with a link only where the rules are known
+     and allow links (`group_kinds.problem` and `group_kinds.rules_problem`, shared with item
+     creation and the cards); one community post a day
      (`caps.COMMUNITY_POSTS_PER_DAY`), three groups an ISO week in SGT
      (`caps.COMMUNITY_GROUPS_PER_WEEK`), and none in a group posted to in the last 14 days
      (`caps.NO_REPEAT_DAYS`). Posts made by hand count as well as claims;
@@ -58,7 +61,6 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from jura_growth import approvals, caps, db, log, paths, pause, timeutil
-from jura_growth.agents.community import rules as rules_mod
 from jura_growth.agents.publish import items, kinds, limits
 
 NOTHING_DUE = "nothing due"
@@ -130,27 +132,26 @@ def _item_problem(conn: sqlite3.Connection, item: items.Item, today: str) -> str
         if used >= caps.SOCIAL_POSTS_PER_PLATFORM_PER_DAY:
             return f"{item.platform} already had its post claimed for {item.day}"
         return None
+    from jura_growth.agents.community import groups as groups_mod
+    from jura_growth.agents.publish import group_kinds
+
     found = kinds.read(conn, item)
     if found is None:
         return None  # gone: `use()` supersedes its request and says so
-    group = db.one(conn, "SELECT * FROM community_groups WHERE id = ?", (found.content["group"],))
-    if group is None:
-        return "its group isn't in the register"
+    group = groups_mod.get(conn, found.content["group"])
+    problem = group_kinds.problem(group, group_kinds.STEP[item.kind])
+    if problem or group is None:
+        return problem
+    day = date.fromisoformat(today)
     if item.kind == items.COMMUNITY_POST_ITEM:
-        return _post_problem(conn, item, found.content, group, date.fromisoformat(today))
-    return _join_problem(conn, item, group, date.fromisoformat(today))
+        return group_kinds.rules_problem(group, found.content["text"], day) or _post_caps(conn, item, group, day)
+    return _join_cap(conn, item, day)
 
 
-# --- the community checks (BP §4.5) -------------------------------------------------------------
+# --- the community caps (BP §4.4) -------------------------------------------------------------------
 
 
-def _week(day: date) -> tuple[str, str, str]:
-    """(label, Monday, Sunday) of `day`'s ISO week, SGT."""
-    monday = day - timedelta(days=day.weekday())
-    return timeutil.iso_week(day), monday.isoformat(), (monday + timedelta(days=6)).isoformat()
-
-
-def _claimed_posts(conn: sqlite3.Connection, first: str, last: str, *, but: int) -> list[dict]:
+def _claimed_posts(conn: sqlite3.Connection, first: str, last: str, *, excluding_item: int) -> list[dict]:
     """Community posts that went out, or may have, between two days (SGT): claimed by a run, or
     posted by hand. A claim counts whatever happened after it (AC-P5.2)."""
     return db.rows(
@@ -160,50 +161,27 @@ def _claimed_posts(conn: sqlite3.Connection, first: str, last: str, *, but: int)
         "AND p.claimed_at IS NOT NULL AND substr(p.claimed_at, 1, 10) BETWEEN ? AND ? "
         "UNION SELECT c.id, c.group_id, substr(c.posted_at, 1, 10) FROM community_posts c "
         "WHERE c.kind = 'post' AND c.status = 'posted' AND substr(c.posted_at, 1, 10) BETWEEN ? AND ?",
-        (items.COMMUNITY_POST_ITEM, but, first, last, first, last),
+        (items.COMMUNITY_POST_ITEM, excluding_item, first, last, first, last),
     )
 
 
-def _group_problem(group: dict) -> str | None:
-    if group["removed"]:
-        return "its group was removed after an admin removal or warning"
-    if group["pages_allowed"] == "no":
-        return "only personal profiles can join or post in its group"
-    if group["fit"] != "good fit":
-        return f"its group isn't a good fit (fit: {group['fit']})"
-    return None
-
-
-def _post_problem(conn: sqlite3.Connection, item: items.Item, content: dict, group: dict, today: date) -> str | None:
-    """A community post goes out only in a good-fit group joined as the Jura Page, whose rules and
-    open days Ting Yu confirmed, on a day they leave open, inside every community cap."""
-    from jura_growth.agents.community import groups as groups_mod
+def _post_caps(conn: sqlite3.Connection, item: items.Item, group: dict, today: date) -> str | None:
+    """One community post a day, three groups an ISO week, and 14 days between posts in a group."""
     from jura_growth.agents.community import plan as plan_mod
+    from jura_growth.agents.publish import group_kinds
 
-    problem = _group_problem(group)
-    if problem:
-        return problem
-    if group["joined_as"] != "page":
-        return "its group isn't joined as the Jura Page"
-    if not group["rules_confirmed"]:
-        return "the group's rules aren't confirmed by Ting Yu"
-    rules = groups_mod.rules_for(group)
-    if not rules.days_confirmed:
-        return "open days not confirmed"
-    closed = rules_mod.day_problem(rules, today.weekday(), promotional=plan_mod.is_promotional(content["text"]))
-    if closed:
-        return f"{today:%a %d %b} breaks the group's rules: {closed}"
     per_day = limits.community_posts_per_day()
-    if len(_claimed_posts(conn, today.isoformat(), today.isoformat(), but=item.id)) >= per_day:
+    if len(_claimed_posts(conn, today.isoformat(), today.isoformat(), excluding_item=item.id)) >= per_day:
         return f"a community post already went out today; the cap is {per_day} a day"
-    label, monday, sunday = _week(today)
-    groups = {row["grp"] for row in _claimed_posts(conn, monday, sunday, but=item.id)}
+    label, monday, sunday = group_kinds.week_of(today)
+    groups = {row["grp"] for row in _claimed_posts(conn, monday.isoformat(), sunday.isoformat(), excluding_item=item.id)}
     cap = plan_mod.groups_per_week()
     if group["id"] not in groups and len(groups) >= cap:
         return f"{len(groups)} groups posted to in {label} already; the cap is {cap} a week"
     gap = plan_mod.no_repeat_days()
     since = (today - timedelta(days=gap - 1)).isoformat()
-    recent = [row["day"] for row in _claimed_posts(conn, since, today.isoformat(), but=item.id) if row["grp"] == group["id"]]
+    recent = [row["day"] for row in _claimed_posts(conn, since, today.isoformat(), excluding_item=item.id)
+              if row["grp"] == group["id"]]
     if group["last_posted_at"] and group["last_posted_at"][:10] >= since:
         recent.append(group["last_posted_at"][:10])
     if recent:
@@ -211,25 +189,20 @@ def _post_problem(conn: sqlite3.Connection, item: items.Item, content: dict, gro
     return None
 
 
-def _join_problem(conn: sqlite3.Connection, item: items.Item, group: dict, today: date) -> str | None:
-    """A join, or its answers, goes in only for a good-fit group not yet joined as the Page; a join
-    (not its answers) only while no join is requested and inside the weekly join cap."""
-    problem = _group_problem(group)
-    if problem:
-        return problem
-    if group["joined_as"] == "page":
-        return "its group is already joined as the Jura Page"
-    if group["join_status"] == "member" or (item.kind == items.JOIN_ITEM and group["join_status"] == "requested"):
-        return f"its group's join is already {group['join_status']}"
-    if item.kind == items.JOIN_ITEM:
-        label, monday, sunday = _week(today)
-        joins = db.scalar(
-            conn, "SELECT count(*) FROM publish_items WHERE kind = ? AND claimed_at IS NOT NULL "
-                  "AND substr(claimed_at, 1, 10) BETWEEN ? AND ?", (items.JOIN_ITEM, monday, sunday),
-        ) or 0
-        cap = limits.community_joins_per_week()
-        if joins >= cap:
-            return f"{joins} joins claimed in {label} already; the cap is {cap} a week"
+def _join_cap(conn: sqlite3.Connection, item: items.Item, today: date) -> str | None:
+    """Three joins claimed an ISO week. The answers are the second step of a join already counted."""
+    from jura_growth.agents.publish import group_kinds
+
+    if item.kind != items.JOIN_ITEM:
+        return None
+    label, monday, sunday = group_kinds.week_of(today)
+    joins = db.scalar(
+        conn, "SELECT count(*) FROM publish_items WHERE kind = ? AND claimed_at IS NOT NULL "
+              "AND substr(claimed_at, 1, 10) BETWEEN ? AND ?", (items.JOIN_ITEM, monday.isoformat(), sunday.isoformat()),
+    ) or 0
+    cap = limits.community_joins_per_week()
+    if joins >= cap:
+        return f"{joins} joins claimed in {label} already; the cap is {cap} a week"
     return None
 
 

@@ -123,6 +123,20 @@ def test_publish_plan_raises_a_community_post_request_only_in_groups_joined_as_t
     assert len(approvals.pending(conn, "community-post")) == 1
 
 
+def test_the_checklist_keeps_page_items_out_of_your_hands(conn, world, discord_double):
+    """Code review 02b, S5: a post with a card goes out through #approvals, so the checklist gives it
+    no box to tick and says not to post it by hand; the others stay yours to post."""
+    posts = _plan_week(conn)
+    assert pw.invoke("community", "publish-plan", "--week", "2026-W46").exit_code == 0
+    checklist = (plan.plan_dir() / "2026-W46.md").read_text()
+    assert f"Post item {posts['page']} " not in checklist
+    assert f"Item {posts['page']} goes out as the Jura Page once you approve its card in #approvals" in checklist
+    assert f"- [ ] Post item {posts['legacy']} " in checklist
+    assert "Nothing here is posted automatically" not in checklist
+    [message] = discord_double.posts("community")
+    assert f"(item {posts['page']}, through #approvals: don't post it by hand)" in message.content
+
+
 def test_with_community_browser_off_publish_plan_raises_nothing(conn, world, monkeypatch, discord_double):
     pw.community_config(monkeypatch, browser=False)
     _plan_week(conn)
@@ -193,7 +207,7 @@ def test_the_join_and_answers_cards_show_the_group_and_the_exact_answers(conn, w
     ("only personal profiles can join or post", {"pages_allowed": "no"}),
     ("isn't a good fit", {"fit": "possible"}),
     ("was removed", {"removed": 1, "fit": "skip"}),
-    ("a join is already requested", {"join_status": "requested"}),
+    ("join is already requested", {"join_status": "requested"}),
 ])
 def test_propose_join_refuses_a_group_that_cant_be_joined_as_the_page(conn, world, why, given):
     group = pw.not_joined(conn, **given)
@@ -321,7 +335,7 @@ def test_a_changed_join_or_answers_item_gets_a_fresh_request(conn, world, monkey
         pw.next_item(conn, pw.run(conn))
     else:  # the run reported the questions again, with different answers drafted
         changed = [dict(pw.QUESTIONS[0]), {**pw.QUESTIONS[1], "answer": "Yes, we have read them."}]
-        made = items.create_join_answers(conn, join, changed, run_id=None)
+        made = items.create_join_answers(conn, items.get(conn, join.id), changed, run_id=None)
         assert made.item.id == answers.id
     assert approvals.get(conn, request.id).status == "superseded"
     [fresh] = [a for a in approvals.pending(conn, "group-join") if a.subject == answers.subject]
@@ -329,10 +343,63 @@ def test_a_changed_join_or_answers_item_gets_a_fresh_request(conn, world, monkey
     assert items.get(conn, answers.id).state == "ready"
 
 
+@pytest.mark.parametrize("field", ["destination", "posting identity"])
+def test_a_fresh_answers_request_after_a_group_change_gets_three_days_from_when_it_is_raised(conn, world, monkeypatch, field):
+    """Code review 02b, B2 (p5): SC3's "third day after it is raised" holds for a fresh request too."""
+    answers, request = pw.answers_item(conn)
+    assert request.decide_by == "2026-11-13T18:00:00+08:00"
+    pw.at(monkeypatch, "2026-11-13T17:00:00+08:00")
+    if field == "destination":
+        conn.execute("UPDATE community_groups SET url = url || '-new' WHERE id = ?", (answers.ref_id,))
+    else:
+        _identity(monkeypatch, "the Jura Solutions test Page")
+    [fresh] = items.sync(conn)
+    assert fresh.subject == answers.subject and fresh.supersedes == request.number
+    assert fresh.decide_by == "2026-11-16T18:00:00+08:00"
+    pw.decide(conn, fresh)
+    assert approvals.get(conn, fresh.id).use_by == "2026-11-16T18:00:00+08:00"
+
+
+def test_an_answers_request_raised_by_a_decision_on_changed_content_gets_three_days_too(conn, world, monkeypatch):
+    """The core raises the fresh request itself when a decision meets changed content (A3)."""
+    answers, request = pw.answers_item(conn)
+    pw.at(monkeypatch, "2026-11-12T11:00:00+08:00")
+    conn.execute("UPDATE community_groups SET url = url || '-new' WHERE id = ?", (answers.ref_id,))
+    assert pw.decide(conn, request).answer == "superseded"
+    [fresh] = [a for a in approvals.pending(conn, "group-join") if a.subject == answers.subject]
+    assert fresh.decide_by == "2026-11-15T18:00:00+08:00"
+
+
+def test_a_changed_post_gets_no_card_while_community_browser_is_off(conn, world, monkeypatch):
+    """Code review 02b, S4 (p2): nothing is raised while the switch is off; the card comes once it is on."""
+    found, request = pw.community_item(conn)
+    pw.community_config(monkeypatch, browser=False)
+    conn.execute("UPDATE community_posts SET text = text || ' Thanks for reading.' WHERE id = ?", (found.ref_id,))
+    assert items.sync(conn) == []
+    assert [a.id for a in approvals.pending(conn, "community-post")] == [request.id]
+    pw.community_config(monkeypatch, browser=True)
+    [fresh] = items.sync(conn)
+    assert fresh.supersedes == request.number
+
+
+def test_the_card_lists_bare_domain_links_too(conn, world, discord_double):
+    """Code review 02b, S1: the card's links are the ones the brand gate and the claim see."""
+    pw.community_item(conn, text=pw.GROUP_TEXT + "\n\nSee jurasolutions.sg for more.")
+    cards.sweep(conn)
+    [card] = discord_double.posts("approvals")
+    assert "Links in the text: jurasolutions.sg" in card.content
+
+
+def test_answers_need_a_join_a_run_has_taken(conn, world):
+    join, _ = pw.join_item(conn)
+    made = items.create_join_answers(conn, join, pw.QUESTIONS, run_id=None)
+    assert made.item is None and "hasn't been claimed by a run" in made.why
+
+
 def test_the_same_answers_reported_again_keep_their_request(conn, world):
     join, _ = pw.join_item(conn)
     answers, request = pw.answers_item(conn, join)
-    again = items.create_join_answers(conn, join, pw.QUESTIONS, run_id=None)
+    again = items.create_join_answers(conn, items.get(conn, join.id), pw.QUESTIONS, run_id=None)
     assert again.item.id == answers.id and again.approval.id == request.id
 
 
@@ -353,7 +420,7 @@ def test_a_community_post_that_is_gone_supersedes_with_no_new_request(conn, worl
     assert approvals.pending(conn) == []
     assert approvals.kinds()["community-post"].kind.superseded_note(conn, found.subject) == {
         "posted by hand": "posted by hand", "community removed": "the group was removed",
-        "pages not allowed": "only personal profiles can join or post in this group", "skipped": "skipped by hand",
+        "pages not allowed": "only personal profiles can join or post in the group", "skipped": "skipped by hand",
     }[gone]
 
 
@@ -510,6 +577,31 @@ def test_line_8_a_day_the_confirmed_rules_close_is_refused(conn, world, given, t
     _refused(conn, request, f"Tue 10 Nov breaks the group's rules: {why}")
 
 
+LINKED = pw.GROUP_TEXT + "\n\nMore on this: https://jurasolutions.sg/apps?utm_source=facebook_group"
+
+
+@pytest.mark.parametrize("given, text, why", [
+    # code review 02b, p3: promotion days confirmed as `none` allow no promotion on any day
+    ({"rules": "No promotion.", "promo_days": "none"}, pw.PROMO_TEXT, "the group's confirmed rules allow no promotion"),
+    ({"rules": "Promo Saturdays only.", "promo_days": "none"}, pw.PROMO_TEXT, "the group's confirmed rules allow no promotion"),
+    # p4: confirmed rules that forbid links
+    ({"rules": "No links in posts."}, LINKED, "the group's rules forbid links"),
+    ({"rules": "unknown"}, LINKED, "the group's rules are unknown, so no link"),
+    ({"post_days": "none"}, pw.GROUP_TEXT, "the group allows no posts on any day"),
+], ids=["no promotion, days none", "promo days none", "no links", "rules unknown", "post days none"])
+def test_line_8_confirmed_rules_that_close_every_day_are_refused(conn, world, given, text, why):
+    _, request = pw.community_item(conn, pw.group(conn, **given), text=text)
+    pw.decide(conn, request)
+    _refused(conn, request, why)
+
+
+def test_line_8_a_value_post_with_no_link_goes_out_where_promotion_and_links_are_forbidden(conn, world):
+    group = pw.group(conn, rules="No promotion. No links.", promo_days="none")
+    _, request = pw.community_item(conn, group)
+    pw.decide(conn, request)
+    _claimed(conn, request)
+
+
 def test_line_8_a_value_post_on_a_day_closed_only_to_promotion_is_claimed(conn, world):
     _, request = pw.community_item(conn, pw.group(conn, promo_days="sat"))
     pw.decide(conn, request)
@@ -530,11 +622,16 @@ def test_rules_not_confirmed_are_refused(conn, world):
 
 @pytest.mark.parametrize("joined_as", ["profile", "none"])
 def test_line_10_a_group_not_joined_as_the_page_is_refused(conn, world, joined_as):
+    """Refused, and gone: the request is superseded with no new card (code review 02b, S6)."""
     group = pw.group(conn)
-    _, request = pw.community_item(conn, group)
+    found, request = pw.community_item(conn, group)
     pw.decide(conn, request)
     conn.execute("UPDATE community_groups SET joined_as_set = ? WHERE id = ?", (joined_as, group))
-    _refused(conn, request, "its group isn't joined as the Jura Page")
+    handed = pw.next_item(conn, pw.run(conn))
+    assert handed.item is None and approvals.get(conn, request.id).used_at is None
+    assert approvals.get(conn, request.id).status == "superseded" and approvals.pending(conn) == []
+    assert approvals.kinds()["community-post"].kind.superseded_note(conn, found.subject) == \
+        "the group isn't joined as the Jura Page"
 
 
 def test_a_group_no_longer_a_good_fit_is_refused(conn, world):
@@ -542,13 +639,13 @@ def test_a_group_no_longer_a_good_fit_is_refused(conn, world):
     _, request = pw.community_item(conn, group)
     pw.decide(conn, request)
     conn.execute("UPDATE community_groups SET fit = 'possible' WHERE id = ?", (group,))
-    _refused(conn, request, "its group isn't a good fit")
+    _refused(conn, request, "the group isn't a good fit")
 
 
 @pytest.mark.parametrize("given, why", [
-    ({"joined_as_set": "page"}, "its group is already joined as the Jura Page"),
-    ({"join_status": "requested"}, "its group's join is already requested"),
-    ({"join_status": "member"}, "its group's join is already member"),
+    ({"joined_as_set": "page"}, "the group is already joined as the Jura Page"),
+    ({"join_status": "requested"}, "the group's join is already requested"),
+    ({"join_status": "member"}, "the group's join is already member"),
 ])
 def test_a_join_for_a_group_already_joined_or_requested_is_refused(conn, world, given, why):
     join, request = pw.join_item(conn)

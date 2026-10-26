@@ -580,12 +580,19 @@ def sync_ticks(conn: sqlite3.Connection) -> list[int]:
 # --- the checklist ------------------------------------------------------------
 
 
+def through_page(group: dict) -> bool:
+    """A post in this group goes out as the Jura Page through its card in #approvals, not by hand:
+    `browser` is on in `config/community.yaml` and the group is joined as the Page (browser
+    publishing PRD §5.4)."""
+    return settings().get("browser") is True and group.get("joined_as") == "page"
+
+
 def render(conn: sqlite3.Connection, week: str) -> str:
     monday = week_monday(week)
     posts = db.rows(
         conn,
         "SELECT p.*, g.name AS group_name, g.url AS group_url, g.promo_rules, g.rules_confirmed, "
-        "g.promo_days_confirmed, g.post_days_confirmed "
+        "g.promo_days_confirmed, g.post_days_confirmed, g.joined_as "
         "FROM community_posts p JOIN community_groups g ON g.id = p.group_id "
         "WHERE p.week = ? AND p.kind = 'post' AND p.status != 'skipped' ORDER BY p.planned_day, p.id",
         (week,),
@@ -597,12 +604,15 @@ def render(conn: sqlite3.Connection, week: str) -> str:
         (week,),
     )
     post_as = settings().get("post_as", "Ting Yu personally")
+    by_page = any(through_page(p) for p in posts)
     out = [
         f"# Community plan, {week}",
         "",
         f"*Jura Solutions · week of Monday {monday:%d %B %Y} · written {timeutil.stamp()}*",
         "",
-        f"Post these yourself, as {post_as}. Nothing here is posted automatically.",
+        (f"Post the items with a box yourself, as {post_as}. Items without one go out as the Jura Page "
+         "through their cards in #approvals once you approve them; don't post those by hand."
+         if by_page else f"Post these yourself, as {post_as}. Nothing here is posted automatically."),
         "When a post is up, tick its box (`- [x]`) or run `jura-growth community posted <item-id> [url]`.",
         "The next Monday run reads the ticks. If an admin removes a post or warns you, run",
         "`jura-growth community removed <group-id>` and that group is skipped for good.",
@@ -618,11 +628,14 @@ def render(conn: sqlite3.Connection, week: str) -> str:
         rules = groups_mod.rules_for(p)
         confirmed = "confirmed by you" if p["rules_confirmed"] else "not yet confirmed by you"
         qa = json.loads(p["qa_json"] or "{}")
+        line = (f"- Item {p['id']} goes out as the Jura Page once you approve its card in #approvals, on "
+                f"{day:%a %d %b} in [{p['group_name']}]({p['group_url']}). Don't post it by hand."
+                if through_page(p) else
+                f"- [{box}] Post item {p['id']} on {day:%a %d %b} in [{p['group_name']}]({p['group_url']})")
         out += [
             f"### {day:%a %d %b} · {p['group_name']}",
             "",
-            f"- [{box}] Post item {p['id']} on {day:%a %d %b} in [{p['group_name']}]({p['group_url']})"
-            + (f" · posted {p['posted_url']}" if p["posted_url"] else ""),
+            line + (f" · posted {p['posted_url']}" if p["posted_url"] else ""),
             f"- Rules reminder: {p['promo_rules'] or 'unknown'} ({confirmed}"
             + (f"; {rules_mod.TIMING_HINT}" if rules.mentions_timing else "")
             + f"). Planned as: {rules.summary()}."
@@ -688,7 +701,7 @@ def publish(conn: sqlite3.Connection, week: str | None = None) -> tuple[Path, di
 def discord_message(conn: sqlite3.Connection, week: str, path: Path) -> str:
     posts = db.rows(
         conn,
-        "SELECT p.id, p.planned_day, p.text, p.image_path, g.name, g.url, g.promo_rules FROM community_posts p "
+        "SELECT p.id, p.planned_day, p.text, p.image_path, g.name, g.url, g.promo_rules, g.joined_as FROM community_posts p "
         "JOIN community_groups g ON g.id = p.group_id WHERE p.week = ? AND p.kind = 'post' AND p.status != 'skipped' ORDER BY p.planned_day, p.id",
         (week,),
     )
@@ -701,7 +714,8 @@ def discord_message(conn: sqlite3.Connection, week: str, path: Path) -> str:
     for p in posts:
         day = date.fromisoformat(p["planned_day"])
         lines += [
-            f"**{day:%a %d %b} · {p['name']}** (item {p['id']})",
+            f"**{day:%a %d %b} · {p['name']}** (item {p['id']}"
+            + (", through #approvals: don't post it by hand)" if through_page(p) else ")"),
             p["url"],
             f"Rules: {p['promo_rules'] or 'unknown'}",
             p["text"],

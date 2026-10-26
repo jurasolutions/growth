@@ -236,6 +236,15 @@ def join_item(conn, group_id: int | None = None) -> tuple[items.Item, approvals.
     return made.item, made.approval
 
 
+def asked(conn, join: items.Item) -> items.Item:
+    """`join`, as BP-06's `publish done --outcome questions` leaves it, if no run has taken it yet."""
+    conn.execute("UPDATE publish_items SET state = 'done', outcome = 'questions' WHERE id = ? AND state = 'ready'",
+                 (join.id,))
+    found = items.get(conn, join.id)
+    assert found is not None
+    return found
+
+
 QUESTIONS = [
     {"question": "Why do you want to join?", "answer": "We help small teams automate admin, and we share what we learn."},
     {"question": "Do you agree to the group rules?", "answer": "Yes."},
@@ -243,8 +252,9 @@ QUESTIONS = [
 
 
 def answers_item(conn, join: items.Item | None = None, answers=None) -> tuple[items.Item, approvals.Approval]:
-    """The membership answers for a join, as `publish done --outcome questions` will raise them."""
-    join = join if join is not None else join_item(conn)[0]
+    """The membership answers for a join, as `publish done --outcome questions` will raise them:
+    a join still `ready` is first recorded as done by a run that met the questions."""
+    join = asked(conn, join if join is not None else join_item(conn)[0])
     made = items.create_join_answers(conn, join, QUESTIONS if answers is None else answers, run_id=None)
     assert made.item is not None and made.approval is not None, made.why
     return made.item, made.approval

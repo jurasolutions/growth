@@ -3,8 +3,8 @@
 `test_approval_gates.py`.
 
 - An item is the answers for a fresh join (raised without a request of its own, so the join's
-  `group-join` request never enters a case's counts), as `publish done --outcome questions` will
-  raise them in browser publishing#06.
+  `group-join` request never enters a case's counts, and recorded as done with the outcome
+  `questions`), as `publish done --outcome questions` will raise them in browser publishing#06.
 - A change is the run reporting the questions again with a different answer: the answers waiting
   for that join are replaced in the item, and the core sees the content change.
 - An item is gone once the group is removed (`community removed`).
@@ -21,7 +21,8 @@ class GroupJoinAnswersAdapter(GroupJoinAdapter):
     kind = items.JOIN_KIND
 
     def item(self) -> str:
-        made = items.create_join_answers(self.conn, self.join(), pw.QUESTIONS, run_id=None, request=False)
+        made = items.create_join_answers(self.conn, pw.asked(self.conn, self.join()), pw.QUESTIONS, run_id=None,
+                                         request=False)
         assert made.item is not None, made.why
         return made.item.subject
 

@@ -7,8 +7,8 @@ Both go out as the Jura Facebook Page (the posting identity of the `facebook` pl
   joined as the Page. Content: the group and its URL, the posting identity, the day, the exact
   text and the image's bytes, read live from the plan and the register. It is gone once the post
   is posted or skipped (by hand, or because `community removed` skipped the group's posts), the
-  group is removed, the group turned out to take only personal profiles (`pages_allowed = no`), or
-  the image is missing. Decide by and use by the end of the posting window on the post's day.
+  group is removed, isn't joined as the Page any more, or turned out to take only personal
+  profiles (`pages_allowed = no`), or the image is missing. Decide by and use by the end of the posting window on the post's day.
 - **`group-join`**, two steps, each its own item and request:
   - the join, subject `publish_item:<id>` of a `community_join` item: the group, its URL and the
     posting identity. Gone once the group is removed or takes only personal profiles. Decide by
@@ -16,8 +16,12 @@ Both go out as the Jura Facebook Page (the posting identity of the `facebook` pl
     proposed in (AC-P3.4).
   - the membership answers, a `community_join_answers` item whose parent is the join: the same,
     plus the questions and the answers exactly as they will be submitted, which live in the item.
-    Decide by and use by the end of the posting window on the third day after the answers were
-    raised. Raising them never touches the join's used approval.
+    Decide by and use by the end of the posting window on the third day after the request is
+    raised: a fresh request over changed answers or a changed group gets three days of its own
+    (the item's day records when). Raising them never touches the join's used approval.
+
+Which groups an item may act in is decided here, in one place (`gone`, `problem`,
+`rules_problem`); the claim, item creation and the cards all ask these.
 
 A content change supersedes the request and raises a fresh one over the new content on the same
 item (MC §4.6 A3, the publish queue's `sync()`); see `items.py`. The hash covers the exact bytes,
@@ -30,21 +34,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from jura_growth import approvals, config, db
+from jura_growth import approvals, brand_check, db, timeutil
 from jura_growth.agents.publish import items, limits
 
-_LINK = re.compile(r"https?://[^\s<>()\"']+")
 ANSWERS_DAYS = 3  # BP §5.5: answers are decided by 18:00 on the third day after they are raised
 
 
 def browser_on() -> bool:
     """`browser` in `config/community.yaml`: off by default (BP §5.10)."""
-    return (config.agent_config("community") or {}).get("browser") is True
+    from jura_growth.agents.community import groups as groups_mod
+
+    return (groups_mod.settings() or {}).get("browser") is True
 
 
 def identity() -> str:
@@ -55,11 +59,88 @@ def identity() -> str:
 
 
 def _group(conn: sqlite3.Connection, group_id) -> dict | None:
-    return db.one(conn, "SELECT * FROM community_groups WHERE id = ?", (int(group_id),))
+    from jura_growth.agents.community import groups as groups_mod
+
+    return groups_mod.get(conn, group_id)
 
 
-def _group_gone(group: dict) -> bool:
-    return bool(group["removed"]) or group["pages_allowed"] == "no"
+def week_of(day: date) -> tuple[str, date, date]:
+    """(label, Monday, Sunday) of `day`'s ISO week in SGT, as the community plan reads weeks."""
+    from jura_growth.agents.community import plan as plan_mod
+
+    label = timeutil.iso_week(day)
+    days = plan_mod.week_days(label)
+    return label, days[0], days[-1]
+
+
+# --- which groups an item may act in (BP §4.3, §4.5): one place for every check -------------------
+
+POST, JOIN, ANSWERS = "post", "join", "answers"
+STEP = {items.COMMUNITY_POST_ITEM: POST, items.JOIN_ITEM: JOIN, items.ANSWERS_ITEM: ANSWERS}
+
+
+def gone(group: dict | None, step: str) -> str | None:
+    """Why no item of `step` can ever go out in `group`, or None. A reason here makes the item's
+    content gone (`None`), so its request is superseded with no new card (A3): the group isn't in
+    the register, was removed, takes only personal profiles, or, for a post, isn't joined as the
+    Jura Page (BP §5.4: posts are made only in groups joined as the Page)."""
+    if group is None:
+        return "the group isn't in the register"
+    if group["removed"]:
+        return "the group was removed"
+    if group["pages_allowed"] == "no":
+        return "only personal profiles can join or post in the group"
+    if step == POST and group["joined_as"] != "page":
+        return "the group isn't joined as the Jura Page"
+    return None
+
+
+def problem(group: dict | None, step: str) -> str | None:
+    """Why an item of `step` can't go out in `group` now, or None: `gone()`, then the checks that
+    may clear again (BP §4.5). A post needs a good-fit group joined as the Page; a join or its
+    answers a good-fit Facebook group not joined as the Page, with no join made yet, and the join
+    itself no join requested yet."""
+    reason = gone(group, step)
+    if reason or group is None:
+        return reason
+    if group["channel"] != "facebook":
+        return "the group isn't a Facebook group"
+    if group["fit"] != "good fit":
+        return f"the group isn't a good fit (fit: {group['fit']})"
+    if step == POST:
+        return None
+    if group["joined_as"] == "page":
+        return "the group is already joined as the Jura Page"
+    if group["join_status"] == "member" or (step == JOIN and group["join_status"] == "requested"):
+        return f"the group's join is already {group['join_status']}"
+    return None
+
+
+def rules_problem(group: dict, text: str, day: date) -> str | None:
+    """Why a post with `text` breaks the group's confirmed rules on `day`, or None (BP §4.5,
+    AC-P5.1 lines 8 and 9). The rules must be confirmed by Ting Yu, with their open days; the day
+    must be open (`rules.day_problem`); a promotional post (a link, or Jura named) needs promotion
+    allowed, and confirmed promotion days of `none` allow none; a post with a link needs rules
+    that are known and don't forbid links. The plan checks the same at `plan-add`, but rules are
+    often confirmed after the plan, so the claim checks them again."""
+    from jura_growth.agents.community import groups as groups_mod
+    from jura_growth.agents.community import plan as plan_mod
+    from jura_growth.agents.community import rules as rules_mod
+
+    if not group["rules_confirmed"]:
+        return "the group's rules aren't confirmed by Ting Yu"
+    rules = groups_mod.rules_for(group)
+    if not rules.days_confirmed:
+        return "open days not confirmed"
+    promotional = plan_mod.is_promotional(text)
+    if promotional and rules.no_promo:
+        return "the group's confirmed rules allow no promotion"
+    if brand_check.find_links(text) and (not rules.known or rules.no_links):
+        return "the group's rules forbid links" if rules.known else "the group's rules are unknown, so no link"
+    closed = rules_mod.day_problem(rules, day.weekday(), promotional=promotional)
+    if closed:
+        return f"{day:%a %d %b} breaks the group's rules: {closed}"
+    return None
 
 
 # --- reading the content ------------------------------------------------------------------------
@@ -74,7 +155,7 @@ def read_post(conn: sqlite3.Connection, post_id: int):
     if post is None or post["kind"] != "post" or post["status"] != "planned" or not post["group_id"]:
         return None
     group = _group(conn, post["group_id"])
-    if group is None or _group_gone(group):
+    if group is None or gone(group, POST):
         return None
     images, blobs = [], []
     for name in [post["image_path"]] if post["image_path"] else []:
@@ -100,7 +181,7 @@ def read_join(conn: sqlite3.Connection, item: items.Item):
     from jura_growth.agents.publish.kinds import Read
 
     group = _group(conn, item.ref_id)
-    if group is None or _group_gone(group):
+    if group is None or gone(group, STEP[item.kind]):
         return None
     content = {"group": group["id"], "target_url": group["url"], "posting_identity": identity()}
     if item.kind == items.ANSWERS_ITEM:
@@ -116,8 +197,7 @@ def closes(item: items.Item, content: dict | None = None) -> datetime:
     if item.kind == items.COMMUNITY_POST_ITEM:
         day = date.fromisoformat((content or {}).get("day") or item.day)
     elif item.kind == items.JOIN_ITEM:
-        proposed = date.fromisoformat(item.day)
-        day = proposed + timedelta(days=6 - proposed.weekday())  # the Sunday of that ISO week
+        day = week_of(date.fromisoformat(item.day))[2]  # the Sunday of the ISO week it was proposed in
     else:
         day = date.fromisoformat(item.day) + timedelta(days=ANSWERS_DAYS)
     return limits.window_on(day)[1]
@@ -134,6 +214,14 @@ def opens(item: items.Item, content: dict | None = None) -> str:
 # --- the kinds ------------------------------------------------------------------------------------
 
 
+def _has_live(conn: sqlite3.Connection, kind: str, subject: str) -> bool:
+    """A request over `subject` is pending, or approved and unclaimed: `deadlines()` is asked for
+    its use-by. With none, it is asked for a new request's decide-by."""
+    return bool(db.scalar(
+        conn, "SELECT 1 FROM approvals WHERE kind = ? AND subject = ? AND status IN ('pending', 'approved') "
+              "AND used_at IS NULL", (kind, subject)))
+
+
 def _item(conn: sqlite3.Connection, subject: str, kinds: tuple[str, ...]) -> items.Item:
     found = items.of(conn, subject)
     if found is None or found.kind not in kinds:
@@ -142,6 +230,7 @@ def _item(conn: sqlite3.Connection, subject: str, kinds: tuple[str, ...]) -> ite
 
 
 class _GroupKind:
+    name = ""
     item_kinds: tuple[str, ...] = ()
     used_word = "claimed by a publish run"
 
@@ -158,6 +247,11 @@ class _GroupKind:
         from jura_growth.agents.publish import kinds
 
         item = _item(conn, subject, self.item_kinds)
+        if item.kind == items.ANSWERS_ITEM and approvals.latest(conn, self.name, subject) is not None \
+                and not _has_live(conn, self.name, subject):
+            # A fresh request over changed answers or a changed group: its three days start now,
+            # whichever path raised it (SC3; code review 02b, B2). The item's day records it.
+            item = items.restart_clock(conn, item, now.astimezone(timeutil.SGT).date())
         found = kinds.read(conn, item)
         end = closes(item, found.content if found else None)
         return approvals.Deadlines(decide_by=end, use_by=end)
@@ -199,7 +293,7 @@ class CommunityPost(_GroupKind):
         day = date.fromisoformat(content["day"])
         qa = json.loads(post.get("qa_json") or "{}")
         lines = [f"```\n{content['text'].strip()}\n```"]
-        links = list(dict.fromkeys(_LINK.findall(content["text"])))
+        links = list(dict.fromkeys(brand_check.find_links(content["text"])))
         lines.append("Links in the text: " + (", ".join(links) if links else "none"))
         if qa.get("brand") == "pass":
             lines.append(f"Brand check: passed on attempt {qa.get('attempt', 1)} of 2")
@@ -260,10 +354,9 @@ def note(conn: sqlite3.Connection, item: items.Item) -> str | None:
         if post and post["status"] == "posted":
             return "posted by hand"
     group = _group(conn, post["group_id"] if post and post["group_id"] else item.content.get("group", item.ref))
-    if group is not None and group["removed"]:
-        return "the group was removed"
-    if group is not None and group["pages_allowed"] == "no":
-        return "only personal profiles can join or post in this group"
+    reason = gone(group, STEP[item.kind])
+    if reason:
+        return reason
     if post and post["status"] == "skipped":
         return "skipped by hand"
     if kinds.read(conn, item) is not None:

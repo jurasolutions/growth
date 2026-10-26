@@ -66,8 +66,10 @@ def community_posts_per_day() -> int:
 def community_joins_per_week() -> int:
     """The weekly join cap: `caps.py`, lowered by `community_joins_per_week` here or by
     `joins_per_week` in `config/community.yaml` (BP §5.10); the lower one wins."""
+    from jura_growth.agents.community import groups as groups_mod
+
     hard = caps.effective(caps.COMMUNITY_JOINS_PER_WEEK, _settings().get("community_joins_per_week"))
-    return caps.effective(hard, (config.agent_config("community") or {}).get("joins_per_week"))
+    return caps.effective(hard, (groups_mod.settings() or {}).get("joins_per_week"))
 
 
 def minutes_between_actions() -> int:

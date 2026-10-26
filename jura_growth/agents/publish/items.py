@@ -188,9 +188,14 @@ def _make(conn: sqlite3.Connection, kind: str, platform: str, ref, content: dict
     return Made(item, approval)
 
 
-def _existing(conn: sqlite3.Connection, kind: str, ref, *, states: tuple[str, ...] | None = None) -> Item | None:
+def _existing(conn: sqlite3.Connection, kind: str, ref, *, states: tuple[str, ...] | None = None,
+              parent: int | None = None) -> Item | None:
+    """The newest item of `kind` over `ref`, optionally in `states` and under the `parent` item."""
     sql = "SELECT * FROM publish_items WHERE kind = ? AND ref = ?"
     params: tuple = (kind, str(ref))
+    if parent is not None:
+        sql += " AND parent_item = ?"
+        params += (parent,)
     if states:
         sql += f" AND state IN ({', '.join('?' for _ in states)})"
         params += states
@@ -219,15 +224,15 @@ def create_community_post(conn: sqlite3.Connection, post_id: int, *, run_id: int
     post = db.one(conn, "SELECT * FROM community_posts WHERE id = ?", (int(post_id),))
     if post is None or post["kind"] != "post":
         return Made(why=f"there is no planned post {post_id}")
-    group = db.one(conn, "SELECT * FROM community_groups WHERE id = ?", (post["group_id"],)) if post["group_id"] else None
-    if group is None or group["joined_as"] != "page":
-        return Made(why=f"item {post_id}'s group isn't joined as the Jura Page, so it is posted by hand")
+    gone = group_kinds.gone(_group(conn, post["group_id"]), group_kinds.POST)
+    if gone:
+        return Made(why=f"item {post_id} is posted by hand: {gone}")
     existing = _existing(conn, COMMUNITY_POST_ITEM, post_id)
     if existing is not None:
         return Made(existing, latest_request(conn, existing), why=f"item {post_id} already has {existing.label}")
     found = group_kinds.read_post(conn, post_id)
     if found is None:
-        return Made(why=f"item {post_id} can't be posted now (posted, skipped, its group removed or Page-less, or its image missing)")
+        return Made(why=f"item {post_id} can't be posted now (posted, skipped, or its image missing)")
     late = _too_late(COMMUNITY_POST_ITEM, post["planned_day"], found.content)
     if late:
         return Made(why=f"item {post_id}: {late}")
@@ -249,31 +254,22 @@ def raise_for_plan(conn: sqlite3.Connection, week: str, *, run_id: int | None) -
 
 
 def proposals_in_week(conn: sqlite3.Connection, day: date) -> int:
-    """Joins proposed in `day`'s ISO week (SGT), whatever became of them."""
-    monday = day - timedelta(days=day.weekday())
+    """Joins proposed in `day`'s ISO week (SGT), whatever became of them: a proposal Ting Yu
+    skipped, or left to expire, still uses one of the week's three (the conductor's decision,
+    code review 02b). It fails closed and keeps the weekly pace."""
+    from jura_growth.agents.publish import group_kinds
+
+    _, monday, sunday = group_kinds.week_of(day)
     return db.scalar(
         conn, "SELECT count(*) FROM publish_items WHERE kind = ? AND day BETWEEN ? AND ?",
-        (JOIN_ITEM, monday.isoformat(), (monday + timedelta(days=6)).isoformat()),
+        (JOIN_ITEM, monday.isoformat(), sunday.isoformat()),
     ) or 0
 
 
-def join_problem(group: dict | None) -> str | None:
-    """Why a group can't be joined as the Jura Page (BP §4.5, community join), or None."""
-    if group is None:
-        return "isn't in the register"
-    if group["channel"] != "facebook":
-        return "isn't a Facebook group"
-    if group["removed"]:
-        return "was removed after an admin removal or warning"
-    if group["pages_allowed"] == "no":
-        return "only personal profiles can join or post there"
-    if group["fit"] != "good fit":
-        return f"isn't a good fit (fit: {group['fit']})"
-    if group["joined_as"] == "page":
-        return "is already joined as the Jura Page"
-    if group["join_status"] in ("requested", "member"):
-        return f"a join is already {group['join_status'] if group['join_status'] == 'requested' else 'made'}"
-    return None
+def _group(conn: sqlite3.Connection, group_id) -> dict | None:
+    from jura_growth.agents.community import groups as groups_mod
+
+    return groups_mod.get(conn, group_id) if group_id else None
 
 
 def create_join(conn: sqlite3.Connection, group_id: int, *, run_id: int | None, request: bool = True) -> Made:
@@ -283,10 +279,9 @@ def create_join(conn: sqlite3.Connection, group_id: int, *, run_id: int | None, 
 
     if not group_kinds.browser_on():
         return Made(why="community.browser is off in config/community.yaml, so no join is proposed")
-    group = db.one(conn, "SELECT * FROM community_groups WHERE id = ?", (int(group_id),))
-    problem = join_problem(group)
+    problem = group_kinds.problem(_group(conn, group_id), group_kinds.JOIN)
     if problem:
-        return Made(why=f"group {group_id} {problem}")
+        return Made(why=f"group {group_id}: {problem}")
     waiting = _existing(conn, JOIN_ITEM, group_id, states=OPEN)
     if waiting is not None:
         return Made(waiting, latest_request(conn, waiting), why=f"group {group_id} already has a join waiting ({waiting.label})")
@@ -308,12 +303,15 @@ def create_join_answers(conn: sqlite3.Connection, join: Item, answers: list[dict
                         request: bool = True) -> Made:
     """The membership answers for `join`, as their own item and `group-join` request (BP §5.4).
     `publish done <id> --outcome questions` calls it once the answers have passed the brand gate
-    (browser publishing#06). Answers already waiting for that join are replaced in place: their
-    request is superseded and a fresh one raised over the new answers (A3)."""
+    (browser publishing#06), so `join` is a join a run has claimed and reported on. Answers already
+    waiting for that join are replaced in place: their request is superseded and a fresh one raised
+    over the new answers (A3), decided by 18:00 on the third day after it is raised."""
     from jura_growth.agents.publish import group_kinds
 
     if join.kind != JOIN_ITEM:
         return Made(why=f"{join.label} isn't a join")
+    if join.state not in ("claimed", "done"):
+        return Made(why=f"{join.label} hasn't been claimed by a run, so no membership questions were seen")
     if not group_kinds.browser_on():
         return Made(why="community.browser is off in config/community.yaml")
     clean = [{"question": str(a["question"]), "answer": str(a["answer"])} for a in answers
@@ -321,12 +319,10 @@ def create_join_answers(conn: sqlite3.Connection, join: Item, answers: list[dict
     if not clean or len(clean) != len(answers):
         return Made(why="every membership question needs its question and its answer")
     today = timeutil.today().isoformat()
-    row = conn.execute("SELECT * FROM publish_items WHERE kind = ? AND parent_item = ? AND state = 'ready' "
-                       "ORDER BY id DESC LIMIT 1", (ANSWERS_ITEM, join.id)).fetchone()
-    if row is not None:
-        waiting = Item.from_row(row)
+    waiting = _existing(conn, ANSWERS_ITEM, join.ref, states=("ready",), parent=join.id)
+    if waiting is not None:
         if waiting.content.get("answers") != clean:
-            refreeze(conn, waiting, {**waiting.content, "answers": clean, "day": today})
+            refreeze(conn, waiting, {**waiting.content, "answers": clean})
             waiting = get(conn, waiting.id) or waiting
         return Made(waiting, raise_request(conn, waiting, run_id=run_id) if request else None)
     found = group_kinds.read_join(conn, _probe(ANSWERS_ITEM, join.ref_id, answers=clean))
@@ -338,8 +334,17 @@ def create_join_answers(conn: sqlite3.Connection, join: Item, answers: list[dict
 
 def _probe(kind: str, group_id, *, day: str | None = None, **content) -> Item:
     """An unsaved item, to read what a new one would hold."""
-    return Item(0, "", kind, COMMUNITY_PLATFORM, str(int(group_id)), None, "", "", json.dumps(content),
-                day or timeutil.today_str(), "ready", None, None, None, None, None, None, "", None, None)
+    return Item(id=0, label="", kind=kind, platform=COMMUNITY_PLATFORM, ref=str(int(group_id)), parent_item=None,
+                target_url="", posting_identity="", content_json=json.dumps(content), day=day or timeutil.today_str(),
+                state="ready", outcome=None, stop_reason=None, post_url=None, live_text_hash=None,
+                live_text_matches=None, run_id=None, created_at="", claimed_at=None, finished_at=None)
+
+
+def restart_clock(conn: sqlite3.Connection, item: Item, day: date) -> Item:
+    """Record `day` as the day the item's fresh request was raised: a membership-answers request is
+    decided by 18:00 on the third day after it is raised (SC3)."""
+    conn.execute("UPDATE publish_items SET day = ? WHERE id = ? AND state = 'ready'", (day.isoformat(), item.id))
+    return get(conn, item.id) or item
 
 
 def raise_request(conn: sqlite3.Connection, item: Item, *, run_id: int | None) -> approvals.Approval | None:
@@ -421,14 +426,18 @@ def sync(conn: sqlite3.Connection, *, run_id: int | None = None) -> list[approva
         found = kinds.read(conn, item)
         content = found.content if found is not None else None
         digest = approvals.content_hash(kinds.hashed(content)) if content is not None else None
-        in_time = content is not None and timeutil.now_sgt() < kinds.closes(item, content)
+        # A fresh answers request gets three days from when it is raised (SC3), so it is never late.
+        in_time = content is not None and (item.kind == ANSWERS_ITEM or timeutil.now_sgt() < kinds.closes(item, content))
+        # While the kind is switched off (a platform in draft, community.browser off) no card is
+        # raised: the old request is superseded or lapses as usual (A13; code review 02b, S4).
+        switched_off = content is not None and kinds.switched_off(conn, item)
         if latest.live:
             if content is not None and digest == latest.content_hash:
                 if content != item.content:
                     refreeze(conn, item, content)
                 continue
-            if content is not None and not in_time:
-                continue  # too late for a new card: `use()` and the lapses close the old one
+            if content is not None and (not in_time or switched_off):
+                continue  # too late for a new card, or switched off: `use()` and the lapses close the old one
             # The post changed (or went) under a live request: supersede it now and raise the
             # new card in this same sync, not at the next transition (code review 02, R2-S1).
             if content is not None:
@@ -439,6 +448,8 @@ def sync(conn: sqlite3.Connection, *, run_id: int | None = None) -> list[approva
                 continue
             latest = latest_request(conn, item) or latest
         elif latest.status == approvals.SUPERSEDED and content is not None and in_time:
+            if switched_off:
+                continue  # raised once the switch is back on
             # Changed, or gone and back again unchanged (R2-N1): either way it needs a live card.
             refreeze(conn, item, content)
             fresh = raise_request(conn, item, run_id=run_id)
