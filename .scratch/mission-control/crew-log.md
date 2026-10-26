@@ -559,3 +559,27 @@ decisions: A4's waiting count read from send-due's answer ("5 waiting for a deci
 decisions: new "Before you start" step 6 and an A4 note: live-mode steps need ticket 18's loopback D1 stub; the Resend stub runs in a second window with the same variables
 questions: -
 evidence:  uv run pytest tests/test_uat_seed_outreach.py -> passed; its assertion matches the 5/12 text now in A4
+
+## 2026-10-27T03:10+0800 reviewer (code review 09)
+status:    done
+persona:   reviewer
+ticket:    09
+artifacts: .scratch/mission-control/reviews/code-review-09.md
+decisions: verdict approve: no blocking findings; no blocked path touched; merges cleanly into crew/mission-control
+decisions: S-1 grid PNGs never pruned (~74 KB/day in OneDrive); recommend retention.one_pager_days: 14, pruned by backup
+decisions: S-2 test_remote.py:187 row passes on "not posted to …"; S-3 DEFAULT_CHROME duplicated (images.py:22, social/settings.py:19); S-4 README layout lacks one-pager/
+decisions: dismissed the spec reviewer's §4.3 masking claim: mission.read loads Keychain masking at mission.py:155
+questions: S-5 exit 0 when Discord refuses vs dispatch-contract "exit 1 = problem of its own"? Recommended: keep 0 (heartbeat precedent), state it in the contract row
+evidence:  uv run pytest -q (worktree, temp data) -> exit 0, 2213 collected, no failures
+evidence:  ticket tests with real Chrome -> 41 passed, 0 skipped; test_social_render.py diff empty
+evidence:  git merge-tree vs fec69b8 -> clean; real grid PNG chunks -> IHDR/IDAT/IEND only
+
+## 2026-10-27T03:03+0800 conductor (09 review; 10b done)
+status:    done
+persona:   conductor
+ticket:    09, 10b
+artifacts: reviews/code-review-09.md
+decisions: 09 approved; crew recommendations adopted: retention.one_pager_days 14 pruned by backup; fix the can-not-fail remote test; one Chrome path constant; README layout; keep exit 0 when Discord refuses and document it; sent as fix round 1
+decisions: 10b done (2238 passed, 0 skipped); sent to review
+questions: -
+evidence:  09: real grid PNG IHDR/IDAT/IEND only; Chrome opens file:// only
