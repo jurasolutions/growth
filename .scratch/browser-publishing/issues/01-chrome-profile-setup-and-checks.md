@@ -26,3 +26,9 @@ The publish job drives whatever Chrome profile the extension last connected to, 
 - `.scratch/mission-control/reviews/tickets-technical.md`: N3, N4
 - `.scratch/mission-control/reviews/test-strategy-v3.md` §7 (U9 to U11, U18)
 - `.scratch/mission-control/uat.md` Part D
+
+## Comments
+
+### 2026-10-27T05:59+0800 conductor
+
+After Ting Yu records the Facebook permalink shape at R1, add it to hosts.post_problem so Facebook done-URLs are checked by path shape too (crew recommendation adopted).

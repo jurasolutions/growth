@@ -846,3 +846,12 @@ decisions: known limit recorded for Ting Yu: personal-profile joins cannot be ma
 decisions: conductor (crew recommendation): declined groups never re-proposed automatically and take no cap slot; refused Page recorded as pages-not-allowed; sent as fix round 1
 questions: -
 evidence:  2996 passed; repros R1-R5 reproduce
+
+## 2026-10-27T05:59+0800 conductor (merge bp 04)
+status:    done
+persona:   conductor
+ticket:    bp-04
+artifacts: merge of bp 04 (through ae4e3dc)
+decisions: fix round verified by the developer repro output (cross-platform cases fail; errored/denied upload counted as missing); merged and pushed; weekends stay on (already decided); Facebook permalink shape check after R1 noted on bp 01; bp 06 and 07 to rebase onto this merge and resolve overlaps
+questions: -
+evidence:  merged branch pytest -rs -> see commit

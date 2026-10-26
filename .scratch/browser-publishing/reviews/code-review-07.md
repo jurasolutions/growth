@@ -1,5 +1,126 @@
 # Code review 07: a fixture platform for the browser rehearsal (BP-07)
 
+## Round 2 (fix round 1): approve
+
+- **Branch:** `crew/browser-publishing-07-fixture-platform` at `0522a6a`, rebased onto `bcf77af`.
+  - `90c76b7` and `f9aadc5` are the round 1 commits, unchanged: `git range-diff` shows `=` for both.
+  - `0522a6a` holds the review fixes.
+- **Reviewed:** `git show 0522a6a` in full, plus `git diff bcf77af...crew/browser-publishing-07-fixture-platform` for the merged shape.
+- **Date:** 2026-10-27
+
+### Verdict: approve
+
+There are no blocking findings. B1 is fixed, and every round 1 should fix is closed.
+
+Ticket 07 stays open until Ting Yu records the R1b `file_upload` result (AC3), as the conductor decided. Before 07 meets 04 or 06, whoever merges second has a conflict to resolve. M1 below gives the steps.
+
+### Round 1 findings, now
+
+- **B1, fixed.** `uat_stub.loopback_url_ok` (`jura_growth/uat_stub.py`) now:
+  - refuses `\`, `%`, `@`, whitespace, control and non-ASCII characters anywhere in the value;
+  - refuses a malformed port;
+  - wants an exact host.
+
+  The fixture takes only `publish-fixture.localhost`, `127.0.0.1` or `::1` (`fixture.py`, `HOSTS`). Page addresses refuse a backslash anywhere (`hosts.url_problem`). The probe below confirms all three.
+- **ST-1, fixed.** There is now one loopback guard, `uat_stub.loopback_problem`, and the D1 and Resend stubs go through it too (`uat_stub.url_problem`). The stubs keep `localhost`; the fixture doesn't.
+- **ST-2, fixed.** `Fixture.url_problem` is gone. `hosts.site_problem` calls `hosts.url_problem`, which now takes `scheme=` and `port=`.
+- **ST-3, fixed.** pyright on the 12 touched files reports 4 errors, all of them the existing ones at `tests/uat/seed.py:550-551`.
+- **ST-n1, fixed.** `hosts.py` imports `fixture` at module level.
+- **ST-n4, fixed for the publish commands.** `publish done` and `publish resolve` now show `refused: ...` (`commands._host_problem`). `social submit` still surfaces a refused fixture as a masked traceback. It fails closed, so this stays a nit.
+- **SP-1, fixed.** `prompts/publish.md` step 8 and the Facebook permalink line now say "on the same host as the target URL". For Facebook this still means `www.facebook.com`. `test_the_prompt_takes_the_permalink_on_the_target_urls_host` pins the wording, and it also guards the merge with 04 (see M1).
+- **SEC-n1, fixed.** Plain `localhost` and other `*.localhost` names are refused, so the host-only domain rule can't reach other local services.
+- **Still open, as before:** ST-n2 (the seven fixture branch points) and ST-n3 (copied test helpers). SP-n1 is accepted as is. SP-n2 is unchanged and expected.
+
+### Evidence (round 2)
+
+All commands ran in the developer worktree `agent-aa7f90ae34da0cc2f` at `0522a6a`, read-only, with `JURA_ROOT` set and `mktemp -d` data and outputs folders. No Chrome or `claude` was started. `git status` was clean before and after.
+
+- `uv run pytest -rs -p no:cacheprovider`: 3016 passed in 125s, exit 0, with no skipped section.
+- `pyright --pythonpath .venv/bin/python` on the 12 touched files: 4 errors. All 4 were already on the base; none is new.
+
+#### Guard probe
+
+Each value was passed to `fixture.active()`, and the same value was parsed with Node's WHATWG `URL`, the parser Chrome uses.
+
+- **Accepted. Each one is loopback in WHATWG, and the rule is the host shown:**
+  - `http://publish-fixture.localhost[:8765][/]`, also in upper or mixed case, and with `:08765` (WHATWG reads that as 8765);
+  - `http://publish-fixture.localhost:` (an empty port, read as port 80; harmless);
+  - `http://127.0.0.1:8765`;
+  - `http://[::1]:8765`.
+- **Refused:**
+  - The round 1 bypass `http://evil.com\.localhost:8765` (WHATWG host `evil.com`), plus `evil.com\.publish-fixture.localhost`, `publish-fixture.localhost\@evil.com` and `:8765\evil`.
+  - IPv4 shorthand: `127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1` and `127.0.0.01`. WHATWG reads all of these as 127.0.0.1, so refusing them is strict but safe.
+  - Other IPv6 spellings: `[::ffff:127.0.0.1]`, `[0:0:0:0:0:0:0:1]` and `[::1%25lo0]`.
+  - A trailing dot: `publish-fixture.localhost.` and `127.0.0.1.`.
+  - A tab or newline inside the host or the port, and leading or trailing spaces.
+  - Port tricks: `:+8765`, `:8765:`, `:0x10`, `:99999` and `:-1`.
+  - `?`, `#`, `/.` and `//evil.com` after the host.
+  - Other names: `localhost`, `foo.localhost`, `%2e` inside the host, `。`, a Unicode hyphen, `publish-fixture.localhost;evil.com` and `[publish-fixture.localhost]`.
+  - Broken schemes: `http:/...`, `http:\\...`.
+  - User info: `user@` and `:@`.
+  - A zero-width space in the path.
+  - A NUL byte can't be set in an environment variable at all.
+- **Page addresses** (`hosts.site_problem`, with the fixture at `:8765`):
+  - **Refused:**
+    - a backslash anywhere: before `@`, in the path, in the host or in the query;
+    - another port, no port, `https`;
+    - a trailing dot;
+    - `127.0.0.1`, when the fixture is the named host;
+    - `:8765@evil.com`;
+    - `javascript:`.
+  - **Accepted:** `post.html?id=1`, the upper-case form and `:08765`. Each is the fixture host and port in WHATWG.
+- **The stubs** still take `127.0.0.1`, `localhost`, `[::1]` and a path. They now refuse `http://evil.com\@127.0.0.1:8025`.
+
+#### Merge check
+
+`git merge-tree --write-tree`:
+
+- against `crew/mission-control` (`bcf77af`): clean;
+- against `crew/browser-publishing-04-instagram-linkedin` (now `1553a55`): conflicts in `commands.py`, `hosts.py`, `job.py`, `scope.py` and `prompts/publish.md`;
+- against `crew/browser-publishing-06-joins-as-the-page` (`adc6adc`): conflicts in `commands.py`, `job.py` and `scope.py`.
+
+### Should fix at merge (for the conductor)
+
+**M1. The 04 and 06 conflicts can silently drop the fixture override.** Neither side is wrong, but a resolution that takes 04's side of any of these hunks would undo 07's safety:
+
+- **`scope.py`:** 04's `browser_hosts(platforms=None)` has no fixture branch. If it wins, the argv gets Facebook, Instagram and LinkedIn domain rules while the fixture is on: the "half-set" mix this ticket exists to prevent.
+
+  The fix is to keep 04's signature and put 07's override first:
+
+  ```python
+  site = fixture.active()
+  if site is not None:
+      return (site.host,)
+  ```
+
+  This must come before the `names = ...` line, for the argv and the audit alike.
+- **`job.py` `_audit`:** keep 04's `own` platforms and 07's `site=fixture.active()` together.
+- **`commands.py`:** keep 04's `hosts.post_problem` inside 07's `_host_problem` try/except. `post_problem` reaches the fixture branch through `problem()`, and 04's `_shape` returns None for any host that isn't the platform's, so the fixture permalink passes.
+- **`hosts.py`:** keep both sides: 04's `post_problem`, `page_problem` and `_shape`, and 07's `site_problem`, `fixture_target_problem` and the keyword-taking `url_problem` with the backslash check. Drop 04's old `url_problem` signature.
+- **`prompts/publish.md`:**
+  - step 7: take 04's text (file input, every image);
+  - step 8: take 07's text ("same host as the target URL");
+  - Facebook permalink: take 07's wording, plus 04's stop-signals bullet.
+
+  `test_the_prompt_takes_the_permalink_on_the_target_urls_host` fails if 04's step 8 wins.
+
+After resolving, run the full suite, plus `tests/test_publish_fixture_platform.py` and `tests/test_publish_fixture_run.py`. Both pin the single fixture domain rule and the audit refusals.
+
+### Nits (round 2)
+
+- **R2-n1. A docs line runs long.** In `tests/fixtures/publish-site/README.md:25-26`, one edited line now runs well past the file's wrap width.
+- **R2-n2. A name collides.** `fixture.HOSTS` shares its name with `hosts.HOSTS`, and the two hold different things. A name like `fixture.ALLOWED_HOSTS` would read better wherever both modules are imported.
+
+### Blocked paths and UI
+
+- **Blocked paths:** none. The round 2 diff has nothing under `inputs/`, `design-system/`, `.env` or the live `data/growth/`.
+- **UI:** there are no UI files.
+
+---
+
+# Round 1
+
+
 - **Branch:** `crew/browser-publishing-07-fixture-platform` at `ef6eb24` (commits `ff55fa4`, `ef6eb24`). Reviewed against the fixed point `b4f0895` with `git diff b4f0895...crew/browser-publishing-07-fixture-platform`.
 - **Changed files (14):** `.scratch/browser-publishing/issues/07-fixture-platform.md`, `.scratch/mission-control/uat.md`, `jura_growth/agents/publish/{audit,claim,fixture,hosts,job,scope}.py`, `tests/conftest.py`, `tests/fixtures/publish-site/README.md`, `tests/test_publish_fixture_platform.py`, `tests/test_publish_fixture_run.py`, `tests/test_uat_seed_fixture.py` and `tests/uat/seed.py`. I read every one. I also read every caller of `hosts.problem`, `scope.browser_hosts` and `items.create_social`, plus `uat_stub.py` and `prompts/publish.md`.
 - **Spec:** `issues/07-fixture-platform.md`, `uat.md` Part R and `uat_stub.py` (the ticket 18 guard style). I also read code review 18 for its lesson about stub pairs.
