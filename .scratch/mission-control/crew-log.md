@@ -698,3 +698,12 @@ artifacts: merged crew/mission-control-prd-sync-raiser; BP PRD AC-P1.3 reworded
 decisions: crew recommendation adopted: AC-P1.3 now says a fresh request on the same item for a queued social post, a new item and request otherwise (Amended 2026-10-27); AC ids unchanged
 questions: -
 evidence:  -
+
+## 2026-10-27T03:44+0800 developer (mc 12) via conductor
+status:    done
+persona:   developer
+ticket:    12
+artifacts: crew/mission-control-12-remote-apps-commands (063c7ec)
+decisions: remote handoff JSON for Dispatch; prd_text unmasked by design (hash), for the brief only; 64 KB spill; sent to review with focus on prd_text exposure
+questions: -
+evidence:  2448 passed, 0 skipped
