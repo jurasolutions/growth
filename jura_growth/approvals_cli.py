@@ -86,6 +86,36 @@ def _decide(ctx: click.Context, approval_id: str, decision: str, words: tuple[st
     ctx.exit(EXIT_CODES[answer.answer])
 
 
+def _title(conn, approval, registered) -> str:
+    if registered is None:
+        return "(its plug-in isn't loaded)"
+    try:
+        return registered.kind.preview(conn, approval.subject).title
+    except Exception as error:  # noqa: BLE001
+        return f"(no preview: {type(error).__name__})"
+
+
+def listed(conn, kind: str | None) -> list[dict]:
+    """The requests `approvals [kind]` shows, as data for `remote --json`: the
+    15 soonest to lapse that are still in time, each with the `key=value`
+    arguments an approve must carry (no buttons for those)."""
+    now = timeutil.now_sgt()
+    registry = approvals.kinds()
+    found = []
+    for approval in approvals.pending(conn):
+        if kind is not None and approval.kind != kind:
+            continue
+        if timeutil.parse(approval.decide_by) <= now:
+            continue
+        registered = registry.get(approval.kind)
+        found.append({"id": approval.id, "kind": approval.kind, "decide_by": approval.decide_by,
+                      "title": _title(conn, approval, registered),
+                      "args": list(getattr(registered.kind, "decision_args", None) or ()) if registered else []})
+        if len(found) == LIST_LIMIT:
+            break
+    return found
+
+
 def _listing(conn, kind: str | None) -> list[str]:
     now = timeutil.now_sgt()
     waiting = [(a, timeutil.parse(a.decide_by)) for a in approvals.pending(conn) if kind is None or a.kind == kind]
@@ -98,11 +128,7 @@ def _listing(conn, kind: str | None) -> list[str]:
     registry = approvals.kinds()
     lines = []
     for approval, due in live[:LIST_LIMIT]:
-        registered = registry.get(approval.kind)
-        try:
-            title = registered.kind.preview(conn, approval.subject).title if registered else "(its plug-in isn't loaded)"
-        except Exception as error:  # noqa: BLE001
-            title = f"(no preview: {type(error).__name__})"
+        title = _title(conn, approval, registry.get(approval.kind))
         lines.append(f"{approval.id} · {cards.label(approval.kind)} · decide by {cards.when_at(due)} · {title}")
     if lapsed:
         lines.append(f"{lapsed} more passed {'their' if lapsed != 1 else 'its'} decide-by and "
