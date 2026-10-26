@@ -527,3 +527,14 @@ decisions: changes-requested; B1 email built before the claim, sent bytes never 
 decisions: conductor: sent as fix round 1 (B1, Sp1, Sec2)
 questions: -
 evidence:  1932 passed; reviewer repros demonstrate both gaps; E14 holds
+
+## 2026-10-27T02:33+0800 conductor (merge mc 10 and 06; wave 5)
+status:    done
+persona:   conductor
+ticket:    10, 06, 05, 09, 10b, 17, bp-02
+artifacts: crew/mission-control at ebec138 (merges of 10 and 06)
+decisions: 10 fix round verified (handoff carries the approved hash, refuses on mismatch; 0 skipped); 06 fix round verified (email built and hashed inside the claim; 23h retry window then uncertain plus alert; exact-byte hash); merged and pushed
+decisions: E14 holds: discord_buttons false, scout mode shadow
+decisions: wave 5 dispatched: mc 05, 09, 10b, 17 and bp 02 (publish queue, no browser)
+questions: -
+evidence:  merged branch pytest -rs -> 2176 passed, 0 skipped
