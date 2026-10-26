@@ -32,6 +32,20 @@ SOCIAL_POSTS_PER_PLATFORM_PER_DAY = 1
 COMMUNITY_GROUPS_PER_WEEK = 3
 NO_REPEAT_DAYS = 14
 
+# Browser publishing (browser publishing PRD §4.4). A cap counts an item from
+# the moment a run claims it, whatever happens next, so a run that crashes
+# mid-post still uses up its slot.
+BROWSER_JOBS = frozenset({"publish"})  # the only jobs that may drive Chrome
+COMMUNITY_POSTS_PER_DAY = 1
+COMMUNITY_JOINS_PER_WEEK = 3  # ISO week, SGT
+PUBLISH_ITEMS_PER_RUN = 1
+# Between the start times of the runs that claimed two items. A floor: config
+# may lengthen it, never shorten it.
+PUBLISH_MINUTES_BETWEEN_ACTIONS = 20
+# SGT, start inclusive and end exclusive. A post's decide-by and use-by are the
+# end of the window on its day. Config may narrow it, never widen it.
+PUBLISH_WINDOW = ("09:00", "18:00")
+
 # App factory
 APP_PRDS_PER_DAY = 1
 APP_PRDS_WAITING_MAX = 7

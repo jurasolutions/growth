@@ -41,14 +41,15 @@ def claude_binary(monkeypatch, script):
 
 
 def social_kind(monkeypatch):
-    """The fake kind from ticket 04, declared as `social-post` by a test plug-in,
-    so the run can raise requests of that kind."""
+    """The fake kind from ticket 04, declared as `social-post` by a test plug-in in
+    place of the publish plug-in's own (BP-02a), so the run can raise requests of
+    that kind over fake items."""
     world = approval_world.World()
     kind = approval_world.FakeKind(world)
     kind.name = "social-post"
     plugin = types.SimpleNamespace(NAME="social-kinds", approval_kinds=lambda: {"social-post": kind}, __name__="social_kinds")
     real = agents.plugins
-    monkeypatch.setattr(agents, "plugins", lambda: (*real(), plugin))
+    monkeypatch.setattr(agents, "plugins", lambda: (*(m for m in real() if getattr(m, "NAME", None) != "publish"), plugin))
     return world
 
 
