@@ -538,3 +538,13 @@ decisions: E14 holds: discord_buttons false, scout mode shadow
 decisions: wave 5 dispatched: mc 05, 09, 10b, 17 and bp 02 (publish queue, no browser)
 questions: -
 evidence:  merged branch pytest -rs -> 2176 passed, 0 skipped
+
+## 2026-10-27T02:53+0800 conductor (merge mc 17; ticket 18)
+status:    done
+persona:   conductor
+ticket:    17, 18
+artifacts: merge of 17 (tests/uat only); issues/18-uat-d1-stub.md
+decisions: 17 is test-only, verified by the conductor (diff limited to tests/) and merged without a separate review
+decisions: crew recommendations adopted: new ticket 18 (loopback-only D1 stub for UAT); QA lead amends uat.md (JURA_GROWTH_RESEND_BASE_URL, JURA_INPUTS_DIR, A4 wording)
+questions: -
+evidence:  dev: 2207 passed, 0 skipped; seed refuses Saturday and live data
