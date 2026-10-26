@@ -9,6 +9,7 @@ run updates and #alerts posts.
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -17,7 +18,7 @@ import publish_transcripts as t
 import publish_world as pw
 import sweep
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, db, pause, paths, runner
+from jura_growth import approvals, cards, db, pause, paths, runner
 from jura_growth.agents import publish
 
 POST = t.POST
@@ -56,12 +57,12 @@ def browser(*steps: dict) -> list[dict]:
 
 def post_steps(live_text: str = "{TEXT}") -> list[dict]:
     return [
-        *browser(t.created(), t.opened(), t.chrome("get_page_text", {"tabId": t.TAB}, "Jura Solutions\nCreate post\n" + t.tab_context((t.TAB, t.PAGE)))),
-        {"chrome": "computer", "input": {"action": "type", "text": "{TEXT}", "tabId": t.TAB}, "result": "Typed."},
-        {"chrome": "file_upload", "input": {"paths": ["{IMG1}"], "tabId": t.TAB}, "result": "Uploaded 1 file."},
-        *browser(t.chrome("computer", {"action": "key", "text": "Return", "tabId": t.TAB}, "Pressed."),
-                 t.chrome("navigate", {"url": POST, "tabId": t.TAB}, f"Navigated to {POST}\n" + t.tab_context((t.TAB, POST)))),
-        {"chrome": "get_page_text", "input": {"tabId": t.TAB}, "result": live_text},
+        *browser(t.created(), t.opened(), t.page("get_page_text", {}, "Jura Solutions\nCreate post"),
+                 t.page("computer", {"action": "left_click", "ref": "ref_12"}, "Clicked.")),
+        chrome(t.typed("{TEXT}")),
+        chrome(t.page("file_upload", {"paths": ["{IMG1}"]}, "Uploaded 1 file.")),
+        *browser(t.page("computer", {"action": "left_click", "ref": "ref_30"}, "Clicked Post."), t.opened(POST)),
+        chrome(t.page("get_page_text", {}, live_text, url=POST)),
         {"write": "{A}-live.txt", "text": live_text},
         {"cli": ["publish", "done", "{A}", "--url", POST, "--live-text-file", "{WORK}/{A}-live.txt"]},
         chrome(t.closed()),
@@ -182,26 +183,27 @@ def stopped_scenario(reason: str, page_url: str, page_text: str) -> list[dict]:
     return [
         *claim(), *browser(t.created()),
         {"chrome": "navigate", "input": {"url": t.PAGE, "tabId": t.TAB}, "result": f"Navigated to {page_url}\n" + t.tab_context((t.TAB, page_url))},
-        {"chrome": "get_page_text", "input": {"tabId": t.TAB}, "result": page_text},
-        {"chrome": "computer", "input": {"action": "screenshot", "tabId": t.TAB}, "result": "Screenshot taken."},
-        {"write": "{A}-stop.png", "text": "png"},
-        {"cli": ["publish", "stopped", "{A}", "--reason", reason, "--screenshot", "{WORK}/{A}-stop.png"]},
+        chrome(t.page("get_page_text", {}, page_text, url=page_url)),
+        chrome(t.page("computer", {"action": "screenshot"}, "Screenshot taken.", url=page_url)),
+        {"cli": ["publish", "stopped", "{A}", "--reason", reason]},
         chrome(t.closed()),
     ]
 
 
-def test_a_login_wall_stops_the_item_pauses_publish_and_alerts_with_the_screenshot(conn, fake, approved, discord_double):
+def test_a_login_wall_stops_the_item_pauses_publish_and_alerts_once_with_the_run(conn, fake, approved, discord_double):
     found, approval = approved
     fake.scenario(stopped_scenario("login", LOGIN, "Log in to Facebook\nEmail or phone\nPassword"), "FAIL: {A} login")
 
     outcome = run()
 
     assert outcome.status == "failed"
+    assert run_row(conn)["status"] == "failed"
     assert item(conn, found)["state"] == "stopped" and item(conn, found)["stop_reason"] == "login"
     assert pause.is_paused(conn, "publish")
-    stop = [a for a in alerts(discord_double) if "Publishing stopped" in a]
-    assert len(stop) == 1 and approval.id in stop[0] and "login or password prompt" in stop[0]
-    assert f"{approval.id}-stop.png" in stop[0]
+    sent = alerts(discord_double)
+    assert len(sent) == 1, sent  # one alert per stop (code review 03, S-4)
+    assert approval.id in sent[0] and "login or password prompt" in sent[0]
+    assert f"run {run_row(conn)['id']}" in sent[0]  # no screenshot file: the run's transcript (decision 4)
     update = discord_double.contents("social-drafts")
     assert len(update) == 1 and approval.id in update[0] and "stopped" in update[0] and "login" in update[0]
     assert "Password" not in update[0]
@@ -252,8 +254,7 @@ def test_a_claim_with_neither_done_nor_stopped_becomes_unknown_and_names_both_re
 def test_a_navigation_off_the_hosts_fails_the_run_pauses_publish_and_alerts(conn, fake, approved, discord_double):
     found, approval = approved
     steps = [*claim(), *post_steps()]
-    steps.insert(len(claim()) + 2, {"chrome": "navigate", "input": {"url": "https://example.com", "tabId": t.TAB},
-                                    "result": "Navigated to https://example.com/"})
+    steps.insert(len(claim()) + 2, chrome(t.opened("https://example.com/")))
     fake.scenario(steps, "OK: posted {A}")
 
     outcome = run()
@@ -289,6 +290,62 @@ def test_a_live_text_mismatch_alerts_pauses_and_says_so_in_the_update(conn, fake
     assert any("doesn't match" in a and approval.id in a for a in alerts(discord_double))
     update = discord_double.contents("social-drafts")
     assert len(update) == 1 and "doesn't match" in update[0] and "Something else" not in update[0]
+
+
+# --- B1 (code review 03): no model text reaches the run row, #alerts or the update -----------------------
+
+
+PAGE_TEXT = "Visitor comment from the Page wall about invoices"
+
+
+def test_a_fail_line_after_a_clean_post_is_withheld_everywhere(conn, fake, approved, discord_double):
+    found, approval = approved
+    fake.scenario([*claim(), *post_steps()], "FAIL: the page said " + PAGE_TEXT)
+
+    outcome = run()
+
+    row = run_row(conn)
+    assert outcome.status == "failed" and row["status"] == "failed"
+    shown = [row["error"] or "", row["summary"] or "", *alerts(discord_double), *discord_double.contents("social-drafts")]
+    assert not [text for text in shown if PAGE_TEXT in text]
+    assert approval.id in row["error"] and f"run {row['id']}" in row["error"]
+    [alert] = alerts(discord_double)
+    assert approval.id in alert and f"run {row['id']}" in alert
+
+
+@pytest.mark.parametrize("ending", ["OK: " + PAGE_TEXT, "SKIP: " + PAGE_TEXT, "FAIL: " + PAGE_TEXT])
+def test_a_run_that_claims_nothing_keeps_no_model_words_either(conn, fake, monkeypatch, discord_double, ending):
+    monkeypatch.setattr(publish, "precheck", lambda job, conn: None)
+    fake.scenario(claim(), ending)
+
+    run()
+
+    row = run_row(conn)
+    shown = [row["error"] or "", row["summary"] or "", *alerts(discord_double), *discord_double.contents("social-drafts")]
+    assert not [text for text in shown if PAGE_TEXT in text]
+    if ending.startswith("FAIL"):
+        assert row["status"] == "failed" and f"run {row['id']}" in row["error"]
+
+
+# --- S-8 (code review 03): the image copies --------------------------------------------------------
+
+
+def test_the_image_copies_are_read_only_after_the_claim(conn, fake, approved):
+    fake.scenario([*claim(), *post_steps()], "OK: posted")
+    run()
+    copies = json.loads(fake.cli[0]["output"])["images"]
+    assert copies and all(not os.access(path, os.W_OK) for path in copies)
+
+
+def test_an_image_copy_rewritten_during_the_run_fails_it_and_pauses_publish(conn, fake, approved, discord_double):
+    steps = [*claim(), {"tamper": "{IMG1}"}, *post_steps()]
+    fake.scenario(steps, "OK: posted")
+
+    outcome = run()
+
+    assert outcome.status == "failed"
+    assert "approved image" in outcome.error
+    assert pause.is_paused(conn, "publish")
 
 
 # --- AC-P9.4: no browser connected -------------------------------------------------------------------
@@ -328,32 +385,49 @@ def test_no_browser_ends_skip_claims_nothing_and_alerts_once_a_day(conn, fake, a
 # --- the sweep over this ticket's messages (AC-M11.1, AC-M12.1) ----------------------------------------
 
 
-def test_nothing_planted_reaches_discord_from_a_publish_run(conn, fake, approved, monkeypatch, tmp_path, discord_double):
-    # The D2 env file without its `keychain:` line: the fake's subprocesses can't use the
-    # Keychain double, and must never ask the real Keychain.
-    env = tmp_path / "uat.env"
+def test_nothing_planted_reaches_discord_from_a_publish_run(conn, fake, monkeypatch, tmp_path, discord_double):
+    """Every message kind this ticket sends: the run update of a post, a stop, a live-text
+    mismatch, an unknown item, the no-browser alert and a run that fails before claiming, each
+    with planted page text in its transcript and its model summary (code review 03, B1 and S-6).
+    The marker reaches Discord only through the approved post's own card."""
+    env = tmp_path / "uat.env"  # the D2 env file without its `keychain:` line: the fake's
     env.write_text("\n".join(line for line in sweep.ENV_FILE.splitlines() if "keychain:" not in line) + "\n")
-    env.chmod(0o600)
+    env.chmod(0o600)  # subprocesses can't use the Keychain double and must never ask the real one
     monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(env))
     planted = sweep.Planted(secrets=(sweep.RESEND_KEY, sweep.AWKWARD), personal=sweep.PERSONAL)
     page = planted.text()
-    steps = [*claim(), *post_steps()]
-    steps.insert(len(claim()) + 2, {"chrome": "get_page_text", "input": {"tabId": t.TAB}, "result": page})
-    fake.scenario(steps, "OK: posted {A}\n" + page)
-    run()  # a run update, with the planted page text and summary in its transcript
-    assert discord_double.contents("social-drafts")
+    said = "FAIL: the page said\n" + page
 
-    # A run that claims nothing and fails with a planted line: the runner's #alerts post.
+    def next_day(day: int) -> None:
+        pause.resume(conn, "publish")
+        pw.at(monkeypatch, f"2026-11-{day}T07:05:00+08:00")
+        _, request = pw.item(conn, day=pw.DAY.replace(day=day), text=pw.TEXT + "\n" + sweep.MARKER)
+        cards.sweep_safely(conn)  # the card, while the request is pending, as it goes out live
+        pw.decide(conn, request, monkeypatch=monkeypatch)
+        pw.at(monkeypatch, f"2026-11-{day}T10:00:00+08:00")
+
+    with_page = [chrome(t.page("get_page_text", {}, page))]
+    next_day(10)
+    fake.scenario([*claim(), *post_steps()[:3], *with_page, *post_steps()[3:]], said)
+    run()  # posted, with a FAIL: summary
+    next_day(11)
+    fake.scenario(stopped_scenario("login", LOGIN, page), said)
+    run()  # a stop
+    next_day(12)
+    fake.scenario([*claim(), *post_steps(live_text=page)], said)
+    run()  # a live-text mismatch
+    next_day(13)
+    fake.scenario([*claim(), *browser(t.created(), t.opened()), *with_page, chrome(t.closed())], said)
+    run()  # an unknown item
+    next_day(14)
+    fake.scenario(NO_BROWSER, "SKIP: " + page)
+    run()  # the no-browser alert
     monkeypatch.setattr(publish, "precheck", lambda job, conn: None)
-    fake.scenario(browser(*t.browser_check()), "FAIL: " + page)
-    run()
-    # A stop: the stop alert (outbox) and its run update.
-    pw.at(monkeypatch, "2026-11-11T07:05:00+08:00")
-    pw.approved(conn, monkeypatch, day=pw.DAY.replace(day=11))
-    pw.at(monkeypatch, "2026-11-11T10:00:00+08:00")
-    fake.scenario(stopped_scenario("login", LOGIN, page), "FAIL: {A} login\n" + page)
-    run()
+    fake.scenario(browser(*t.browser_check()), said)
+    run()  # a failure before any claim
 
+    assert len(discord_double.contents("social-drafts")) == 4
+    assert len([a for a in alerts(discord_double) if "No browser" in a]) == 1
     sweep.assert_clean(discord_double, sweep.outbox_dir(), planted)
 
 

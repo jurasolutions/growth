@@ -306,17 +306,18 @@ def test_a_kill_switch_claims_nothing_and_keeps_the_approval(conn, world, monkey
 
 def test_publish_stopped_marks_the_item_pauses_publish_and_alerts(conn, world, monkeypatch, discord_double):
     found, request = pw.approved(conn, monkeypatch)
+    run = pw.run(conn, monkeypatch=monkeypatch)
     next_json()
-    shot = paths.work_dir("publish") / "login.png"
-    shot.parent.mkdir(parents=True, exist_ok=True)
-    shot.write_bytes(pw.PNG)
-    result = pw.invoke("publish", "stopped", request.id, "--reason", "login", "--screenshot", str(shot))
+    result = pw.invoke("publish", "stopped", request.id, "--reason", "login")
     assert result.exit_code == 0, result.output
     row = pw.item_row(conn, found.id)
     assert row["state"] == "stopped" and row["stop_reason"] == "login"
     assert pause.is_paused(conn, "publish")
+    # BP-03 fix round 1 (conductor decision): no screenshot file; the alert names the reason and
+    # the run, whose transcript keeps what the page showed for 7 days.
     [alert] = [c for c in discord_double.contents("alerts") if request.id in c]
-    assert "login" in alert and str(shot) in alert
+    assert "a login or password prompt" in alert and f"run {run}" in alert
+    monkeypatch.delenv("JURA_GROWTH_RUN_ID")
     _, other = pw.approved(conn, monkeypatch, "facebook", day=date(2026, 11, 11))
     pw.at(monkeypatch, "2026-11-11T10:00:00+08:00")
     assert next_json()["due"] is False
@@ -324,14 +325,14 @@ def test_publish_stopped_marks_the_item_pauses_publish_and_alerts(conn, world, m
     assert next_json()["approval"] == other.id
 
 
-def test_a_screenshot_outside_the_scratch_folder_is_not_named(conn, world, monkeypatch, discord_double, tmp_path):
-    _, request = pw.approved(conn, monkeypatch)
+def test_publish_stopped_takes_no_screenshot_file(conn, world, monkeypatch, tmp_path):
+    found, request = pw.approved(conn, monkeypatch)
     next_json()
-    elsewhere = tmp_path / "elsewhere.png"
-    elsewhere.write_bytes(pw.PNG)
-    assert pw.invoke("publish", "stopped", request.id, "--reason", "login", "--screenshot", str(elsewhere)).exit_code == 0
-    [alert] = [c for c in discord_double.contents("alerts") if request.id in c]
-    assert str(elsewhere) not in alert
+    shot = tmp_path / "login.png"
+    shot.write_bytes(pw.PNG)
+    result = pw.invoke("publish", "stopped", request.id, "--reason", "login", "--screenshot", str(shot))
+    assert result.exit_code == 2 and "No such option" in result.output
+    assert pw.item_row(conn, found.id)["state"] == "claimed"
 
 
 @pytest.mark.parametrize("command", ["done", "stopped"])

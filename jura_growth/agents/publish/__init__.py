@@ -70,6 +70,9 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
 
 
 def precheck(job: str, conn: sqlite3.Connection):
+    """The publish job's precheck (`job.precheck`); the plug-in's other jobs have none."""
+    if job != "publish":
+        return None
     from jura_growth.agents.publish import job as publish_job
 
     return publish_job.precheck(job, conn)

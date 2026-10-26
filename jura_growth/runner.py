@@ -50,6 +50,9 @@ class Outcome:
     summary: str = ""
     error: str = ""
     cost_usd: float | None = None
+    # True when the failure has already been posted to #alerts (a publish stop, by
+    # `publish stopped` itself), so the runner doesn't post it a second time.
+    alerted: bool = False
 
 
 def jobs() -> dict[str, dict]:
@@ -155,7 +158,8 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
 
     if outcome.status == "failed":
         try:
-            discord.alert(conn, f"`{name}` failed: {outcome.error[:500]}", agent=agent)
+            if not outcome.alerted:
+                discord.alert(conn, f"`{name}` failed: {outcome.error[:500]}", agent=agent)
         finally:
             pause.check_auto_pause(conn, agent)  # whatever happened to the alert
     return _run_update(conn, name, spec, run_id, outcome)

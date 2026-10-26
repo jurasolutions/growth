@@ -17,6 +17,8 @@ The fake, started by `runner.run("publish")`:
     `publish next --json` it opens growth.db read-only and records, in `claims.json`, whether the
     approval was already used and the item claimed when the command returned (G21);
   - `{"write": name, "text": "..."}`: a file in the publish scratch folder, as the Write tool;
+  - `{"tamper": path}`: makes `path` writable and overwrites it, as a run that rewrote an image
+    copy would;
 - ends with the scenario's `result` text.
 
 Placeholders in any string: `{A}` the claimed A-id, `{TEXT}` the approved text, `{IMG1}` the first
@@ -96,6 +98,11 @@ for step in scenario["steps"]:
                 state = db.execute("SELECT state FROM publish_items WHERE label = ?", (handed["item"],)).fetchone()
                 db.close()
                 (home / "claims.json").write_text(json.dumps({"used_at": used[0], "used_by_run": used[1], "state": state[0]}))
+    elif "tamper" in step:
+        target = Path(step["tamper"])
+        os.chmod(target, 0o644)
+        target.write_bytes(b"not the approved image")
+        emit("Write", {"file_path": str(target), "content": "(bytes)"}, "File written")
     elif "write" in step:
         target = work / step["write"]
         target.parent.mkdir(parents=True, exist_ok=True)
