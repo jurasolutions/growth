@@ -32,6 +32,16 @@ def test_the_core_and_the_one_pager_import_no_agent():
         assert not [line for line in imports if "agents" in line], module
 
 
+def test_the_default_chrome_path_is_written_once_and_the_social_cards_share_it():
+    """Code review 09, S-3: the agent depends on the core's constant, never the reverse."""
+    from jura_growth.agents.social import settings as social_settings
+
+    assert social_settings.DEFAULT_CHROME == images.DEFAULT_CHROME
+    found = [path.relative_to(paths.REPO_ROOT).as_posix() for path in (paths.REPO_ROOT / "jura_growth").rglob("*.py")
+             if "Google Chrome.app" in path.read_text(encoding="utf-8")]
+    assert found == ["jura_growth/images.py"]
+
+
 def test_chrome_path_takes_the_path_it_is_given(tmp_path, monkeypatch):
     monkeypatch.delenv("JURA_GROWTH_CHROME", raising=False)
     assert images.chrome_path(tmp_path / "no-chrome-here") is None

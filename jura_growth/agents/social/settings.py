@@ -10,13 +10,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
-from jura_growth import config
+from jura_growth import config, images
 
 PLATFORMS = ("linkedin", "facebook", "instagram")
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 LAYOUTS = ("headline", "list", "tool")
 PUBLISH_MODES = ("draft", "auto")
-DEFAULT_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+DEFAULT_CHROME = images.DEFAULT_CHROME  # one path for the cards and the one-pager grid
 
 
 class SettingsError(ValueError):
