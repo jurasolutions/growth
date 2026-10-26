@@ -31,8 +31,8 @@ from email.utils import formataddr
 
 import httpx
 
-from jura_growth import approval_settings, caps, cloudflare, config, db, discord, holidays, locks, log, pause, timeutil
-from jura_growth.agents.outreach import compose, queue, replies, store, sync
+from jura_growth import approval_settings, approvals, caps, cloudflare, config, db, discord, holidays, locks, log, pause, timeutil
+from jura_growth.agents.outreach import approval, compose, queue, replies, store, sync
 from jura_growth.agents.scout import contact as contact_rules
 from jura_growth.agents.scout import dnc, registry, settings
 
@@ -238,12 +238,19 @@ def quota(conn: sqlite3.Connection, mode: str) -> tuple[int, str]:
     return max(0, left), why
 
 
-def due(conn: sqlite3.Connection) -> list[dict]:
-    return db.rows(
-        conn,
-        "SELECT * FROM outreach_messages WHERE status = 'queued' AND send_after <= ? ORDER BY send_after, id",
-        (timeutil.today_str(),),
-    )
+def due(conn: sqlite3.Connection, *, approved_only: bool = False) -> list[dict]:
+    """Queued emails due today. With `approved_only` (live mode), only those
+    Ting Yu approved: unclaimed, or claimed by an attempt that is retried
+    under the same idempotency key. That list also feeds the spacing
+    probability, so spacing spreads only what can actually go out."""
+    sql = "SELECT * FROM outreach_messages WHERE status = 'queued' AND send_after <= ?"
+    if approved_only:
+        sql += (
+            " AND EXISTS (SELECT 1 FROM approvals a WHERE a.kind = ? AND a.status = 'approved'"
+            " AND a.subject = 'outreach_message:' || outreach_messages.id)"
+        )
+    params = (timeutil.today_str(), approval.KIND) if approved_only else (timeutil.today_str(),)
+    return db.rows(conn, sql + " ORDER BY send_after, id", params)
 
 
 # --- the run ---------------------------------------------------------------
@@ -260,7 +267,13 @@ def send_due(conn: sqlite3.Connection, *, client: httpx.Client | None = None) ->
     with locks.held(SEND_LOCK) as acquired:
         if not acquired:
             return SendResult(None, "skipped: another send-due run is still going")
-        return _send_due(conn, client)
+        result = _send_due(conn, client)
+        if outside_window(timeutil.now_sgt()) is None:
+            # Live mode tops the requests up to today's room (A14): after a
+            # send, a skip, or a decision since the last slot.
+            approval.raise_due(conn)
+    approval.post_cards(conn)
+    return result
 
 
 def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> SendResult:
@@ -280,9 +293,9 @@ def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> SendResu
         if problems:
             return _refuse(conn, problems)
 
-    waiting = due(conn)
+    waiting = due(conn, approved_only=mode == "live")
     if not waiting:
-        return SendResult(None, "nothing queued")
+        return SendResult(None, _nothing_waiting(conn, mode))
     left, binding = quota(conn, mode)
     if left <= 0:
         return SendResult(None, f"nothing more today: {binding} reached")
@@ -321,7 +334,7 @@ def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> SendResu
         return SendResult(text, text)
 
     skipped = []
-    for message in due(conn):
+    for message in due(conn, approved_only=mode == "live"):
         try:
             lead, row = queue.recipient(conn, message["lead_id"])
         except queue.QueueError as error:
@@ -337,13 +350,28 @@ def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> SendResu
             continue
         if db.scalar(conn, "SELECT status FROM outreach_messages WHERE id = ?", (message["id"],)) != "queued":
             continue  # cancelled meanwhile (a reply or an unsubscribe)
-        result = _send_one(conn, message, lead, row, mode, client)
+        try:
+            result = _send_one(conn, message, lead, row, mode, client)
+        except _NotClaimed as refused:
+            skipped.append(store.mask(str(refused)))
+            continue  # the next approved email may still go
         summary = "; ".join([result] + notes + (["skipped " + "; ".join(skipped)] if skipped else []))
         return SendResult(summary, summary)
     if skipped:
         text = "skipped " + "; ".join(skipped)
         return SendResult(text, text)
     return SendResult(None, "nothing sendable")
+
+
+def _nothing_waiting(conn: sqlite3.Connection, mode: str) -> str:
+    if mode != "live":
+        return "nothing queued"
+    pending = approval.pending_requests(conn)
+    unasked = len(approval.without_request(conn))
+    if not pending and not unasked:
+        return "nothing queued"
+    return (f"nothing approved to send: {pending} waiting for a decision, "
+            f"{unasked} waiting for a request slot")
 
 
 def _follow_up_send_problems(conn: sqlite3.Connection, lead_id: int) -> list[str]:
@@ -380,6 +408,40 @@ def _skip(conn: sqlite3.Connection, message: dict, lead: dict, found: list[str])
     log.event(conn, "outreach.skipped", {"message": message["id"], "domain": lead["domain"], "reasons": [store.mask(f) for f in found]}, agent=store.AGENT)
 
 
+class _NotClaimed(Exception):
+    """Live: the email's approval couldn't be claimed, so it isn't sent."""
+
+
+def _claim(conn: sqlite3.Connection, message: dict) -> str | None:
+    """The claim (MC §4.6 A6, §5.8): in one `BEGIN IMMEDIATE` transaction,
+    claim the email's approval and count the attempt (the in-flight marker),
+    so the claim is committed before Resend is called. Returns why it was
+    refused, or None.
+
+    An email whose approval an earlier attempt already claimed (Resend
+    errored, or the process died before the mark) is the same action
+    instance: it is retried under its `Idempotency-Key` without a second
+    claim, as long as what goes out is still what was approved."""
+    refusal = None
+    with db.transaction(conn):
+        claimed = approval.claimed(conn, message["id"])
+        if claimed is None:
+            try:
+                approvals.use(conn, approval.KIND, approval.subject_of(message["id"]), run_id=log.current_run_id())
+            except approvals.NotApproved as error:
+                refusal = error.text  # a lapse or supersede it wrote commits with the block
+        elif not approval.still_matches(conn, claimed):
+            refusal = f"changed after {claimed.id} was used, so it isn't sent again"
+            conn.execute("UPDATE outreach_messages SET status = 'failed', error = ? WHERE id = ? AND status = 'queued'",
+                         (refusal, message["id"]))
+        if refusal is None:
+            conn.execute("UPDATE outreach_messages SET attempts = attempts + 1 WHERE id = ?", (message["id"],))
+        else:
+            log.event(conn, "outreach.not_claimed", {"message": message["id"], "why": store.mask(refusal)},
+                      level="warning", agent=store.AGENT)
+    return refusal
+
+
 def _send_one(conn, message: dict, lead: dict, row: dict, mode: str, client) -> str:
     # Recomposed from the draft so the footer carries the current token, then
     # gated again on exactly the text that goes out.
@@ -408,9 +470,13 @@ def _send_one(conn, message: dict, lead: dict, row: dict, mode: str, client) -> 
         )
         return f"SHADOW message {message['id']} to {domain}"
 
+    refusal = _claim(conn, message)
+    if refusal:
+        raise _NotClaimed(f"message {message['id']} ({lead['domain']}): {refusal}")
     outcome, detail = _resend(conn, message, row, email, client)
     if outcome == "sent":
-        _mark_sent(conn, message, lead, row, email, mode="live", resend_id=detail)
+        with db.transaction(conn):
+            _mark_sent(conn, message, lead, row, email, mode="live", resend_id=detail)
         store.post(
             conn,
             "outreach-sent",
@@ -423,7 +489,7 @@ def _send_one(conn, message: dict, lead: dict, row: dict, mode: str, client) -> 
         conn.execute("UPDATE outreach_messages SET error = ? WHERE id = ?", (detail[:500], message["id"]))
         store.auto_pause(conn, f"Resend refused the send: {detail}")
         return f"Resend error, outreach paused: {detail}"
-    attempts = message["attempts"] + 1
+    attempts = message["attempts"] + 1  # counted by the claim, before the call
     if outcome == "retry" and attempts < 3:
         conn.execute("UPDATE outreach_messages SET attempts = ?, error = ? WHERE id = ?", (attempts, detail[:500], message["id"]))
         log.event(conn, "outreach.retry", {"message": message["id"], "error": detail}, level="warning", agent=store.AGENT)

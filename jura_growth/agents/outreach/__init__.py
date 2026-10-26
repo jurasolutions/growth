@@ -38,6 +38,13 @@ def channels() -> dict:
     return {"email": compose.channel()}
 
 
+def approval_kinds() -> dict:
+    """`outreach-email`: every live email waits for Ting Yu's approval (MC §5.8)."""
+    from jura_growth.agents.outreach import approval
+
+    return approval.kinds()
+
+
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     # send-due and sync check everything themselves, so a manual run behaves
     # the same as a scheduled one.

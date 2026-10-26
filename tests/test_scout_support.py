@@ -227,6 +227,41 @@ def live_ready(monkeypatch, *, d1_rows=(), approval_buttons=True) -> list:
     return fake_d1(monkeypatch, d1_rows)
 
 
+# --- approvals: Ting Yu's decisions, as Dispatch delivers them (ADR 0004) --------------
+
+CONTROL_ID = "111"  # CONTROL_DISCORD_USER_ID in the tests
+
+
+def decide(conn, approval, decision: str = "approve", monkeypatch=None):
+    """Ting Yu's decision on one request, through the only origin that decides."""
+    from jura_growth import approvals
+    from jura_growth.origin import Origin
+
+    if monkeypatch is not None:
+        monkeypatch.setenv("CONTROL_DISCORD_USER_ID", CONTROL_ID)
+    return approvals.decide(conn, approval.id, decision, actor=f"discord:{CONTROL_ID}", origin=Origin.ssh(),
+                            source_ref=None, args={})
+
+
+def outreach_requests(conn, status: str | None = None) -> list:
+    from jura_growth import approvals
+
+    rows = conn.execute("SELECT * FROM approvals WHERE kind = 'outreach-email' ORDER BY id").fetchall()
+    found = [approvals.Approval.from_row(r) for r in rows]
+    return [a for a in found if status is None or a.status == status]
+
+
+def approve_due(conn, monkeypatch) -> list:
+    """The approval fixture for live sending (AC-M8.12): raise today's requests up to the
+    remaining quota, as `send-due` would, and approve every pending one."""
+    from jura_growth.agents.outreach import approval
+
+    approval.raise_due(conn)
+    answers = [decide(conn, a, "approve", monkeypatch) for a in outreach_requests(conn, "pending")]
+    assert all(a.answer == "recorded" for a in answers), [a.text for a in answers]
+    return answers
+
+
 def fake_resend(monkeypatch, responder=None) -> list:
     sent = []
 

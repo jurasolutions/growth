@@ -59,6 +59,10 @@ def queue_cmd(lead_id, file_, kind, as_json) -> None:
         _echo_json(result.as_dict())
     elif result.status == "queued":
         click.echo(f"queued message {result.message_id}; it goes out in the send window from {result.send_after}")
+        if result.approval:
+            click.echo(f"approval requested: {result.approval} (in #approvals)")
+        elif settings.mode() == "live":
+            click.echo("no approval request yet: it waits for a request slot (today's quota, or its day)")
     else:
         verdict = "fail: fix every reason below and queue once more" if result.status == "retry" else "dropped: failed twice, move on"
         click.echo(verdict)
@@ -142,6 +146,9 @@ def requeue_shadow(since, lead_ids, dry_run, as_json) -> None:
         click.echo("no shadow emails to requeue")
     else:
         click.echo(f"{len(plan.requeued)} {verb}, {len(plan.skipped)} left alone")
+    if plan.requests:
+        listed = ", ".join(plan.requests)
+        click.echo(f"approval requested for {len(plan.requests)} (today's quota): {listed}; the rest wait for a request slot")
 
 
 @outreach_group.command("queue-list")

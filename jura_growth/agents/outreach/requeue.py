@@ -16,6 +16,9 @@ unsubscribe token.
   dropped at send time (and count towards the two-failures pause).
 - Idempotent: the shadow row becomes `requeued` and points to nothing new on a
   second run; only `shadow` rows are candidates.
+- Each requeued email needs its own approval. Requests are raised only up to
+  today's remaining live quota (MC §4.6 A14); the others stay queued until
+  `send-due` finds room for them.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from jura_growth import brand_check, db, log, timeutil
-from jura_growth.agents.outreach import queue, send, store
+from jura_growth.agents.outreach import approval, queue, send, store
 
 
 class RequeueError(RuntimeError):
@@ -37,9 +40,10 @@ class Plan:
     requeued: list[dict] = field(default_factory=list)  # {shadow_id, message_id, lead_id, domain, subject}
     skipped: list[dict] = field(default_factory=list)  # {shadow_id, lead_id, domain, reason}
     dry_run: bool = False
+    requests: list[str] = field(default_factory=list)  # the A-nnnn raised, up to today's quota
 
     def as_dict(self) -> dict:
-        return {"dry_run": self.dry_run, "requeued": self.requeued, "skipped": self.skipped}
+        return {"dry_run": self.dry_run, "requeued": self.requeued, "skipped": self.skipped, "requests": self.requests}
 
 
 def candidates(conn: sqlite3.Connection, *, since: str | None = None, lead_ids=()) -> list[dict]:
@@ -123,4 +127,8 @@ def requeue_shadow(conn: sqlite3.Connection, *, since: str | None = None, lead_i
             {"requeued": [(i["shadow_id"], i["message_id"]) for i in plan.requeued], "skipped": len(plan.skipped)},
             agent=store.AGENT,
         )
+        # Each requeued email needs its own approval, raised only up to
+        # today's remaining quota (A14); the rest wait for a request slot.
+        plan.requests = [a.id for a in approval.raise_due(conn)]
+        approval.post_cards(conn)
     return plan
