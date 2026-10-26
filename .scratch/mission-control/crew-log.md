@@ -507,3 +507,13 @@ decisions: ticket 17 (blocked by 06): --today, outreach-live, requests via the f
 questions: tech lead: how does Dispatch reach the UAT folder? rec a UAT-only key whose authorized_keys forced command fixes the UAT folder variables, removed after UAT; Parts A-C wait on it
 questions: PM: tickets 10, 05, BP-02a, BP-02b don't list their uat.md seed scenarios; rec add one line each
 evidence:  grep uat.md for "jura-growth approve|skip" -> 2 hits, both refusal steps (A3 Terminal, A7 headless); jura-growth --help, outreach --help, log events --help -> the commands named in uat.md exist
+
+## 2026-10-27T02:22+0800 conductor (ticket 10 review; UAT decisions)
+status:    done
+persona:   conductor
+ticket:    10, 17
+artifacts: reviews/code-review-10.md; merged crew/mission-control-qa-uat-discord-only (uat.md, issues/17)
+decisions: 10 changes-requested (B1 handoff SHA read after claim); apps/0003 safe; skips legit but break E3 -> fixed in 10; sent as fix round 1
+decisions: UAT reaches its folder through a UAT-only SSH key whose forced command fixes the UAT folder variables, removed after UAT; seed-scenario lines added to mc 05, 10 and bp 02, 02b
+questions: -
+evidence:  reviewer: 1842 passed 10 skipped; main-built db migrates, rows equal

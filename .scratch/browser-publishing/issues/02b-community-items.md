@@ -38,3 +38,9 @@ Every criterion above passes, `uv run pytest` passes, and the report is in. Ting
 - `.scratch/mission-control/reviews/tickets-technical.md`: T7, T8, N9
 - `.scratch/mission-control/reviews/test-strategy-v3.md`: §4.2 (AC-P3.4, AC-P5.1), §4.3 (X7), §5, §3 (D10 community), §11.2 row BP-02
 - Code: `jura_growth/agents/community/` (`__init__.py`, `groups.py`, `plan.py`, migrations), `agents/publish/claim.py` (from 02), `config/community.yaml`
+
+## Comments
+
+### 2026-10-27T02:22+0800 conductor: UAT seed
+
+Add this ticket's uat.md seed scenario to tests/uat/seed.py SCENARIOS.

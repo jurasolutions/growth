@@ -51,3 +51,7 @@ Every criterion above passes, `uv run pytest` passes, and the report is in. Then
 - Decisions come only from Dispatch over SSH (ADR 0004 as amended 2026-10-26). There is no Terminal origin, cards carry no code, and tests decide with `aw.dispatch()` and actor `aw.CONTROL`.
 - **Resolved 2026-10-26 (business analyst, per the conductor):** X9 now says `rules_confirmed=yes` raises the request, decided in `#approvals`. Was: X9 says `community set … rules_confirmed=yes` from Terminal "creates and decides a `group-rules` approval with the Terminal origin in one step". That origin no longer exists. The recommendation is that `rules_confirmed=yes` from Terminal raises the `group-rules` request, and Ting Yu decides it in `#approvals` with the typed days.
 - A kind may fill the optional `superseded_note(conn, subject)` hook to word the card's "Superseded:" line in its own terms (code review 04b, Sp1).
+
+### 2026-10-27T02:22+0800 conductor: UAT seed
+
+Add this kind's uat.md seed scenario to tests/uat/seed.py SCENARIOS (QA lead).

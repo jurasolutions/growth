@@ -116,3 +116,9 @@ Every criterion above passes, `git diff main -- jura_growth/caps.py` raises no e
 - `.scratch/mission-control/uat.md` Part C
 - `CONTEXT.md` (Publish item, Posting identity, Posting window, Stop signal, Claim)
 - Code: `jura_growth/caps.py`, `headless.py`, `agents/social/settings.py`, `submit.py`, `digest.py`, `config/social.yaml`
+
+## Comments
+
+### 2026-10-27T02:22+0800 conductor: UAT seed
+
+Add this ticket's uat.md seed scenario to tests/uat/seed.py SCENARIOS.

@@ -73,3 +73,7 @@ Every criterion above passes, `uv run pytest` passes, and the report is in. Ting
 - Decisions come only from Dispatch over SSH (ADR 0004 as amended 2026-10-26). AC-M9.2 "from Terminal" now means through `remote`'s in-process seam; there is no Terminal origin, cards carry no code, and tests decide with `aw.dispatch()` and actor `aw.CONTROL`.
 - The deadline settings are read through `approval_settings.deadline("app-build", …)`, and `approval_settings.switch("dispatch_builds")` says whether Dispatch polls the handoffs.
 - A kind may fill the optional `superseded_note(conn, subject)` hook to word the card's "Superseded:" line in its own terms (code review 04b, Sp1).
+
+### 2026-10-27T02:22+0800 conductor: UAT seed
+
+Add this kind's uat.md seed scenario to tests/uat/seed.py SCENARIOS (QA lead).
