@@ -85,6 +85,82 @@ class OutreachEmail:
             use_by=_at_cutoff(store.add_business_days(today, use)),
         )
 
+    # The kind's own switch: `use()` refuses without claiming while it shows.
+    def switched_off(self, conn: sqlite3.Connection, subject: str) -> str | None:
+        from jura_growth.agents.outreach import send
+        from jura_growth.agents.scout import settings
+
+        mode = settings.mode()
+        if mode != "live":
+            return f"outreach is in {mode} mode, which sends nothing"
+        problems = send.live_problems()
+        return f"live sending isn't ready: {problems[0]}" if problems else None
+
+    # What each answer, or silence, does (MC §5.7). Each runs inside the
+    # transaction that writes the transition, at most once per request.
+    def on_skip(self, conn: sqlite3.Connection, subject: str) -> None:
+        self._close(conn, subject, "skipped by Ting Yu")
+        message = _message(conn, subject)
+        if message is not None:
+            lead = db.scalar(conn, "SELECT status FROM leads WHERE id = ?", (message["lead_id"],))
+            if lead not in store.FINAL_LEAD_STATUSES:
+                store.set_lead_status(conn, [message["lead_id"]], store.DECLINED)
+
+    def on_expire(self, conn: sqlite3.Connection, subject: str) -> None:
+        self._reopen(conn, self._close(conn, subject, "not approved in time"))
+
+    def on_lapse(self, conn: sqlite3.Connection, subject: str) -> None:
+        self._reopen(conn, self._close(conn, subject, "approved but the limits didn't reach it"))
+
+    def superseded_note(self, conn: sqlite3.Connection, subject: str) -> str | None:
+        """Why the email changed or went away, for the card's first line."""
+        message = _message(conn, subject)
+        if message is None:
+            return None
+        lead = db.scalar(conn, "SELECT status FROM leads WHERE id = ?", (message["lead_id"],))
+        if lead in _LEAD_NOTES:
+            return _LEAD_NOTES[lead]
+        if message["status"] == "dropped":
+            return "dropped by the brand check at send time"
+        if message["status"] == "queued":
+            return "the email changed"
+        return None
+
+    def _close(self, conn: sqlite3.Connection, subject: str, why: str) -> dict | None:
+        """Cancel the email if it is still queued; log the hook either way.
+        Returns the message, or None when there is none."""
+        message = _message(conn, subject)
+        if message is None:
+            return None
+        cancelled = conn.execute(
+            "UPDATE outreach_messages SET status = 'cancelled', error = ? WHERE id = ? AND status = 'queued'",
+            (why, message["id"]),
+        ).rowcount
+        log.event(conn, "outreach.approval_closed", {"message": message["id"], "why": why, "cancelled": bool(cancelled)},
+                  agent=store.AGENT)
+        return message if cancelled else None
+
+    def _reopen(self, conn: sqlite3.Connection, message: dict | None) -> None:
+        """The lead stays new: a first email that never went out leaves its
+        lead as it was before it was queued."""
+        if message is not None and message["kind"] == "first":
+            conn.execute("UPDATE leads SET status = 'new', updated_at = ? WHERE id = ? AND status = 'queued'",
+                         (timeutil.stamp(), message["lead_id"]))
+
+    # What a card's answer says about a used request (AC-M8.7).
+    used_word = "sent"
+
+
+_LEAD_NOTES = {
+    "unsubscribed": "lead unsubscribed",
+    "bounced": "lead bounced",
+    "complained": "lead complained",
+    "replied": "lead replied",
+    "suppressed": "address suppressed",
+    "do_not_contact": "company on the do-not-contact list",
+    store.DECLINED: "lead declined by Ting Yu",
+}
+
 
 def kinds() -> dict[str, OutreachEmail]:
     return {KIND: OutreachEmail()}
@@ -139,6 +215,11 @@ def without_request(conn: sqlite3.Connection) -> list[dict]:
     )
 
 
+def _open(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every live outreach request: its subject and the reason it was raised for."""
+    return conn.execute(f"SELECT a.subject, a.reason FROM approvals a WHERE a.kind = ? AND {_LIVE} ORDER BY a.id", (KIND,)).fetchall()
+
+
 def raising_problem(conn: sqlite3.Connection) -> str | None:
     """Why no request may be raised now, or None. Shadow mode raises nothing
     (A13), and neither does a live mode that would refuse to send, or a paused
@@ -165,6 +246,12 @@ def raise_due(conn: sqlite3.Connection, *, run_id: int | None = None) -> list[ap
     run_id = run_id if run_id is not None else log.current_run_id()
     raised: list[approvals.Approval] = []
     with db.transaction(conn):
+        # The next read (A3): an open request whose email was cancelled
+        # meanwhile (a reply, an unsubscribe, a skip at send time) is
+        # superseded now, so its card says so and its slot frees up; one
+        # whose email changed is superseded by a request for the new text.
+        for row in _open(conn):
+            approvals.request(conn, KIND, row["subject"], reason=row["reason"], run_id=run_id)
         room = send.quota(conn, "live")[0] - open_requests(conn)
         for message in without_request(conn):
             if room <= 0:
