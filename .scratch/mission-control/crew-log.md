@@ -894,3 +894,13 @@ decisions: fix round 2 verified (group_url_problem accepts only /groups/<one seg
 decisions: bp 05 (community posts as the Page) dispatched: the last code ticket
 questions: -
 evidence:  merged branch pytest -rs -> 3253 passed, 0 skipped
+
+## 2026-10-27T06:31+0800 conductor (incident: removed a live worktree)
+status:    done
+persona:   conductor
+ticket:    bp-05
+artifacts: -
+decisions: the worktree cleanup removed the just-started bp 05 developer's worktree (its placeholder branch sat at the merge base, so it looked merged); the agent had only read its brief, so no work was lost; it was stopped and relaunched fresh
+decisions: cleanup rule from now on: remove only worktrees whose branch starts with crew/, is merged, and whose agent has reported done; never a worktree-agent-* branch of a running agent
+questions: -
+evidence:  git status clean; no bp 05 branch existed
