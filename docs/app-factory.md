@@ -4,15 +4,19 @@ The daily job that writes one new app PRD for the free toolbox on jurasolutions.
 against `prd/pending/prd-jura-app-factory-2026-10-24.md` §5.6, §5.7 and block 4. (Blocks 1 to 3,
 the toolbox shell, APP-001 and APP-002, are built in the landing-page repo.)
 
-The factory writes PRDs. It never builds an app. Ting Yu's "approved, build <file>" is the
-sign-off for each one.
+The factory writes PRDs. It never builds an app. Each PRD goes to Ting Yu as an `app-build`
+request in #approvals, and his approval there is the sign-off for that PRD
+(`prd-jura-mission-control-2026-10-25.md` §5.9, which supersedes the app factory PRD's
+build step).
 
 ## How a day goes
 
 1. **06:30 SGT**, launchd runs `jura-growth run app-factory`.
-2. `precheck` skips the run before Claude starts when:
+2. `precheck` first raises an `app-build` request for any factory PRD in `prd/pending/apps/`
+   that has never had one (the one-off pass for PRDs filed before requests existed; it does
+   nothing once each has one). Then it skips the run before Claude starts when:
    - the factory already wrote a PRD today (one a day, `caps.APP_PRDS_PER_DAY`),
-   - 7 or more app PRDs are waiting in `prd/pending/apps/` (`caps.APP_PRDS_WAITING_MAX`), or
+   - 7 or more app PRDs are waiting for an `app-build` decision (`caps.APP_PRDS_WAITING_MAX`), or
    - today's PRD failed the brand check twice and was dropped.
 
    The skipped run is recorded with its reason, and the digest says so.
@@ -20,9 +24,11 @@ sign-off for each one.
    an idea, confirms any rule on the official page with WebFetch, writes the PRD to the template
    in its scratch folder (`data/growth/work/app-factory/`), checks it with
    `apps submit-prd --dry-run`, then files it with `apps submit-prd`.
-4. `submit-prd` writes `prd/pending/apps/prd-app-NNN-<slug>-YYYY-MM-DD.md`, marks the backlog,
-   records the row in `app_prds` and posts to `#app-factory`: name, pitch, tier, lead types and
-   the exact build line.
+4. `submit-prd` writes `prd/pending/apps/prd-app-NNN-<slug>-YYYY-MM-DD.md`, records the row in
+   `app_prds`, raises the `app-build` request over the file's bytes and marks the backlog. The
+   request's card goes to #approvals when the command ends, with the PRD attached, the pitch, the
+   tier and the lead types. The run update in #app-factory names the request.
+5. Ting Yu approves or skips it in #approvals (see "Building an app PRD").
 
 ## Commands
 
@@ -31,13 +37,14 @@ sign-off for each one.
 | `jura-growth apps status` | Waiting count, next APP number, today's PRD or the limit, live tools from the site registry, pending and built PRDs, the backlog |
 | `jura-growth apps context --json` | Everything the prompt needs in one call: the above plus usage (D1 `app_usage`, last 7 days, or "not configured") and the last 30 days of scout insights |
 | `jura-growth apps backlog [--json]` | The backlog with the status worked out from the PRD folders and the registry |
-| `jura-growth apps submit-prd <file> [--dry-run]` | The gate. `--dry-run` runs every check, brand check included, without filing, posting or using an attempt |
+| `jura-growth apps submit-prd <file> [--dry-run]` | The gate. `--dry-run` runs every check, brand check included, without filing, raising a request or using an attempt |
+| `jura-growth apps handoffs [--json]` | Build handoffs waiting for a builder, oldest first. `--json` is what Dispatch polls: each with `handoff: {repo, base, prd_text, prd_sha256, approval}`, within 64 KB |
 
 ## What `submit-prd` checks in code
 
 In this order. A structural rejection never uses up the brand gate's one regeneration.
 
-1. **Limits**: one factory PRD a day, fewer than 7 waiting, at most 4 structural rejections a day
+1. **Limits**: one factory PRD a day, fewer than 7 waiting for a decision, at most 4 structural rejections a day
    (`config/apps.yaml`).
 2. **The template's shape** (`agents/apps/prd.py`, `validate_shape`): the five header lines and
    `---`; Tier `browser` or `ai`; Category one of Sales, Finance, Admin, HR, Marketing,
@@ -90,8 +97,8 @@ button.
 
 | Path | What |
 |---|---|
-| `jura_growth/agents/apps/` | The plug-in: `prd.py` (template and factory rules), `catalog.py` (PRD folders, registry, numbering, limits), `backlog.py`, `inputs.py` (D1 usage, scout insights), `factory.py` (`submit-prd`, the Discord post, the `app-copy` channel) |
-| `jura_growth/agents/apps/migrations/0001_app_factory.sql` | `app_prds` |
+| `jura_growth/agents/apps/` | The plug-in: `prd.py` (template and factory rules), `catalog.py` (PRD folders, registry, numbering, limits), `backlog.py`, `inputs.py` (D1 usage, scout insights), `factory.py` (`submit-prd`, the `app-copy` channel), `builds.py` (the `app-build` kind, handoffs, skip and expiry, the one-off pass) |
+| `jura_growth/agents/apps/migrations/` | `0001` `app_prds`; `0002` `app_builds`; `0003` lets an expired idea's slug be filed again |
 | `jura_growth/agents/apps/backlog-seed.yaml` | The §5.7 seed, used when the data file is missing |
 | `jurasolutions/data/growth/app-backlog.yaml` | The live backlog |
 | `prompts/app-factory.md` | The headless prompt (§5.6 steps 1 to 6) |
@@ -102,7 +109,9 @@ button.
 - **The factory's own record decides "one a day".** APP-001 and APP-002 are dated the same day
   the factory was built, so the date in a file name can't be the test. The `app_prds` table is,
   with a fallback to files whose author line is `app factory (for Ting Yu)`.
-- **The waiting pile counts every PRD in `prd/pending/apps/`**, hand-written ones included.
+- **The waiting pile counts PRDs waiting for an `app-build` decision** (MC §5.9 step 6). A
+  handed-off build no longer waits for Ting Yu, and his own PRDs (APP-001, APP-002) have no
+  request, so neither counts.
 - **A backlog idea is the expected pick, not a duplicate.** Duplicates are slugs and names that
   already have a PRD or are live.
 - **PayNow** is run by the Association of Banks in Singapore, so `abs.org.sg` counts as official
@@ -118,8 +127,23 @@ button.
 
 ## Building an app PRD
 
-Ting Yu opens Claude Code in `jurasolutions/` and says "approved, build
-prd/pending/apps/prd-app-NNN-<slug>-YYYY-MM-DD.md". Claude Code builds it in the landing-page repo
-in one pass, runs the tests, the done-check and the copy checker, shows it locally, deploys only
-after his go-ahead, then moves the PRD to `prd/done/apps/` with the ship date. The backlog and
-`apps status` pick up the move on their own.
+Each filed PRD waits for Ting Yu's answer to its `app-build` request in #approvals
+(`agents/apps/builds.py`; MC §5.7 and §5.9). The request covers the PRD file's bytes, so changing
+one byte supersedes it and raises a new one.
+
+- **Approve.** The decision claims the request and writes a build handoff, an `app_builds` row
+  with the PRD's path and SHA-256 and the request's id and date, in one transaction. Nothing is
+  written into the PRD, so its hash stays the one Ting Yu saw. Dispatch polls
+  `apps handoffs --json` and builds the app in `repos/landing-page` on its own task branch from
+  `main` (Dispatch D6). Until `approvals.dispatch_builds` is set to `true`, the decision's answer
+  and the one-pager say how to build it by hand: "Build it: open Claude Code in `jurasolutions/`
+  and say: build the approved PRD `<path>` (approval A-nnnn)". The handoff is listed until the
+  build is reported (ticket 10b).
+- **Skip.** The PRD moves to `prd/skipped/apps/` with "Skipped by Ting Yu on <date>" at the top,
+  and the backlog idea is dropped for good.
+- **No answer for 7 days.** The PRD moves to `prd/skipped/apps/` with "Expired unanswered on
+  <date>". The backlog idea goes back to `idea` with a `reopens` date 30 days on, shows as
+  `resting` until then, and may be proposed again from that date under a new number.
+
+The PRD template's "To build:" header line and its sign-off section are unchanged, because
+`prd.py` checks the template's shape; the request in #approvals is what counts.

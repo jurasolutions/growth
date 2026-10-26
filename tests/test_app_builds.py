@@ -463,6 +463,15 @@ def test_an_app_build_card_and_its_edit_carry_nothing_planted(conn, discord_doub
     assert_clean(discord_double, outbox_dir(), planted())
 
 
+@pytest.mark.parametrize("name", ["prompts/app-factory.md", "docs/app-factory.md"])
+def test_the_prompt_and_docs_no_longer_say_a_build_starts_with_approved_build(name):
+    """MC §4.9: the approval in #approvals is the sign-off. "approved, build" survives only where
+    a file quotes the template's own "To build:" header line, which `prd.py` still checks."""
+    text = (paths.REPO_ROOT / name).read_text(encoding="utf-8")
+    assert [line for line in text.splitlines() if "approved, build" in line and "To build:" not in line] == []
+    assert "#approvals" in text and "app-build" in text
+
+
 @pytest.mark.parametrize("brake", ["PAUSE file", "paused agent"])
 def test_a_paused_factory_refuses_the_approval_without_claiming(tmp_path, conn, brake):
     """AC-M4.6 for a kind applied on decide: the decision is refused and the request waits."""
