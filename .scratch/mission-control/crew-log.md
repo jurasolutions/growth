@@ -604,3 +604,13 @@ decisions: changes-requested; B1 --preview accepts Markdown so a masked link to 
 decisions: conductor: sent as fix round 1 with rebase onto abe16b0
 questions: -
 evidence:  2238 passed; trial merge 2308 passed; probes reproduce B1, S1, S2, S3
+
+## 2026-10-27T03:21+0800 business-analyst (PRD clarification: group-rules over researched rules, re-confirming)
+status:    done
+persona:   business-analyst
+ticket:    -
+artifacts: jurasolutions/prd/pending/prd-jura-mission-control-2026-10-25.md (§5.1 "Group rules" bullet and header line, marked "Amended 2026-10-27")
+decisions: "never for researched rules" means the engine never raises a request from research on its own. Ting Yu's community set <id> rules_confirmed=yes may raise one over researched text such as "not stated", because unknown-rules groups need confirmed days to get any open day
+decisions: re-confirming a confirmed group raises a new card. Approve replaces the days; skip or expiry keeps the days already confirmed. No AC ids changed
+questions: -
+evidence:  AC count 80 unchanged; "Amended 2026-10-27" 2 hits; closing line intact
