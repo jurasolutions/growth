@@ -19,7 +19,7 @@ import pytest
 
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, cards, config, db, pause, paths, runner
+from jura_growth import agents, approvals, cards, config, db, pause, paths, runner
 from jura_growth.agents import community, publish
 from jura_growth.agents.community import groups as community_groups
 from jura_growth.agents.community import plan
@@ -148,6 +148,16 @@ def test_a_join_proposed_monday_is_decided_by_sunday_18_00(conn, world, monkeypa
     pw.at(monkeypatch, "2026-11-12T09:30:00+08:00")
     assert pw.decide(conn, request).answer == "recorded"
     assert approvals.get(conn, request.id).use_by == "2026-11-15T18:00:00+08:00"
+
+
+def test_a_join_proposed_after_sundays_window_counts_in_the_next_week(conn, world, monkeypatch):
+    """The week's last chance to act ends Sunday 18:00, so a proposal after it belongs to the next
+    ISO week: decided by the next Sunday, and counted against that week's cap."""
+    pw.at(monkeypatch, "2026-11-15T18:30:00+08:00")
+    found, request = pw.join_item(conn)
+    assert found.day == "2026-11-16" and request.decide_by == "2026-11-22T18:00:00+08:00"
+    assert items.proposals_in_week(conn, date(2026, 11, 16)) == 1
+    assert items.proposals_in_week(conn, date(2026, 11, 15)) == 0
 
 
 def test_an_answers_item_raised_tuesday_is_decided_by_friday_18_00(conn, world, monkeypatch):
@@ -608,3 +618,23 @@ def test_an_unknown_community_item_is_settled_as_not_posted(conn, world, monkeyp
     assert refused.exit_code == 1 and "not-posted" in refused.output
     assert pw.invoke("publish", "resolve", request.id, "not-posted").exit_code == 0
     assert items.get(conn, found.id).state == "withdrawn"
+
+
+# --- AC-M4.7 the publish plug-in failed to load ---------------------------------------------------
+
+
+@pytest.mark.parametrize("which", ["community post", "join", "answers"])
+def test_with_the_publish_plug_in_missing_a_community_approval_fails_closed(conn, world, monkeypatch, which):
+    build = {"community post": pw.community_item, "join": pw.join_item, "answers": pw.answers_item}[which]
+    found, request = build(conn)
+    pw.decide(conn, request)
+    real = agents.plugins
+    monkeypatch.setattr(agents, "plugins", lambda: tuple(m for m in real() if getattr(m, "NAME", None) != "publish"))
+    with pytest.raises(approvals.NotApproved) as refused:
+        with db.transaction(conn):
+            approvals.use(conn, request.kind, found.subject, run_id=None)
+    assert refused.value.reason == "unknown-kind"
+    pw.at(monkeypatch, "2026-11-23T10:00:00+08:00")  # past every deadline
+    assert approvals.expire_due(conn) == []
+    record = approvals.get(conn, request.id)
+    assert record.status == "approved" and record.used_at is None

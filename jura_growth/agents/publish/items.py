@@ -291,15 +291,15 @@ def create_join(conn: sqlite3.Connection, group_id: int, *, run_id: int | None, 
     if waiting is not None:
         return Made(waiting, latest_request(conn, waiting), why=f"group {group_id} already has a join waiting ({waiting.label})")
     today = timeutil.today()
+    if _too_late(JOIN_ITEM, today.isoformat(), {}):
+        # Past this week's last window (Sunday 18:00): the proposal belongs to the next ISO week.
+        today += timedelta(days=7 - today.weekday())
     cap = limits.community_joins_per_week()
     if proposals_in_week(conn, today) >= cap:
         return Made(why=f"{cap} joins proposed in {timeutil.iso_week(today)} already; the cap is {cap} a week")
     found = group_kinds.read_join(conn, _probe(JOIN_ITEM, group_id))
     if found is None:
         return Made(why=f"group {group_id} can't be joined now")
-    late = _too_late(JOIN_ITEM, today.isoformat(), found.content)
-    if late:
-        return Made(why=f"a join proposed now: {late}")
     return _make(conn, JOIN_ITEM, COMMUNITY_PLATFORM, group_id, found.content, today.isoformat(), run_id=run_id,
                  request=request)
 
