@@ -120,3 +120,9 @@ def write(path, steps: list[dict], result_text: str = "OK: done"):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines(steps, result_text)) + "\n", encoding="utf-8")
     return path
+
+
+# Page content that once crashed the audit's JSON reader (code review 03, B3): nested arrays a few
+# thousand characters long, and an object nested 5,000 deep. A comment on the Page can carry either.
+ARRAY_BOMB = "[" * 3000 + "]" * 3000
+OBJECT_BOMB = '{"a":' * 5000 + "1" + "}" * 5000

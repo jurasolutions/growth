@@ -13,16 +13,21 @@ did. It walks the calls in transcript order:
   such. A new tab's own `chrome://newtab/` and `about:blank` are fine. An attempt fails even when
   it was denied (rehearsal R3). URLs inside page text are not tab URLs, and are ignored.
 - **Tab addresses fail closed.** Every page-tool result on a tab this run opened must report that
-  tab's address in a shape read here (`tabId` and `url` as JSON, a `tabId <n>: "<title>" (<url>)`
-  line, or `navigate`'s "Navigated to <url>"). A result that doesn't, whatever it says instead,
-  fails the run: an address the audit can't read is one it can't clear.
+  tab's address in the extension's own tab context, which ends the result: a JSON block with
+  `tabId` and `url` starting on a line of its own, or trailing `tabId <n>: "<title>" (<url>)`
+  lines, or, for `navigate` only, its opening "Navigated to <url>". Nothing earlier in a result
+  counts, so tab JSON planted in page text can't clear a tab (code review 03, S-10). A result
+  that doesn't end that way fails the run: an address the audit can't read is one it can't
+  clear. The block is read from the last `TAIL_CHARS` characters, at most `MAX_DEPTH` deep, and
+  never raises, whatever the page holds (B3).
 - **Tabs.** A page tool call must name a tab this run opened with `tabs_create_mcp`. A tab it
   opened and didn't close is a warning.
 - **Typing, judged whole.** What is typed is gathered per field, in order: `form_input` sets its
   `ref`'s field; `computer` `type` (and any `key` that types a character) adds to the focused
   field, a click or Tab or Escape moves to a new one, and Return or Space add a space. Each
   field's text, after Unicode NFC and collapsing whitespace, must be one of the approved texts:
-  never a fragment, a reordering or a mix. Only a field left part-typed by a `publish stopped`
+  never a fragment, a reordering or a mix, and never the same approved text in two fields. Only
+  a field left part-typed by a `publish stopped`
   may hold the start of one. An editing key (Backspace, Delete, the arrows) on a field that
   already holds text fails the run, and so does anything typed before `publish next` handed out
   an item.
@@ -69,9 +74,12 @@ EDIT_KEYS = {"backspace", "delete", "up", "down", "left", "right", "arrowup", "a
 # Page actions that may not follow a stop.
 ACTS_AFTER_STOP = {"form_input", "file_upload", "upload_image", "navigate"}
 URL_KEYS = ("url", "uri", "href", "link")
-_TAB_LINE = re.compile(r"tabId\D{0,3}(\d+)\b[^\n]*?\((\S+)\)\s*$", re.M)
+TAIL_CHARS = 20_000  # how far from a result's end its tab context may start
+MAX_DEPTH = 16  # the deepest JSON tab context read; anything deeper is unreadable
+TAIL_CANDIDATES = 50  # lines starting with { or [ tried, from the end
+_TAB_LINE = re.compile(r"tabId\D{0,3}(\d+)\b[^\n]*?\((\S+)\)\s*$")
 _CREATED = re.compile(r"tab\s*id\D{0,3}(\d+)", re.I)
-_NAVIGATED = re.compile(r"Navigated to (\S+)")
+_NAVIGATED = re.compile(r"\s*Navigated to (\S+)")
 _HANDED_OUT = re.compile(r'"due"\s*:\s*true|^A-[0-9]+ · ', re.M)
 
 
@@ -182,22 +190,30 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
             continue
         if tool in TABLESS or tab not in created:
             continue
-        seen = [url for shown, url in _tabs(call.result) if shown == tab]
+        reported = _trailing_tabs(call.result)
+        seen = [url for shown, url in reported if shown == tab]
         if tool == "navigate":
-            seen += _NAVIGATED.findall(call.result)
+            opening = _NAVIGATED.match(call.result)
+            seen += [opening.group(1)] if opening else []
         if not seen:
             fail(f"couldn't read the address of tab {tab} from a {tool} result, so it can't be cleared")
         for url in seen:
             check_url(url, f"tab {tab} showed")
-        for shown, url in _tabs(call.result):
+        for shown, url in reported:
             if shown != tab and shown in created:
                 check_url(url, f"tab {shown} showed")
 
+    filled: dict[str, int] = {}
     for name, pieces in fields.typed.items():
         text = _normal("".join(pieces))
+        if text in texts:
+            filled[text] = filled.get(text, 0) + 1
         if not text or text in texts or (stopped and any(t.startswith(text) for t in texts)):
             continue
         fail(f"a field was typed with {len(text)} characters that aren't the approved content")
+    for text, count in filled.items():
+        if count > 1:
+            fail(f"an approved text ({len(text)} characters) was typed into {count} fields")
 
     left = len(created - closed)
     if left:
@@ -260,49 +276,87 @@ def _normal(text: str) -> str:
 
 
 def _created_tab(text: str) -> str | None:
-    """The tab `tabs_create_mcp` opened: "Tab ID: <n>" in its text, else the first tab it lists."""
-    match = _CREATED.search(text)
+    """The tab `tabs_create_mcp` opened: "Tab ID: <n>" in its text, else the first tab its tab
+    context lists."""
+    match = _CREATED.search(text[:TAIL_CHARS])
     if match:
         return match.group(1)
-    for tab, _ in _json_tabs(text):
-        return tab
-    return None
+    reported = _trailing_tabs(text)
+    return reported[0][0] if reported else None
 
 
-def _tabs(text: str) -> list[tuple[str, str]]:
-    """(tab id, url) pairs a result reports: JSON objects with `tabId` and `url`, and
-    `tabId <n>: "<title>" (<url>)` lines."""
-    return list(_json_tabs(text)) + [(tab, url) for tab, url in _TAB_LINE.findall(text)]
+def _trailing_tabs(text: str) -> list[tuple[str, str]]:
+    """(tab id, url) pairs in the tab context that ends a result: a JSON block starting on a line
+    of its own and running to the end, or trailing `tabId <n>: "<title>" (<url>)` lines. Nothing
+    earlier in the result counts. Never raises: anything it can't read gives no pairs."""
+    try:
+        tail = text[-TAIL_CHARS:].rstrip()
+        return _tail_json(tail) or _tail_lines(tail)
+    except Exception:  # noqa: BLE001 - page content is never allowed to break the audit
+        return []
 
 
-def _json_tabs(text: str) -> Iterator[tuple[str, str]]:
-    for chunk in _json_chunks(text):
-        yield from _walk(chunk)
-
-
-def _json_chunks(text: str) -> Iterator[object]:
-    decoder = json.JSONDecoder()
-    index = 0
-    while True:
-        start = min((i for i in (text.find("{", index), text.find("[", index)) if i != -1), default=-1)
-        if start == -1:
-            return
-        try:
-            value, end = decoder.raw_decode(text, start)
-        except ValueError:
-            index = start + 1
+def _tail_json(tail: str) -> list[tuple[str, str]]:
+    if not tail.endswith(("}", "]")):
+        return []
+    starts = [i for i in range(len(tail) - 1, -1, -1) if tail[i] in "{[" and (i == 0 or tail[i - 1] == "\n")]
+    for start in starts[:TAIL_CANDIDATES]:
+        block = tail[start:]
+        if _depth(block) > MAX_DEPTH:
             continue
-        yield value
-        index = end
+        try:
+            value = json.loads(block)
+        except ValueError:
+            continue
+        return list(_walk(value, MAX_DEPTH))
+    return []
 
 
-def _walk(value) -> Iterator[tuple[str, str]]:
+def _tail_lines(tail: str) -> list[tuple[str, str]]:
+    found = []
+    for line in reversed(tail.splitlines()):
+        if not line.strip():
+            continue
+        match = _TAB_LINE.search(line)
+        if not match:
+            break
+        found.append((match.group(1), match.group(2)))
+    return list(reversed(found))
+
+
+def _depth(block: str) -> int:
+    """The deepest nesting of brackets outside strings, without parsing."""
+    deepest = level = 0
+    in_string = escaped = False
+    for ch in block:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "{[":
+            level += 1
+            deepest = max(deepest, level)
+            if deepest > MAX_DEPTH:
+                return deepest
+        elif ch in "}]":
+            level -= 1
+    return deepest
+
+
+def _walk(value, budget: int) -> Iterator[tuple[str, str]]:
+    if budget < 0:
+        return
     if isinstance(value, dict):
         tab, url = value.get("tabId"), value.get("url")
         if isinstance(tab, (int, str)) and not isinstance(tab, bool) and isinstance(url, str):
             yield str(tab), url
         for child in value.values():
-            yield from _walk(child)
+            yield from _walk(child, budget - 1)
     elif isinstance(value, list):
         for child in value:
-            yield from _walk(child)
+            yield from _walk(child, budget - 1)

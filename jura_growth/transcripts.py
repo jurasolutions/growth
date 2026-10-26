@@ -40,7 +40,7 @@ class ToolCall:
     ok: bool | None = None  # None until its result is seen
     denied: bool = False
     error_text: str = ""
-    result: str = ""  # the result's text, as the tool returned it (RESULT_CHARS at most)
+    result: str = ""  # the result's text, as the tool returned it (RESULT_CHARS at most, head and tail)
 
     def urls(self) -> list[str]:
         """URLs this call would open. WebSearch only searches, so it opens none."""
@@ -122,7 +122,10 @@ def read(path: Path) -> Transcript:
                     if call is None:
                         continue
                     text = _result_text(block.get("content"))
-                    call.result = text[:RESULT_CHARS]
+                    # The head and the tail of a long result: a tool's own context (the publish
+                    # audit's tab address) comes after the page text, at the end.
+                    half = RESULT_CHARS // 2
+                    call.result = text if len(text) <= RESULT_CHARS else text[:half] + text[-half:]
                     call.ok = not block.get("is_error")
                     if not call.ok:
                         call.error_text = text[:300]
