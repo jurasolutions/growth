@@ -815,3 +815,13 @@ decisions: fix round 2 verified by the conductor with the reviewer repros: repro
 decisions: next wave: bp 04 (Instagram, LinkedIn), bp 06 (joins as the Page), bp 07 (fixture platform)
 questions: -
 evidence:  merged branch pytest -rs -> see commit
+
+## 2026-10-27T05:44+0800 reviewer (bp 04) via conductor
+status:    done
+persona:   reviewer
+ticket:    bp-04
+artifacts: .scratch/browser-publishing/reviews/code-review-04.md
+decisions: changes-requested; B1 audit uses all enabled platform hosts, not the claimed item platform (cross-platform post ends ok); should fix S1 failed upload counted, S3 native upload buttons, S4 done URL shape, S5 LinkedIn /in/ accepted, S2 docs; hosts exact; round-3 protections hold
+decisions: conductor: weekends stay on with three platforms (crew recommendation), weekends:false documented; sent as fix round 1
+questions: -
+evidence:  3015 passed; repro_04 and fake-claude B1b/S1 reproduce
