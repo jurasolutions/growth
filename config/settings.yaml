@@ -18,6 +18,7 @@ discord:
     - community
     - alerts
     - approvals
+    - mission-control
 
 # Approval requests (mission control PRD §4.6, §5.7). Read through
 # jura_growth/approval_settings.py; the kinds and `remote` only read this block.
@@ -102,6 +103,14 @@ jobs:
     kind: command
     command: [digest]
     schedule: {daily: "17:30"}
+
+  # The one-pager (mission control PRD SC1): writes the day's approval lapses,
+  # then posts to #mission-control. Not in headless.NEVER: it is this job's own command.
+  one-pager:
+    agent: digest
+    kind: command
+    command: [one-pager]
+    schedule: {daily: "08:00"}
 
   community:
     agent: community

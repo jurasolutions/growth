@@ -393,15 +393,28 @@ def heartbeat() -> str:
 
 @cli.command("one-pager")
 @click.option("--no-post", is_flag=True, help="Print the one-pager instead of posting it.")
-def one_pager_cmd(no_post) -> None:
-    """Build the one-pager from growth.db, read-only, and print it."""
-    if not no_post:
-        raise click.UsageError("posting the one-pager to #mission-control isn't built yet; use --no-post to print it")
-    pieces = one_pager_mod.messages(mission.read(mission.Source.here()))
-    for index, piece in enumerate(pieces):
-        if index:
-            click.echo(f"\n(message {index + 1} of {len(pieces)})\n")
-        click.echo(piece)
+def one_pager_cmd(no_post) -> str | None:
+    """Post the one-pager to #mission-control, with the 14-day grid.
+
+    First write the approval lapses that are due (MC §4.2, A17), then build
+    from growth.db read-only. With --no-post, only print it: nothing is written."""
+    if no_post:
+        pieces = one_pager_mod.messages(mission.read(mission.Source.here()))
+        for index, piece in enumerate(pieces):
+            if index:
+                click.echo(f"\n(message {index + 1} of {len(pieces)})\n")
+            click.echo(piece)
+        return None
+    with db.session() as conn:
+        # Lapsed cards are edited (edits don't notify); new cards wait for the
+        # heartbeat or a raising command, and the one-pager lists them.
+        _approval_upkeep(conn, post=False)
+    snapshot = mission.read(mission.Source.here())
+    with db.session() as conn:
+        result = one_pager_mod.post(conn, snapshot)
+    answer = f"posted to #{result.channel}" if result.delivered else f"not posted to #{result.channel}: {result.reason}"
+    click.echo(answer)
+    return answer
 
 
 @cli.command()

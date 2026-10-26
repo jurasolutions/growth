@@ -4,20 +4,23 @@ Built from a `mission.Snapshot`, never from the database, in this order: the
 header, Needs you (the health strip), Approvals waiting, Today, Yesterday and
 Ask me. `messages()` is what goes to Discord: the text through
 `privacy.for_discord()`, split by `discord.split()` only past 2,000
-characters. `jura-growth one-pager --no-post` prints it; posting it to
-#mission-control with the 14-day grid, and the 08:00 job, are ticket MC-09.
+characters. `post()` sends it to #mission-control with the 14-day grid as a
+PNG (`grid_html`, drawn by the core Chrome helper in `images.py`); the 08:00
+`one-pager` job and `/growth one-pager` both run `jura-growth one-pager`, and
+`--no-post` prints it instead.
 
 The one-pager is for Ting Yu only and shows only figures the engine recorded.
 """
 
 from __future__ import annotations
 
+import sqlite3
 from collections import Counter
 from datetime import timedelta
 from html import escape
 from pathlib import Path
 
-from jura_growth import discord, health, images, mission, privacy, slots
+from jura_growth import discord, health, images, log, mission, paths, privacy, slots
 
 ASK_ME = ("`/growth status`", "`/growth approvals`", "`/growth one-pager`", "`/growth pause <agent|all>`", "`/growth resume <agent|all>`")
 SLOTS_LISTED = 3  # a job with more slots in a day shows counts per status instead
@@ -228,3 +231,38 @@ def render_grid(snapshot: mission.Snapshot, out: Path, *, chrome: images.Chrome,
     """The grid as a PNG at `out`, through the core Chrome helper."""
     width, height = grid_size(snapshot)
     return images.screenshot(grid_html(snapshot), out, width, height, chrome=chrome, offline=offline)
+
+
+# --- posting to #mission-control (MC SC1) ---------------------------------------------------
+
+CHANNEL = "mission-control"
+USERNAME = "Jura growth · mission control"
+# Off in production, so the design system's web fonts load. The tests switch it
+# on: there Chrome's host resolver is off and the page can't reach the network.
+OFFLINE = False
+
+
+def grid_png(snapshot: mission.Snapshot) -> tuple[Path | None, str | None]:
+    """The grid drawn to `data/growth/one-pager/grid-<day>.png` (one file a
+    day, replaced by a later one-pager that day), or None and why not."""
+    out = paths.data_dir() / "one-pager" / f"grid-{snapshot.now:%Y-%m-%d}.png"
+    try:
+        return render_grid(snapshot, out, chrome=images.Chrome(images.DEFAULT_CHROME), offline=OFFLINE), None
+    except images.RenderError as error:
+        return None, str(error)
+    except Exception as error:  # noqa: BLE001 - the text goes out without the picture
+        return None, f"{type(error).__name__}: {error}"
+
+
+def post(conn: sqlite3.Connection, snapshot: mission.Snapshot) -> discord.PostResult:
+    """The one-pager to #mission-control: the text, split only past 2,000
+    characters, and the grid on the last piece (`discord.post` attaches files
+    there). Never deduplicated: asked for twice, it posts twice (MC §5.10).
+    When the grid can't be drawn, the text still goes and says why."""
+    content = text(snapshot)
+    png, problem = grid_png(snapshot)
+    if problem:
+        log.event(conn, "one_pager.grid_failed", {"error": problem}, level="warning")
+        content += f"\n\n(The 14-day grid couldn't be drawn: {problem})"
+    return discord.post(conn, CHANNEL, content, files=[png] if png else [], username=USERNAME, dedupe=False,
+                        suppress_embeds=True)

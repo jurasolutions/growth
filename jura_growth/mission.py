@@ -129,7 +129,7 @@ class Request:
     close_reason: str | None
 
 
-# The one-pager job's own schedule (ticket 09 adds the job); until then, its planned 08:00.
+# The one-pager job's own schedule (config/settings.yaml); without the job, its planned 08:00.
 ONE_PAGER_JOB, ONE_PAGER_DEFAULT = "one-pager", {"daily": "08:00"}
 ONE_PAGER_GRACE = timedelta(hours=1)  # a slot this recent is the one-pager being built now
 ONE_PAGER_LOOKBACK = timedelta(days=7)  # "since the last one-pager" never reaches further back

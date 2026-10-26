@@ -73,6 +73,7 @@ brackets are required; words in square brackets are optional.
 | `approvals [kind]` | `approvals` | The 15 soonest to lapse, then "and N more". `--json` adds `approvals` |
 | `approve <A-nnnn> [key=value …] [note]` | `approve` | Answers from the enum below. Leading `key=value` words are the kind's arguments (`group-rules`: `promo_days=… post_days=…`); the rest is a note |
 | `community removed <group-id>` | `community removed` | |
+| `one-pager` | `one-pager` | Posts the one-pager to `#mission-control` with the 14-day grid, dedupe off: asked twice, it posts twice. Answers "posted to #mission-control", or says why not |
 | `outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]` | `outreach requeue-shadow` | Live mode only; each requeued email raises its own approval request. Exit 1 in shadow mode |
 | `pause <agent\|all> [reason]` | `pause` | The rest of the words are the reason; "paused from Discord" without one |
 | `resume <agent\|all>` | `resume` | With a PAUSE file present, the answer says it can only be removed on the Mac |
