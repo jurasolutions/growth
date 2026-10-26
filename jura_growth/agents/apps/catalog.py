@@ -105,8 +105,14 @@ def prd_files() -> list[PrdFile]:
     return found
 
 
-def waiting() -> list[PrdFile]:
-    return [f for f in prd_files() if f.state == "pending"]
+def waiting(conn: sqlite3.Connection) -> list[PrdFile]:
+    """The waiting pile (MC §5.9 step 6): PRDs in `prd/pending/apps/` waiting for an `app-build`
+    decision. Handed-off builds and Ting Yu's own PRDs, which have no request, don't count."""
+    asked = {
+        row[0]
+        for row in conn.execute("SELECT subject FROM approvals WHERE kind = 'app-build' AND status = 'pending'")
+    }
+    return [f for f in prd_files() if f.state == "pending" and f"app:{f.app_id}" in asked]
 
 
 def waiting_max() -> int:
@@ -212,9 +218,9 @@ def limit_reason(conn: sqlite3.Connection, day: str | None = None) -> str | None
     if len(written) >= per_day():
         first = written[0]
         return f"app PRD already written today ({first['app_id']} {first['name']}); one a day"
-    count = len(waiting())
+    count = len(waiting(conn))
     if count >= waiting_max():
-        return f"{count} app PRDs waiting in prd/pending/apps (limit {waiting_max()}); skipping until some are built"
+        return f"{count} app PRDs waiting for an app-build decision (limit {waiting_max()}); skipping until some are decided"
     dropped = db.one(conn, "SELECT attempts FROM qa_attempts WHERE item_key = ?", (gate_key(day),))
     from jura_growth import gate
 
