@@ -28,6 +28,7 @@ from jura_growth.cli import cli
 REAL_PRD = paths.JURA_ROOT / "prd"
 TASK = "T-0031"
 BRANCH = "claude/T-0031-paynow-qr"
+PROJECT = "jura-site"
 PREVIEW = "https://claude-t-0031-paynow-qr.jura-site.pages.dev"
 
 
@@ -47,8 +48,15 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setenv("CONTROL_DISCORD_USER_ID", aw.CONTROL_ID)
     aw.at(monkeypatch, aw.NOW)
     config.reset_caches()
+    pages_project(monkeypatch, PROJECT)
     site_repo.make()
     return prd
+
+
+def pages_project(monkeypatch, name):
+    """`pages_project` in config/apps.yaml: the landing page's Cloudflare Pages project."""
+    real = catalog.settings
+    monkeypatch.setattr(catalog, "settings", lambda: {**real(), "pages_project": name})
 
 
 def handed_off(conn, number: int = 101) -> tuple[str, approvals.Approval]:
@@ -115,6 +123,23 @@ def test_built_moves_the_handoff_off_the_list_waiting_for_a_builder(conn):
         ("preview", "http://claude-t-0031.jura-site.pages.dev"),
         ("preview", "https://jurasolutions.sg/apps/paynow-qr"),
         ("preview", "https://evil.example/?x=.pages.dev"),
+        # code review 10b, B1: a masked link, or anything else Discord would render as Markdown
+        ("preview", "https://x.jura-site.pages.dev/ [open the preview](https://evil.example/login)"),
+        ("preview", "https://x.jura-site.pages.dev/[a](https://evil.example)"),
+        ("preview", "https://x.jura-site.pages.dev/apps/<b>"),
+        ("preview", "https://x.jura-site.pages.dev/apps/`x`"),
+        ("preview", "https://x.jura-site.pages.dev/apps/_x_"),
+        ("preview", "https://x.jura-site.pages.dev/apps/x?y=1"),
+        ("preview", "https://x.jura-site.pages.dev/apps/x#y"),
+        ("preview", " https://x.jura-site.pages.dev"),
+        ("preview", "https://x.jura-site.pages.dev\nhttps://evil.example"),
+        ("preview", "https://X.jura-site.pages.dev"),
+        # S1: only the landing page's own project, and only a preview of it
+        ("preview", "https://not-jura.pages.dev"),
+        ("preview", "https://x.not-jura.pages.dev"),
+        ("preview", "https://x.jura-site-not.pages.dev"),
+        ("preview", "https://jura-site.pages.dev"),  # production, not a preview
+        ("preview", "https://a.b.jura-site.pages.dev"),
     ],
 )
 def test_built_refuses_what_it_cannot_bind_or_show_safely(conn, field, value):
@@ -124,6 +149,46 @@ def test_built_refuses_what_it_cannot_bind_or_show_safely(conn, field, value):
     assert result.exit_code == 1, result.output
     assert release_requests(conn) == []
     assert [b["app_id"] for b in builds.open_handoffs(conn)] == [app_id]  # still waiting for its build
+
+
+def test_the_card_shows_the_preview_as_plain_text_and_says_it_follows_the_branch(conn, discord_double):
+    """Code review 10b, B1 and N2."""
+    app_id, _ = handed_off(conn)
+    sha = site_repo.branch(BRANCH)
+    preview = f"{PREVIEW}/apps/paynow-qr/"
+    assert built(app_id, sha, preview=preview).exit_code == 0
+    [card] = [p for p in discord_double.posts("approvals") if "· app release**" in (p.content or "")]
+    lines = card.content.splitlines()
+    assert f"Preview: {preview}" in lines
+    assert any(f"the release is commit {sha[:7]}" in line and "latest push" in line for line in lines)
+
+
+def test_without_the_pages_project_set_no_preview_is_accepted(conn, monkeypatch):
+    """S1: the project comes from config/apps.yaml; unset, `apps built` refuses and says what to set."""
+    pages_project(monkeypatch, None)
+    app_id, _ = handed_off(conn)
+    result = built(app_id, site_repo.branch(BRANCH))
+    assert result.exit_code == 1 and "pages_project" in result.output
+    assert release_requests(conn) == []
+
+
+def test_a_new_preview_after_the_approval_supersedes_it(conn):
+    """S2: the preview link is part of what Ting Yu approved, so it can't be swapped afterwards."""
+    app_id, sha, request = approved_release(conn)
+    other = "https://claude-t-0031-paynow-qr-v2.jura-site.pages.dev"
+    result = built(app_id, sha, preview=other)
+    assert result.exit_code == 0
+    old, new = release_requests(conn)
+    assert old.status == "superseded" and new.status == "pending" and new.supersedes == old.number
+    assert invoke("apps", "release-plan", app_id).exit_code == 1
+
+
+def test_built_refuses_a_commit_main_already_contains(conn):
+    """N1: there is nothing to release, so no request is raised."""
+    app_id, _ = handed_off(conn)
+    result = built(app_id, site_repo.main_head())
+    assert result.exit_code == 1 and "main already contains" in result.output
+    assert release_requests(conn) == []
 
 
 def test_built_again_with_the_same_commit_keeps_the_one_request(conn, discord_double):
@@ -288,6 +353,46 @@ def test_released_records_the_release_and_moves_the_prd_to_done_with_both_approv
     assert invoke("apps", "built", app_id, "--task", TASK, "--branch", BRANCH, "--sha", sha, "--preview", PREVIEW).exit_code == 1
 
 
+def test_a_tag_named_main_does_not_stand_in_for_the_main_branch(conn):
+    """S3: `released` checks refs/heads/main, so a tag `main` holding the commit counts for nothing."""
+    app_id, sha, _ = approved_release(conn)
+    assert invoke("apps", "release-plan", app_id).exit_code == 0
+    site_repo.git(paths.site_repo(), "tag", "main", sha)
+    result = invoke("apps", "released", app_id, "--task", TASK)
+    assert result.exit_code == 1 and pending_prd(app_id) is not None
+
+
+def test_released_updates_the_backlog_even_when_the_prd_is_not_in_pending(conn):
+    """S6: §5.9 step 4 updates the backlog whether or not the PRD file is there to move."""
+    app_id, sha, _ = approved_release(conn)
+    assert invoke("apps", "release-plan", app_id).exit_code == 0
+    site_repo.merge(sha)
+    pending_prd(app_id).unlink()
+    result = invoke("apps", "released", app_id, "--task", TASK)
+    assert result.exit_code == 0 and "isn't in prd/pending/apps/" in result.output
+    [row] = [r for r in backlog.load() if r.get("app_id") == app_id]
+    assert row["status"] == "live"
+
+
+def test_a_failed_backlog_write_is_reported_as_that_not_as_a_failed_move(conn, monkeypatch):
+    """S7: the PRD has moved; only the backlog is left to do by hand."""
+    app_id, sha, _ = approved_release(conn)
+    assert invoke("apps", "release-plan", app_id).exit_code == 0
+    site_repo.merge(sha)
+
+    def refuse(**_):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(backlog, "release", refuse)
+    result = invoke("apps", "released", app_id, "--task", TASK)
+    assert result.exit_code == 0
+    assert "PRD moved to prd/done/apps/" in result.output and "couldn't be moved" not in result.output
+    assert "backlog couldn't be updated" in result.output
+    assert len(done_prds()) == 1 and pending_prd(app_id) is None
+    assert [e["app_id"] for e in aw.events(conn, "apps.backlog.release_failed")] == [app_id]
+    assert aw.events(conn, "apps.prd.done_move_failed") == []
+
+
 def test_released_only_reads_the_temp_landing_page_repository(conn, tmp_path, monkeypatch):
     """The write guard doesn't cover subprocesses, so the test checks every git call: each runs
     against the repository under tmp_path, and none fetches, pulls, merges, pushes or writes."""
@@ -308,7 +413,7 @@ def test_released_only_reads_the_temp_landing_page_repository(conn, tmp_path, mo
         assert call[:2] == ["git", "-C"]
         assert Path(call[2]).resolve().is_relative_to(tmp_path.resolve())
         assert call[3] in ("merge-base", "rev-parse")
-    assert ["git", "-C", str(paths.site_repo()), "merge-base", "--is-ancestor", sha, "main"] in calls
+    assert ["git", "-C", str(paths.site_repo()), "merge-base", "--is-ancestor", sha, "refs/heads/main"] in calls
 
 
 # --- skip, expiry and lapse leave it on its preview, listed in the one-pager (MC §5.7) ---------------
@@ -362,6 +467,29 @@ def test_the_one_pager_says_what_an_approved_or_claimed_release_waits_for(conn):
     site_repo.merge(sha)
     assert invoke("apps", "released", app_id, "--task", TASK).exit_code == 0
     assert one_pager_lines(app_id, aw.NOW) == []
+
+
+def test_the_one_pager_judges_deadlines_by_the_clock_before_the_lapse_is_written(conn, monkeypatch):
+    """S4 (ADR 0002): an approval past its use-by, or a request past its decide-by, reads as lapsed
+    even before `expire_due` writes it, so the one-pager never points at a command that refuses."""
+    app_id, _, request = approved_release(conn)
+    use_by = aw.get(conn, request.id).use_by
+    aw.at(monkeypatch, aw.later(use_by, seconds=-1))
+    [line] = one_pager_lines(app_id, aw.later(use_by, seconds=-1))
+    assert line.startswith("App release approved:")
+    aw.at(monkeypatch, use_by)
+    [line] = one_pager_lines(app_id, use_by)
+    assert line.startswith("App on its preview:") and "approved, but its merge was never printed" in line
+    assert aw.get(conn, request.id).status == "approved"  # nothing was written
+
+    other, _ = handed_off(conn, 102)
+    assert built(other, site_repo.branch("claude/T-0032-other", file="other.txt"), task="T-0032",
+                 branch="claude/T-0032-other", preview="https://claude-t-0032-other.jura-site.pages.dev").exit_code == 0
+    pending = release_requests(conn)[-1]
+    assert one_pager_lines(other, use_by) == []  # still waiting: the approvals list has it
+    aw.at(monkeypatch, pending.decide_by)
+    [line] = one_pager_lines(other, pending.decide_by)
+    assert line.startswith("App on its preview:") and "expired unanswered" in line
 
 
 # --- AC-M4.7 and the sweep ------------------------------------------------------------------------------

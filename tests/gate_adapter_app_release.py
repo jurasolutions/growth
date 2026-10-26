@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from jura_growth import approvals, db, paths
-from jura_growth.agents.apps import builds, releases
+from jura_growth.agents.apps import builds, catalog, releases
 
 import approval_world as aw
 import site_repo
@@ -38,6 +38,8 @@ class AppReleaseAdapter:
         self.printed: list[dict] = []
         monkeypatch.setenv("CONTROL_DISCORD_USER_ID", aw.CONTROL_ID)
         aw.at(monkeypatch, aw.NOW)
+        real = catalog.settings
+        monkeypatch.setattr(catalog, "settings", lambda: {**real(), "pages_project": "jura-site"})
 
     # --- the world ------------------------------------------------------------------------------
 
@@ -71,7 +73,7 @@ class AppReleaseAdapter:
     # --- the contract ----------------------------------------------------------------------------
 
     def item(self) -> str:
-        return releases.subject(self._hand_off())
+        return builds.subject(self._hand_off())
 
     def twin(self, subject: str) -> str:
         """Another app built from the very same task, branch and commit, never reported."""
@@ -82,7 +84,7 @@ class AppReleaseAdapter:
             "UPDATE app_builds SET status = 'built', task_id = ?, branch = ?, head_sha = ?, preview_url = ? WHERE app_id = ?",
             (source["task"], source["branch"], source["sha"], source["preview"], twin),
         )
-        return releases.subject(twin)
+        return builds.subject(twin)
 
     def raise_request(self, subject: str) -> approvals.Approval:
         app_id = builds.app_id_of(subject)

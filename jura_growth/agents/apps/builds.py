@@ -54,6 +54,28 @@ def pending_file(app_id: str) -> catalog.PrdFile | None:
     return None
 
 
+def app_name(conn: sqlite3.Connection, app_id: str) -> str:
+    """The app's name: the factory's record, else its pending PRD's title, else empty."""
+    name = db.scalar(conn, "SELECT name FROM app_prds WHERE app_id = ?", (app_id,))
+    if name:
+        return name
+    found = pending_file(app_id)
+    return found.name if found else ""
+
+
+def day_deadlines(kind: str, now: datetime) -> approvals.Deadlines:
+    """A kind's decide-by and use-by in whole days, from the `approvals:` block (capped)."""
+    return approvals.Deadlines(
+        decide_by=now + timedelta(days=approval_settings.deadline(kind, "decide_by_days")),
+        use_by=now + timedelta(days=approval_settings.deadline(kind, "use_by_days")),
+    )
+
+
+def sgt_day(stamp: str) -> str:
+    """The SGT calendar day of a stored time, `2026-11-10`."""
+    return timeutil.parse(stamp).astimezone(timeutil.SGT).date().isoformat()
+
+
 # --- the kind -----------------------------------------------------------------
 
 
@@ -91,10 +113,7 @@ class AppBuild:
         return approvals.Preview(title=f"{found.app_id} {found.name}", text=text, reason="", files=(found.path,))
 
     def deadlines(self, conn: sqlite3.Connection, subject: str, now: datetime) -> approvals.Deadlines:
-        return approvals.Deadlines(
-            decide_by=now + timedelta(days=approval_settings.deadline(KIND, "decide_by_days")),
-            use_by=now + timedelta(days=approval_settings.deadline(KIND, "use_by_days")),
-        )
+        return day_deadlines(KIND, now)
 
     def on_approve(self, conn: sqlite3.Connection, subject: str, args: dict[str, str]) -> str:
         build = hand_off(conn, subject, run_id=log.current_run_id())
@@ -207,15 +226,9 @@ def answer_line(build: dict) -> str:
 def open_handoffs(conn: sqlite3.Connection) -> list[dict]:
     """Handoffs waiting for a builder, oldest first."""
     rows = db.rows(conn, "SELECT * FROM app_builds WHERE status = 'handed_off' ORDER BY id")
-    names = {r["app_id"]: r["name"] for r in db.rows(conn, "SELECT app_id, name FROM app_prds")}
     for row in rows:
-        row["name"] = names.get(row["app_id"]) or _file_name(row["app_id"])
+        row["name"] = app_name(conn, row["app_id"])
     return rows
-
-
-def _file_name(app_id: str) -> str:
-    found = pending_file(app_id)
-    return found.name if found else ""
 
 
 def prd_file(prd_path: str) -> Path:
@@ -303,14 +316,13 @@ def _set_aside(conn: sqlite3.Connection, subject: str, *, skipped: bool) -> None
     the decision or expiry that called this commits (`db.after_commit`): a transaction that
     rolls back leaves the PRD and the backlog as they were (code review 10, N4)."""
     app_id = app_id_of(subject)
-    record = db.one(conn, "SELECT id, decide_by FROM approvals WHERE kind = ? AND subject = ? ORDER BY id DESC LIMIT 1",
-                    (KIND, subject))
-    shown = approvals.format_id(record["id"]) if record else "none"
+    record = approvals.latest(conn, KIND, subject)
+    shown = record.id if record else "none"
     if skipped:
         day = timeutil.today_str()
         why = f"Skipped by Ting Yu on {day} (approval {shown})."
     else:
-        day = timeutil.parse(record["decide_by"]).astimezone(timeutil.SGT).date().isoformat() if record else timeutil.today_str()
+        day = sgt_day(record.decide_by) if record else timeutil.today_str()
         why = f"Expired unanswered on {day} (approval {shown})."
     found = pending_file(app_id)
     target = catalog.skipped_dir() / found.path.name if found is not None else None
