@@ -25,7 +25,8 @@ KIND = "fake"
 AGENT = "fake-agent"
 # A Tuesday that is a business day (test strategy v3 §3, reference dates).
 NOW = "2026-11-10T10:02:15+08:00"
-TERMINAL_USER = "tingyu"
+CONTROL_ID = "111"  # CONTROL_DISCORD_USER_ID in the tests (test strategy v3 §0)
+CONTROL = f"discord:{CONTROL_ID}"
 
 
 def at(monkeypatch, moment: str | None) -> datetime:
@@ -141,10 +142,12 @@ class World:
 
 
 def install(monkeypatch, world: World | None = None) -> World:
-    """Register the fake plug-in beside the real ones."""
+    """Register the fake plug-in beside the real ones, with Ting Yu's
+    Discord id as the control user, so `dispatch()` decisions hold."""
     world = world or World()
     real = agents.plugins
     monkeypatch.setattr(agents, "plugins", lambda: (*real(), world.plugin))
+    monkeypatch.setenv("CONTROL_DISCORD_USER_ID", CONTROL_ID)
     return world
 
 
@@ -152,24 +155,26 @@ def prepare(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE TABLE IF NOT EXISTS fake_in_flight (subject TEXT NOT NULL)")
 
 
-def terminal(approval, code: str | None = None) -> Origin:
-    return Origin.terminal(TERMINAL_USER, code if code is not None else approval.code)
+def dispatch() -> Origin:
+    """The only origin that decides: `remote` under the SSH forced command
+    (Terminal decisions are off, ADR 0004)."""
+    return Origin.ssh()
 
 
-def approve(conn, approval, *, args=None, origin=None, actor=None, source_ref=None):
+def approve(conn, approval, *, args=None, origin=None, actor=CONTROL, source_ref=None):
     return approvals.decide(
         conn,
         approval.id,
         "approve",
         actor=actor,
-        origin=origin or terminal(approval),
+        origin=origin or dispatch(),
         source_ref=source_ref,
         args={"promo_days": "sat,sun", "post_days": "any"} if args is None else args,
     )
 
 
-def skip(conn, approval, *, origin=None, actor=None, source_ref=None):
-    return approvals.decide(conn, approval.id, "skip", actor=actor, origin=origin or terminal(approval), source_ref=source_ref, args={})
+def skip(conn, approval, *, origin=None, actor=CONTROL, source_ref=None):
+    return approvals.decide(conn, approval.id, "skip", actor=actor, origin=origin or dispatch(), source_ref=source_ref, args={})
 
 
 def run(conn) -> int:

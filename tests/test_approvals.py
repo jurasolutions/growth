@@ -4,6 +4,7 @@ A17, ADR 0003). The cases every kind runs are in test_approval_gates.py."""
 
 import hashlib
 import time
+import types
 
 import pytest
 
@@ -29,7 +30,6 @@ def test_request_raises_one_pending_record_over_the_kinds_content(conn, world):
     assert approval.id == "A-0001"
     assert approval.status == "pending"
     assert approval.content_hash == expected
-    assert approval.code == expected[:6]
     assert approval.requested_at == aw.NOW
     assert approval.decide_by == "2026-11-12T10:02:15+08:00"
     assert approval.raised_by_run == run_id
@@ -107,10 +107,9 @@ def test_parse_id_accepts_only_a_ids():
 
 
 @pytest.mark.parametrize("build", [
-    lambda: Origin("terminal", code="abcdef"),
-    lambda: Origin("terminal", user="tingyu"),
-    lambda: Origin("terminal", user="", code="abcdef"),
-    lambda: Origin("ssh", user="tingyu"),
+    lambda: Origin("terminal"),  # Terminal decisions are off (ADR 0004)
+    lambda: Origin("terminal", reason="typed in Terminal"),
+    lambda: Origin("ssh", reason="anything"),
     lambda: Origin("claude"),
     lambda: Origin("refused"),
 ])
@@ -147,12 +146,16 @@ def test_an_ssh_approval_records_actor_origin_growths_time_hash_and_ref(conn, wo
     assert event["at"] == "2026-11-10T10:02:15+08:00" and event["hash"] == approval.content_hash
 
 
-def test_a_terminal_approval_records_the_macos_user(conn, world):
-    """AC-M6.4, the record: the real Terminal path is ticket 04b's."""
+def test_there_is_no_terminal_origin_and_a_lookalike_decides_nothing(conn, world):
+    """MC3 as amended 2026-10-26: Terminal decisions are off (ADR 0004), so
+    AC-M6.4's Terminal record can't be made, even by an object that looks
+    like the old Terminal origin."""
+    assert not hasattr(Origin, "terminal")
     _, approval = raise_one(conn, world)
-    assert aw.approve(conn, approval).answer == "recorded"
-    row = aw.record(conn, approval.id)
-    assert row["decided_by"] == f"terminal:{aw.TERMINAL_USER}" and row["decided_origin"] == "terminal"
+    lookalike = types.SimpleNamespace(kind="terminal", human=True, user="tingyu", code=approval.content_hash[:6], reason=None)
+    for decision in (aw.approve, aw.skip):
+        assert decision(conn, approval, origin=lookalike, actor=None).answer == "refused"
+    assert aw.get(conn, approval.id).status == "pending"
 
 
 def test_an_ssh_actor_that_is_not_the_control_user_is_refused_and_logged(conn, world, control_user):
@@ -167,16 +170,16 @@ def test_an_ssh_actor_that_is_not_the_control_user_is_refused_and_logged(conn, w
     assert world.ran("on_approve") == []
 
 
-def test_an_ssh_decision_is_refused_when_no_control_user_is_configured(conn, world):
+def test_an_ssh_decision_is_refused_when_no_control_user_is_configured(conn, world, monkeypatch):
+    monkeypatch.delenv("CONTROL_DISCORD_USER_ID")
     _, approval = raise_one(conn, world)
     answer = aw.approve(conn, approval, origin=Origin.ssh(), actor="discord:111")
     assert answer.answer == "refused" and aw.get(conn, approval.id).status == "pending"
 
 
-@pytest.mark.parametrize("origin", [Origin.refused("no terminal"), None])
-def test_a_refused_origin_or_a_wrong_terminal_code_decides_nothing(conn, world, origin):
+@pytest.mark.parametrize("origin", [Origin.refused("no terminal"), Origin.refused("a claude ancestor")])
+def test_a_refused_origin_decides_nothing(conn, world, origin):
     _, approval = raise_one(conn, world)
-    origin = origin or aw.terminal(approval, code="000000" if approval.code != "000000" else "111111")
     for decision in (aw.approve, aw.skip):
         answer = decision(conn, approval, origin=origin)
         assert answer.answer == "refused"
@@ -192,9 +195,11 @@ def test_a_refused_origin_stays_refused_whatever_actor_it_claims(conn, world, co
     assert aw.get(conn, approval.id).status == "pending"
 
 
-def test_a_terminal_actor_that_is_not_the_terminal_user_is_refused(conn, world):
+def test_an_ssh_decision_without_an_actor_is_refused(conn, world):
     _, approval = raise_one(conn, world)
-    assert aw.approve(conn, approval, actor="discord:111").answer == "refused"
+    answer = aw.approve(conn, approval, actor=None)
+    assert answer.answer == "refused" and "--actor" in answer.text
+    assert aw.get(conn, approval.id).status == "pending"
 
 
 def test_the_same_ref_twice_records_once_and_returns_the_first_answer(conn, world, control_user):
@@ -304,13 +309,12 @@ def test_a_skip_on_a_pending_request_runs_on_skip_once(conn, world):
     assert aw.get(conn, approval.id).status == "skipped"
     assert world.ran("on_skip") == [("on_skip", subject)]
     [event] = aw.events(conn, "approval.skipped")
-    assert event["actor"] == f"terminal:{aw.TERMINAL_USER}" and event["origin"] == "terminal"
+    assert event["actor"] == aw.CONTROL and event["origin"] == "ssh"
 
 
 @pytest.mark.parametrize("number", ["A-9999", "P-0042", "publish_item:42", "42"])
 def test_an_id_that_names_no_request_answers_unknown_id(conn, world, number):
-    origin = Origin.terminal(aw.TERMINAL_USER, "abcdef")
-    answer = approvals.decide(conn, number, "approve", actor=None, origin=origin, source_ref=None, args={})
+    answer = approvals.decide(conn, number, "approve", actor=aw.CONTROL, origin=aw.dispatch(), source_ref=None, args={})
     assert answer.answer == "unknown-id"
 
 
@@ -394,8 +398,7 @@ def test_an_argument_the_kind_does_not_take_is_refused(conn, world):
     answer = aw.approve(conn, approval, args={"promo_days": "sat", "post_days": "any", "send_now": "yes"})
     assert answer.answer == "refused" and "send_now" in answer.text
     _, other = raise_one(conn, world, "other")
-    origin = aw.terminal(other)
-    assert approvals.decide(conn, other.id, "skip", actor=None, origin=origin, source_ref=None, args={"x": "1"}).answer == "refused"
+    assert approvals.decide(conn, other.id, "skip", actor=aw.CONTROL, origin=aw.dispatch(), source_ref=None, args={"x": "1"}).answer == "refused"
 
 
 # --- use: the claim -----------------------------------------------------------
@@ -700,7 +703,7 @@ def states(conn, world) -> dict[str, approvals.Approval]:
     }.items()}
 
 
-DECIDED = "decided_at = '2026-11-10T10:02:15+08:00', decided_by = 'terminal:t', decided_origin = 'terminal'"
+DECIDED = "decided_at = '2026-11-10T10:02:15+08:00', decided_by = 'discord:111', decided_origin = 'ssh'"
 CLOSED = "closed_at = '2026-11-10T10:02:15+08:00', close_reason = 'test'"
 
 ALLOWED = [
@@ -824,7 +827,8 @@ def test_a_database_at_mains_schema_migrates_through_0003_with_no_row_changed(tm
     conn.execute("INSERT INTO pause_flags (agent, paused, reason, set_at) VALUES ('social', 1, 'by hand', ?)", (aw.NOW,))
     tables = [r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
     before = {t: db.rows(conn, f"SELECT * FROM {t}") for t in tables}
-    assert db.migrate(conn) == ["core/0003_approvals.sql"]
+    # 0004 (ticket 04b) adds the approval_cards table and changes no row either.
+    assert db.migrate(conn) == ["core/0003_approvals.sql", "core/0004_approval_cards.sql"]
     assert {t: db.rows(conn, f"SELECT * FROM {t} WHERE rowid IN (SELECT rowid FROM {t})") for t in tables if t != "schema_migrations"} == {
         t: rows for t, rows in before.items() if t != "schema_migrations"
     }

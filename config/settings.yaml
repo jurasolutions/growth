@@ -17,6 +17,21 @@ discord:
     - social-drafts
     - community
     - alerts
+    - approvals
+
+# Approval requests (mission control PRD §4.6, §5.7). Read through
+# jura_growth/approval_settings.py; the kinds and `remote` only read this block.
+approvals:
+  discord_buttons: false   # buttons checked by Ting Yu (U17); unlocks live outreach (06)
+  post_buttons: false      # send Approve/Skip components on cards (11); needs Dispatch's own webhook
+  dispatch_builds: false   # Dispatch D6 polls handoffs (10)
+  # In the units of jura_growth/caps.py. A value may shorten a deadline, never
+  # lengthen it: anything above the cap reads as the cap.
+  deadlines:
+    outreach-email: {decide_by_business_days: 1, use_by_business_days: 3}
+    app-build: {decide_by_days: 7, use_by_days: 1}
+    app-release: {decide_by_days: 7, use_by_days: 14}
+    group-rules: {decide_by_days: 14}
 
 # Headless Claude Code runs (`claude -p`).
 claude:

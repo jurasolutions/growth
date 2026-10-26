@@ -30,7 +30,6 @@ The core never imports an agent by name: it asks the job's agent plug-in.
 from __future__ import annotations
 
 import functools
-import os
 from dataclasses import dataclass
 from typing import Callable, Iterator
 
@@ -171,7 +170,7 @@ def _guarded(kind: click.Path) -> GuardedPath:
 def _enforced(name: str, callback: Callable) -> Callable:
     @functools.wraps(callback)
     def run(*args, **kwargs):
-        job = os.environ.get("JURA_GROWTH_JOB")
+        job = log.current_job()
         if job and not may_use(job, name):
             try:
                 log.mirror({

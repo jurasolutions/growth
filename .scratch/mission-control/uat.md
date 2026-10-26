@@ -43,7 +43,7 @@ Only you can do these steps. Each one touches your accounts.
 3. **A second Discord account**, or a friend willing to tap one button, for the "someone else taps
    Approve" check (B4 in Part B).
 4. **The build's UAT harness** (functional S15). This script assumes
-   `uv run python -m tests.mission_seed <folder> [--scenario <name>]` and a local Resend stub started
+   `uv run python -m tests.uat.seed <folder> [--scenario <name>]` and a local Resend stub started
    with `uv run python -m tests.resend_stub`. If the block reports name them differently, use their
    names.
 
@@ -61,7 +61,7 @@ export JURA_GROWTH_CONFIG_DIR="$UAT/config"
 export JURA_GROWTH_PAUSE_FILE="$UAT/PAUSE"
 export JURA_GROWTH_ENV_FILE="$HOME/jura-uat/uat.env"
 export JURA_GROWTH_NOW="2026-11-10T08:00:00+08:00"
-uv run python -m tests.mission_seed "$UAT"
+uv run python -m tests.uat.seed "$UAT"
 ```
 
 You change `JURA_GROWTH_NOW` from step to step, as each step says. A frozen clock refuses to run
@@ -87,6 +87,13 @@ The dates: Fri 2026-11-06 and Tue 2026-11-10 are business days. Sun 2026-11-08 i
 ---
 
 ## Part A: the engine, decided from Terminal
+
+> **Changed 2026-10-26 (Ting Yu): Terminal decisions are off** (ADR 0004). `jura-growth approve` and
+> `skip` in Terminal now refuse and point to `#approvals`; decide in `#approvals` through Dispatch
+> (Part B) instead. Every "approve" or "skip" step below moves there. A card no longer shows a
+> code, and `jura-growth approvals` never writes a lapse, so in A4 a request past its decide-by is
+> no longer offered rather than read as "Expired". The seed is `tests.uat.seed`; it seeds the
+> data rows, and the kinds' tickets add the approval requests.
 
 **A1. The morning one-pager (must, AC-M1, AC-M2)**
 - Do: `JURA_GROWTH_NOW=2026-11-10T08:00:00+08:00 uv run jura-growth one-pager`
@@ -136,7 +143,7 @@ The dates: Fri 2026-11-06 and Tue 2026-11-10 are business days. Sun 2026-11-08 i
   allows. No second send for that email at any slot.
 - *A change after approval.*
   Do: approve lead 240's request, then
-  `uv run python -m tests.mission_seed "$UAT" --scenario edit-draft --lead 240`.
+  `uv run python -m tests.uat.seed "$UAT" --scenario edit-draft --lead 240`.
   Expect: lead 240's old request reads "Superseded", a new card appears for the edited text, and
   `send-due` doesn't send lead 240.
 - *Undo.*
@@ -170,7 +177,7 @@ The dates: Fri 2026-11-06 and Tue 2026-11-10 are business days. Sun 2026-11-08 i
 - Expect: an `app-release` card with the preview link.
 - Do: skip it with `uv run jura-growth skip <its A-id>`.
 - Expect: APP-014 stays on preview, and the one-pager (re-run A1's command) lists it.
-- Do: `uv run python -m tests.mission_seed "$UAT" --scenario new-app-prd` (APP-015), then
+- Do: `uv run python -m tests.uat.seed "$UAT" --scenario new-app-prd` (APP-015), then
   `uv run jura-growth skip <APP-015's A-id>`.
 - Expect: the PRD is now in `$UAT/prd/skipped/apps/` with "Skipped by Ting Yu on 2026-11-10" at the
   top, and `uv run jura-growth apps context --json` doesn't offer that idea.
@@ -274,7 +281,7 @@ Same window and variables as Part A.
   Jura. Approve its card, then run `publish next` at 10:00.
 - Expect: refused. The rules aren't confirmed, and "promo Saturdays only" closes Tuesday for a
   promotional post.
-- Do: `uv run python -m tests.mission_seed "$UAT" --scenario note-rules --group 4`.
+- Do: `uv run python -m tests.uat.seed "$UAT" --scenario note-rules --group 4`.
 - Expect: a `group-rules` card showing the rules text and the parsed days ("promotion only on
   Saturday"). Approve it.
 - Expect: the Tuesday item is still refused, and a Saturday item for G4 is claimable on Saturday at

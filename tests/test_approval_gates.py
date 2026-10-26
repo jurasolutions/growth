@@ -328,7 +328,7 @@ def test_g29_every_transition_leaves_one_event_with_actor_origin_ref_hash_and_ti
             assert event["hash"] == record.content_hash
             assert event["at"] == (timeutil.stamp(later) if kind == "approval.expired" else now)
             if kind in ("approval.approved", "approval.skipped"):
-                assert event["actor"] == record.decided_by and event["actor"].startswith("terminal:")
-                assert event["origin"] == "terminal" and event["ref"] == record.decision_ref
+                assert event["actor"] == record.decided_by and event["actor"].startswith("discord:")
+                assert event["origin"] == "ssh" and event["ref"] == record.decision_ref
             else:
                 assert event["actor"] and event["origin"] is None and event["ref"] is None

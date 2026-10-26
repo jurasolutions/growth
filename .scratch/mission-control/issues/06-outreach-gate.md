@@ -90,3 +90,12 @@ Every criterion above passes, `security-review` has run on the `send.py` change,
 - `.scratch/mission-control/reviews/test-strategy-v3.md`: §4.1 (AC-M5.1, AC-M8.x, AC-M12.2), §4.3 (X2, X3, X13), §5, §3 (D8 outreach live), §9 (the Resend crash gap), §11.2 row MC-06
 - `.scratch/mission-control/uat.md` Parts A and E
 - Code: `jura_growth/agents/outreach/queue.py`, `send.py`, `requeue.py`, `store.py`; `jura_growth/gate.py`; `tests/test_outreach_send.py`, `tests/test_scout_support.py` (`fake_resend`)
+
+## Comments
+
+### 2026-10-26 developer: from ticket 04b's fix round
+
+- Posting cards: `queue`, `send-due` (top-up) and `requeue-shadow` each call `cards.sweep_safely(conn)` as their last step, after their own transaction commits, so the cards go out (A12). `send-due` calls it after a claim too, so the card's first line reads "claimed". There is no decorator; `approvals.raises_requests` was removed (code review 04b, Sp2). Test that the card posts when each command ends.
+- AC-M5.3's "Superseded: lead unsubscribed" is this ticket's: fill the optional `superseded_note(conn, subject)` hook on the `outreach-email` kind. It is asked after the record is superseded, so it reads the lead's own state ("lead unsubscribed", "lead bounced") and returns None to keep the core's reason (code review 04b, Sp1).
+- Decisions come only from Dispatch over SSH (ADR 0004 as amended 2026-10-26). There is no Terminal origin, cards carry no code, and tests decide with `aw.dispatch()` and actor `aw.CONTROL`.
+- The deadline settings are read through `approval_settings.deadline("outreach-email", …)`, and the buttons switch through `approval_settings.switch("discord_buttons")`.

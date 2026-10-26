@@ -16,7 +16,10 @@ import click
 
 from jura_growth import (
     agents,
+    approvals,
+    approvals_cli,
     backup as backup_mod,
+    cards,
     brand_check,
     config,
     copy_check,
@@ -186,10 +189,25 @@ def db_path() -> None:
     click.echo(paths.db_path())
 
 
+def _approval_upkeep(conn, *, post: bool) -> None:
+    """Write the lapses that are due (MC §4.6 A17), then edit the cards they
+    changed, and with `post` post the unposted ones (A12). Never stops the
+    job that calls it."""
+    try:
+        approvals.expire_due(conn)
+    except Exception as error:  # noqa: BLE001
+        log.event(conn, "approval.upkeep_error", {"step": "expire_due", "error": f"{type(error).__name__}: {error}"},
+                  level="error")
+    cards.sweep_safely(conn, post=post)
+
+
 @cli.command()
 def backup() -> str:
-    """Back up growth.db (kept 14 days) and prune old transcripts."""
+    """Back up growth.db (kept 14 days) and prune old transcripts; write due approval lapses."""
     with db.session() as conn:
+        # Lapsed cards are edited (edits don't notify); new cards wait for
+        # the heartbeat or a raising command, so nothing new posts at 23:30.
+        _approval_upkeep(conn, post=False)
         target = backup_mod.backup(conn)
     click.echo(f"backup written: {target}")
     return f"backup written: {target.name}"
@@ -361,8 +379,10 @@ def schedule_uninstall(jobs) -> None:
 
 @cli.command()
 def heartbeat() -> str:
-    """Post a heartbeat to #daily-digest (proves the scheduler is alive)."""
+    """Post a heartbeat to #daily-digest (proves the scheduler is alive), write
+    due approval lapses, and post or edit approval cards."""
     with db.session() as conn:
+        _approval_upkeep(conn, post=True)
         installed = sum(1 for name in runner.jobs() if schedule_mod.installed(name))
         text = f"Heartbeat {timeutil.stamp()}: the scheduler is running ({installed} of {len(runner.jobs())} jobs loaded)."
         result = discord.post(conn, "daily-digest", text, username="Jura growth · heartbeat", dedupe=False)
@@ -424,6 +444,11 @@ def suppression_check(email) -> None:
         reason = suppression.is_suppressed(conn, email)
     click.echo(f"suppressed: {reason}" if reason else "not suppressed")
     sys.exit(1 if reason else 0)
+
+
+# --- approvals, approve, skip (ticket 04b) -----------------------------------
+
+approvals_cli.register(cli)
 
 
 # --- agent plug-ins --------------------------------------------------------
