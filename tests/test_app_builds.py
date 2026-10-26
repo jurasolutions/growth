@@ -19,7 +19,7 @@ import mission_world as mw
 from discord_double import discord_double  # noqa: F401 - the fixture
 from sweep import d2_secrets  # noqa: F401 - the fixture
 from gate_adapter_app_build import DispatchDouble, file_prd, prd_path
-from jura_growth import approvals, config, db, log, mission, one_pager, pause, paths
+from jura_growth import approvals, config, db, log, mission, one_pager, pause, paths, timeutil
 from jura_growth.agents.apps import builds
 from jura_growth.cli import cli
 from test_apps import GOOD, TODAY
@@ -461,6 +461,23 @@ def test_an_app_build_card_and_its_edit_carry_nothing_planted(conn, discord_doub
     cards.sweep(conn)  # the card's first line, edited
     assert [r.method for r in discord_double.requests].count("PATCH") == 1
     assert_clean(discord_double, outbox_dir(), planted())
+
+
+def test_without_the_apps_plugin_nothing_is_handed_off_or_expired(conn, monkeypatch):
+    """AC-M4.7 for app-build: a kind whose plug-in failed to load fails closed."""
+    from jura_growth import agents
+
+    request = raise_for(conn, file_prd(101))
+    real = agents.plugins()
+    monkeypatch.setattr(agents, "plugins", lambda: tuple(m for m in real if getattr(m, "NAME", "") != "app-factory"))
+    with db.transaction(conn):
+        with pytest.raises(approvals.NotApproved) as refused:
+            builds.hand_off(conn, request.subject)
+    assert refused.value.reason == "unknown-kind"
+    assert aw.approve(conn, request, args={}).answer == "refused"
+    assert approvals.expire_due(conn, timeutil.parse(aw.later(request.decide_by, days=1))) == []
+    assert aw.get(conn, request.id).status == "pending" and prd_path("APP-101").exists()
+    assert db.scalar(conn, "SELECT count(*) FROM app_builds") == 0
 
 
 @pytest.mark.parametrize("name", ["prompts/app-factory.md", "docs/app-factory.md"])
