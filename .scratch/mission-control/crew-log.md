@@ -728,3 +728,13 @@ decisions: bp 01 (Chrome profile setup and checks) is Ting Yu's and gates live p
 decisions: next wave dispatched: bp 02b (community items) and bp 03 (browser job, Facebook Page)
 questions: -
 evidence:  merged branch pytest -rs -> see commit
+
+## 2026-10-27T03:52+0800 reviewer (mc 12) via conductor
+status:    done
+persona:   reviewer
+ticket:    12
+artifacts: reviews/code-review-12.md
+decisions: approve; origin and control-user checks hold on all 4 commands; injection closed; prd_text stays out of Discord, events and plain output; should fix S1 trim order, S2 redacted prd_text keeps the approved hash, shared trim policy
+decisions: conductor adopts Q1 recommendation: app PRDs the privacy filter would change are refused at factory submit; S2 as backstop; D6 says brief only, never Discord; sent as fix round 1
+questions: -
+evidence:  2448 passed; probes reproduce S1, S2; injection refused
