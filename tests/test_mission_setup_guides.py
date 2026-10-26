@@ -40,3 +40,17 @@ def test_the_1730_digest_still_writes_daily_summary_json(conn, monkeypatch):
     assert outcome.status == "ok", outcome
     summary = json.loads((paths.data_dir() / "daily-summary.json").read_text())
     assert summary["date"] == "2026-11-10" and summary["brief_line"]
+
+
+def test_every_configured_channel_has_an_empty_webhook_line_in_the_env_example():
+    """Final review St2: a setup copied from `.env.example` names every channel's webhook, with
+    no value, each under a comment."""
+    lines = (paths.REPO_ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
+    for channel in discord.channels():
+        name = discord.env_name(channel)
+        assert f"{name}=" in lines, f"{name} is missing from .env.example"
+    for line in lines:
+        if line.startswith("DISCORD_WEBHOOK_"):
+            assert line.endswith("="), f"{line.split('=')[0]} has a value in .env.example"
+    for name in ("DISCORD_WEBHOOK_APPROVALS=", "DISCORD_WEBHOOK_MISSION_CONTROL="):
+        assert lines[lines.index(name) - 1].startswith("# "), f"{name} has no comment"
