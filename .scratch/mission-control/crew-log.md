@@ -594,3 +594,13 @@ decisions: 05 changes-requested (B1 quoted rules_confirmed bypass); crew recomme
 decisions: bp 02 (publish queue) done, 2310 passed; sent to review
 questions: -
 evidence:  merged branch pytest -rs -> 2246 passed, 0 skipped
+
+## 2026-10-27T03:17+0800 reviewer (10b) via conductor
+status:    done
+persona:   reviewer
+ticket:    10b
+artifacts: reviews/code-review-10b.md
+decisions: changes-requested; B1 --preview accepts Markdown so a masked link to any domain renders on the release card; release needs a separate claimed approval of the exact SHA, SHA unspoofable, plan merges only the approved SHA; should fix S1-S8
+decisions: conductor: sent as fix round 1 with rebase onto abe16b0
+questions: -
+evidence:  2238 passed; trial merge 2308 passed; probes reproduce B1, S1, S2, S3
