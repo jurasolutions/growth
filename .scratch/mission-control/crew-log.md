@@ -738,3 +738,12 @@ decisions: approve; origin and control-user checks hold on all 4 commands; injec
 decisions: conductor adopts Q1 recommendation: app PRDs the privacy filter would change are refused at factory submit; S2 as backstop; D6 says brief only, never Discord; sent as fix round 1
 questions: -
 evidence:  2448 passed; probes reproduce S1, S2; injection refused
+
+## 2026-10-27T04:04+0800 conductor (merge mc 12; mission-control code complete)
+status:    done
+persona:   conductor
+ticket:    12
+artifacts: merge of 12 (2429947 ca5de35 cf1a096)
+decisions: fix round verified (handoff_fit shared limit; redacted prd_text withheld; PRDs the privacy filter would change rejected at submit); merged and pushed; all mission-control code tickets (01-12, 04b, 10b, 17, 18) are merged; 13-16 are Ting Yu setup tickets
+questions: -
+evidence:  merged branch pytest -rs -> see commit
