@@ -7,7 +7,8 @@ carry the matching `tool_result` blocks, and the final `result` record lists
 the permission denials.
 
 Core module (moved from the community plug-in). Used by `jura-growth community audit-run` (no fetches of facebook.com) and by
-`jura-growth apps submit-prd` (a cited official source was really fetched).
+`jura-growth apps submit-prd` (a cited official source was really fetched), and by the publish
+job's audit (`agents/publish/audit.py`), which reads every result's text for the tabs it shows.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ FETCH_COMMAND = re.compile(r"\b(?:curl|wget|http|httpie|fetch|lynx|links|w3m|ope
 # left out before looking for fetch commands (`cat > groups.json <<'EOF' ...`).
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\b", re.S)
 DENIAL_TEXT = re.compile(r"permission|denied|not allowed|blocked|refused", re.I)
+RESULT_CHARS = 200_000
 
 
 @dataclass
@@ -38,6 +40,7 @@ class ToolCall:
     ok: bool | None = None  # None until its result is seen
     denied: bool = False
     error_text: str = ""
+    result: str = ""  # the result's text, as the tool returned it (RESULT_CHARS at most)
 
     def urls(self) -> list[str]:
         """URLs this call would open. WebSearch only searches, so it opens none."""
@@ -119,6 +122,7 @@ def read(path: Path) -> Transcript:
                     if call is None:
                         continue
                     text = _result_text(block.get("content"))
+                    call.result = text[:RESULT_CHARS]
                     call.ok = not block.get("is_error")
                     if not call.ok:
                         call.error_text = text[:300]
