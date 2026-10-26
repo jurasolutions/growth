@@ -384,16 +384,49 @@ def plan_add_cmd(file_, week) -> str:
 @click.option("--week", help="Plan week, default this week.")
 def publish_plan_cmd(week) -> str:
     """Write outputs/growth/community/YYYY-Www.md and post it to #community."""
+    from jura_growth.agents.publish import items as publish_items
+
     with db.session() as conn:
         try:
             target, posted, posts, replies = plan_mod.publish(conn, week)
         except ValueError as error:
             raise click.ClickException(str(error)) from None
+        # Each planned post in a group joined as the Jura Page also gets its publish item and its
+        # community-post card in #approvals (browser publishing PRD §5.4); A12: after the commit.
+        made = publish_items.raise_for_plan(conn, week or plan_mod.current_week(), run_id=log.current_run_id())
+        cards.sweep_safely(conn)
     click.echo(f"checklist: {target}")
     click.echo("posted to #community" if posted.delivered else f"#community: {posted.reason}")
+    for result in made:
+        if result.why:
+            click.echo(f"No new approval card: {result.why}")
+        elif result.item is not None and result.approval is not None and result.approval.live:
+            click.echo(f"Approval requested: community post item {result.item.ref} ({result.item.label}) as "
+                       f"{result.approval.id} in #approvals")
     summary = f"plan published: {posts} posts, {replies} reply ideas ({target.name})"
     click.echo(summary)
     return summary
+
+
+@community.command("propose-join")
+@click.argument("group_id", type=int)
+def propose_join_cmd(group_id) -> str:
+    """Ask Ting Yu, in #approvals, to join a good-fit group as the Jura Page (browser publishing).
+
+    Up to the weekly join cap. Nothing is joined until he approves the card and a publish run
+    claims it."""
+    from jura_growth.agents.publish import items as publish_items
+
+    with db.session() as conn:
+        with db.transaction(conn):
+            made = publish_items.create_join(conn, group_id, run_id=log.current_run_id())
+        cards.sweep_safely(conn)
+    if made.why or made.item is None or made.approval is None or not made.approval.live:
+        click.echo(f"no join proposed: {made.why or 'no request raised'}")
+        sys.exit(1)
+    line = f"join proposed for group {group_id} as {made.approval.id} ({made.item.label}); decide it in #approvals"
+    click.echo(line)
+    return line
 
 
 @community.command("posted")

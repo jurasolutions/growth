@@ -1,7 +1,8 @@
 """Browser publishing: the publish queue (prd/pending/prd-jura-browser-publishing-2026-10-25.md).
 
-A **publish item** is one action the browser may take, with frozen content: today a social post
-for one platform and day (BP-02a; community posts and joins follow in BP-02b). Every item is the
+A **publish item** is one action the browser may take, with frozen content: a social post for
+one platform and day (BP-02a), a community post for one group and day, a join for one group, or a
+join's membership answers (BP-02b). Every item is the
 subject of an approval request (`publish_item:<id>`), and nothing is handed to a browser run
 until `publish next` claims that approval (MC §4.6 A6). Approval state lives only in `approvals`;
 `publish_items` holds the item's own lifecycle: ready, claimed, done, stopped, unknown or
@@ -10,7 +11,8 @@ withdrawn.
 Modules:
 
 - `items`: creating items and their lifecycle writes.
-- `kinds`: the `social-post` approval kind.
+- `kinds`: the `social-post` approval kind, and reading any item's content.
+- `group_kinds`: the `community-post` and `group-join` approval kinds.
 - `claim`: every claim-time check and the claim itself; `claimable(conn, now)` is the read-only
   form the publish job's precheck uses (BP-03).
 - `job`: the job hooks. `after_run` settles a claim the run left open as `unknown`.

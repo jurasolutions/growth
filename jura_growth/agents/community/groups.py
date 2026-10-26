@@ -193,9 +193,12 @@ def add(conn: sqlite3.Connection, record: dict) -> tuple[str, int | None, list[s
 
 
 SETTABLE = {
-    "joined", "rules", "promo_rules", "rules_confirmed", "promo_days", "post_days",
+    "joined", "joined_as", "rules", "promo_rules", "rules_confirmed", "promo_days", "post_days",
     "fit", "fit_reason", "notes", "audience", "size_hint", "active_hint", "name",
 }
+# How a group was joined (browser publishing PRD §4.3). `joined_as` is read from the database; it is
+# written through `joined_as_set` (a legacy `joined = 1` with nothing recorded reads as `profile`).
+JOINED_AS = ("none", "profile", "page")
 DAY_COLUMNS = {"promo_days": "promo_days_confirmed", "post_days": "post_days_confirmed"}
 YES = {"yes", "y", "true", "1", "on"}
 NO = {"no", "n", "false", "0", "off"}
@@ -248,6 +251,16 @@ def set_parsed(conn: sqlite3.Connection, group_id: int, parsed: list[tuple[str, 
             if value.lower() not in YES | NO:
                 raise GroupError(f"{key} must be yes or no")
             updates[key] = 1 if value.lower() in YES else 0
+            if key == "joined":  # keep `joined_as` agreeing: a yes from Ting Yu means as himself
+                if not updates[key]:
+                    updates["joined_as_set"] = "none"
+                elif group["joined_as"] == "none":
+                    updates["joined_as_set"] = "profile"
+        elif key == "joined_as":
+            if value.lower() not in JOINED_AS:
+                raise GroupError(f"joined_as must be {', '.join(JOINED_AS[:-1])} or {JOINED_AS[-1]}")
+            updates["joined_as_set"] = value.lower()
+            updates["joined"] = 0 if value.lower() == "none" else 1
         elif key == "fit":
             if value.lower() not in FITS:
                 raise GroupError("fit must be \"good fit\", \"possible\" or \"skip\"")

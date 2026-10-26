@@ -7,6 +7,17 @@
 groups_per_week: 3 # open question 2: 3 groups a week to start
 no_repeat_days: 14
 
+# Browser publishing (prd/pending/prd-jura-browser-publishing-2026-10-25.md
+# §5.10). With browser: true, each planned post in a group joined as the Jura
+# Facebook Page, and each join `community propose-join` proposes, becomes a
+# publish item with its own approval card in #approvals; the publish job acts
+# on it only after Ting Yu approves. With false (the default), nothing is
+# raised, and an approval already given is not claimed.
+browser: false
+# Group joins per ISO week (SGT). Hard limit: COMMUNITY_JOINS_PER_WEEK (3) in
+# caps.py; this may lower it, never raise it.
+joins_per_week: 3
+
 post_words: {min: 60, max: 150}
 reply_words: {min: 10, max: 120}
 replies_per_week: {min: 2, max: 3}

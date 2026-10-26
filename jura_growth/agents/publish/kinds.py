@@ -1,4 +1,6 @@
-"""The `social-post` approval kind (browser publishing PRD §5.5; MC §4.6).
+"""The `social-post` approval kind, and what every publish kind shares (browser publishing PRD §5.5;
+MC §4.6). The `community-post` and `group-join` kinds are in `group_kinds.py`; `read()`,
+`closes()`, `opens()` and `kind_of()` answer for an item of any kind.
 
 The subject is one publish item, `publish_item:<id>`: one platform's post for one draft.
 
@@ -88,7 +90,52 @@ def social_content(conn: sqlite3.Connection, post_id: int) -> dict | None:
 
 def hashed(content: dict) -> bytes:
     """The bytes a request's hash covers: everything but where the images sit on disk."""
+    if "images" not in content:
+        return _canonical(content)
     return _canonical({**content, "images": [image["sha256"] for image in content["images"]]})
+
+
+def read(conn: sqlite3.Connection, item: items.Item) -> Read | None:
+    """What a browser run would act on for `item` now, read once, whatever its kind; None when
+    it can't go out (MC §4.6 A3)."""
+    from jura_growth.agents.publish import group_kinds
+
+    if item.kind == items.SOCIAL_ITEM:
+        return read_social(conn, item.ref_id)
+    if item.kind == items.COMMUNITY_POST_ITEM:
+        return group_kinds.read_post(conn, item.ref_id)
+    return group_kinds.read_join(conn, item)
+
+
+def switched_off(conn: sqlite3.Connection, item: items.Item) -> str | None:
+    """The item's kind's own switch (`switched_off`), as `use()` reads it: why nothing goes out."""
+    registered = approvals.kinds().get(kind_of(item))
+    hook = getattr(registered.kind, "switched_off", None) if registered else None
+    return hook(conn, item.subject) if hook is not None else None
+
+
+def kind_of(item: items.Item) -> str:
+    """The approval kind of an item's requests."""
+    return items.APPROVAL_KINDS[item.kind]
+
+
+def closes(item: items.Item, content: dict | None = None) -> datetime:
+    """When the item's chance to go out ends (its decide-by and use-by), for `content` as it
+    reads now (the item's own frozen copy when None)."""
+    from jura_growth.agents.publish import group_kinds
+
+    if item.kind == items.SOCIAL_ITEM:
+        return limits.window_on(date.fromisoformat((content or item.content)["day"]))[1]
+    return group_kinds.closes(item, content)
+
+
+def opens(item: items.Item, content: dict | None = None) -> str:
+    """The first day (YYYY-MM-DD) the item may be claimed."""
+    from jura_growth.agents.publish import group_kinds
+
+    if item.kind == items.SOCIAL_ITEM:
+        return (content or item.content)["day"]
+    return group_kinds.opens(item, content)
 
 
 def _item(conn: sqlite3.Connection, subject: str) -> items.Item:
@@ -180,6 +227,10 @@ class SocialPost:
 
 
 def skipped_by_hand(conn: sqlite3.Connection, item: items.Item) -> bool:
+    if item.kind == items.COMMUNITY_POST_ITEM:
+        return db.scalar(conn, "SELECT status FROM community_posts WHERE id = ?", (item.ref_id,)) == "skipped"
+    if item.kind != items.SOCIAL_ITEM:
+        return False
     post = db.one(conn, "SELECT status FROM social_posts WHERE id = ?", (item.ref_id,))
     skip = db.scalar(conn, "SELECT 1 FROM social_skips WHERE date = ? AND platform = ?", (item.day, item.platform))
     return bool(skip) or bool(post and post["status"] == "skipped")
@@ -197,5 +248,9 @@ def note(conn: sqlite3.Connection, item: items.Item) -> str | None:
     return None
 
 
-def kinds() -> dict[str, SocialPost]:
-    return {KIND: SocialPost()}
+def kinds() -> dict:
+    """The three browser-publishing kinds (BP §5.5), all declared by the publish plug-in."""
+    from jura_growth.agents.publish import group_kinds
+
+    return {KIND: SocialPost(), group_kinds.CommunityPost.name: group_kinds.CommunityPost(),
+            group_kinds.GroupJoin.name: group_kinds.GroupJoin()}

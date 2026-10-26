@@ -40,6 +40,13 @@ day's Facebook draft through the same code `social submit` uses, which raises it
 - `claimed-not-closed` (C2): claimed by a publish run that recorded neither done nor stopped, so
   it is `unknown`, publish is paused and #alerts says how to settle it. Seed it between 09:00 and
   18:00.
+
+Part C's community scenario (BP-02b), after `base`:
+
+- `community-plan` (C3): `community.browser` on in `$UAT/config`, G4 recorded as joined as the
+  Jura Page, and a G4 post planned for the seeded day that mentions Jura, with its pending
+  `community-post` card raised through the code `community publish-plan` uses. G4's rules aren't
+  confirmed yet, so `publish next` refuses it once approved.
 """
 
 from __future__ import annotations
@@ -535,7 +542,52 @@ def claimed_not_closed(conn) -> None:
     discord.alert(conn, f"`publish` failed: {outcome.error[:500]}", agent="publish")
 
 
-for _scenario in (social_post, social_approved, claimed_not_closed):
+# --- the community scenario (BP-02b; uat.md Part C, C3) ---------------------------------------
+
+G4_POST = (
+    "Most invoice chasing follows the same three steps: a polite reminder, a firmer one, then a call. "
+    "If your accounting software sends the first two on a schedule, you only make the call. "
+    "What does your team do when an invoice is a week late?\n\n"
+    "We write about small automations like this at Jura Solutions."
+)
+
+
+def _community_browser() -> None:
+    folder = os.environ.get("JURA_GROWTH_CONFIG_DIR")
+    if not folder:
+        raise Refused("JURA_GROWTH_CONFIG_DIR isn't set: the community scenario writes browser: true into $UAT/config, "
+                      "never config/")
+
+    def browser(community: dict) -> None:
+        community["browser"] = True
+
+    _rewrite_yaml(Path(folder) / "community.yaml", browser)
+    config.reset_caches()
+
+
+def community_plan(conn) -> None:
+    """C3: G4 joined as the Jura Page, and a promotional post planned there for the seeded day,
+    with its card. G4's rules ("promo Saturdays only") aren't confirmed yet."""
+    from jura_growth.agents.publish import items
+
+    if db.one(conn, "SELECT id FROM community_groups WHERE id = 4") is None:
+        raise Refused("no group 4: seed `base` first")
+    _community_browser()
+    day = today()
+    with db.transaction(conn):
+        conn.execute("UPDATE community_groups SET joined_as_set = 'page', joined = 1 WHERE id = 4")
+        conn.execute(
+            "INSERT INTO community_posts (group_id, week, planned_day, kind, text, qa_json, status, created_at)"
+            " VALUES (4, ?, ?, 'post', ?, ?, 'planned', ?)",
+            (timeutil.iso_week(day), day.isoformat(), G4_POST, json.dumps({"brand": "pass", "attempt": 1}), timeutil.stamp()),
+        )
+    made = items.raise_for_plan(conn, timeutil.iso_week(day), run_id=None)
+    if not made or made[0].approval is None:
+        raise Refused("no community-post card could be raised: " + "; ".join(m.why for m in made))
+    cards.sweep_safely(conn)
+
+
+for _scenario in (social_post, social_approved, claimed_not_closed, community_plan):
     _scenario.own_transactions = True  # type: ignore[attr-defined]
 
 
@@ -548,6 +600,7 @@ SCENARIOS: dict[str, Callable] = {
     "social-post": social_post,
     "social-approved": social_approved,
     "claimed-not-closed": claimed_not_closed,
+    "community-plan": community_plan,
 }
 
 
