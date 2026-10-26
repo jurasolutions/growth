@@ -10,7 +10,9 @@ the Discord double (S5):
   in order, so a change in any image's bytes, or in their order, supersedes the request.
 - AC-P5.1 line 1 per platform: a second item for the same platform and day is refused.
 - AC-P7.2 for the new hosts: `www.instagram.com` and `www.linkedin.com` are accepted for their own
-  items, and the look-alikes (and the other platforms' hosts) are refused.
+  items, and the look-alikes (and the other platforms' hosts) are refused. A post URL must also be
+  a post's own address, not a profile or a feed (code review 04, S4).
+- The LinkedIn `page_url` must be a company page, never a person's profile (code review 04, S5).
 
 The clock is BP's default, Tue 2026-11-10, unless a test needs a carousel day (Mon or Thu).
 """
@@ -18,7 +20,6 @@ The clock is BP's default, Tue 2026-11-10, unless a test needs a carousel day (M
 from __future__ import annotations
 
 import json
-from datetime import date
 
 import pytest
 
@@ -35,7 +36,6 @@ LABELS = {"instagram": "Instagram", "linkedin": "LinkedIn page"}
 IDENTITIES = {"instagram": "the Jura Solutions Instagram account", "linkedin": "the Jura Solutions LinkedIn company page"}
 VARIANTS = {"instagram": IG, "linkedin": LI}
 IMAGES = {"instagram": "instagram-1080x1350.png", "linkedin": "linkedin-1200x627.png"}
-THURSDAY = date(2026, 11, 12)  # an Instagram carousel day in ISO week 46
 
 
 @pytest.fixture
@@ -61,6 +61,12 @@ def social_requests(conn) -> list[dict]:
     return db.rows(conn, "SELECT * FROM approvals WHERE kind = 'social-post' ORDER BY id")
 
 
+def image_paths(conn, post: int) -> list[str]:
+    stored = db.scalar(conn, "SELECT image_paths FROM social_posts WHERE id = ?", (post,))
+    assert isinstance(stored, str)
+    return json.loads(stored)
+
+
 # --- AC-P1.1 per platform: one request, and the drafts message points at the card -----------------
 
 
@@ -80,20 +86,22 @@ def test_submit_raises_exactly_one_social_post_request_for_the_platform_in_brows
     [request] = approvals.pending(conn)
     assert request.kind == "social-post" and request.subject == f"publish_item:{rows[0]['id']}"
     [card] = discord_double.posts("approvals")
-    assert card.content.split("\n")[0] == f"**{request.id} · social post** · decide by Tue 10 Nov, 18:00 SGT"
-    assert LABELS[platform] in card.content and URLS[platform] in card.content
-    assert IDENTITIES[platform] in card.content
-    assert VARIANTS[platform].strip() in card.content
-    assert "Brand check: passed on attempt 1 of 2" in card.content
+    content = card.content or ""
+    assert content.split("\n")[0] == f"**{request.id} · social post** · decide by Tue 10 Nov, 18:00 SGT"
+    assert LABELS[platform] in content and URLS[platform] in content
+    assert IDENTITIES[platform] in content
+    assert VARIANTS[platform].strip() in content
+    assert "Brand check: passed on attempt 1 of 2" in content
     assert [name for name, _ in card.files] == [IMAGES[platform]]
 
     mine = [p for p in discord_double.posts("social-drafts") if (p.content or "").startswith(f"**{LABELS[platform]}**")]
     assert len(mine) == 1
-    assert request.id in mine[0].content and "#approvals" in mine[0].content
-    assert VARIANTS[platform].strip() not in mine[0].content and mine[0].files == []
+    pointer = mine[0].content or ""
+    assert request.id in pointer and "#approvals" in pointer
+    assert VARIANTS[platform].strip() not in pointer and mine[0].files == []
     others = [p for p in discord_double.posts("social-drafts")
               if (p.content or "").startswith(("**Facebook Page**", *(f"**{LABELS[o]}**" for o in NEW if o != platform)))]
-    assert len(others) == 2 and all("post it by hand" in p.content and p.files for p in others)
+    assert len(others) == 2 and all("post it by hand" in (p.content or "") and p.files for p in others)
 
 
 def test_on_a_carousel_day_the_instagram_card_carries_every_slide_in_order(conn, env, monkeypatch, discord_double):
@@ -110,23 +118,18 @@ def test_on_a_carousel_day_the_instagram_card_carries_every_slide_in_order(conn,
     assert names == ["instagram-1-of-3-1080x1350.png", "instagram-2-of-3-1080x1350.png", "instagram-3-of-3-1080x1350.png"]
     [card] = discord_double.posts("approvals")
     assert [name for name, _ in card.files] == names
-    assert "3 images attached, posted in this order." in card.content
+    assert "3 images attached, posted in this order." in (card.content or "")
 
 
 # --- AC-P1.3 the carousel row ----------------------------------------------------------------------
 
 
-def slides(day: date = THURSDAY) -> list:
-    return [pw.image(f"instagram-{n}-of-3-1080x1350.png", pw.png(1080, 1350, extra=bytes([n])), day=day) for n in (1, 2, 3)]
-
-
 def change_slide_bytes(conn, post, number):
-    path = json.loads(db.scalar(conn, "SELECT image_paths FROM social_posts WHERE id = ?", (post,)))[number - 1]
-    pw.Path(path).write_bytes(pw.png(1080, 1350, extra=b"a different slide"))
+    pw.Path(image_paths(conn, post)[number - 1]).write_bytes(pw.png(1080, 1350, extra=b"a different slide"))
 
 
 def change_slide_order(conn, post, order):
-    current = json.loads(db.scalar(conn, "SELECT image_paths FROM social_posts WHERE id = ?", (post,)))
+    current = image_paths(conn, post)
     conn.execute("UPDATE social_posts SET image_paths = ? WHERE id = ?",
                  (json.dumps([current[i - 1] for i in order]), post))
 
@@ -145,7 +148,8 @@ CAROUSEL_CHANGES = {
 def test_a_carousel_change_in_any_slides_bytes_or_their_order_supersedes_the_request(conn, world, monkeypatch, change):
     pw.social_config(monkeypatch, browser=("instagram",))
     pw.at(monkeypatch, "2026-11-12T07:05:00+08:00")
-    found, approval = pw.approved(conn, monkeypatch, "instagram", day=THURSDAY, images=slides())
+    found, approval = pw.approved(conn, monkeypatch, "instagram", day=pw.THURSDAY, images=pw.slides())
+    assert approval is not None
     kind = kinds.SocialPost()
     before = kind.content(conn, approval.subject)
     assert before is not None and approvals.content_hash(before) == approval.content_hash
@@ -157,7 +161,8 @@ def test_a_carousel_change_in_any_slides_bytes_or_their_order_supersedes_the_req
     pw.at(monkeypatch, "2026-11-12T10:00:00+08:00")
     pw.run(conn, monkeypatch=monkeypatch)
     assert pw.next_item(conn).item is None
-    assert approvals.get(conn, approval.id).status == "superseded"
+    record = approvals.get(conn, approval.id)
+    assert record is not None and record.status == "superseded"
     [fresh] = [a for a in approvals.pending(conn) if a.subject == approval.subject]
     assert fresh.supersedes == approval.number and fresh.content_hash == approvals.content_hash(after)
 
@@ -165,8 +170,9 @@ def test_a_carousel_change_in_any_slides_bytes_or_their_order_supersedes_the_req
 def test_an_unchanged_carousel_is_handed_out_slide_for_slide_in_order(conn, world, monkeypatch):
     pw.social_config(monkeypatch, browser=("instagram",))
     pw.at(monkeypatch, "2026-11-12T07:05:00+08:00")
-    originals = slides()
-    _, approval = pw.approved(conn, monkeypatch, "instagram", day=THURSDAY, images=originals)
+    originals = pw.slides()
+    _, approval = pw.approved(conn, monkeypatch, "instagram", day=pw.THURSDAY, images=originals)
+    assert approval is not None
     pw.at(monkeypatch, "2026-11-12T10:00:00+08:00")
     pw.run(conn, monkeypatch=monkeypatch)
 
@@ -184,10 +190,12 @@ def test_an_unchanged_carousel_is_handed_out_slide_for_slide_in_order(conn, worl
 def test_line_1_a_second_item_for_the_same_platform_and_day_is_refused(conn, world, monkeypatch, platform):
     pw.social_config(monkeypatch, browser=(platform,))
     found, request = pw.approved(conn, monkeypatch, platform)
+    assert request is not None
     assert next_json()["approval"] == request.id
     assert pw.invoke("publish", "stopped", request.id, "--reason", "login").exit_code == 0
     pause.resume(conn, "publish")
     second = items.create_social(conn, found.ref_id, run_id=None)
+    assert second.approval is not None
     pw.decide(conn, second.approval)
     pw.at(monkeypatch, "2026-11-10T11:00:00+08:00")
 
@@ -195,16 +203,23 @@ def test_line_1_a_second_item_for_the_same_platform_and_day_is_refused(conn, wor
 
     assert refused["due"] is False
     assert any(f"{platform} already had its post claimed for 2026-11-10" in r for r in refused["reasons"])
-    assert not approvals.get(conn, second.approval.id).used_at
+    record = approvals.get(conn, second.approval.id)
+    assert record is not None and not record.used_at
 
 
-# --- AC-P7.2 the new hosts ------------------------------------------------------------------------
+# --- AC-P7.2 the new hosts, and S4 the post's own address ----------------------------------------------
 
 
 ACCEPTED = {
-    "instagram": ["https://www.instagram.com/p/C0deAbc123/", "https://instagram.com/p/C0deAbc123/"],
-    "linkedin": ["https://www.linkedin.com/feed/update/urn:li:activity:7254000000000000000/",
-                 "https://linkedin.com/posts/jura-solutions_automation-activity-7254000000000000000-abcd"],
+    "instagram": [
+        pw.INSTAGRAM_POST, "https://instagram.com/p/C0deAbc123/", "https://www.instagram.com/p/C0de_Abc-123",
+        "https://www.instagram.com/p/C0deAbc123/?img_index=1", "https://www.instagram.com/reel/C0deAbc123/",
+    ],
+    "linkedin": [
+        pw.LINKEDIN_POST, "https://www.linkedin.com/feed/update/urn:li:share:7254000000000000001/",
+        "https://www.linkedin.com/feed/update/urn:li:ugcPost:7254000000000000002",
+        "https://linkedin.com/posts/jura-solutions_automation-activity-7254000000000000000-abcd",
+    ],
 }
 REFUSED = {
     "instagram": [
@@ -213,6 +228,10 @@ REFUSED = {
         "https:///p/1/", "https://www.instagram.com:8443/p/1/", "https://l.instagram.com/?u=https://evil.test",
         "https://scontent.cdninstagram.com/v/t51/1.jpg", "https://www.facebook.com/jura-test-page/posts/1",
         "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+        # S4: on the host, but not a post's own address
+        pw.INSTAGRAM_URL, "https://www.instagram.com/", "https://www.instagram.com/explore/",
+        "https://www.instagram.com/p/", "https://www.instagram.com/p/C0deAbc123/comments/",
+        "https://www.instagram.com/jura-test-page/p/C0deAbc123/",
     ],
     "linkedin": [
         "https://linkedin.com.evil.test/feed/update/1/", "https://www.linkedin.com@evil.test/feed/update/1/",
@@ -220,14 +239,20 @@ REFUSED = {
         "http://www.linkedin.com/feed/update/1/", "https:///feed/update/1/", "https://www.linkedin.com:8443/feed/update/1/",
         "https://lnkd.in/abc123", "https://media.licdn.com/dms/image/1.jpg", "https://sg.linkedin.com/company/jura",
         "https://www.instagram.com/p/C0deAbc123/", "https://www.facebook.com/jura-test-page/posts/1",
+        # S4: on the host, but not a post's own address
+        pw.LINKEDIN_URL, "https://www.linkedin.com/company/jura-test-page/posts/", "https://www.linkedin.com/feed/",
+        "https://www.linkedin.com/in/someone/", "https://www.linkedin.com/feed/update/urn:li:activity:abc/",
+        "https://www.linkedin.com/feed/update/urn:li:member:7254000000000000000/",
+        "https://www.linkedin.com/posts/someone_a-post",
     ],
 }
 
 
 @pytest.mark.parametrize("platform, url", [(p, u) for p in NEW for u in ACCEPTED[p]])
-def test_the_new_platforms_own_hosts_are_accepted_for_their_own_items(conn, world, monkeypatch, platform, url):
+def test_the_new_platforms_post_addresses_are_accepted_for_their_own_items(conn, world, monkeypatch, platform, url):
     pw.social_config(monkeypatch, browser=(platform,))
     found, request = pw.approved(conn, monkeypatch, platform)
+    assert request is not None
     next_json()
     result = pw.invoke("publish", "done", request.id, "--url", url, "--live-text-file", live_file(pw.TEXT))
     assert result.exit_code == 0, result.output
@@ -237,22 +262,60 @@ def test_the_new_platforms_own_hosts_are_accepted_for_their_own_items(conn, worl
 
 
 @pytest.mark.parametrize("platform, url", [(p, u) for p in NEW for u in REFUSED[p]])
-def test_look_alikes_and_other_platforms_hosts_exit_1_and_record_nothing(conn, world, monkeypatch, platform, url):
+def test_look_alikes_other_hosts_and_non_post_addresses_exit_1_and_record_nothing(conn, world, monkeypatch, platform, url):
     pw.social_config(monkeypatch, browser=(platform,))
     found, request = pw.approved(conn, monkeypatch, platform)
+    assert request is not None
     next_json()
     result = pw.invoke("publish", "done", request.id, "--url", url, "--live-text-file", live_file(pw.TEXT))
     assert result.exit_code == 1
     assert pw.item_row(conn, found.id)["state"] == "claimed"
 
 
+@pytest.mark.parametrize("platform, url, settles", [
+    ("instagram", pw.INSTAGRAM_URL, False), ("instagram", pw.INSTAGRAM_POST, True),
+    ("linkedin", pw.LINKEDIN_URL, False), ("linkedin", pw.LINKEDIN_POST, True),
+])
+def test_resolve_posted_takes_only_a_posts_own_address(conn, world, monkeypatch, platform, url, settles):
+    pw.social_config(monkeypatch, browser=(platform,))
+    found, request = pw.approved(conn, monkeypatch, platform)
+    assert request is not None
+    next_json()
+    conn.execute("UPDATE publish_items SET state = 'unknown' WHERE id = ?", (found.id,))
+    conn.commit()
+
+    result = pw.invoke("publish", "resolve", request.id, "posted", "--url", url)
+
+    assert (result.exit_code == 0) is settles, result.output
+    assert pw.item_row(conn, found.id)["state"] == ("done" if settles else "unknown")
+
+
+# --- S5 the page each platform posts to -----------------------------------------------------------
+
+
 @pytest.mark.parametrize("platform, url", [
     ("instagram", "https://instagram.com.evil.test/jura"), ("instagram", "https://www.linkedin.com/company/jura"),
     ("linkedin", "https://www.linkedin.com@evil.test/company/jura"), ("linkedin", "https://www.instagram.com/jura"),
+    ("linkedin", "https://www.linkedin.com/in/ting-yu/"), ("linkedin", "https://www.linkedin.com/feed/"),
+    ("linkedin", "https://www.linkedin.com/"), ("linkedin", "https://www.linkedin.com/company/"),
+    ("instagram", "https://www.instagram.com/p/C0deAbc123/"), ("instagram", "https://www.instagram.com/explore/"),
+    ("instagram", "https://www.instagram.com/"),
 ])
-def test_a_page_url_off_the_new_platforms_hosts_raises_no_item(conn, monkeypatch, platform, url):
+def test_a_page_url_that_isnt_the_platforms_own_page_raises_no_item(conn, monkeypatch, platform, url):
     pw.social_config(monkeypatch, browser=(platform,), urls={platform: url})
     pw.at(monkeypatch, pw.TEN)
     made = items.create_social(conn, pw.draft(conn, platform), run_id=None)
     assert made.item is None and "page_url" in made.why
     assert social_requests(conn) == []
+
+
+@pytest.mark.parametrize("platform, url", [
+    ("linkedin", "https://www.linkedin.com/company/jura-solutions"),
+    ("linkedin", "https://www.linkedin.com/company/105000000/admin/page-posts/published/"),
+    ("instagram", "https://www.instagram.com/jura.solutions/"), ("instagram", "https://www.instagram.com/jura_solutions"),
+])
+def test_a_company_page_or_an_account_profile_is_a_page_url(conn, monkeypatch, platform, url):
+    pw.social_config(monkeypatch, browser=(platform,), urls={platform: url})
+    pw.at(monkeypatch, pw.TEN)
+    made = items.create_social(conn, pw.draft(conn, platform), run_id=None)
+    assert made.item is not None, made.why

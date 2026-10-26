@@ -182,6 +182,21 @@ def test_an_instagram_item_posted_on_another_enabled_platform_fails_the_run_and_
     assert any(host in a for a in alerts(discord_double))
 
 
+def test_a_done_url_that_isnt_an_instagram_post_leaves_the_item_unknown_and_pauses(conn, fake, monkeypatch, discord_double):
+    """B1b: the post made on LinkedIn, then recorded with the Instagram profile's address."""
+    found, _ = approved_instagram(conn, fake, monkeypatch, *ALL)
+    steps = post_steps("instagram", [["{IMG1}", "{IMG2}", "{IMG3}"]], on="linkedin", done_url=pw.INSTAGRAM_URL)
+    fake.scenario([*claim(), *steps], "OK: posted {A}")
+
+    outcome = run()
+
+    assert outcome.status == "failed"
+    assert [c["exit"] for c in fake.cli if c["cli"][:2] == ["publish", "done"]] == [1]
+    assert item(conn, found)["state"] == "unknown"
+    assert "www.linkedin.com" in outcome.error  # and the audit names where it went
+    assert pause.is_paused(conn, "publish")
+
+
 # --- AC-P11.1: the wrong identity stops before any typing ----------------------------------------------
 
 
