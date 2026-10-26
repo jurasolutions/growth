@@ -52,10 +52,6 @@ def pending_file(app_id: str) -> catalog.PrdFile | None:
     return None
 
 
-def skipped_dir() -> Path:
-    return catalog.skipped_dir()
-
-
 # --- the kind -----------------------------------------------------------------
 
 
@@ -300,7 +296,9 @@ def health_lines(conn: sqlite3.Connection) -> list[str]:
 
 
 def _set_aside(conn: sqlite3.Connection, subject: str, *, skipped: bool) -> None:
-    """Move the PRD to `prd/skipped/apps/` with why at the top, and update the backlog."""
+    """Move the PRD to `prd/skipped/apps/` with why at the top, and update the backlog, once
+    the decision or expiry that called this commits (`db.after_commit`): a transaction that
+    rolls back leaves the PRD and the backlog as they were (code review 10, N4)."""
     app_id = app_id_of(subject)
     record = db.one(conn, "SELECT id, decide_by FROM approvals WHERE kind = ? AND subject = ? ORDER BY id DESC LIMIT 1",
                     (KIND, subject))
@@ -312,18 +310,28 @@ def _set_aside(conn: sqlite3.Connection, subject: str, *, skipped: bool) -> None
         day = timeutil.parse(record["decide_by"]).astimezone(timeutil.SGT).date().isoformat() if record else timeutil.today_str()
         why = f"Expired unanswered on {day} (approval {shown})."
     found = pending_file(app_id)
-    moved = None
-    if found is not None:
-        target = paths.writable(skipped_dir() / found.path.name)
-        target.write_text(f"{why}\n\n{found.path.read_text(encoding='utf-8')}", encoding="utf-8")
-        found.path.unlink()
-        moved = catalog.rel(target)
+    target = catalog.skipped_dir() / found.path.name if found is not None else None
     slug = found.slug if found else None
     name = found.name if found else None
-    if skipped:
-        backlog.drop(app_id=app_id, slug=slug, name=name, note=why)
-    else:
-        reopens = (datetime.fromisoformat(day) + timedelta(days=REST_DAYS)).date().isoformat()
-        backlog.rest(app_id=app_id, slug=slug, name=name, note=why, reopens=reopens)
+
+    def apply() -> None:
+        try:
+            if found is not None and target is not None and found.path.exists():
+                # The skipped copy is written before the pending file goes, so the PRD is never lost.
+                paths.writable(target).write_text(f"{why}\n\n{found.path.read_text(encoding='utf-8')}", encoding="utf-8")
+                found.path.unlink()
+            if skipped:
+                backlog.drop(app_id=app_id, slug=slug, name=name, note=why)
+            else:
+                reopens = (datetime.fromisoformat(day) + timedelta(days=REST_DAYS)).date().isoformat()
+                backlog.rest(app_id=app_id, slug=slug, name=name, note=why, reopens=reopens)
+        except Exception as error:  # noqa: BLE001 - the decision has committed; say what is left to do
+            log.event(conn, "apps.prd.set_aside_failed", {"app_id": app_id, "approval": shown, "why": why,
+                                                          "error": f"{type(error).__name__}: {error}"},
+                      level="error", agent=catalog.NAME)
+
     log.event(conn, "apps.prd.skipped" if skipped else "apps.prd.expired",
-              {"app_id": app_id, "subject": subject, "approval": shown, "moved_to": moved}, agent=catalog.NAME)
+              {"app_id": app_id, "subject": subject, "approval": shown,
+               "moved_to": catalog.rel(target) if target is not None else None}, agent=catalog.NAME)
+    if not db.after_commit(conn, apply):
+        apply()

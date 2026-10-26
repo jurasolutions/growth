@@ -304,6 +304,24 @@ def test_a_skipped_prd_moves_to_skipped_and_its_idea_never_comes_back(tmp_path, 
     assert again.exit_code == 1 and "delivery-order-maker" in again.output
 
 
+def test_a_skip_that_rolls_back_leaves_the_prd_and_the_backlog_as_they_were(tmp_path, prd_tree, conn):
+    """Code review 10, N4: the PRD moves and the backlog changes only once the decision commits."""
+    request = filed(tmp_path, conn)
+    before = backlog_row("delivery-order-maker")
+    conn.execute(
+        "CREATE TEMP TRIGGER fail_decision BEFORE INSERT ON approval_decisions BEGIN SELECT RAISE(ABORT, 'disk full'); END"
+    )
+    with pytest.raises(Exception, match="disk full"):
+        aw.skip(conn, request)
+    assert aw.get(conn, request.id).status == "pending"
+    assert (prd_tree / "pending" / "apps" / FILED).exists()
+    assert not (prd_tree / "skipped" / "apps" / FILED).exists()
+    assert backlog_row("delivery-order-maker") == before
+    conn.execute("DROP TRIGGER temp.fail_decision")
+    assert aw.skip(conn, request).answer == "recorded"
+    assert (prd_tree / "skipped" / "apps" / FILED).exists() and backlog_row("delivery-order-maker")["effective_status"] == "dropped"
+
+
 def test_an_unanswered_prd_expires_and_its_idea_is_offered_again_from_day_30(tmp_path, prd_tree, conn, monkeypatch):
     """AC-M9.6: not offered on day 29 after the expiry, offered and filed again on day 30."""
     at(monkeypatch, "2026-11-10T06:30:00+08:00")
