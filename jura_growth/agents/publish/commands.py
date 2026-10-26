@@ -4,7 +4,7 @@
 |---|---|
 | `publish next [--json]` | the publish run: claims at most one item (`claim.py`) |
 | `publish done <A-id> --url <url> --live-text-file <f>` | the publish run: records the post |
-| `publish stopped <A-id> --reason <r> [--screenshot <f>]` | the publish run: records a stop signal |
+| `publish stopped <A-id> --reason <r>` | the publish run: records a stop signal |
 | `publish queue [--json]` | Ting Yu: items, their state and their A-ids |
 | `publish resolve <A-id> posted --url <url>` or `not-posted` | Ting Yu: settles an `unknown` item (in `headless.NEVER`) |
 
@@ -25,7 +25,7 @@ from pathlib import Path
 
 import click
 
-from jura_growth import approvals, db, discord, log, pause, paths, timeutil
+from jura_growth import approvals, caps, db, discord, log, pause, timeutil
 from jura_growth.agents.publish import claim, hosts, items, kinds
 
 # What the run may report as a stop signal (BP §4.6). A closed list, so a page's own words
@@ -187,26 +187,29 @@ def done(approval_id, url, live_text_file) -> str:
 @publish.command()
 @click.argument("approval_id", metavar="A-ID")
 @click.option("--reason", required=True, type=click.Choice(list(STOP_REASONS)), help="The stop signal the page showed.")
-@click.option("--screenshot", type=click.Path(dir_okay=False, path_type=Path), help="A screenshot in the run's scratch folder.")
-def stopped(approval_id, reason, screenshot) -> str:
-    """Record a stop signal: the item stops and publishing pauses for every item."""
+def stopped(approval_id, reason) -> str:
+    """Record a stop signal: the item stops and publishing pauses for every item.
+
+    There is no screenshot file (BP §4.6 as amended): the alert names the run, whose transcript
+    keeps what the page showed for 7 days. This is the stop's only alert: the runner doesn't
+    post the failed run again (`job.after_run`)."""
+    run_id = log.current_run_id()
     with db.session() as conn:
         record, found = _item_for(conn, approval_id)
         if found.state != "claimed":
             raise click.ClickException(f"{record.id}'s item isn't claimed (it is {found.state})")
-        shown = None
-        if screenshot is not None and paths.is_within(screenshot, paths.work_dir("publish")):
-            shown = str(screenshot)
         with db.transaction(conn):
             conn.execute(
                 "UPDATE publish_items SET state = 'stopped', stop_reason = ?, finished_at = ? WHERE id = ? AND state = 'claimed'",
                 (reason, timeutil.stamp(), found.id),
             )
-            log.event(conn, "publish.stopped", {"item": found.label, "approval": record.id, "reason": reason,
-                                                 "screenshot": shown}, level="warning", agent=items.AGENT)
+            log.event(conn, "publish.stopped", {"item": found.label, "approval": record.id, "reason": reason},
+                      level="warning", agent=items.AGENT, run_id=run_id)
             pause.pause(conn, items.AGENT, f"{record.id} stopped: {reason}", notify=False)
-        text = f"Publishing stopped at {record.id} ({_where(found)}): {STOP_REASONS[reason]}."
-        text += f"\nScreenshot: {shown}" if shown else ""
+        where = f"in run {run_id}" if run_id is not None else "outside a run"
+        text = f"Publishing stopped at {record.id} ({_where(found)}) {where}: {STOP_REASONS[reason]}."
+        if run_id is not None:
+            text += f" The run's transcript keeps what the page showed for {caps.BROWSER_TRANSCRIPT_DAYS} days."
         text += f"\nNothing more is posted or joined until you resume it: {RESUME}."
         discord.alert(conn, text, agent=items.AGENT)
     click.echo(f"{record.id}: stopped ({reason}); publish is paused")

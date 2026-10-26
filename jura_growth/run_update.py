@@ -7,8 +7,11 @@ to do; a finished run, after its row, the alert and auto-pause; and the lock
 skip, with `conn=None`, so the database is never opened. The runner wraps the
 call, so an error here is logged and never changes the run.
 
-A job asks for run updates with `run_update: true` in `config/settings.yaml`.
-The message goes to the agent plug-in's `RUN_UPDATE_DISCORD_CHANNEL`:
+A job asks for run updates with `run_update: true` in `config/settings.yaml`,
+or with `run_update: claimed-only` for an update only when the plug-in's
+`run_update()` gives one (the publish job: only a run that claimed an item,
+never a skip, a quiet run or the lock skip). The message goes to the agent
+plug-in's `RUN_UPDATE_DISCORD_CHANNEL`:
 
     **social** · ok · 07:00 SGT · 4m 12s · US$0.41 · run 1287
     > Drafted LinkedIn, Facebook and Instagram for "PayNow QR for small shops".
@@ -55,6 +58,7 @@ if TYPE_CHECKING:
     from jura_growth.runner import Outcome
 
 LIMIT = caps.RUN_UPDATE_TEXT_CHARS
+CLAIMED_ONLY = "claimed-only"
 _STATUS_PREFIX = re.compile(r"^\s*[*_`>]*\s*(?:OK|SKIP|FAIL):\s*", re.I)
 
 
@@ -81,18 +85,21 @@ def count(number: int, noun: str) -> str:
 
 def after_run(conn: sqlite3.Connection | None, job: str, spec: dict, run_id: int | None, outcome: Outcome) -> None:
     """Post the run update for this run, if its job asks for one."""
-    if spec.get("run_update") is not True:
+    mode = spec.get("run_update")
+    if mode is not True and mode != CLAIMED_ONLY:
         return
     agent = spec["agent"]
     module = agents.by_name(agent)
     discord_channel = getattr(module, "RUN_UPDATE_DISCORD_CHANNEL", None)
     if not discord_channel:
         raise LookupError(f"job {job} has run_update on, but agent {agent} names no RUN_UPDATE_DISCORD_CHANNEL")
+    hook = getattr(module, "run_update", None)
+    if mode == CLAIMED_ONLY and (conn is None or run_id is None or hook is None):
+        return  # only the plug-in can say a run claimed something, and only for a run with a row
     run = _run(conn, job, agent, run_id, outcome)
     produced: list[str] | None = []  # None: the plug-in couldn't say
     if conn is not None:
         privacy.load_for_masking(conn)  # summaries come from another process
-        hook = getattr(module, "run_update", None)
         if hook:
             try:
                 produced = hook(conn, run)
@@ -106,6 +113,8 @@ def after_run(conn: sqlite3.Connection | None, job: str, spec: dict, run_id: int
                     run_id=run_id,
                 )
                 produced = None
+                if mode == CLAIMED_ONLY:
+                    return  # it can't say whether the run claimed anything
             else:
                 if produced is None:
                     return  # the plug-in asks for no update for this run

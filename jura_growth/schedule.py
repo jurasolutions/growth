@@ -12,6 +12,7 @@ Schedule shapes (all SGT):
     {daily: "HH:MM"}
     {business_days: "HH:MM"}                    Mon–Fri; holidays skipped in code
     {business_days_every: {start, end, minutes}}
+    {daily_every: {start, end, minutes}}        every day, weekends included
     {weekly: {day: mon, time: "HH:MM"}}
 """
 
@@ -69,17 +70,21 @@ def sgt_slots(schedule: dict) -> list[tuple[int | None, int, int]]:
         h, m = _hm(schedule["business_days"])
         slots += [(day, h, m) for day in range(1, 6)]
     if "business_days_every" in schedule:
-        every = schedule["business_days_every"]
-        start, end = _hm(every["start"]), _hm(every["end"])
-        step = int(every["minutes"])
-        minute = start[0] * 60 + start[1]
-        while minute <= end[0] * 60 + end[1]:
-            slots += [(day, minute // 60, minute % 60) for day in range(1, 6)]
-            minute += step
+        for hour, minute in _every(schedule["business_days_every"]):
+            slots += [(day, hour, minute) for day in range(1, 6)]
+    if "daily_every" in schedule:
+        slots += [(None, hour, minute) for hour, minute in _every(schedule["daily_every"])]
     if "weekly" in schedule:
         weekly = schedule["weekly"]
         slots.append((WEEKDAYS[weekly["day"][:3].lower()], *_hm(weekly["time"])))
     return slots
+
+
+def _every(every: dict) -> list[tuple[int, int]]:
+    """(hour, minute) from `start` to `end` inclusive, every `minutes`."""
+    start, end = _hm(every["start"]), _hm(every["end"])
+    step = int(every["minutes"])
+    return [(m // 60, m % 60) for m in range(start[0] * 60 + start[1], end[0] * 60 + end[1] + 1, step)]
 
 
 def local_offset() -> timedelta:
@@ -190,6 +195,9 @@ def describe(spec: dict) -> str:
     if "business_days_every" in schedule:
         e = schedule["business_days_every"]
         return f"business days {e['start']}–{e['end']}, every {e['minutes']} min"
+    if "daily_every" in schedule:
+        e = schedule["daily_every"]
+        return f"daily {e['start']}–{e['end']}, every {e['minutes']} min"
     if "weekly" in schedule:
         w = schedule["weekly"]
         return f"{w['day'].capitalize()} {w['time']}"

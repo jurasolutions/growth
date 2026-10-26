@@ -195,10 +195,10 @@ content, its day and its lifecycle (`ready`, `claimed`, `done`, `stopped`, `unkn
 `withdrawn`), the live URL and whether the live text matched. It holds no approval state: that
 lives only in `approvals`, under the subject `publish_item:<id>`.
 
-## Publishing through the browser (browser publishing PRD, BP-02a)
+## Publishing through the browser (browser publishing PRD, BP-02a and BP-03)
 
-Nothing posts without Ting Yu's approval of that exact post (MC §4.6). The queue is built and
-works from Terminal and the tests; the scheduled `publish` job that drives Chrome is BP-03.
+Nothing posts without Ting Yu's approval of that exact post (MC §4.6). The queue (BP-02a) works
+from Terminal and the tests; the scheduled `publish` job (BP-03, below) drives Chrome.
 
 1. `social submit` makes a **publish item** for each platform in `browser` mode whose variant
    passed the brand gate, and raises one `social-post` approval request for it. The card in
@@ -229,7 +229,7 @@ exact bytes, with no Unicode normalisation (ADR 0003).
 |---|---|---|
 | `jura-growth publish next [--json]` | the publish run | Claims at most one item, or prints "nothing due" with the reasons |
 | `jura-growth publish done <A-id> --url <url> --live-text-file <f>` | the publish run | Records the post. The URL must be `https://` on the platform's own host. Live text that differs from the approved text (after Unicode NFC, collapsing whitespace and trimming) is recorded, alerts and pauses `publish` |
-| `jura-growth publish stopped <A-id> --reason <r> [--screenshot <f>]` | the publish run | A stop signal (`login`, `captcha`, `checkpoint`, `warning`, `restriction`, `rate-limit`, `removed`, `admin-warning`, `wrong-identity`, `unidentified`): the item stops, `publish` pauses for every item and `#alerts` says why |
+| `jura-growth publish stopped <A-id> --reason <r>` | the publish run | A stop signal (`login`, `captcha`, `checkpoint`, `warning`, `restriction`, `rate-limit`, `removed`, `admin-warning`, `wrong-identity`, `unidentified`): the item stops, `publish` pauses for every item, and `#alerts` gives the reason and the run id |
 | `jura-growth publish queue [--json]` | Ting Yu | Every item, its state and its A-id |
 | `jura-growth publish resolve <A-id> posted --url <url>` or `not-posted` | Ting Yu only (refused in any scheduled run) | Settles an item whose outcome is unknown |
 
@@ -245,6 +245,54 @@ item becomes `unknown`: it is never claimed again, `publish` pauses, and `#alert
 `/growth publish resolve A-nnnn posted --url <url>` and `… not-posted`. A claim left by a run
 whose process died is settled the same way by the next run, and `publish resolve` also settles a
 claim nobody will close: one whose run has ended, or one made in Terminal with no run.
+`/growth publish queue` and `/growth publish resolve …` work from Discord too.
+
+### The `publish` job (BP-03, ADR 0005)
+
+Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/settings.yaml`).
+
+- **Precheck, before Claude starts.** With `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` in
+  the environment the run is skipped and says why, because either one silently removes the Chrome
+  tools; `jura-growth status` lists the variable as a setup gap. Otherwise the precheck runs the
+  queue's `items.sync()` and posts any fresh card, then asks whether anything can be claimed. If
+  not, the slot is a quiet run ("nothing due") and no Claude starts.
+- **What the run may do.** `--chrome`, only because `publish` is in `caps.BROWSER_JOBS`; no
+  `--add-dir`. The tab tools by name, and the page tools only through one
+  `ClaudeInChromeDomain(<host>)` rule per Facebook host (`hosts.BROWSER_HOSTS`) while Facebook is
+  in `browser` mode. Scripting, network, console, shortcut, recording, browser-switching, batch and
+  resize tools, `upload_image`, web search and fetch are denied, and `file_upload` too unless the
+  item due has an image. Bash runs only `publish next`, `done` and `stopped`.
+- **The prompt** (`prompts/publish.md`) checks the connected browser before `publish next` (no
+  browser ends `SKIP:` and claims nothing), opens its own tab, checks the page shows the Jura Page
+  as the posting identity before typing, posts exactly the approved text and images, reads the
+  live post back and records it, and closes its tab. Any stop signal ends in `publish stopped`.
+- **After the run** (`after_run`, before the run row is finished): an open claim becomes
+  `unknown`. The transcript audit fails the run and pauses `publish` for:
+  - a URL off the publish hosts, asked for or shown as a tab's address in any later result, or
+    a tab address it can't read;
+  - a Discord host;
+  - a tool call on a tab the run didn't open;
+  - a field typed with anything but an approved text, judged whole and in order, or typing
+    before the claim;
+  - an upload that isn't the claimed item's own read-only image copy, or a copy that no longer
+    hashes to the approved image;
+  - a click, key, input, upload or navigation after `publish stopped`;
+  - a never-tool.
+
+  A tab left open is a warning. A run that found no browser alerts once a day. The tab address
+  is read only from the tab context that ends each result, never from page text, and nothing a
+  page holds can make the audit raise. If the checks fail for any reason at all, the run fails
+  with a fixed reason naming it, and publishing pauses (`publish.after_run` fails closed).
+- **No model text goes out.** Every publish run's summary and error are written from the item's
+  record: the A-id, the platform, what happened, the URL or the closed stop reason, and the run
+  id. The model's own summary and `FAIL:` line stay in the transcript.
+- **Run updates** (`run_update: claimed-only`) post in `#social-drafts` only for a run that
+  claimed an item. Stops, mismatches and unknown items also go to `#alerts`, once each: a stop's
+  one alert comes from `publish stopped` and names the run, whose transcript keeps what the page
+  showed (there is no screenshot file).
+- **Transcripts** of publish runs hold page text, so they are kept 7 days
+  (`caps.BROWSER_TRANSCRIPT_DAYS`), not 30, and so are the files a run leaves in
+  `work/publish/` (its read-back live text and its image copies).
 
 ## Digest
 

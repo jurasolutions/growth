@@ -196,6 +196,8 @@ def _table(conn, world):
         (["one-pager"], 0, "not posted to #mission-control: DISCORD_WEBHOOK_MISSION_CONTROL not set; saved to outbox"),
         (["outreach", "requeue-shadow", "--dry-run"], 1, "live sending is ready"),
         (["pause", "all", "holiday"], 0, "paused all"),
+        (["publish", "queue"], 0, "no publish items"),  # browser-publishing#03
+        (["publish", "resolve", "A-0999", "not-posted"], 1, "there is no approval request A-0999"),
         (["resume", "all"], 0, "resumed all"),
         (["skip", skipped.id, "not", "now"], 0, f"{skipped.id} skipped."),
         (["social", "skip", "2026-11-10", "instagram"], 0, "won't be drafted"),

@@ -90,6 +90,17 @@ def _ready(conn: sqlite3.Connection, today: str) -> list[items.Item]:
     return [items.Item.from_row(r) for r in rows]
 
 
+def approved_ready(conn: sqlite3.Connection, today: str) -> list[items.Item]:
+    """The ready items `next_item()` looks at whose latest request is approved and unused: a plain
+    read, with none of the claim's checks, for the publish argv's upload rule (`scope.py`)."""
+    found = []
+    for item in _ready(conn, today):
+        latest = items.latest_request(conn, item)
+        if latest is not None and latest.status == approvals.APPROVED and latest.used_at is None:
+            found.append(item)
+    return found
+
+
 def _run_start(conn: sqlite3.Connection, run_id: int | None, now: datetime) -> datetime:
     started = db.scalar(conn, "SELECT started_at FROM runs WHERE id = ?", (run_id,)) if run_id else None
     return timeutil.parse(started) if started else now
@@ -320,14 +331,17 @@ def _hand_out(conn: sqlite3.Connection, item: items.Item, approval: approvals.Ap
 
 
 def _copy_images(found: kinds.Read, approval: approvals.Approval) -> list[Path]:
-    """Write the checked bytes, in order, into the run's scratch folder, and read each copy back
-    to make sure it holds them."""
+    """Write the checked bytes, in order, into the run's scratch folder, read each copy back to
+    make sure it holds them, and make it read-only, so the run's own Write tool can't change it
+    (code review 03, S-8). The publish job's `after_run` hashes the copies again."""
     folder = paths.work_dir("publish") / approval.id
     copies = []
     for number, (image, blob) in enumerate(zip(found.content.get("images", []), found.blobs), start=1):
         target = paths.writable(folder / f"{number}-{Path(image['path']).name}")
+        target.unlink(missing_ok=True)  # a copy left read-only by a claim that rolled back
         target.write_bytes(blob)
         if hashlib.sha256(target.read_bytes()).hexdigest() != image["sha256"]:
             raise CopyFailed(f"{target.name} doesn't hold the approved image")
+        target.chmod(0o444)
         copies.append(target)
     return copies

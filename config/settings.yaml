@@ -48,6 +48,8 @@ auto_pause_after_failures: 3
 retention:
   backups_days: 14
   transcripts_days: 30
+  # Publish transcripts hold page text: at most 7 days (caps.BROWSER_TRANSCRIPT_DAYS); may only be lower.
+  browser_transcripts_days: 7
   one_pager_days: 14 # the one-pager's grid PNGs in data/growth/one-pager/
 
 # Jobs `pause all` leaves running: housekeeping, and the digest that reports
@@ -122,6 +124,21 @@ jobs:
     # config/community.yaml blocked_fetch_domains, and every subdomain of it.
     schedule: {weekly: {day: mon, time: "07:30"}}
     run_update: true # one message per run in #community
+
+  # Browser publishing (prd-jura-browser-publishing §5.8; ADR 0005). Posts one
+  # approved item per run through Claude in Chrome. `browser: true` gives it
+  # `--chrome`, and only because `publish` is in caps.BROWSER_JOBS: any other
+  # job that sets it fails. Its tools come from the publish plug-in (domain
+  # rules for the platforms in `browser` mode), never from this file. The
+  # precheck skips without starting Claude when nothing can be claimed.
+  publish:
+    agent: publish
+    kind: claude
+    prompt: publish.md
+    quiet: true
+    browser: true
+    schedule: {daily_every: {start: "09:00", end: "17:40", minutes: 20}}
+    run_update: claimed-only # one message per run that claimed an item
 
   backup:
     agent: backup

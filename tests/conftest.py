@@ -165,6 +165,10 @@ def isolated(tmp_path, monkeypatch):
     # The UAT window's stub URLs (X13), so a shell that exported them doesn't change a test.
     for name in ("JURA_GROWTH_RESEND_BASE_URL", "JURA_GROWTH_D1_BASE_URL"):
         monkeypatch.delenv(name, raising=False)
+    # Claude Code auth variables: the publish precheck skips and status lists a gap when either is
+    # set (BP-03, AC-P9.5), so a shell that exported one doesn't change a test.
+    for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
     config.reset_caches()
     GUARD.take()
     NETWORK.take()

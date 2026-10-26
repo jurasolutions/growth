@@ -15,11 +15,16 @@ Modules:
 - `group_kinds`: the `community-post` and `group-join` approval kinds.
 - `claim`: every claim-time check and the claim itself; `claimable(conn, now)` is the read-only
   form the publish job's precheck uses (BP-03).
-- `job`: the job hooks. `after_run` settles a claim the run left open as `unknown`.
+- `job`: the job hooks: the precheck, `after_run` (unknown claims, the audit, the no-browser
+  alert, the summary) and the run update.
+- `scope`: the publish run's commands and Chrome tools, scoped by domain (ADR 0005).
+- `audit`: the transcript audit for hosts, tabs and typed text.
+- `hosts`: each platform's hosts, for post URLs and for the browser.
 - `limits`: the caps in `caps.py`, tightened by `config/publish.yaml`.
 - `commands`: `jura-growth publish next | done | stopped | queue | resolve`.
 
-No browser is involved yet: BP-03 adds the scheduled `publish` job that drives Chrome.
+The scheduled `publish` job (BP-03, `prompts/publish.md`) drives Chrome through Claude in Chrome,
+every 20 minutes from 09:00 to 17:40 SGT, posting to the Facebook Page in this build.
 See docs/social.md.
 """
 
@@ -30,6 +35,8 @@ from pathlib import Path
 
 NAME = "publish"
 MIGRATIONS = Path(__file__).parent / "migrations"
+# Social posts are the only kind this build publishes; BP-05's community posts report to #community.
+RUN_UPDATE_DISCORD_CHANNEL = "social-drafts"
 
 
 def register(cli) -> None:
@@ -62,10 +69,51 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
             "lines": [f"Publishing: {line}"], "brief": []}
 
 
-def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
+def precheck(job: str, conn: sqlite3.Connection):
+    """The publish job's precheck (`job.precheck`); the plug-in's other jobs have none."""
+    if job != "publish":
+        return None
     from jura_growth.agents.publish import job as publish_job
 
-    return publish_job.after_run(conn, job, run_id, outcome)
+    return publish_job.precheck(job, conn)
+
+
+def setup_gaps() -> list:
+    """`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` in the environment (AC-P9.5)."""
+    from jura_growth.agents.publish import job as publish_job
+
+    return publish_job.setup_gaps()
+
+
+def permissions(job: str):
+    """The publish run's commands and Chrome tools (`scope.py`, AC-P9.2)."""
+    if job != "publish":
+        return None
+    from jura_growth.agents.publish import scope
+
+    return scope.permissions()
+
+
+def run_update(conn: sqlite3.Connection, run) -> list[str] | None:
+    """Only a run that claimed an item posts an update (`run_update: claimed-only`, AC-P8.1)."""
+    from jura_growth.agents.publish import job as publish_job
+
+    return publish_job.run_update(conn, run)
+
+
+def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
+    """The publish run's checks, failing closed (code review 03, B3).
+
+    The runner keeps a run's own outcome when a plug-in's `after_run` raises, and for publish
+    that outcome holds the model's words and has had no audit. So any exception in the checks,
+    whatever its cause (page content, a parser bug, the database), fails the run here, with a
+    fixed reason naming the run, and pauses publishing (`job.failed_closed`)."""
+    from jura_growth.agents.publish import job as publish_job
+
+    try:
+        return publish_job.after_run(conn, job, run_id, outcome)
+    except Exception as error:  # noqa: BLE001 - fail closed, whatever went wrong
+        return publish_job.failed_closed(conn, run_id, outcome, error)
 
 
 def approval_kinds() -> dict:

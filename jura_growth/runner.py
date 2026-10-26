@@ -37,7 +37,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from jura_growth import agents, config, db, discord, headless, holidays, locks, log, pause, paths, run_update, schedule, timeutil
+from jura_growth import agents, caps, config, db, discord, headless, holidays, locks, log, pause, paths, run_update, schedule, timeutil
 
 
 class JobError(RuntimeError):
@@ -50,6 +50,9 @@ class Outcome:
     summary: str = ""
     error: str = ""
     cost_usd: float | None = None
+    # True when the failure has already been posted to #alerts (a publish stop, by
+    # `publish stopped` itself), so the runner doesn't post it a second time.
+    alerted: bool = False
 
 
 def jobs() -> dict[str, dict]:
@@ -155,7 +158,8 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
 
     if outcome.status == "failed":
         try:
-            discord.alert(conn, f"`{name}` failed: {outcome.error[:500]}", agent=agent)
+            if not outcome.alerted:
+                discord.alert(conn, f"`{name}` failed: {outcome.error[:500]}", agent=agent)
         finally:
             pause.check_auto_pause(conn, agent)  # whatever happened to the alert
     return _run_update(conn, name, spec, run_id, outcome)
@@ -253,15 +257,22 @@ def _run_command(spec: dict, agent: str, run_id: int | None, job_name: str) -> O
 
 
 def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
-    """The argv and the stdin prompt for a claude job (also used by --dry-run)."""
+    """The argv and the stdin prompt for a claude job (also used by --dry-run).
+
+    A job in `caps.BROWSER_JOBS` that sets `browser: true` gets `--chrome` and no `--add-dir`
+    (ADR 0005): its plug-in's rules scope the Chrome tools by domain, and the files it needs are
+    copied into its scratch folder. Any other job that sets `browser` raises."""
     settings = config.settings()["claude"]
+    browser = name in caps.BROWSER_JOBS
+    if spec.get("browser") and not browser:
+        raise JobError(f"job {name} sets browser: true, but only {', '.join(sorted(caps.BROWSER_JOBS))} may drive Chrome")
     prompt_file = paths.prompts_dir() / spec["prompt"]
     if not prompt_file.exists():
         raise JobError(f"prompt file missing: {prompt_file}")
     work = paths.writable(paths.work_dir(name) / ".keep").parent
 
     # Only the job's own jura-growth commands, and no secret files (headless.py).
-    commands_allowed, commands_disallowed = headless.claude_rules(name)
+    commands_allowed, commands_disallowed = headless.claude_rules(name)  # with the plug-in's tool rules
     allowed = [
         *commands_allowed,
         f"Write(/{work}/**)",
@@ -282,11 +293,13 @@ def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
         "--strict-mcp-config",
         "--setting-sources", "project",
         "--no-session-persistence",
-        "--add-dir", str(paths.JURA_ROOT),
+        *([] if browser else ["--add-dir", str(paths.JURA_ROOT)]),
         "--max-budget-usd", str(budget),
         "--allowedTools", *allowed,
         "--disallowedTools", *disallowed,
     ]
+    if browser and spec.get("browser"):
+        argv.append("--chrome")
     if spec.get("model") or settings.get("model"):
         argv += ["--model", spec.get("model") or settings["model"]]
     return argv, prompt_file.read_text(encoding="utf-8")

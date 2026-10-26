@@ -111,6 +111,31 @@ def _pause(words: list[str], ref: str | None) -> list[str]:
     return ["pause", f"--reason={reason}", "--", words[0]]
 
 
+_A_ID = re.compile(r"A-[0-9]+")
+_RESOLVE = "say `publish resolve A-nnnn posted --url <url>` or `publish resolve A-nnnn not-posted`"
+
+
+def _publish_resolve(words: list[str], ref: str | None) -> list[str]:
+    """`<A-nnnn> posted --url <url>` (or `--url=<url>`), or `<A-nnnn> not-posted`, and nothing
+    else. The URL is checked against the platform's hosts by the command itself."""
+    if len(words) < 2 or not _A_ID.fullmatch(words[0]) or words[1] not in ("posted", "not-posted"):
+        raise Refusal(_RESOLVE)
+    approval, outcome, rest = words[0], words[1], list(words[2:])
+    if outcome == "not-posted":
+        if rest:
+            raise Refusal(_RESOLVE)
+        return ["publish", "resolve", "--", approval, outcome]
+    if len(rest) == 2 and rest[0] == "--url":
+        url = rest[1]
+    elif len(rest) == 1 and rest[0].startswith("--url="):
+        url = rest[0].removeprefix("--url=")
+    else:
+        raise Refusal(_RESOLVE)
+    if not url or url.startswith("-"):
+        raise Refusal(_RESOLVE)
+    return ["publish", "resolve", f"--url={url}", "--", approval, outcome]
+
+
 def _requeue_shadow(words: list[str], ref: str | None) -> list[str]:
     argv = ["outreach", "requeue-shadow"]
     rest = list(words)
@@ -175,6 +200,8 @@ ALLOWLIST: dict[str, Entry] = {
     "one-pager": Entry("one-pager", _none("one-pager")),
     "outreach requeue-shadow": Entry("outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]", _requeue_shadow),
     "pause": Entry("pause <agent|all> [reason]", _pause),
+    "publish queue": Entry("publish queue", _none("publish queue")),
+    "publish resolve": Entry("publish resolve <A-nnnn> posted --url <url> | not-posted", _publish_resolve),
     "resume": Entry("resume <agent|all>", _positional("resume", 1, 1)),
     "skip": Entry("skip <A-nnnn> [note]", _decision("skip"), decision=True),
     "social skip": Entry("social skip <date> <platform>", _positional("social skip", 2, 2)),

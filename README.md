@@ -126,6 +126,15 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
 - The code enforces the same command list again: with `JURA_GROWTH_JOB` set, any other command
   exits with status 2 and a `refused:` line (`jura_growth/headless.py`). A command job may run
   only its own command. Commands you run in Terminal are unaffected.
+- **The browser job is narrower (ADR 0005).** A job in `caps.BROWSER_JOBS` (only `publish`) with
+  `browser: true` gets `--chrome` and no `--add-dir`, so it reads nothing under `jurasolutions/`
+  beyond what its commands print; `publish next` copies the item's images into its scratch
+  folder, read-only. It has no web search or fetch. Its Chrome tools come from the plug-in's
+  `Permissions.allowed_tools`: the tab tools by name and one `ClaudeInChromeDomain(<host>)` rule
+  per host of each platform in `browser` mode, never a page tool by name. Any other job that
+  sets `browser: true` fails. After the run, its transcript is audited for hosts, tabs, typed
+  text, uploads and actions after a stop, and its summary and error are rewritten from the
+  item's record, so no model or page text reaches the run row, `#alerts` or a run update.
 - Every file a command takes goes through `paths.guard()`: secret files are always refused, and
   inside a run only the job's `work/` folder and `outputs/growth/` are accepted.
 - Configured secret values (secret-named settings and `keychain:` references) are masked in
@@ -175,14 +184,14 @@ imports it by name. The module may define:
 | `channels()` | `{name: brand_check.Channel}` with the agent's rule-10 checks |
 | `digest(conn, day)` | `{"figures": {}, "lines": [], "brief": []}` for the digest and morning brief |
 | `precheck(job, conn)` | A reason to skip a scheduled run before it starts, or `None`. Return `agents.NothingToDo("nothing due")` instead of a plain string when the run simply has nothing to do: the runner writes a `run.quiet` event with that reason and no run row (ADR 0001). It may also run a catch-up write before the run, in its own transaction: the app factory raises `app-build` requests for PRDs filed before requests existed, and the community scout runs its one-off pass over rules confirmed before `group-rules` (it logs a failure and goes ahead, so the write never skips the run) |
-| `permissions(job)` | For a `claude` job the agent runs: `headless.Permissions` with the `jura-growth` commands its prompt uses (and any extra Claude Code deny rules), or `None`. A job with no declaration may run no commands |
-| `after_run(conn, job, run_id, outcome)` | Called after the job body of a run that started, before its run row is finished. Return a `runner.Outcome` to replace the outcome (the row, `#alerts` and auto-pause all see it), or `None` to keep it. An exception is logged as `run.after_run_error` and the outcome stands |
+| `permissions(job)` | For a `claude` job the agent runs: `headless.Permissions` with the `jura-growth` commands its prompt uses, any extra Claude Code deny rules (`disallowed_tools`) and any extra allow rules that aren't Bash (`allowed_tools`, such as the publish job's Chrome tab tools and `ClaudeInChromeDomain` rules), or `None`. A job with no declaration may run no commands |
+| `after_run(conn, job, run_id, outcome)` | Called after the job body of a run that started, before its run row is finished. Return a `runner.Outcome` to replace the outcome (the row, `#alerts` and auto-pause all see it), or `None` to keep it. An `Outcome` with `alerted=True` has already posted its failure to `#alerts` itself, so the runner doesn't post it again. An exception is logged as `run.after_run_error` and the outcome stands |
 | `RUN_UPDATE_DISCORD_CHANNEL` | The Discord channel the agent's run updates go to, for example `social-drafts` |
 | `run_update(conn, run)` | The "Produced:" items of the agent's run update (`["3 drafts", "3 images"]`; `[]` reads "nothing"), or `None` to post no update for this run. `run` is a `run_update.Run`. Asked only when there is a database connection; an exception is logged as `run.after_run_error` and the update posts without the line |
 | `approval_kinds()` | `{name: approvals.ApprovalKind}`, the approval kinds the agent owns (below). A kind that two plug-ins declare, or whose plug-in failed to load, fails closed |
 | `privacy_terms(conn)` | `{"named_addresses": [], "companies": [], "owner_addresses": [], "kept_names": []}`: addresses that name a person (their names stay out of Discord), company names (never read as a person's name), Ting Yu's own addresses (removed outside Jura's own email) and names that are not a prospect's (Ting Yu's) |
 | `REQUIRED_SETTINGS` | The `.env` settings the agent needs, by name. Each one not set is a setup gap in `jura-growth status` and the one-pager |
-| `setup_gaps()` | `[health.Gap(name, ok=...)]` in place of `REQUIRED_SETTINGS`: names and booleans only, never a value |
+| `setup_gaps()` | `[health.Gap(name, ok=...)]` in place of `REQUIRED_SETTINGS`: names and booleans only, never a value. `Gap(name, ok=..., must_be_unset=True)` is a setting that must *not* be set (the publish job's `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`), shown as "set, and must not be" |
 | `health(conn)` | Extra "Needs you" lines for the one-pager. `conn` is the read model's read-only connection, so a write raises |
 
 Every hook except `NAME` is optional and found with `getattr`. Its prompt goes in
@@ -199,6 +208,15 @@ start, length, cost and run id, the error in one line for a failed run, the summ
 most `caps.RUN_UPDATE_TEXT_CHARS` characters (without the lines the error already shows),
 "Produced:" and the approval requests the run raised. A skip posts its reason, and a quiet run
 "nothing to do". Any other exception out of the runner (a database or programming error) posts none.
+A job with `run_update: claimed-only` (publish) posts only when its plug-in's `run_update()` gives
+"Produced:" items, which the publish plug-in does only for a run that claimed an item: never for a
+skip, a quiet run or the lock skip.
+
+A job's keys in `config/settings.yaml`: `agent`, `kind` (`command` or `claude`), `command` or
+`prompt`, `schedule` (the shapes in `jura_growth/schedule.py`, including `daily_every` for a
+repeating daily slot), and optionally `tools`, `disallowed_tools`, `max_budget_usd`, `model`,
+`quiet`, `run_update` (`true` or `claimed-only`) and `browser` (`true` only for a job in
+`caps.BROWSER_JOBS`; any other job that sets it fails).
 
 ### Approval kinds
 
