@@ -35,7 +35,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from jura_growth import approval_settings, approvals, db, log, paths, timeutil
-from jura_growth.agents.apps import builds, catalog
+from jura_growth.agents.apps import backlog, builds, catalog
 
 KIND = "app-release"
 TASK_RE = re.compile(r"^T-\d{4,}$")
@@ -280,6 +280,90 @@ def merge_plan(app_id: str, row: dict, approval: approvals.Approval) -> list[str
         "  git push origin main",
         f"  jura-growth apps released {app_id} --task {row['task_id']}",
     ]
+
+
+# --- `apps released` ----------------------------------------------------------------------------------
+
+
+SIGNED_BLANK = re.compile(r"^Signed off by: _+[ \t]+Date: _+[ \t]*$", re.M)
+
+
+def record_released(conn: sqlite3.Connection, app_id: str, *, task: str) -> Outcome:
+    """`apps released`: the completion write (A6). It needs the request `release-plan` claimed,
+    still over the build's commit, and `main` of the landing-page repository containing that
+    commit; it never re-checks a deadline. Then the build is `released`, the PRD moves to
+    `prd/done/apps/` with the ship date and both approvals, and the backlog row goes live."""
+    row = db.one(conn, "SELECT * FROM app_builds WHERE app_id = ? AND task_id = ? ORDER BY id DESC LIMIT 1", (app_id, task))
+    if row is None or row["status"] not in ("built", "released"):
+        return Outcome(False, [f"refused: {app_id} has no build reported under {task}; `apps built` reports one."])
+    if row["status"] == "released":
+        return Outcome(True, [f"{app_id} was already recorded as released on {row['released_at'][:10]}."])
+    claimed = claimed_release(conn, app_id)
+    if claimed is None:
+        return Outcome(False, [f"refused: {app_id} has no claimed app-release request. Approve its release in #approvals, "
+                               f"then run `jura-growth apps release-plan {app_id}` and the merge it prints."])
+    sha = row["head_sha"]
+    if claimed.content_hash != approvals.content_hash(encode(row)):
+        return Outcome(False, [f"refused: {claimed.id} covers another commit than the one reported for {app_id} "
+                               f"({short(sha)}); approve the release of the new commit first."])
+    contained = on_main(sha)
+    if contained is None:
+        return Outcome(False, [f"refused: git can't tell whether main of {paths.site_repo()} contains {short(sha)}. "
+                               "Pull main after the merge, then run this again."])
+    if not contained:
+        return Outcome(False, [f"refused: main of {paths.site_repo()} doesn't contain {short(sha)} yet. "
+                               f"Run the merge `apps release-plan` printed for {claimed.id}, then this again."])
+    found = builds.pending_file(app_id)
+    with db.transaction(conn):
+        done = conn.execute(
+            "UPDATE app_builds SET status = 'released', released_at = ? WHERE id = ? AND status = 'built' AND head_sha = ?",
+            (timeutil.stamp(), row["id"], sha),
+        ).rowcount
+        if done:
+            log.event(conn, "apps.release.recorded", {"app_id": app_id, "task": task, "sha": sha, "approval": claimed.id,
+                                                       "build_approval": row["approval_id"]}, agent=catalog.NAME)
+    if not done:
+        return Outcome(False, [f"refused: the build of {app_id} changed while this ran; run it again."])
+    lines = [f"Recorded: {app_id} released at {short(sha)} ({task}), approvals {row['approval_id']} and {claimed.id}."]
+    try:
+        moved = _file_done(found, row, claimed)
+    except OSError as error:
+        log.event(conn, "apps.prd.done_move_failed", {"app_id": app_id, "error": f"{type(error).__name__}: {error}"},
+                  level="error", agent=catalog.NAME)
+        moved = None
+        lines.append(f"The PRD couldn't be moved to prd/done/apps/ ({type(error).__name__}); move it by hand.")
+    if moved is not None:
+        lines.append(f"PRD moved to {moved}.")
+    elif found is None:
+        lines.append("Its PRD isn't in prd/pending/apps/, so nothing was moved.")
+    return Outcome(True, lines, claimed)
+
+
+def _day(stamp: str | None) -> str:
+    return timeutil.parse(stamp).astimezone(timeutil.SGT).date().isoformat() if stamp else "?"
+
+
+def _file_done(found: catalog.PrdFile | None, row: dict, release: approvals.Approval) -> str | None:
+    """Move the PRD to `prd/done/apps/`: the ship date on top, both approvals on the sign-off
+    line. The done copy is written before the pending file goes, so the PRD is never lost."""
+    if found is None or not found.path.exists():
+        return None
+    today = timeutil.today_str()
+    shipped = (f"*Shipped on {today}: released to jurasolutions.sg from `{row['branch']}` at {short(row['head_sha'])} "
+               f"(task {row['task_id']}).*")
+    signed = (f"Signed off by: Ting Yu in #approvals, build approval {row['approval_id']} ({_day(row['approval_at'])}) and "
+              f"release approval {release.id} ({_day(release.decided_at)})  Date: {today}")
+    text = found.path.read_text(encoding="utf-8")
+    text, filled = SIGNED_BLANK.subn(lambda _: signed, text, count=1)
+    if not filled:
+        text = text.rstrip("\n") + f"\n\n{signed}\n"
+    target = paths.writable(catalog.done_dir() / found.path.name)
+    target.write_text(f"{shipped}\n\n{text}", encoding="utf-8")
+    found.path.unlink()
+    relative = catalog.rel(target)
+    backlog.release(app_id=found.app_id, slug=found.slug, name=found.name, prd_path=relative,
+                    note=f"Released on {today} at {short(row['head_sha'])} (approval {release.id}).")
+    return relative
 
 
 def claimed_release(conn: sqlite3.Connection, app_id: str) -> approvals.Approval | None:

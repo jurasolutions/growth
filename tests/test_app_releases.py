@@ -10,6 +10,7 @@ through `gate_adapter_app_release.py`.
 
 import re
 import shutil
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -19,7 +20,7 @@ import site_repo
 from discord_double import discord_double  # noqa: F401 - the fixture
 from gate_adapter_app_build import file_prd
 from jura_growth import approvals, config, db, paths
-from jura_growth.agents.apps import builds, releases
+from jura_growth.agents.apps import backlog, builds, catalog, releases
 from jura_growth.cli import cli
 
 REAL_PRD = paths.JURA_ROOT / "prd"
@@ -200,6 +201,112 @@ def test_release_plan_refuses_a_release_whose_branch_moved_on_after_the_approval
     result = invoke("apps", "release-plan", app_id)
     assert result.exit_code == 1 and "git merge" not in result.output
     assert aw.get(conn, request.id).status == "superseded"
+
+
+# --- AC-M9.9: `apps released` checks main, then records the release ----------------------------------
+
+
+def pending_prd(app_id: str):
+    found = builds.pending_file(app_id)
+    return found.path if found else None
+
+
+def done_prds():
+    folder = catalog.done_dir()
+    return sorted(folder.glob("prd-app-*.md")) if folder.is_dir() else []
+
+
+def test_released_with_no_claimed_release_exits_1_and_the_prd_stays_in_pending(conn):
+    app_id, _ = handed_off(conn)
+    assert invoke("apps", "released", app_id, "--task", TASK).exit_code == 1  # not even built
+    sha = site_repo.branch(BRANCH)
+    assert built(app_id, sha).exit_code == 0
+    [request] = release_requests(conn)
+    site_repo.merge(sha)  # merged by hand with no approval: still not a release
+    assert invoke("apps", "released", app_id, "--task", TASK).exit_code == 1  # pending
+    aw.approve(conn, request, args={})
+    result = invoke("apps", "released", app_id, "--task", TASK)  # approved, never claimed by release-plan
+    assert result.exit_code == 1 and "release-plan" in result.output
+    assert pending_prd(app_id) is not None and done_prds() == []
+    assert releases.current_build(conn, app_id)["status"] == "built"
+
+
+def test_released_when_main_lacks_the_approved_sha_exits_1_and_the_prd_stays_in_pending(conn):
+    app_id, sha, _ = approved_release(conn)
+    assert invoke("apps", "release-plan", app_id).exit_code == 0
+    later = site_repo.commit_on(BRANCH)
+    site_repo.merge(later)  # main has the branch's newer head, but not via the approved merge...
+    site_repo.git(paths.site_repo(), "reset", "-q", "--hard", "HEAD~1")  # ...undone: main has neither
+    result = invoke("apps", "released", app_id, "--task", TASK)
+    assert result.exit_code == 1 and sha[:7] in result.output
+    assert pending_prd(app_id) is not None and done_prds() == []
+    assert releases.current_build(conn, app_id)["status"] == "built"
+
+
+def test_released_refuses_another_task(conn):
+    app_id, sha, _ = approved_release(conn)
+    assert invoke("apps", "release-plan", app_id).exit_code == 0
+    site_repo.merge(sha)
+    assert invoke("apps", "released", app_id, "--task", "T-0099").exit_code == 1
+    assert pending_prd(app_id) is not None
+
+
+def test_released_records_the_release_and_moves_the_prd_to_done_with_both_approvals(conn, monkeypatch):
+    app_id, build_approval = handed_off(conn)
+    sha = site_repo.branch(BRANCH)
+    assert built(app_id, sha).exit_code == 0
+    [release] = release_requests(conn)
+    aw.at(monkeypatch, "2026-11-12T09:30:00+08:00")
+    aw.approve(conn, release, args={})
+    assert invoke("apps", "release-plan", app_id).exit_code == 0
+    site_repo.merge(sha)
+    aw.at(monkeypatch, "2026-11-13T11:00:00+08:00")
+    source = pending_prd(app_id)
+    original = source.read_text()
+    result = invoke("apps", "released", app_id, "--task", TASK)
+    assert result.exit_code == 0, result.output
+    row = db.one(conn, "SELECT * FROM app_builds WHERE app_id = ?", (app_id,))
+    assert row["status"] == "released" and row["released_at"].startswith("2026-11-13T11:00")
+    assert pending_prd(app_id) is None and not source.exists()
+    [done] = done_prds()
+    assert done.name == source.name
+    text = done.read_text()
+    assert text.splitlines()[0] == (f"*Shipped on 2026-11-13: released to jurasolutions.sg from `{BRANCH}` at {sha[:7]} "
+                                    f"(task {TASK}).*")
+    signed = (f"Signed off by: Ting Yu in #approvals, build approval {build_approval.id} (2026-11-10) and "
+              f"release approval {release.id} (2026-11-12)  Date: 2026-11-13")
+    assert signed in text.splitlines()
+    assert "Signed off by: ____" not in text
+    assert text.replace(signed, "Signed off by: ________________  Date: ____________").split("\n", 2)[2] == original
+    [row] = [r for r in backlog.load() if r.get("app_id") == app_id]
+    assert row["status"] == "live" and row["prd"] == f"prd/done/apps/{done.name}"
+    assert [f.state for f in catalog.prd_files() if f.app_id == app_id] == ["done"]
+    again = invoke("apps", "released", app_id, "--task", TASK)
+    assert again.exit_code == 0 and "already" in again.output
+    assert invoke("apps", "built", app_id, "--task", TASK, "--branch", BRANCH, "--sha", sha, "--preview", PREVIEW).exit_code == 1
+
+
+def test_released_only_reads_the_temp_landing_page_repository(conn, tmp_path, monkeypatch):
+    """The write guard doesn't cover subprocesses, so the test checks every git call: each runs
+    against the repository under tmp_path, and none fetches, pulls, merges, pushes or writes."""
+    app_id, sha, _ = approved_release(conn)
+    assert invoke("apps", "release-plan", app_id).exit_code == 0
+    site_repo.merge(sha)
+    calls = []
+    real = releases.subprocess.run
+
+    def spy(args, **kwargs):
+        calls.append(list(args))
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(releases.subprocess, "run", spy)
+    assert invoke("apps", "released", app_id, "--task", TASK).exit_code == 0
+    assert calls
+    for call in calls:
+        assert call[:2] == ["git", "-C"]
+        assert Path(call[2]).resolve().is_relative_to(tmp_path.resolve())
+        assert call[3] in ("merge-base", "rev-parse")
+    assert ["git", "-C", str(paths.site_repo()), "merge-base", "--is-ancestor", sha, "main"] in calls
 
 
 # --- X2 and X3: seven days to decide, fourteen to use ----------------------------------------------

@@ -128,6 +128,17 @@ def rest(*, app_id: str, slug: str | None, name: str | None, note: str, reopens:
     return row
 
 
+def release(*, app_id: str, slug: str | None, name: str | None, prd_path: str, note: str) -> dict | None:
+    """The app's build is on jurasolutions.sg (`apps released`): live, with its PRD in prd/done/apps."""
+    rows = load()
+    row = _row_for(rows, app_id=app_id, slug=slug, name=name)
+    if row is None:
+        return None
+    row.update(status="live", prd=prd_path, released=timeutil.today_str(), notes=_note(row, note))
+    save(rows)
+    return row
+
+
 def resting(row: dict, today: str | None = None) -> bool:
     """An idea whose PRD expired unanswered, before its `reopens` date."""
     reopens = row.get("reopens")

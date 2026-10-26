@@ -300,3 +300,17 @@ def release_plan_cmd(app_id) -> str:
             click.echo(line)
         sys.exit(1)
     return outcome.lines[0]
+
+
+@apps.command("released")
+@click.argument("app_id")
+@click.option("--task", required=True, help="The task whose build was merged, e.g. T-0031.")
+def released_cmd(app_id, task) -> str:
+    """Record a release once main of the landing-page repository holds the approved commit."""
+    with db.session() as conn:
+        outcome = releases.record_released(conn, app_id, task=task)
+    for line in outcome.lines:
+        click.echo(line)
+    if not outcome.ok:
+        sys.exit(1)
+    return outcome.lines[0]
