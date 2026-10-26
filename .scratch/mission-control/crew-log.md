@@ -805,3 +805,13 @@ decisions: changes-requested; round-1 findings all fixed; B3 new: nested JSON in
 decisions: conductor (standing instruction: decide, do not ask): third round with a structural fail-closed fix at the publish after_run boundary instead of escalating; conductor verifies with the reviewer repros
 questions: -
 evidence:  2926 passed; repro_audit_r2 reproduces B3 and S-10
+
+## 2026-10-27T05:23+0800 conductor (merge bp 03)
+status:    done
+persona:   conductor
+ticket:    bp-03
+artifacts: merge of bp 03 (through a87e79c)
+decisions: fix round 2 verified by the conductor with the reviewer repros: repro_audit (fragments, whole typing, after-stop, upload secret, unparsed tab all fail) and repro_audit_r2 (extra text, two fields, planted tab fail; deep JSON no longer raises); merged and pushed
+decisions: next wave: bp 04 (Instagram, LinkedIn), bp 06 (joins as the Page), bp 07 (fixture platform)
+questions: -
+evidence:  merged branch pytest -rs -> see commit
