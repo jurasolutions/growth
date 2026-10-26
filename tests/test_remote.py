@@ -447,6 +447,20 @@ def test_thirty_pending_through_remote_lists_the_fifteen_soonest_then_the_rest(c
                                     "title": f"fake item {made[-1].subject}", "args": ["promo_days", "post_days"]}
 
 
+def test_the_text_and_json_lists_choose_the_same_soonest_whatever_order_pending_returns(conn, world, monkeypatch):
+    """Code review 11: one selection, in its own explicit order (decide-by, then id)."""
+    made = []
+    for n in range(20):
+        world.decide_in = timedelta(hours=40 - n)
+        made.append(raised(conn, world, f"item {n}"))
+    real = approvals.pending
+    monkeypatch.setattr(approvals, "pending", lambda conn: list(reversed(real(conn))))
+    body = answer(remote(["approvals"], as_json=True))
+    soonest = [a.id for a in reversed(made)][:15]
+    assert [line.split(" · ")[0] for line in body["text"].splitlines()[:15]] == soonest
+    assert [item["id"] for item in body["approvals"]] == soonest
+
+
 # --- AC-M10.5: the --json answer ----------------------------------------------------------------------
 
 
