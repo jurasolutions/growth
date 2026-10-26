@@ -15,7 +15,7 @@ import yaml
 
 from discord_double import discord_double  # noqa: F401 - a fixture
 from jura_growth import brand_check, config, db, paths
-from jura_growth.agents.outreach import approval, queue, send
+from jura_growth.agents.outreach import approval, queue, requeue, send
 from test_scout_support import CONTROL_ID, REGISTRY, d1_env, decide, fake_d1, fake_resend, outreach_requests
 from uat import seed
 
@@ -287,6 +287,39 @@ def test_edit_draft_after_approval_supersedes_the_request_and_sends_nothing(live
     finally:
         conn.close()
     assert live == []  # lead 240 doesn't send, and nothing else was approved
+
+
+def test_shadow_trial_then_requeue_shadow_asks_only_up_to_todays_quota(live, cards, window):
+    """AC-M8.13 at the harness's data (B6)."""
+    assert seed.main([str(window), "--scenario", "shadow-trial", "--today", TUESDAY.isoformat()]) == 0
+    conn = db.connect()
+    try:
+        assert len(requeue.candidates(conn)) == 40
+        plan = requeue.requeue_shadow(conn)
+        assert len(plan.requeued) == 40 and plan.skipped == []
+        assert len(plan.requests) == 5  # warm-up day 3, nothing sent or asked about yet today
+        assert len(outreach_requests(conn, "pending")) == 5
+    finally:
+        conn.close()
+    assert live == []
+
+
+def test_requeue_shadow_raises_nothing_once_todays_quota_is_asked_about(live, cards, window):
+    conn = db.connect()
+    try:
+        send.send_due(conn)  # the five base emails due today take the quota
+        seed.seed(window, "shadow-trial", today=TUESDAY)
+        plan = requeue.requeue_shadow(conn)
+        assert len(plan.requeued) == 40 and plan.requests == []
+        assert len(outreach_requests(conn, "pending")) == 5
+    finally:
+        conn.close()
+
+
+def test_shadow_trial_twice_is_refused(live, window):
+    seed.seed(window, "shadow-trial", today=TUESDAY)
+    with pytest.raises(seed.Refused, match="already"):
+        seed.seed(window, "shadow-trial", today=TUESDAY)
 
 
 def test_edit_draft_refuses_a_lead_with_no_queued_email(live, window):

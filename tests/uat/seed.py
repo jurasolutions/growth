@@ -369,7 +369,36 @@ def edit_draft(conn) -> None:
     conn.execute("UPDATE outreach_messages SET draft_body = ? WHERE id = ?", (message["draft_body"] + EDITED, message["id"]))
 
 
-SCENARIOS: dict[str, Callable] = {"base": base, "outreach-live": outreach_live, "edit-draft": edit_draft}
+SHADOW_LEADS = range(300, 340)  # S10: 40 shadow-trial emails
+SHADOW_TRADES = ("Aircon", "Renovation")
+
+
+def shadow_trial(conn) -> None:
+    """S10: 40 first emails shadow-sent over the business days before today, five a day, in the
+    shape `requeue-shadow` reads: the message `shadow`, its lead `shadow_sent`."""
+    if db.scalar(conn, "SELECT 1 FROM leads WHERE id = ?", (SHADOW_LEADS[0],)):
+        raise Refused("shadow-trial is already seeded in this folder")
+    day = today()
+    for index, lead_id in enumerate(SHADOW_LEADS):
+        if index % 5 == 0:
+            day = previous_business_day(day)
+        name = f"{NAMES[index % len(NAMES)]} {SHADOW_TRADES[index // len(NAMES)]}"
+        domain = f"shadow{lead_id}.example.sg"
+        _lead(conn, lead_id, f"{name} Pte Ltd", domain)
+        contact = _contact(conn, lead_id, f"hello@{domain}", "role", f"https://{domain}/contact")
+        message = _queued(conn, lead_id, contact, at(day, "09:05"), day, draft(name))
+        sent = at(day, f"{10 + index % 5}:00")
+        conn.execute("UPDATE outreach_messages SET status = 'shadow', mode = 'shadow', sent_at = ?, qa_json = '{}' WHERE id = ?",
+                     (sent, message))
+        conn.execute("UPDATE leads SET status = 'shadow_sent' WHERE id = ?", (lead_id,))
+
+
+SCENARIOS: dict[str, Callable] = {
+    "base": base,
+    "outreach-live": outreach_live,
+    "edit-draft": edit_draft,
+    "shadow-trial": shadow_trial,
+}
 
 
 # --- seeding --------------------------------------------------------------------------------
