@@ -80,6 +80,8 @@ brackets are required; words in square brackets are optional.
 | `one-pager` | `one-pager` | Posts the one-pager to `#mission-control` with the 14-day grid, dedupe off: asked twice, it posts twice. Exit 0 and `recorded` either way, like `heartbeat`: the text says "posted to #mission-control", or "not posted to #mission-control: <why>" when Discord didn't take it and it waits in the outbox, which the next one-pager lists under Needs you. Read the text, not the exit code, to tell them apart |
 | `outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]` | `outreach requeue-shadow` | Live mode only; each requeued email raises its own approval request. Exit 1 in shadow mode |
 | `pause <agent\|all> [reason]` | `pause` | The rest of the words are the reason; "paused from Discord" without one |
+| `publish queue` | `publish queue` | Every publish item with its `P-nnnn` label, its A-id, platform, day and state |
+| `publish resolve <A-nnnn> posted --url <url> \| not-posted` | `publish resolve` | Settles an item whose outcome is `unknown`. `posted` needs the live post's URL (`--url <url>` or `--url=<url>`) on the platform's own host, or exits 1. It records no decision. A scheduled run can never send it |
 | `resume <agent\|all>` | `resume` | With a PAUSE file present, the answer says it can only be removed on the Mac |
 | `skip <A-nnnn> [note]` | `skip` | Answers from the enum below. Allowed until the request is claimed |
 | `social skip <date> <platform>` | `social skip` | Today or tomorrow |
