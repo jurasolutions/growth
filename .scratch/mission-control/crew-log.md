@@ -855,3 +855,13 @@ artifacts: merge of bp 04 (through ae4e3dc)
 decisions: fix round verified by the developer repro output (cross-platform cases fail; errored/denied upload counted as missing); merged and pushed; weekends stay on (already decided); Facebook permalink shape check after R1 noted on bp 01; bp 06 and 07 to rebase onto this merge and resolve overlaps
 questions: -
 evidence:  merged branch pytest -rs -> see commit
+
+## 2026-10-27T05:59+0800 reviewer (bp 07, round 2) via conductor
+status:    done
+persona:   reviewer
+ticket:    bp-07
+artifacts: .scratch/browser-publishing/reviews/code-review-07.md (round 2)
+decisions: approve; 60 WHATWG probes, every accepted URL is loopback; M1 at merge: 04 browser_hosts must not bring real domain rules back while the fixture is on; sent to the developer as a rebase task with a regression test
+decisions: AC3 (R1b file_upload) stays open for Ting Yu; ticket 07 stays open after the code merges
+questions: -
+evidence:  3016 passed, 0 skipped
