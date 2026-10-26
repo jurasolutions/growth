@@ -321,6 +321,45 @@ def remove(conn: sqlite3.Connection, group_id: int, reason: str) -> dict:
     return get(conn, group_id)
 
 
+JOIN_STATUSES = ("requested", "member", "declined")
+PAGES_NOT_ALLOWED = "only personal profiles can join or post"
+
+
+def record_join(conn: sqlite3.Connection, group_id: int, status: str) -> dict:
+    """What a publish run's join as the Jura Page came to (browser publishing PRD §5.6). The run
+    acted as the Page, so a request or membership also records that the group allows Pages; a
+    membership records `joined_as = page`. The group's rules and open days are untouched: they
+    still need Ting Yu's `group-rules` decision (AC-P4.4)."""
+    if status not in JOIN_STATUSES:
+        raise GroupError(f"join status must be {', '.join(JOIN_STATUSES)}")
+    if get(conn, group_id) is None:
+        raise GroupError(f"no group {group_id}")
+    updates: dict[str, object] = {"join_status": status}
+    if status in ("requested", "member"):
+        updates["pages_allowed"] = "yes"
+    if status == "member":
+        updates.update(joined_as_set="page", joined=1)
+    updates["updated_at"] = timeutil.stamp()
+    assignments = ", ".join(f"{k} = ?" for k in updates)
+    conn.execute(f"UPDATE community_groups SET {assignments} WHERE id = ?", (*updates.values(), group_id))
+    log.event(conn, "community.group.join", {"id": group_id, "status": status}, agent=NAME)
+    return get(conn, group_id)  # type: ignore[return-value]
+
+
+def pages_not_allowed(conn: sqlite3.Connection, group_id: int) -> dict:
+    """A publish run found that only personal profiles can join or post in the group: it is
+    skipped for good (BP §4.3, AC-P4.3). `pages_allowed = no` keeps it out of every join and
+    post (`publish.group_kinds.gone`)."""
+    if get(conn, group_id) is None:
+        raise GroupError(f"no group {group_id}")
+    conn.execute(
+        "UPDATE community_groups SET pages_allowed = 'no', fit = 'skip', fit_reason = ?, updated_at = ? WHERE id = ?",
+        (PAGES_NOT_ALLOWED, timeutil.stamp(), group_id),
+    )
+    log.event(conn, "community.group.pages_not_allowed", {"id": group_id}, agent=NAME)
+    return get(conn, group_id)  # type: ignore[return-value]
+
+
 def get(conn: sqlite3.Connection, group_id: int) -> dict | None:
     return db.one(conn, "SELECT * FROM community_groups WHERE id = ?", (int(group_id),))
 

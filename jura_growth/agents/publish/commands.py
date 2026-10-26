@@ -26,7 +26,7 @@ from pathlib import Path
 import click
 
 from jura_growth import approvals, caps, db, discord, log, pause, timeutil
-from jura_growth.agents.publish import claim, fixture, hosts, items, kinds
+from jura_growth.agents.publish import claim, fixture, hosts, items, kinds, outcomes
 
 # What the run may report as a stop signal (BP §4.6). A closed list, so a page's own words
 # never reach an alert through the reason.
@@ -157,11 +157,21 @@ def next_cmd(as_json) -> str:
 
 @publish.command()
 @click.argument("approval_id", metavar="A-ID")
-@click.option("--url", required=True, help="The live post's address, on the platform's own host.")
-@click.option("--live-text-file", "live_text_file", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path),
+@click.option("--url", help="The live post's address, on the platform's own host; with --outcome, the group's.")
+@click.option("--live-text-file", "live_text_file", type=click.Path(exists=True, dir_okay=False, path_type=Path),
               help="The post's text as it reads live, saved in the run's scratch folder.")
-def done(approval_id, url, live_text_file) -> str:
-    """Record that a claimed item was posted."""
+@click.option("--outcome", type=click.Choice(outcomes.OUTCOMES),
+              help="What a join, or a group's join or post screen, came to (instead of a post).")
+@click.option("--file", "answers_file", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="With --outcome questions: the questions and the drafted answers, as JSON.")
+def done(approval_id, url, live_text_file, outcome, answers_file) -> str:
+    """Record that a claimed item was posted, or what its join came to (--outcome)."""
+    if outcome is not None:
+        return _done_outcome(approval_id, outcome, url, live_text_file, answers_file)
+    if not url or live_text_file is None:
+        raise click.UsageError("a post needs --url and --live-text-file; a join needs --outcome")
+    if answers_file is not None:
+        raise click.UsageError("--file goes with --outcome questions")
     live = live_text_file.read_text(encoding="utf-8")
     with db.session() as conn:
         record, found = _item_for(conn, approval_id)
@@ -190,6 +200,35 @@ def done(approval_id, url, live_text_file) -> str:
                                 f"{RESUME}.", agent=items.AGENT)
     click.echo(f"{record.id}: posted, {url}" + ("" if matches else " (live text doesn't match; publish paused)"))
     return f"{record.id} posted"
+
+
+def _done_outcome(approval_id: str, outcome: str, url: str | None, live_text_file, answers_file) -> str:
+    """`publish done <A-id> --outcome …` (`outcomes.py`): no alert, no pause."""
+    if live_text_file is not None:
+        raise click.UsageError("--live-text-file is for a post, not --outcome")
+    if (answers_file is None) != (outcome != outcomes.QUESTIONS):
+        raise click.UsageError("--outcome questions needs --file <q.json>, and only it takes --file")
+    if url:
+        wrong = hosts.problem(items.COMMUNITY_PLATFORM, url)
+        if wrong:
+            raise click.ClickException(f"refused: {wrong}")
+    try:
+        answers = outcomes.read_answers(answers_file.read_text(encoding="utf-8")) if answers_file else None
+    except (outcomes.Refused, UnicodeDecodeError) as refusal:
+        raise click.ClickException(f"refused: {refusal}") from None
+    with db.session() as conn:
+        record, found = _item_for(conn, approval_id)
+        try:
+            with db.transaction(conn):
+                done = outcomes.record(conn, record, found, outcome, url=url, answers=answers,
+                                       run_id=log.current_run_id())
+        except outcomes.Refused as refusal:
+            raise click.ClickException(f"refused: {refusal}") from None
+        _post_cards(conn)
+    click.echo(done.line)
+    if not done.ok:
+        raise SystemExit(1)
+    return done.line
 
 
 @publish.command()
