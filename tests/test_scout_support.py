@@ -41,7 +41,11 @@ def blocked_client(**kwargs) -> httpx.Client:
 
 @pytest.fixture(autouse=True)
 def scout_env(isolated, monkeypatch):
-    tmp = isolated
+    return prepare_scout(isolated, monkeypatch)
+
+
+def prepare_scout(tmp, monkeypatch):
+    """What `scout_env` sets up, for code that isn't a test module (a gate adapter)."""
     inputs = tmp / "inputs"
     inputs.mkdir()
     (inputs / "icp.md").write_text("# ICP\n\n## Industries\n\n- logistics and delivery\n- events\n- property agencies\n")

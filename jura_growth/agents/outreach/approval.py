@@ -251,6 +251,8 @@ def raising_problem(conn: sqlite3.Connection) -> str | None:
     problems = send.live_problems()
     if problems:
         return problems[0]
+    if KIND not in approvals.kinds():
+        return f"the {KIND} kind isn't loaded, so nothing can be approved (A15)"
     paused = pause.is_paused(conn, store.AGENT)
     return f"outreach is paused ({paused})" if paused else None
 

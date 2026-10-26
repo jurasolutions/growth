@@ -23,20 +23,34 @@ Every rule is code. In order:
 
 from __future__ import annotations
 
+import os
 import random
 import sqlite3
+import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from email.utils import formataddr
+from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
-from jura_growth import approval_settings, approvals, caps, cloudflare, config, db, discord, holidays, locks, log, pause, timeutil
+from jura_growth import approval_settings, approvals, caps, cloudflare, config, db, discord, holidays, locks, log, pause, paths, timeutil
 from jura_growth.agents.outreach import approval, compose, queue, replies, store, sync
 from jura_growth.agents.scout import contact as contact_rules
 from jura_growth.agents.scout import dnc, registry, settings
 
 RESEND_URL = "https://api.resend.com/emails"
+# The UAT harness only (uat.md Part A): point Resend at the local stub,
+# `uv run python -m tests.resend_stub`. Refused unless it is a loopback http
+# URL and the data folder is a temporary one, so a real run can never send
+# through it or be fooled into thinking it sent.
+RESEND_BASE_ENV = "JURA_GROWTH_RESEND_BASE_URL"
+_LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
+class ResendStubRefused(RuntimeError):
+    pass
 
 
 @dataclass
@@ -65,6 +79,45 @@ def sending_domain() -> str:
 def from_address() -> str:
     local = str(settings.get().get("from_local_part") or "tingyu").strip()
     return formataddr((settings.SENDER_NAME, f"{local}@{sending_domain()}"))
+
+
+def _temporary(folder: Path) -> bool:
+    roots = {Path(tempfile.gettempdir()), Path("/tmp"), Path("/private/tmp"), Path("/private/var/folders")}
+    return any(root.exists() and paths.is_within(folder, root.resolve()) for root in roots)
+
+
+def temporary_data_problem() -> str | None:
+    """Why the data folder isn't a temporary one the UAT stub may serve, or None."""
+    value = os.environ.get("JURA_GROWTH_DATA_DIR")
+    if not value:
+        return "JURA_GROWTH_DATA_DIR isn't set: point it at a folder made with `mktemp -d`"
+    folder = Path(value).resolve()
+    if paths.is_within(folder, paths.JURA_ROOT) or not _temporary(folder):
+        return f"the data folder {folder} is not a temporary folder: make one with `mktemp -d`, outside jurasolutions/"
+    return None
+
+
+def resend_stub_problem() -> str | None:
+    """Why `JURA_GROWTH_RESEND_BASE_URL` may not be used, or None (also None when unset)."""
+    base = os.environ.get(RESEND_BASE_ENV)
+    if not base:
+        return None
+    parts = urlsplit(base)
+    if parts.scheme != "http" or parts.hostname not in _LOOPBACK:
+        return f"{RESEND_BASE_ENV} must point at the local UAT stub (http://127.0.0.1:<port>), not {base}"
+    problem = temporary_data_problem()
+    return f"{RESEND_BASE_ENV} is for the UAT stub only, and {problem}" if problem else None
+
+
+def resend_url() -> str:
+    """Where emails are sent: Resend, or the UAT stub when that is allowed."""
+    base = os.environ.get(RESEND_BASE_ENV)
+    if not base:
+        return RESEND_URL
+    problem = resend_stub_problem()
+    if problem:
+        raise ResendStubRefused(problem)
+    return base.rstrip("/") + "/emails"
 
 
 def approval_gate_problem() -> str | None:
@@ -116,6 +169,9 @@ def live_problems() -> list[str]:
         problems.append(f"{dnc.path()} does not exist (create it, even with only a header row)")
     if not cloudflare.configured():
         problems.append("D1 is not configured (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, D1_DATABASE_ID), so suppression can't sync")
+    stub = resend_stub_problem()
+    if stub:
+        problems.append(stub)
     return problems
 
 
@@ -554,11 +610,15 @@ def classify(status: int, body: dict) -> tuple[str, str]:
 
 def _resend(conn, message: dict, row: dict, email: compose.Email, client) -> tuple[str, str]:
     key = config.require("RESEND_API_KEY_OUTREACH")
+    try:
+        url = resend_url()
+    except ResendStubRefused as refused:
+        return "pause", str(refused)
     owns = client is None
     client = client or resend_client()
     try:
         response = client.post(
-            RESEND_URL,
+            url,
             headers={"Authorization": f"Bearer {key}", "Idempotency-Key": f"jura-outreach-{message['id']}"},
             json=resend_payload(message, row, email),
         )
