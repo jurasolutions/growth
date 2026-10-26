@@ -583,3 +583,14 @@ decisions: 09 approved; crew recommendations adopted: retention.one_pager_days 1
 decisions: 10b done (2238 passed, 0 skipped); sent to review
 questions: -
 evidence:  09: real grid PNG IHDR/IDAT/IEND only; Chrome opens file:// only
+
+## 2026-10-27T03:13+0800 conductor (merge mc 09; 05 review; bp 02 done)
+status:    done
+persona:   conductor
+ticket:    09, 05, bp-02
+artifacts: merge of 09; reviews/code-review-05.md
+decisions: 09 fix round verified (14-day grid retention pruned by backup, failing-capable remote test, shared Chrome path, exit 0 documented); merged
+decisions: 05 changes-requested (B1 quoted rules_confirmed bypass); crew recommendation adopted for S5 (re-request on a confirmed group is how days change; skip keeps the old confirmation); sent as fix round 1 with rebase
+decisions: bp 02 (publish queue) done, 2310 passed; sent to review
+questions: -
+evidence:  merged branch pytest -rs -> 2246 passed, 0 skipped
