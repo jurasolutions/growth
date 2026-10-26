@@ -70,16 +70,51 @@ def _path(url: str) -> str:
     return urlsplit(url.strip()).path.rstrip("/").lower()
 
 
+# One group's own address: `/groups/<one segment>`, with an optional trailing slash (code review
+# 06, S7). The segment is a group's id or its name in the address, never `.` or `..`, and holds no
+# percent-encoding, `;` or anything else a path could be bent with.
+_GROUP_PATH = re.compile(r"/groups/([A-Za-z0-9._-]+)/?")
+GROUP_SHAPE = "one group's own address, https://www.facebook.com/groups/<group>/"
+
+
+def group_url_problem(url: str | None) -> str | None:
+    """Why `url` isn't one Facebook group's own address, or None when it is: `https://` on
+    Facebook's hosts (or, while the fixture platform is on, an address on the fixture site), with
+    the path `/groups/<one segment>[/]` and no query or fragment. The register holds only such
+    addresses (`community.groups.validate`), and an item never acts in a group whose address
+    isn't one (`group_kinds.gone`). Names the host, never the path."""
+    text = (url or "").strip()
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return "an address that isn't a URL"
+    site = fixture.active()
+    if site is not None and (parts.hostname or "").lower() == site.host:
+        wrong = site_problem(text, site)
+    else:
+        wrong = url_problem(text, HOSTS["facebook"], f"Facebook's hosts ({', '.join(HOSTS['facebook'])})")
+    if wrong:
+        return wrong
+    match = _GROUP_PATH.fullmatch(parts.path)
+    if "?" in text or "#" in text or match is None or match.group(1) in (".", ".."):
+        return f"the address on {(parts.hostname or '').lower()} isn't {GROUP_SHAPE}"
+    return None
+
+
 def within(url: str, place: str) -> bool:
     """Whether `url` is `place` or a page under it, on any of the same platform's hosts: a group's
     own address (`/groups/<id>`), its posts, members or About. The query and fragment don't count;
-    the path must match whole segments, so `/groups/a-10` isn't inside `/groups/a-1`. The host is
-    checked separately (`url_problem`)."""
+    the path must match whole segments, so `/groups/a-10` isn't inside `/groups/a-1`. It fails
+    closed on a `place` that isn't one group's own path, and on a `url` with a `.` or `..`
+    segment (code review 06, S7 and N10). The host is checked separately (`url_problem`)."""
     try:
         path, root = _path(url), _path(place)
+        raw = urlsplit(url.strip()).path
     except ValueError:
         return False
-    return bool(root) and (path == root or path.startswith(root + "/"))
+    if not _GROUP_PATH.fullmatch(root) or any(segment in (".", "..") for segment in raw.split("/")):
+        return False
+    return path == root or path.startswith(root + "/")
 
 
 def same_place(url: str, place: str) -> bool:

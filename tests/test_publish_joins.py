@@ -393,6 +393,73 @@ def test_the_facebook_hosts_open_for_group_items_even_with_the_page_in_draft(mon
     assert scope.domain_rules() == [f"ClaudeInChromeDomain({host})" for host in expected]
 
 
+# --- code review 06, S7: a group's address is one group's own address ---------------------------------------
+
+NOT_ONE_GROUP = [
+    "https://www.facebook.com/groups/",  # R9: every group
+    "https://www.facebook.com/jura-test-page?/groups/",  # R9: the Page timeline
+    "https://www.facebook.com/groups/sgsme/about",
+    "https://www.facebook.com/groups/sgsme?ref=share",
+    "https://www.facebook.com/groups/sgsme#about",
+    "https://www.facebook.com/groups/..",
+    "https://www.facebook.com/groups/.",
+    "https://www.facebook.com/groups/sgsme%2F..%2Fother",
+    "https://www.facebook.com/groups/sgsme;x",
+    "http://www.facebook.com/groups/sgsme",
+    "https://www.facebook.com/x/groups/sgsme",
+    "https://facebook.com.evil.test/groups/sgsme",
+]
+ONE_GROUP = ["https://www.facebook.com/groups/sgsme", "https://www.facebook.com/groups/1234567890/",
+             "https://m.facebook.com/groups/sg.sme-owners_2"]
+
+
+def register_record(url: str) -> dict:
+    return {"channel": "facebook", "name": "SG SME owners", "url": url, "audience": "owners", "promo_rules": "none",
+            "fit": "good fit", "fit_reason": "Owners asking about admin.", "source_urls": ["https://example.sg/groups"]}
+
+
+@pytest.mark.parametrize("url", NOT_ONE_GROUP)
+def test_add_group_refuses_an_address_that_isnt_one_groups_own(conn, url):
+    status, _, messages = community_groups.add(conn, register_record(url))
+    assert status == "rejected" and any("one group's own address" in m for m in messages), messages
+
+
+@pytest.mark.parametrize("url", ONE_GROUP)
+def test_add_group_takes_one_groups_own_address(conn, url):
+    status, _, messages = community_groups.add(conn, register_record(url))
+    assert status == "added", messages
+
+
+@pytest.mark.parametrize("url", NOT_ONE_GROUP[:2])
+def test_a_register_address_that_isnt_one_group_raises_nothing_and_is_never_claimed(conn, world, url):
+    """Already in the register (from before the check): fail closed. No join is proposed, and an
+    approved one is superseded and never claimed."""
+    proposed = pw.not_joined(conn)
+    _, request = pw.join_item(conn, proposed)
+    pw.decide(conn, request)
+    fresh = pw.not_joined(conn)
+    for group_id in (proposed, fresh):
+        conn.execute("UPDATE community_groups SET url = ? WHERE id = ?", (url, group_id))
+    made = items.create_join(conn, fresh, run_id=None)
+    assert made.item is None and "one group's own address" in made.why
+    handed = pw.next_item(conn, pw.run(conn))
+    assert handed.item is None
+    assert record_of(conn, request.id).status == "superseded" and record_of(conn, request.id).used_at is None
+
+
+@pytest.mark.parametrize("url, place, inside", [
+    ("https://www.facebook.com/groups/a/../b", "https://www.facebook.com/groups/a", False),  # N10
+    ("https://www.facebook.com/groups/a/./members", "https://www.facebook.com/groups/a", False),
+    ("https://www.facebook.com/groups/a/members", "https://www.facebook.com/groups/a", True),
+    ("https://www.facebook.com/groups/a", "https://www.facebook.com/groups/", False),  # a place that isn't one group
+    ("https://www.facebook.com/jura-test-page", "https://www.facebook.com/jura-test-page?/groups/", False),
+])
+def test_within_fails_closed_on_dot_segments_and_on_a_place_that_isnt_one_group(url, place, inside):
+    from jura_growth.agents.publish import hosts
+
+    assert hosts.within(url, place) is inside
+
+
 def test_the_publish_run_may_call_note_rules_and_still_nothing_that_decides():
     from jura_growth.agents.publish import scope
 

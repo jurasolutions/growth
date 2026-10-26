@@ -124,8 +124,11 @@ def validate(record: dict) -> tuple[dict, list[str]]:
     if not re.match(r"^https?://\S+$", url):
         errors.append("url must be the group's full http(s) link")
     elif clean["channel"] == "facebook":
-        if not (host(url) in ("facebook.com",) or host(url).endswith(".facebook.com")) or "/groups/" not in url.lower():
-            errors.append("a Facebook group's url must be its facebook.com/groups/... link (recorded, never fetched)")
+        from jura_growth.agents.publish import hosts as publish_hosts
+
+        if publish_hosts.group_url_problem(url):
+            errors.append("a Facebook group's url must be one group's own address, "
+                          "https://www.facebook.com/groups/<group>/, with nothing after it (recorded, never fetched)")
     elif is_blocked(url):
         errors.append(f"a {clean['channel']} group's url can't be on a Facebook domain")
     fit = (clean.get("fit") or "").lower()
