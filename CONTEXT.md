@@ -131,9 +131,10 @@ late and no deadline is checked again.
 _Avoid_: use (in prose), consume
 
 **Human origin**:
-Where a decision or control command may come from: a real terminal with the request's six-character
-code typed, or `jura-growth remote` reached through the SSH forced command from Dispatch. Never a
-process with a `claude` ancestor, and never a headless run.
+Where a decision or control command may come from: `jura-growth remote`, reached through the SSH
+forced command from Dispatch, carrying Ting Yu's Discord decision from `#approvals`. Never Terminal
+(off since 2026-10-26, until a Touch ID ticket; ADR 0004), never a process with a `claude` ancestor
+or Claude Code's environment markers, and never a headless run.
 _Avoid_: authenticated user (the Discord user id is attribution, not authentication)
 
 **Gated action**:
