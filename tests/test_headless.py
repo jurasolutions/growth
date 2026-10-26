@@ -371,6 +371,24 @@ def test_claude_rules_deny_the_decision_and_remote_commands_bare_and_with_argume
         assert not allowed_by(f"jura-growth {name} A-0001", allowed)
 
 
+def test_a_never_entry_of_several_words_matches_a_leading_run_of_command_words():
+    """N7 (BP-02a): `publish resolve` is refused to every run, with or without arguments, and
+    `publish next` is not caught by it."""
+    assert "publish resolve" in headless.NEVER
+    assert headless.never("publish resolve A-0001 posted --url x") and headless.never("publish resolve")
+    assert not headless.never("publish next") and not headless.never("publish") and not headless.never("resolve")
+    for job in ALL_JOBS + ["not-a-job"]:
+        assert not headless.may_use(job, "publish resolve")
+        assert not headless.may_use(job, "publish resolve A-0001 posted")
+
+
+@pytest.mark.parametrize("job", CLAUDE_JOBS)
+def test_claude_rules_deny_publish_resolve_bare_and_with_arguments(job):
+    allowed, denied = rules(job)
+    assert "Bash(jura-growth publish resolve)" in denied and "Bash(jura-growth publish resolve:*)" in denied
+    assert not allowed_by("jura-growth publish resolve A-0001 not-posted", allowed)
+
+
 # --- every scheduled command job may run its own command (AC-M1.5) -------------------
 
 COMMAND_JOBS = sorted(
