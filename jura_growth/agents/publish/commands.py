@@ -209,8 +209,11 @@ def _done_outcome(approval_id: str, outcome: str, url: str | None, live_text_fil
     """`publish done <A-id> --outcome …` (`outcomes.py`): no alert, no pause."""
     if live_text_file is not None:
         raise click.UsageError("--live-text-file is for a post, not --outcome")
-    if (answers_file is None) != (outcome != outcomes.QUESTIONS):
-        raise click.UsageError("--outcome questions needs --file <q.json>, and only it takes --file")
+    asks = outcome == outcomes.QUESTIONS
+    if asks and answers_file is None:
+        raise click.UsageError("--outcome questions needs --file <q.json>")
+    if not asks and answers_file is not None:
+        raise click.UsageError("only --outcome questions takes --file")
     if url:
         wrong = hosts.problem(items.COMMUNITY_PLATFORM, url)
         if wrong:
@@ -223,15 +226,15 @@ def _done_outcome(approval_id: str, outcome: str, url: str | None, live_text_fil
         record, found = _item_for(conn, approval_id)
         try:
             with db.transaction(conn):
-                done = outcomes.record(conn, record, found, outcome, url=url, answers=answers,
-                                       run_id=log.current_run_id())
+                recorded = outcomes.record(conn, record, found, outcome, url=url, answers=answers,
+                                           run_id=log.current_run_id())
         except outcomes.Refused as refusal:
             raise click.ClickException(f"refused: {refusal}") from None
         _post_cards(conn)
-    click.echo(done.line)
-    if not done.ok:
+    click.echo(recorded.line)
+    if not recorded.ok:
         raise SystemExit(1)
-    return done.line
+    return recorded.line
 
 
 @publish.command()

@@ -259,8 +259,7 @@ def set_parsed(conn: sqlite3.Connection, group_id: int, parsed: list[tuple[str, 
         elif key == "joined_as":
             if value.lower() not in JOINED_AS:
                 raise GroupError(f"joined_as must be {', '.join(JOINED_AS[:-1])} or {JOINED_AS[-1]}")
-            updates["joined_as_set"] = value.lower()
-            updates["joined"] = 0 if value.lower() == "none" else 1
+            updates.update(_joined_as(value.lower()))
         elif key == "fit":
             if value.lower() not in FITS:
                 raise GroupError("fit must be \"good fit\", \"possible\" or \"skip\"")
@@ -285,11 +284,26 @@ def set_parsed(conn: sqlite3.Connection, group_id: int, parsed: list[tuple[str, 
         updates.setdefault("rules_confirmed", 0)
     if updates.get("rules_confirmed") == 1:
         _check_days_confirmed({**group, **updates})
-    updates["updated_at"] = timeutil.stamp()
+    return _write(conn, group_id, updates, "community.group.set")
+
+
+def _joined_as(value: str) -> dict[str, object]:
+    """How a group was joined, kept in step with the legacy `joined` flag: the one place both are
+    written (`set_parsed`, `record_join`)."""
+    return {"joined_as_set": value, "joined": 0 if value == "none" else 1}
+
+
+def _write(conn: sqlite3.Connection, group_id: int, updates: dict[str, object], event: str, *,
+           run_id: int | None = None) -> dict:
+    """Write `updates` (fixed column names; every value a parameter) and log `event` with them."""
+    updates = {**updates, "updated_at": timeutil.stamp()}
     assignments = ", ".join(f"{k} = ?" for k in updates)
     conn.execute(f"UPDATE community_groups SET {assignments} WHERE id = ?", (*updates.values(), group_id))
-    log.event(conn, "community.group.set", {"id": group_id, **{k: v for k, v in updates.items() if k != "updated_at"}}, agent=NAME)
-    return get(conn, group_id)
+    log.event(conn, event, {"id": group_id, **{k: v for k, v in updates.items() if k != "updated_at"}}, agent=NAME,
+              run_id=run_id)
+    group = get(conn, group_id)
+    assert group is not None  # written above
+    return group
 
 
 def _check_days_confirmed(group: dict) -> None:
@@ -322,10 +336,10 @@ def remove(conn: sqlite3.Connection, group_id: int, reason: str) -> dict:
 
 
 JOIN_STATUSES = ("requested", "member", "declined")
-PAGES_NOT_ALLOWED = "only personal profiles can join or post"
+PROFILES_ONLY = "only personal profiles can join or post"  # the fit reason `pages_not_allowed` records
 
 
-def record_join(conn: sqlite3.Connection, group_id: int, status: str) -> dict:
+def record_join(conn: sqlite3.Connection, group_id: int, status: str, *, run_id: int | None = None) -> dict:
     """What a publish run's join as the Jura Page came to (browser publishing PRD §5.6). The run
     acted as the Page, so a request or membership also records that the group allows Pages; a
     membership records `joined_as = page`. The group's rules and open days are untouched: they
@@ -338,26 +352,18 @@ def record_join(conn: sqlite3.Connection, group_id: int, status: str) -> dict:
     if status in ("requested", "member"):
         updates["pages_allowed"] = "yes"
     if status == "member":
-        updates.update(joined_as_set="page", joined=1)
-    updates["updated_at"] = timeutil.stamp()
-    assignments = ", ".join(f"{k} = ?" for k in updates)
-    conn.execute(f"UPDATE community_groups SET {assignments} WHERE id = ?", (*updates.values(), group_id))
-    log.event(conn, "community.group.join", {"id": group_id, "status": status}, agent=NAME)
-    return get(conn, group_id)  # type: ignore[return-value]
+        updates.update(_joined_as("page"))
+    return _write(conn, group_id, updates, "community.group.join", run_id=run_id)
 
 
-def pages_not_allowed(conn: sqlite3.Connection, group_id: int) -> dict:
+def pages_not_allowed(conn: sqlite3.Connection, group_id: int, *, run_id: int | None = None) -> dict:
     """A publish run found that only personal profiles can join or post in the group: it is
     skipped for good (BP §4.3, AC-P4.3). `pages_allowed = no` keeps it out of every join and
     post (`publish.group_kinds.gone`)."""
     if get(conn, group_id) is None:
         raise GroupError(f"no group {group_id}")
-    conn.execute(
-        "UPDATE community_groups SET pages_allowed = 'no', fit = 'skip', fit_reason = ?, updated_at = ? WHERE id = ?",
-        (PAGES_NOT_ALLOWED, timeutil.stamp(), group_id),
-    )
-    log.event(conn, "community.group.pages_not_allowed", {"id": group_id}, agent=NAME)
-    return get(conn, group_id)  # type: ignore[return-value]
+    return _write(conn, group_id, {"pages_allowed": "no", "fit": "skip", "fit_reason": PROFILES_ONLY},
+                  "community.group.pages_not_allowed", run_id=run_id)
 
 
 def get(conn: sqlite3.Connection, group_id: int) -> dict | None:

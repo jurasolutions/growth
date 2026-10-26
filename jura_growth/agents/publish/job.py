@@ -32,16 +32,6 @@ ENDINGS = (
     ("claude ", "ended with a Claude Code error"),
 )
 MODEL_FAILED = "ended FAIL:"
-# What a join, or a group screen, came to: in the run update's line, and as its "Produced:" noun.
-OUTCOME_LINES = {
-    "requested": "join requested as the Jura Page",
-    "member": "joined as the Jura Page",
-    "declined": "join declined",
-    "questions": "membership questions; nothing was submitted",
-    "pages-not-allowed": "only personal profiles can join or post; the group is skipped for good",
-}
-OUTCOME_NOUNS = {"requested": "join requested", "member": "join accepted", "declined": "join declined",
-                 "questions": "join with membership questions", "pages-not-allowed": "group for personal profiles only"}
 
 
 def precheck(job: str, conn: sqlite3.Connection):
@@ -123,14 +113,14 @@ def run_update(conn: sqlite3.Connection, run) -> list[str] | None:
         return None
     from jura_growth.run_update import count
 
-    words = {"posted": 0, **{outcome: 0 for outcome in OUTCOME_NOUNS}, "stopped": 0, "unknown": 0}
+    nouns = {"posted": "post", **{outcome: words.noun for outcome, words in outcomes.WORDS.items()}}
+    tally = {**{word: 0 for word in nouns}, "stopped": 0, "unknown": 0}
     for item in claimed:
         if item.state == "done":
-            words[item.outcome if item.outcome in OUTCOME_NOUNS else "posted"] += 1
-        elif item.state in words:
-            words[item.state] += 1
-    return [count(n, "post") if word == "posted" else count(n, OUTCOME_NOUNS[word]) if word in OUTCOME_NOUNS
-            else f"{n} {word}" for word, n in words.items() if n]
+            tally[item.outcome if item.outcome in outcomes.WORDS else "posted"] += 1
+        elif item.state in tally:
+            tally[item.state] += 1
+    return [count(n, nouns[word]) if word in nouns else f"{n} {word}" for word, n in tally.items() if n]
 
 
 def run_update_channel(conn: sqlite3.Connection, run) -> str | None:
@@ -161,8 +151,8 @@ def _line(conn: sqlite3.Connection, item: items.Item) -> str:
         where = item.platform
     if item.kind in outcomes.GROUP_KINDS:
         where = f"Facebook group {outcomes.group_of(item)}"
-    if item.state == "done" and item.outcome in OUTCOME_LINES:
-        what = OUTCOME_LINES[item.outcome]
+    if item.state == "done" and item.outcome in outcomes.WORDS:
+        what = outcomes.WORDS[item.outcome].line
         if item.outcome == outcomes.QUESTIONS:
             answers = outcomes.answers_request(conn, item)
             what += f"; the answers wait for your decision as {answers.id}" if answers else "; no answers were raised"

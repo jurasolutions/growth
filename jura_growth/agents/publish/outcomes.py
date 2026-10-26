@@ -26,10 +26,30 @@ from dataclasses import dataclass
 from jura_growth import approvals, db, gate, log, timeutil
 from jura_growth.agents.publish import hosts, items
 
-JOIN_OUTCOMES = ("requested", "member", "declined")
 QUESTIONS = "questions"
 PAGES_NOT_ALLOWED = "pages-not-allowed"
-OUTCOMES = (*JOIN_OUTCOMES, QUESTIONS, PAGES_NOT_ALLOWED)
+
+
+@dataclass(frozen=True)
+class Words:
+    """How an outcome reads: in the run update's line, and as its "Produced:" noun."""
+
+    line: str
+    noun: str
+
+
+# Every outcome, in one table (code review 06, N1). The join outcomes are the group's
+# `join_status` values too (`community.groups.JOIN_STATUSES`).
+WORDS = {
+    "requested": Words("join requested as the Jura Page", "join requested"),
+    "member": Words("joined as the Jura Page", "join accepted"),
+    "declined": Words("join declined by the group", "join declined"),
+    QUESTIONS: Words("membership questions; nothing was submitted", "join with membership questions"),
+    PAGES_NOT_ALLOWED: Words("only personal profiles can join or post; the group is skipped for good",
+                             "group for personal profiles only"),
+}
+JOIN_OUTCOMES = ("requested", "member", "declined")
+OUTCOMES = tuple(WORDS)
 JOIN_KINDS = (items.JOIN_ITEM, items.ANSWERS_ITEM)
 GROUP_KINDS = (items.COMMUNITY_POST_ITEM, *JOIN_KINDS)
 
@@ -40,10 +60,9 @@ class Refused(Exception):
 
 @dataclass(frozen=True)
 class Recorded:
-    """What `record()` did: one line for the run, and the answers request it raised, if any."""
+    """What `record()` did: one line for the run, and whether it went as asked."""
 
     line: str
-    raised: approvals.Approval | None = None
     ok: bool = True
 
 
@@ -116,12 +135,12 @@ def record(conn: sqlite3.Connection, request: approvals.Approval, found: items.I
     if outcome == QUESTIONS:
         return _answers(conn, request, items.get(conn, found.id) or found, answers or [], run_id)
     if outcome == PAGES_NOT_ALLOWED:
-        groups_mod.pages_not_allowed(conn, group_of(found))
+        groups_mod.pages_not_allowed(conn, group_of(found), run_id=run_id)
         # Every item still waiting for the group is gone now (`group_kinds.gone`): its request is
         # superseded, with the reason on its card, and the item withdrawn (A3).
         items.sync(conn, run_id=run_id)
-        return Recorded(f"{request.id}: {outcome}; the group is skipped for good, since {groups_mod.PAGES_NOT_ALLOWED}")
-    groups_mod.record_join(conn, found.ref_id, outcome)
+        return Recorded(f"{request.id}: {outcome}; the group is skipped for good, since {groups_mod.PROFILES_ONLY}")
+    groups_mod.record_join(conn, found.ref_id, outcome, run_id=run_id)
     return Recorded(f"{request.id}: {outcome}")
 
 
@@ -147,7 +166,7 @@ def _answers(conn: sqlite3.Connection, request: approvals.Approval, found: items
     if made.approval is None or made.item is None:
         return Recorded(f"{met} No answers were raised: {made.why}", ok=False)
     return Recorded(f"{met} The answers wait for Ting Yu's decision as {made.approval.id} ({made.item.label}) in "
-                    f"#approvals; a later run submits them once approved.", made.approval)
+                    f"#approvals; a later run submits them once approved.")
 
 
 def answers_request(conn: sqlite3.Connection, found: items.Item) -> approvals.Approval | None:

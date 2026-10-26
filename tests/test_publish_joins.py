@@ -409,6 +409,18 @@ def test_pages_not_allowed_skips_the_group_for_good_without_alert_or_pause(conn,
     assert never.approval is None and never.item is None
 
 
+def test_pages_not_allowed_supersedes_membership_answers_still_waiting_for_the_group(conn, world, monkeypatch):
+    """Code review 06, N8: the handler supersedes every kind still waiting, answers included."""
+    join, request = claimed_join(conn, monkeypatch)
+    answers, waiting = pw.answers_item(conn, join)
+
+    assert pw.invoke("publish", "done", request.id, "--outcome", "pages-not-allowed").exit_code == 0
+
+    record = approvals.get(conn, waiting.id)
+    assert record is not None and record.status == "superseded"
+    assert pw.item_row(conn, answers.id)["state"] == "withdrawn"
+
+
 def test_pages_not_allowed_supersedes_every_item_still_waiting_for_the_group(conn, world, monkeypatch, discord_double):
     found, request = claimed_post(conn, monkeypatch)
     group_id = found.content["group"]
