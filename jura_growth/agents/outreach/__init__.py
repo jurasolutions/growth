@@ -81,7 +81,7 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         if unsubscribes:
             brief.append(f"{unsubscribes} unsubscribe{'s' if unsubscribes != 1 else ''}")
     elif queued:
-        lines.append(f"Outreach ({mode}): nothing sent today; {queued} queued")
+        lines.append(f"Outreach ({mode}): nothing sent; {queued} queued")  # no day: see MC X15
     return {
         "figures": {
             "outreach_mode": mode,

@@ -226,6 +226,26 @@ def test_yesterday_is_the_digest_for_yesterday_and_both_spend_figures(conn):
     assert lines[-1] == "Claude spend: US$0.41 yesterday, US$0.20 so far today"
 
 
+def test_yesterday_names_no_day_of_its_own(conn):
+    """The plug-ins' digest lines say "no run", not "no run today", so
+    Yesterday can repeat them word for word (X15; code review 08, S-2)."""
+    from jura_growth import digest
+
+    conn.execute("INSERT INTO runs (agent, job, started_at, status, summary) VALUES ('app-factory', 'app-factory', '2026-11-09T06:30:00+08:00', 'skipped', '7 app PRDs waiting')")
+    conn.execute("INSERT INTO social_submissions (date, attempt, status, reason, created_at) VALUES ('2026-11-09', 1, 'no-draft', 'no theme', '2026-11-09T07:05:00+08:00')")
+    conn.execute("PRAGMA foreign_keys = OFF")  # a queued email without its lead: only the count matters here
+    conn.execute(
+        "INSERT INTO outreach_messages (lead_id, kind, subject, draft_body, body_text, body_html, send_after, queued_at, status)"
+        " VALUES (1, 'first', 's', 'd', 't', 'h', '2026-11-11', '2026-11-09T09:00:00+08:00', 'queued')"
+    )
+    lines = section(one_pager.text(mission.read(world.source())), "Yesterday")
+    assert [line for line in lines if line.startswith("- ")] == [f"- {line}" for line in digest.build(conn, "2026-11-09")["lines"]]
+    assert any(line.startswith("- App factory: skipped") for line in lines)
+    assert any(line.startswith("- Social: no draft") for line in lines)
+    assert any(line.startswith("- Outreach") for line in lines)
+    assert not any("today" in line.lower() for line in lines if line.startswith("- ")), lines
+
+
 # --- the whole read, end to end (AC-M13.1, AC-M3.3, AC-M2.4) --------------------------------
 
 

@@ -72,7 +72,7 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         lines.append(f"Social: no drafts waiting, {skipped} skipped, {published} published")
     if no_draft and not rows:
         figures["social_no_draft"] = no_draft["reason"]
-        lines.append(f"Social: no draft today ({no_draft['reason']})")
+        lines.append(f"Social: no draft ({no_draft['reason']})")  # no day: see MC X15
         brief.append("no social draft today")
     return {"figures": figures, "lines": lines, "brief": brief}
 

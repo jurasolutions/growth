@@ -406,7 +406,7 @@ def test_waiting_pile_guard(tmp_path, prd_tree, conn):
     assert reason and reason.startswith("7 app PRDs waiting")
     outcome = runner.run("app-factory", ignore_schedule=True)
     assert outcome.status == "skipped"
-    assert "skipped today: 7 app PRDs waiting" in apps_plugin.digest(conn, TODAY)["lines"][0]
+    assert "skipped: 7 app PRDs waiting" in apps_plugin.digest(conn, TODAY)["lines"][0]
     result = invoke("apps", "submit-prd", str(write(tmp_path, GOOD)))
     assert result.exit_code == 1 and "waiting" in result.output
 

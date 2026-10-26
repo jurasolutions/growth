@@ -77,16 +77,18 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         "SELECT status, summary, error FROM runs WHERE job = ? AND substr(started_at, 1, 10) = ? ORDER BY id DESC",
         (JOB, day),
     )
+    # The digest's lines name no day: the digest is headed with its date, and
+    # the one-pager repeats them under "Yesterday" (MC X15).
     if not runs:
-        note, brief = "no run today", "no app PRD today"
+        note, brief = "no run", "no app PRD today"
     elif runs[0]["status"] == "skipped":
-        note = f"skipped today: {runs[0]['summary']}"
+        note = f"skipped: {runs[0]['summary']}"
         brief = f"app PRD skipped ({runs[0]['summary']})"
     elif runs[0]["status"] == "failed":
-        note = f"no PRD today; the run failed ({(runs[0]['error'] or '')[:160]})"
+        note = f"no PRD; the run failed ({(runs[0]['error'] or '')[:160]})"
         brief = "no app PRD today (run failed)"
     else:
-        note = f"no PRD today: {(runs[0]['summary'] or '').strip()[:200]}"
+        note = f"no PRD: {(runs[0]['summary'] or '').strip()[:200]}"
         brief = "no app PRD today"
     figures["app_factory_note"] = note
     return {"figures": figures, "lines": [f"App factory: {note}; {waiting} app PRDs waiting."], "brief": [brief]}
