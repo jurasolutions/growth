@@ -66,29 +66,21 @@ def _approvals(snapshot: mission.Snapshot) -> list[str]:
     if snapshot.approvals is None:
         return [_unavailable(snapshot)]
     waiting = [r for r in snapshot.approvals if r.state == mission.WAITING]
+    if not waiting:
+        return ["Nothing waiting"]
     following = snapshot.next_one_pager or snapshot.now + timedelta(days=1)
-    last = snapshot.last_one_pager or snapshot.now - timedelta(days=1)
-    lines = []
-    if waiting:
-        counts = Counter(r.kind for r in waiting)
-        lines.append(", ".join(f"{kind} {counts[kind]}" for kind in sorted(counts)))
-        oldest = min(waiting, key=lambda r: (r.requested_at, r.id))
-        lines.append(
-            f"Oldest: {oldest.id} ({oldest.kind}), waiting since {health.when(oldest.requested_at)}, "
-            f"decide by {health.when(oldest.decide_by)}"
-        )
-        lapsing = sorted((r for r in waiting if r.decide_by < following), key=lambda r: (r.decide_by, r.id))
-        if lapsing:
-            lines.append("Lapsing before the next one-pager: " + ", ".join(f"{r.id} ({health.when(r.decide_by)})" for r in lapsing))
-    else:
-        lines.append("Nothing waiting")
-    terminal = sorted(
-        ((r.decided_at, r) for r in snapshot.approvals if r.decided_origin == "terminal" and r.decided_at and r.decided_at > last),
-        key=lambda pair: (pair[0], pair[1].id),
+    counts = Counter(r.kind for r in waiting)
+    lines = [", ".join(f"{kind} {counts[kind]}" for kind in sorted(counts))]
+    oldest = min(waiting, key=lambda r: (r.requested_at, r.id))
+    lines.append(
+        f"Oldest: {oldest.id} ({oldest.kind}), waiting since {health.when(oldest.requested_at)}, "
+        f"decide by {health.when(oldest.decide_by)}"
     )
-    if terminal:
-        decided = (f"{r.id} {'skipped' if r.state == mission.SKIPPED else 'approved'}" for _, r in terminal)
-        lines.append("Decided in Terminal since the last one-pager: " + ", ".join(decided))
+    lapsing = sorted((r for r in waiting if r.decide_by < following), key=lambda r: (r.decide_by, r.id))
+    if lapsing:
+        lines.append("Lapsing before the next one-pager: " + ", ".join(f"{r.id} ({health.when(r.decide_by)})" for r in lapsing))
+    # Decisions are made in Discord only (Ting Yu, 2026-10-26): point there.
+    lines.append(f"Decide in #approvals: {len(waiting)} waiting for you.")
     return lines
 
 

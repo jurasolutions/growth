@@ -125,8 +125,6 @@ class Request:
     requested_at: datetime
     decide_by: datetime
     use_by: datetime | None
-    decided_at: datetime | None
-    decided_origin: str | None  # "terminal" or "ssh"
     posted: bool
     close_reason: str | None
 
@@ -347,7 +345,7 @@ def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: dateti
     Its own SELECT: approvals.py may supersede on a read, which is a write."""
     since = last_one_pager.isoformat(timespec="seconds")
     rows = conn.execute(
-        "SELECT id, kind, status, requested_at, decide_by, use_by, decided_at, decided_origin, used_at, posted_at, close_reason"
+        "SELECT id, kind, status, requested_at, decide_by, use_by, decided_at, used_at, posted_at, close_reason"
         " FROM approvals WHERE (status IN ('pending', 'approved') AND used_at IS NULL) OR decided_at > ? OR closed_at > ?"
         " ORDER BY requested_at, id",
         (since, since),
@@ -375,8 +373,6 @@ def _request(row: sqlite3.Row, now: datetime) -> Request:
         requested_at=_at(row["requested_at"]),
         decide_by=decide_by,
         use_by=use_by,
-        decided_at=_at_or_none(row["decided_at"]),
-        decided_origin=row["decided_origin"],
         posted=row["posted_at"] is not None,
         close_reason=_clean_or_none(row["close_reason"]),
     )

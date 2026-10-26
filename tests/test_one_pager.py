@@ -43,8 +43,6 @@ def request(number, kind="outreach-email", state=mission.WAITING, **fields) -> m
         requested_at=datetime(2026, 11, 9, 9, number % 60, tzinfo=SGT),
         decide_by=datetime(2026, 11, 10, 16, 30, tzinfo=SGT),
         use_by=None,
-        decided_at=None,
-        decided_origin=None,
         posted=True,
         close_reason=None,
     )
@@ -99,8 +97,7 @@ def test_nothing_in_the_health_strip_reads_nothing_needs_you():
 
 
 MISSED = slots.SlotStatus("scout-send", datetime(2026, 11, 6, 10, 0, tzinfo=SGT), "missed")
-LAPSED_EMAIL = request(412, state=mission.LAPSED_UNUSED, use_by=datetime(2026, 11, 10, 7, 59, tzinfo=SGT),
-                       decided_at=datetime(2026, 11, 9, 10, 0, tzinfo=SGT), decided_origin="ssh")
+LAPSED_EMAIL = request(412, state=mission.LAPSED_UNUSED, use_by=datetime(2026, 11, 10, 7, 59, tzinfo=SGT))
 
 HEALTH_ITEMS = [
     ("PAUSE file", dict(pause_file="holiday"), "The PAUSE file is in place"),
@@ -183,13 +180,18 @@ def test_a_social_post_past_its_decide_by_yesterday_is_not_waiting(conn):
     assert lines == ["Nothing waiting"]
 
 
-def test_a_decision_made_in_terminal_since_the_last_one_pager_is_noted(conn):
+def test_approvals_waiting_points_to_the_approvals_channel_with_the_count(five_waiting):
+    lines = section(one_pager.text(mission.read(world.source())), "Approvals waiting")
+    assert lines[-1] == "Decide in #approvals: 5 waiting for you."
+
+
+def test_decisions_are_discord_only_so_the_one_pager_never_mentions_terminal(conn):
     world.approval(conn, 153, "outreach-email", status="approved", decided_at="2026-11-09T21:14:00+08:00",
                    decided_origin="terminal", use_by="2026-11-12T16:30:00+08:00")
-    world.approval(conn, 154, "outreach-email", status="skipped", decided_at="2026-11-09T21:15:00+08:00", decided_origin="terminal")
-    world.approval(conn, 155, "outreach-email", status="skipped", decided_at="2026-11-09T21:16:00+08:00", decided_origin="ssh")
-    lines = section(one_pager.text(mission.read(world.source())), "Approvals waiting")
-    assert "Decided in Terminal since the last one-pager: A-0153 approved, A-0154 skipped" in lines
+    world.approval(conn, 154, "outreach-email")
+    text = one_pager.text(mission.read(world.source()))
+    assert "terminal" not in text.lower()
+    assert "Decide in #approvals: 1 waiting for you." in section(text, "Approvals waiting")
 
 
 def test_without_an_approvals_table_the_section_says_so():

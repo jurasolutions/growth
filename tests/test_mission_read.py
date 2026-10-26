@@ -239,7 +239,6 @@ def test_each_stored_status_reads_as_what_it_means_now(conn):
         "A-0005": mission.USED,
         "A-0006": mission.SKIPPED,
     }
-    assert found["A-0006"].decided_origin == "terminal"
 
 
 def test_only_live_requests_and_those_closed_since_the_last_one_pager_are_read(conn):
