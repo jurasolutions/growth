@@ -344,6 +344,18 @@ def remove(conn: sqlite3.Connection, group_id: int, reason: str, *, run_id: int 
     return removed
 
 
+def remove_for_good(conn: sqlite3.Connection, group_id: int, reason: str, *, run_id: int | None = None) -> dict:
+    """`remove()`, then every publish item still waiting for the group is withdrawn and its card
+    superseded in the same transaction (`publish.items.sync`). The one path for `community
+    removed` and for a publish run's removal or admin-warning stop (code review 05, N8). Call it
+    inside a transaction; post the cards with `cards.sweep_safely()` once that has committed."""
+    from jura_growth.agents.publish import items as publish_items
+
+    group = remove(conn, group_id, reason, run_id=run_id)
+    publish_items.sync(conn, run_id=run_id)
+    return group
+
+
 JOIN_STATUSES = ("requested", "member", "declined")
 PROFILES_ONLY = "only personal profiles can join or post"  # the fit reason `pages_not_allowed` records
 

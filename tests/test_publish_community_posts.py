@@ -258,3 +258,17 @@ def test_the_community_plan_prompt_writes_drafts_in_the_jura_voice():
     assert re.search(r"Jura Solutions Facebook Page \(`post_as`\)", flat)
     voice = next(line for line in prompt.split("\n   - ") if line.startswith("Voice:"))
     assert '"we"' in voice and "design-system/README.md" in voice
+
+
+def test_community_removed_by_hand_supersedes_the_groups_waiting_cards_at_once(conn, world):
+    """Code review 05, N8: the hand command and the stop take the same path, so a waiting card is
+    superseded in the same transaction, not at the next sync."""
+    group_id = pw.group(conn)
+    _, waiting = pw.community_item(conn, group_id)
+
+    result = pw.invoke("community", "removed", str(group_id))
+
+    assert result.exit_code == 0, result.output
+    record = approvals.get(conn, waiting.id)
+    assert record is not None and record.status == approvals.SUPERSEDED
+    assert group_of(conn, group_id)["removed"] == 1

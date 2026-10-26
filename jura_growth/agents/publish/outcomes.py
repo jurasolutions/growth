@@ -207,8 +207,8 @@ def remove_group(conn: sqlite3.Connection, found: items.Item, reason: str, *, ru
         return None
     group_id = group_of(found)
     where = f"in run {run_id}" if run_id is not None else "outside a run"
-    groups_mod.remove(conn, group_id, f"the publish job stopped at {found.label} {where} ({reason})", run_id=run_id)
-    items.sync(conn, run_id=run_id)
+    groups_mod.remove_for_good(conn, group_id, f"the publish job stopped at {found.label} {where} ({reason})",
+                               run_id=run_id)
     return group_id
 
 
