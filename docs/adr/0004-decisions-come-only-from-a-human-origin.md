@@ -1,8 +1,8 @@
 # Decisions and control commands come only from a human origin
 
-Status: proposed (2026-10-25), amended 2026-10-26 by Ting Yu's decision to turn Terminal decisions
-off. Referenced from ticket MC-04 and accepted in ticket MC-11a of
-`prd-jura-mission-control-2026-10-25.md`.
+Status: accepted (2026-10-26, ticket MC-11a of `prd-jura-mission-control-2026-10-25.md`). Proposed
+2026-10-25 and amended 2026-10-26 by Ting Yu's decision to turn Terminal decisions off. Referenced
+from ticket MC-04.
 
 Decisions come only from Dispatch over SSH. Terminal decisions are disabled until a Touch ID ticket
 exists.
@@ -14,9 +14,15 @@ carries the decision and his Discord user id. `remote` checks the origin before 
 (`origin.detect_ssh()`):
 
 - `SSH_ORIGINAL_COMMAND` is set;
-- an `sshd` process is an ancestor, and no ancestor is `claude`;
+- an `sshd` process running as root is an ancestor, and no ancestor is `claude`;
 - none of Claude Code's environment markers (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_PID`)
   is set.
+
+Root matters. A process name is only a file name: during ticket MC-11a, an orphaned shell run from
+inside a Claude session through a symlink called `sshd`, with `SSH_ORIGINAL_COMMAND` set, passed a
+check that looked only at names. The real daemon's privileged monitor runs as root above every
+session, and no process running as Ting Yu's user can start a root one. That probe is a regression
+test too (`tests/test_origin_processes.py`).
 
 Those variables can only refuse an origin, never grant one. `approvals.decide()` accepts no other
 origin. The Discord user id is attribution, checked against `CONTROL_DISCORD_USER_ID` for
@@ -49,6 +55,12 @@ password through macOS LocalAuthentication. That needs a new helper or dependenc
 as its own ticket. Until then the card carries no code, and Terminal can only list requests.
 
 ## The remaining limit
+
+A real SSH login to the Mac is still a real `sshd` origin. So the Mac's `authorized_keys` holds only
+Dispatch's entry, restricted to the forced command and to Dispatch's tailnet address (`restrict`,
+`command=`, `from=`), and Remote Login takes keys only. Another key in that file, or password login,
+would let any process that can read the matching secret run `ssh localhost jura-growth remote …`.
+The setup guide (`outputs/growth/setup/remote-control.md`) has the steps and the checks.
 
 Anything that can write `growth.db` directly can forge a decision with raw SQL. The `approvals`
 trigger refuses the transitions A7 doesn't allow, but no trigger can tell who wrote a row. Headless

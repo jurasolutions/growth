@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import timedelta
@@ -463,6 +464,46 @@ def test_the_json_answer_stays_under_64_kb():
 def test_every_answer_is_from_the_closed_enum_with_one_exit_code_each():
     assert set(remote_mod.ANSWER_FOR_EXIT.values()) == set(approvals.ANSWERS)
     assert len(remote_mod.ANSWER_FOR_EXIT) == len(approvals.ANSWERS)
+
+
+# --- docs/dispatch-contract.md says what the code does (AC-M10.5, ticket review N8) -------------------
+
+CONTRACT_DOC = paths.REPO_ROOT / "docs" / "dispatch-contract.md"
+
+
+def _rows(heading: str) -> list[list[str]]:
+    text = CONTRACT_DOC.read_text(encoding="utf-8")
+    section = text.split(f"\n## {heading}\n", 1)[1].split("\n## ", 1)[0]
+    rows = [line for line in section.splitlines() if line.startswith("| ") and not line.startswith("| ---")]
+    split = (re.split(r"(?<!\\)\|", row.strip().strip("|")) for row in rows[1:])  # "\|" is a pipe inside a cell
+    return [[cell.strip().replace("\\|", "|") for cell in cells] for cells in split]
+
+
+def test_the_contracts_answer_table_is_the_codes_enum_and_exit_codes():
+    table = {row[0].strip("`"): int(row[1]) for row in _rows("Answers and exit codes")}
+    assert table == {answer: code for code, answer in remote_mod.ANSWER_FOR_EXIT.items()}
+    assert list(table) == list(approvals.ANSWERS)
+
+
+def test_the_contracts_command_rows_follow_the_allowlist_in_order():
+    usages = [row[0].strip("`") for row in _rows("Commands")]
+    assert usages == [entry.usage for entry in remote_mod.ALLOWLIST.values()]
+
+
+def test_adr_0004_is_accepted_and_the_setup_guide_restricts_the_key():
+    """Exit criteria E12 and E6 (test strategy v3 §11.1); the guide is drafted in the feature folder."""
+    adr = paths.REPO_ROOT / "docs" / "adr" / "0004-decisions-come-only-from-a-human-origin.md"
+    status = next(line for line in adr.read_text(encoding="utf-8").splitlines() if line.startswith("Status:"))
+    assert status.startswith("Status: accepted")
+    guide = paths.REPO_ROOT / ".scratch" / "mission-control" / "setup" / "remote-control.md"
+    assert 'restrict,command="' in guide.read_text(encoding="utf-8")
+
+
+def test_the_contract_names_its_version_its_limits_and_the_json_fields():
+    text = CONTRACT_DOC.read_text(encoding="utf-8")
+    for needed in ('"contract": 1', "1,900", "64 KB", "--ref", "--actor discord:", "shlex.join", "growth:approve:A-",
+                   "restrict,command=", *(f"| D{n} |" for n in range(1, 10))):
+        assert needed in text, needed
 
 
 # --- AC-M10.2, generated: every other leaf, and every command that takes a path ---------------------

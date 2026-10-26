@@ -64,6 +64,8 @@ The database stays in rollback-journal mode, not WAL, because it lives in OneDri
 | `jura-growth pause <agent\|all>` | Stop an agent, or every agent except digest and backup |
 | `jura-growth resume <agent\|all>` | Start it again |
 | `jura-growth status` | Pauses, last runs, schedule, Discord setup and setup gaps (the same list as the one-pager's) |
+| `jura-growth approvals [kind]` | Pending approval requests, the 15 soonest to lapse first. Decisions come only from `#approvals`, through Dispatch (ADR 0004) |
+| `jura-growth remote …` | Control commands from Discord, reached only through Dispatch's SSH forced command (`bin/growth-remote`) and refused anywhere else. See `docs/dispatch-contract.md` |
 | `jura-growth one-pager --no-post` | Print the one-pager: Needs you, approvals waiting, today's slots, yesterday's figures. Reads `growth.db` read-only and never repairs it (ADR 0002) |
 | `jura-growth run <job>` | Run a scheduled job now. `--dry-run` prints the command, `--ignore-schedule` runs on a weekend or holiday |
 | `jura-growth schedule list\|render\|install\|uninstall [jobs]` | launchd jobs |
