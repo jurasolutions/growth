@@ -14,8 +14,8 @@ import pytest
 import yaml
 
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import config, db, paths
-from jura_growth.agents.outreach import approval, send
+from jura_growth import brand_check, config, db, paths
+from jura_growth.agents.outreach import approval, queue, send
 from test_scout_support import CONTROL_ID, REGISTRY, d1_env, decide, fake_d1, fake_resend, outreach_requests
 from uat import seed
 
@@ -243,3 +243,54 @@ def test_an_approved_email_goes_to_the_stub_once(live, cards):
     (sent,) = live
     assert str(sent.url) == f"{STUB}/emails"
     assert json.loads(sent.content)["to"] == ["info@example.com.sg"]
+
+
+def test_every_s4_draft_passes_the_send_time_brand_gate(live):
+    """So whichever card A4 approves, the email reaches the stub."""
+    conn = db.connect()
+    try:
+        failing = []
+        for message in db.rows(conn, "SELECT * FROM outreach_messages WHERE status = 'queued'"):
+            lead, row = queue.recipient(conn, message["lead_id"])
+            email = queue.build(conn, lead, row, subject=message["subject"], body=message["draft_body"])
+            args = queue.check_args(lead, email, kind="first", tool=message["tool_slug"])
+            if not brand_check.check(email.check_text, **args).passed:
+                failing.append(message["lead_id"])
+    finally:
+        conn.close()
+    assert failing == []
+
+
+# --- edit-draft (S9) ------------------------------------------------------------------------
+
+
+def test_edit_draft_after_approval_supersedes_the_request_and_sends_nothing(live, cards, window):
+    conn = db.connect()
+    try:
+        send.send_due(conn)
+        approved = request_for(conn, 240)
+        assert decide(conn, approved).answer == "recorded"
+        before = db.scalar(conn, "SELECT draft_body FROM outreach_messages WHERE lead_id = 240")
+    finally:
+        conn.close()
+
+    assert seed.main([str(window), "--scenario", "edit-draft", "--lead", "240", "--today", TUESDAY.isoformat()]) == 0
+
+    conn = db.connect()
+    try:
+        after = db.scalar(conn, "SELECT draft_body FROM outreach_messages WHERE lead_id = 240")
+        assert after != before
+        send.send_due(conn)
+        assert [r.id for r in outreach_requests(conn, "superseded")] == [approved.id]
+        fresh = request_for(conn, 240)
+        assert fresh.id != approved.id
+    finally:
+        conn.close()
+    assert live == []  # lead 240 doesn't send, and nothing else was approved
+
+
+def test_edit_draft_refuses_a_lead_with_no_queued_email(live, window):
+    with pytest.raises(seed.Refused, match="lead 999"):
+        seed.seed(window, "edit-draft", today=TUESDAY, lead=999)
+    with pytest.raises(seed.Refused, match="--lead"):
+        seed.seed(window, "edit-draft", today=TUESDAY)

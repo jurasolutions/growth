@@ -59,6 +59,14 @@ class Refused(RuntimeError):
 
 _day: date | None = None
 _folder: Path | None = None  # the UAT folder being seeded
+_options: dict = {}  # the scenario's own options, such as `--lead`
+
+
+def option(name: str, flag: str | None = None):
+    """A scenario's option, or Refused naming the flag that sets it."""
+    if name not in _options:
+        raise Refused(f"this scenario needs {flag or '--' + name}")
+    return _options[name]
 
 
 def today() -> date:
@@ -208,6 +216,8 @@ def _contact(conn, lead_id: int, email: str, kind: str, source: str) -> int:
     return int(cursor.lastrowid or 0)
 
 
+NAMES = ("Alder", "Birch", "Cedar", "Dove", "Elm", "Fern", "Grove", "Hazel", "Iris", "Juniper", "Kestrel", "Linden",
+         "Maple", "Nutmeg", "Olive", "Pine", "Quill", "Rowan", "Sage", "Teak")
 SUBJECT = "Quotes that write themselves"
 TOOL = "quote-builder"  # live in the site registry, so a draft linking it passes the send-time brand gate
 
@@ -238,15 +248,18 @@ def s4_queued_emails(conn) -> None:
     contact = _contact(conn, 233, "info@example.com.sg", "role", "https://example.com.sg/contact")
     previous = previous_business_day()
     _queued(conn, 233, contact, at(previous, "09:12"), previous, draft("Example"))
-    for lead_id in range(240, 255):
+    for lead_id, name in zip(range(240, 255), NAMES):
         domain = f"lead{lead_id}.example.sg"
-        _lead(conn, lead_id, f"Lead {lead_id} Pte Ltd", domain)
+        # Word names: a figure in a company name fails the numbers rule at send time.
+        _lead(conn, lead_id, f"{name} Freight Pte Ltd", domain)
         contact = _contact(conn, lead_id, f"hello@{domain}", "role", f"https://{domain}/contact")
         planted = f" (draft notes: key {RESEND_KEY})" if lead_id == 254 else ""  # S6
-        _queued(conn, lead_id, contact, at(today(), "09:05"), today(), draft(f"Lead {lead_id}") + planted)
-    _lead(conn, 260, "Tan Logistics Pte Ltd", "tanlogistics.example.sg")
-    contact = _contact(conn, 260, NAMED_ADDRESS, "named", "https://tanlogistics.example.sg/enquiries")
-    _queued(conn, 260, contact, at(today(), "09:05"), today(), draft("Tan Logistics"))
+        _queued(conn, lead_id, contact, at(today(), "09:05"), today(), draft(f"{name} Freight") + planted)
+    # Not "Tan Logistics": a company name holding the named recipient's surname reads as greeting
+    # the person, and the `email` brand channel drops it (AC-M12.2).
+    _lead(conn, 260, "Harbourline Logistics Pte Ltd", "harbourline.example.sg")
+    contact = _contact(conn, 260, NAMED_ADDRESS, "named", "https://harbourline.example.sg/enquiries")
+    _queued(conn, 260, contact, at(today(), "09:05"), today(), draft("Harbourline Logistics"))
 
 
 def s5_s6_planted(conn) -> None:
@@ -343,16 +356,30 @@ def outreach_live(conn) -> list[str]:
     return [p for p in send.live_problems() if not p.startswith("approval buttons not set up")]
 
 
-SCENARIOS: dict[str, Callable] = {"base": base, "outreach-live": outreach_live}
+EDITED = "\n\nP.S. A short note added by hand after the first read."
+
+
+def edit_draft(conn) -> None:
+    """S9: change one lead's queued `draft_body`, as a hand edit would, so the next read or claim
+    supersedes its request and raises one for the new text."""
+    lead = option("lead")
+    message = db.one(conn, "SELECT id, draft_body FROM outreach_messages WHERE lead_id = ? AND status = 'queued'", (lead,))
+    if message is None:
+        raise Refused(f"lead {lead} has no queued email to edit")
+    conn.execute("UPDATE outreach_messages SET draft_body = ? WHERE id = ?", (message["draft_body"] + EDITED, message["id"]))
+
+
+SCENARIOS: dict[str, Callable] = {"base": base, "outreach-live": outreach_live, "edit-draft": edit_draft}
 
 
 # --- seeding --------------------------------------------------------------------------------
 
 
-def seed(folder: str | os.PathLike[str], scenario: str = "base", *, today: date | None = None) -> list[str]:
-    """Seed `scenario` into `folder`, dating it from `today` (default: today in SGT). Returns
-    notes for Ting Yu: anything the window must still supply before the scenario's steps."""
-    global _day, _folder
+def seed(folder: str | os.PathLike[str], scenario: str = "base", *, today: date | None = None, **options) -> list[str]:
+    """Seed `scenario` into `folder`, dating it from `today` (default: today in SGT). A scenario
+    reads its own `options` (`--lead`) through `option()`. Returns notes for Ting Yu: anything
+    the window must still supply before the scenario's steps."""
+    global _day, _folder, _options
     problem = refusal(folder)
     if problem:
         raise Refused(problem)
@@ -365,7 +392,7 @@ def seed(folder: str | os.PathLike[str], scenario: str = "base", *, today: date 
     problem = day_refusal(day)
     if problem:
         raise Refused(problem)
-    _day, _folder = day, Path(folder).resolve()
+    _day, _folder, _options = day, Path(folder).resolve(), {k: v for k, v in options.items() if v is not None}
     try:
         with db.session() as conn:
             if scenario == "base" and db.scalar(conn, "SELECT count(*) FROM runs"):
@@ -373,7 +400,7 @@ def seed(folder: str | os.PathLike[str], scenario: str = "base", *, today: date 
             with db.transaction(conn):
                 return list(build(conn) or [])
     finally:
-        _day, _folder = None, None
+        _day, _folder, _options = None, None, {}
 
 
 def _day_argument(value: str) -> date:
@@ -388,9 +415,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("folder")
     parser.add_argument("--scenario", default="base")
     parser.add_argument("--today", type=_day_argument, help="the day to date the rows from (default: today in SGT)")
+    parser.add_argument("--lead", type=int, help="edit-draft: the lead whose queued draft to change")
     options = parser.parse_args(argv)
     try:
-        notes = seed(options.folder, options.scenario, today=options.today)
+        notes = seed(options.folder, options.scenario, today=options.today, lead=options.lead)
     except Refused as refused:
         print(f"refused: {refused}")
         return 2
