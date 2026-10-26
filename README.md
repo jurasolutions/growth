@@ -174,7 +174,7 @@ imports it by name. The module may define:
 | `register(cli)` | Add a click command group |
 | `channels()` | `{name: brand_check.Channel}` with the agent's rule-10 checks |
 | `digest(conn, day)` | `{"figures": {}, "lines": [], "brief": []}` for the digest and morning brief |
-| `precheck(job, conn)` | A reason to skip a scheduled run before it starts, or `None`. Return `agents.NothingToDo("nothing due")` instead of a plain string when the run simply has nothing to do: the runner writes a `run.quiet` event with that reason and no run row (ADR 0001) |
+| `precheck(job, conn)` | A reason to skip a scheduled run before it starts, or `None`. Return `agents.NothingToDo("nothing due")` instead of a plain string when the run simply has nothing to do: the runner writes a `run.quiet` event with that reason and no run row (ADR 0001). It may also run a catch-up write before the run, in its own transaction: the app factory raises `app-build` requests for PRDs filed before requests existed, and the community scout runs its one-off pass over rules confirmed before `group-rules` (it logs a failure and goes ahead, so the write never skips the run) |
 | `permissions(job)` | For a `claude` job the agent runs: `headless.Permissions` with the `jura-growth` commands its prompt uses (and any extra Claude Code deny rules), or `None`. A job with no declaration may run no commands |
 | `after_run(conn, job, run_id, outcome)` | Called after the job body of a run that started, before its run row is finished. Return a `runner.Outcome` to replace the outcome (the row, `#alerts` and auto-pause all see it), or `None` to keep it. An exception is logged as `run.after_run_error` and the outcome stands |
 | `RUN_UPDATE_DISCORD_CHANNEL` | The Discord channel the agent's run updates go to, for example `social-drafts` |
@@ -229,7 +229,10 @@ A kind is an object with:
 
 The outreach plug-in's `outreach-email` kind (`agents/outreach/approval.py`) is the worked example:
 requests are raised only in live mode, only for emails due today and only up to today's remaining
-quota (MC §4.6 A14), and `send-due` claims before it calls Resend.
+quota (MC §4.6 A14), and `send-due` claims before it calls Resend. The community plug-in's
+`group-rules` kind (`agents/community/group_rules.py`) is the example of a kind applied on
+decide: its approve takes `promo_days=` and `post_days=`, and `on_approve` claims the request and
+sets the group's confirmation and days in the decision itself.
 
 ## Tests
 

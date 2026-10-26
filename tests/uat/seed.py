@@ -3,7 +3,7 @@
 Seeds the UAT data into a temporary folder, for Ting Yu to run the script against a test Discord
 server. From the repo root, in the window `uat.md` sets up ("The window for Parts A and C"):
 
-    uv run python -m tests.uat.seed "$UAT" [--scenario base] [--today YYYY-MM-DD] [--lead <id>]
+    uv run python -m tests.uat.seed "$UAT" [--scenario base] [--today YYYY-MM-DD] [--lead <id>] [--group <id>]
 
 It refuses unless `$UAT` is a temporary folder (made with `mktemp -d`) outside `jurasolutions/`, and
 `JURA_GROWTH_DATA_DIR`, `JURA_GROWTH_OUTPUTS_DIR` and `JURA_PRD_DIR` all sit inside it, as does
@@ -24,9 +24,13 @@ stamps decisions with the real clock, so deadlines must line up with the day the
   is inside `$UAT`. It prints any pre-condition the window must still supply.
 - `edit-draft --lead <id>` (S9) changes that lead's queued draft by hand.
 - `shadow-trial` (S10) holds 40 shadow-sent emails for `requeue-shadow`.
+- `note-rules --group <id>` (S13, ticket 05) records that group's rules as seen inside the group
+  and raises its `group-rules` request, as `publish note-rules` will: `--group 4` is G4.
 
-The seed never raises an approval request: the outreach commands raise them, as they would live.
-The other kinds' tickets add their own scenarios to `SCENARIOS`.
+A scenario never inserts approval rows. The outreach requests come from the outreach commands
+themselves, as they would live; `note-rules` raises its request through the kind's own code. Any
+card a scenario raised is posted once its transaction commits. The other kinds' tickets add their
+own scenarios to `SCENARIOS`.
 """
 
 from __future__ import annotations
@@ -43,7 +47,7 @@ from typing import Callable
 
 import yaml
 
-from jura_growth import config, db, holidays, paths, schedule, suppression, timeutil
+from jura_growth import cards, config, db, holidays, paths, schedule, suppression, timeutil
 from jura_growth.agents.outreach import send, store
 
 FOLDERS = ("JURA_GROWTH_DATA_DIR", "JURA_GROWTH_OUTPUTS_DIR", "JURA_PRD_DIR")
@@ -297,19 +301,20 @@ def s7_factory_prd(conn) -> None:
     )
 
 
-def _group(conn, name: str, slug: str, *, joined: int, rules: str | None) -> None:
+def _group(conn, group_id: int, name: str, slug: str, *, joined: int, rules: str | None) -> None:
     now = at(today() - timedelta(days=HISTORY_DAYS), "07:30")
     url = f"https://www.facebook.com/groups/{slug}"
     conn.execute(
-        "INSERT INTO community_groups (name, slug, url, url_key, promo_rules, fit, fit_reason, joined, rules_confirmed,"
-        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'good fit', 'owners asking about admin', ?, 0, ?, ?)",
-        (name, slug, url, url.removeprefix("https://www."), rules, joined, now, now),
+        "INSERT INTO community_groups (id, name, slug, url, url_key, promo_rules, fit, fit_reason, joined, rules_confirmed,"
+        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'good fit', 'owners asking about admin', ?, 0, ?, ?)",
+        (group_id, name, slug, url, url.removeprefix("https://www."), rules, joined, now, now),
     )
 
 
 def s8_groups(conn) -> None:
-    _group(conn, "G4 Singapore SME owners", "g4-sg-sme-owners", joined=1, rules="promo Saturdays only")
-    _group(conn, "G7 Logistics operators SG", "g7-logistics-sg", joined=0, rules=None)
+    """G4 and G7 under ids 4 and 7, so `community set 4` and `--group 4` mean G4."""
+    _group(conn, 4, "G4 Singapore SME owners", "g4-sg-sme-owners", joined=1, rules="promo Saturdays only")
+    _group(conn, 7, "G7 Logistics operators SG", "g7-logistics-sg", joined=0, rules=None)
 
 
 def base(conn) -> None:
@@ -404,11 +409,30 @@ def shadow_trial(conn) -> None:
         conn.execute("UPDATE leads SET status = 'shadow_sent' WHERE id = ?", (lead_id,))
 
 
+# --- the group-rules scenario (ticket 05) ---------------------------------------------------
+
+
+def note_rules(conn) -> None:
+    """S13: the group's rules as seen inside the group, with its `group-rules` request raised over
+    them through the kind's own code (the same request again if one is already waiting)."""
+    from jura_growth.agents.community import group_rules
+    from jura_growth.agents.community import groups as groups_mod
+
+    group = option("group", "--group <id>, such as --group 4 for G4")
+    found = groups_mod.get(conn, group)
+    if found is None:
+        raise Refused(f"no group {group}: seed `base` first")
+    if not (found["promo_rules"] or "").strip():
+        raise Refused(f"group {group} has no rules recorded to confirm")
+    group_rules.request(conn, group, reason="the rules as seen inside the group (UAT seed, as publish note-rules will record them)")
+
+
 SCENARIOS: dict[str, Callable] = {
     "base": base,
     "outreach-live": outreach_live,
     "edit-draft": edit_draft,
     "shadow-trial": shadow_trial,
+    "note-rules": note_rules,
 }
 
 
@@ -438,7 +462,9 @@ def seed(folder: str | os.PathLike[str], scenario: str = "base", *, today: date 
             if scenario == "base" and db.scalar(conn, "SELECT count(*) FROM runs"):
                 raise Refused(f"{folder} is already seeded: start again from a fresh `mktemp -d`")
             with db.transaction(conn):
-                return list(build(conn) or [])
+                notes = list(build(conn) or [])
+            cards.sweep_safely(conn)  # any request a scenario raised posts its card (A12)
+            return notes
     finally:
         _day, _folder, _options = None, None, {}
 
@@ -456,9 +482,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scenario", default="base")
     parser.add_argument("--today", type=_day_argument, help="the day to date the rows from (default: today in SGT)")
     parser.add_argument("--lead", type=int, help="edit-draft: the lead whose queued draft to change")
+    parser.add_argument("--group", type=int, help="note-rules: the group whose rules to raise, such as 4 for G4")
     options = parser.parse_args(argv)
     try:
-        notes = seed(options.folder, options.scenario, today=options.today, lead=options.lead)
+        notes = seed(options.folder, options.scenario, today=options.today, lead=options.lead, group=options.group)
     except Refused as refused:
         print(f"refused: {refused}")
         return 2

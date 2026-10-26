@@ -150,3 +150,45 @@ def test_seeding_twice_is_refused(seeded, uat):
 def test_an_unknown_scenario_is_refused(uat):
     with pytest.raises(seed.Refused, match="no scenario"):
         seed.seed(uat, scenario="nope")
+
+
+# --- note-rules (S13, ticket 05; uat.md C3) ---------------------------------------------------------
+
+
+def test_g4_and_g7_keep_the_ids_uat_md_types(seeded):
+    names = {r["id"]: r["name"] for r in seeded.execute("SELECT id, name FROM community_groups")}
+    assert names == {4: "G4 Singapore SME owners", 7: "G7 Logistics operators SG"}
+
+
+def test_note_rules_raises_g4s_group_rules_request_and_posts_its_card(seeded, uat, monkeypatch):
+    from discord_double import DiscordDouble
+
+    double = DiscordDouble(monkeypatch)
+    seed.seed(uat, scenario="note-rules", group=4)
+    [request] = seeded.execute("SELECT * FROM approvals").fetchall()
+    assert request["kind"] == "group-rules" and request["subject"] == "group:4" and request["status"] == "pending"
+    g4 = db.one(seeded, "SELECT * FROM community_groups WHERE id = 4")
+    assert g4["rules_confirmed"] == 0 and g4["promo_days_confirmed"] is None
+    (card,) = double.posts("approvals")
+    assert "promo Saturdays only" in card.content and card.components is None
+    assert "promo_days=… post_days=…" in card.content
+    seed.seed(uat, scenario="note-rules", group=4)  # again: the same request, no second card
+    assert seeded.execute("SELECT count(*) FROM approvals").fetchone()[0] == 1 and len(double.posts("approvals")) == 1
+
+
+@pytest.mark.parametrize("group, why", [(9, "no group 9"), (7, "no rules"), (None, "--group")])
+def test_note_rules_refuses_a_group_it_cant_raise_for(seeded, uat, group, why):
+    with pytest.raises(seed.Refused, match=why):
+        seed.seed(uat, scenario="note-rules", group=group)
+    assert seeded.execute("SELECT count(*) FROM approvals").fetchone()[0] == 0
+
+
+def test_note_rules_refuses_a_non_temp_folder_too(monkeypatch):
+    live = paths.JURA_ROOT / "data" / "growth"
+    with pytest.raises(seed.Refused, match="temporary"):
+        seed.seed(live, scenario="note-rules", group=4)
+
+
+def test_note_rules_runs_as_a_script_with_its_group(seeded, uat):
+    assert seed.main([str(uat), "--scenario", "note-rules", "--group", "4"]) == 0
+    assert seeded.execute("SELECT subject FROM approvals").fetchone()[0] == "group:4"
