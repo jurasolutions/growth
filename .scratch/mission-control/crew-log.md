@@ -453,3 +453,14 @@ artifacts: merge of 08 (rebased on ed609a3)
 decisions: fix round verified by the conductor with window_probe (08:00:05 -> previous day window, A-0160 listed, undelivered 1); merged and pushed
 questions: -
 evidence:  merged branch pytest -> see commit
+
+## 2026-10-26T21:17+0800 conductor (merge mc 04b; wave 4)
+status:    done
+persona:   conductor
+ticket:    04b, 06, 10, 11
+artifacts: crew/mission-control at 722bcdc (merge of 04b)
+decisions: 04b fix round verified (Terminal origin removed; orphaned-expect probe refused with and without markers); merged; Discord-only decisions in force
+decisions: ticket 05 X9: setting rules_confirmed raises a group-rules request decided in #approvals (crew recommendation adopted)
+decisions: wave 4 dispatched: 06 outreach gate, 10 app-factory kinds, 11 remote core
+questions: -
+evidence:  merged branch pytest -> 1803 passed
