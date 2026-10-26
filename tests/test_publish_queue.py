@@ -437,6 +437,17 @@ def test_nfc_equivalent_text_matches():
     assert not commands.same_text("Cafe au lait", "Café au lait")
 
 
+def test_the_audit_and_publish_done_share_one_normal_form():
+    """Final review St3: the transcript audit and `publish done --live-text-file` must agree on
+    whether two texts match, so there is one normal form and both modules use it."""
+    from jura_growth.agents.publish import audit, commands, text
+
+    assert not hasattr(audit, "_normal") and not hasattr(commands, "_normal")
+    assert audit.normal is text.normal and commands.normal is text.normal
+    assert text.normal("  Café  au\n\tlait ") == "Café au lait"
+    assert commands.same_text is text.same
+
+
 # --- AC-P10.1 after_run settles an open claim ------------------------------------------------------
 
 

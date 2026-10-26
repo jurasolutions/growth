@@ -20,9 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import sqlite3
-import unicodedata
 from datetime import date
 from pathlib import Path
 
@@ -30,6 +28,7 @@ import click
 
 from jura_growth import approvals, caps, db, discord, log, pause, timeutil
 from jura_growth.agents.publish import claim, fixture, hosts, items, kinds, outcomes
+from jura_growth.agents.publish import text as text_mod
 
 # What the run may report as a stop signal (BP §4.6). A closed list, so a page's own words
 # never reach an alert through the reason.
@@ -51,14 +50,10 @@ STEPS = {items.SOCIAL_ITEM: "social post", items.COMMUNITY_POST_ITEM: "community
          items.JOIN_ITEM: "join the group", items.ANSWERS_ITEM: "submit the membership answers"}
 
 
-def same_text(approved: str, live: str) -> bool:
-    """The live text matches the approved text after Unicode NFC, collapsing whitespace and
-    trimming (BP QA Q9); any other difference is a mismatch."""
-    return _normal(approved) == _normal(live)
-
-
-def _normal(text: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFC", text)).strip()
+# The live text matches the approved text after Unicode NFC, collapsing whitespace and trimming
+# (BP QA Q9), the one normal form the transcript audit uses too (`text.py`).
+same_text = text_mod.same
+normal = text_mod.normal
 
 
 POSTS = (items.SOCIAL_ITEM, items.COMMUNITY_POST_ITEM)
@@ -201,7 +196,7 @@ def done(approval_id, url, live_text_file, outcome, answers_file) -> str:
             conn.execute(
                 "UPDATE publish_items SET state = 'done', outcome = 'posted', post_url = ?, live_text_hash = ?, "
                 "live_text_matches = ?, finished_at = ? WHERE id = ? AND state = 'claimed'",
-                (url, hashlib.sha256(_normal(live).encode("utf-8")).hexdigest(), int(matches), timeutil.stamp(), found.id),
+                (url, hashlib.sha256(normal(live).encode("utf-8")).hexdigest(), int(matches), timeutil.stamp(), found.id),
             )
             _mark_published(conn, found, url, "browser")
             log.event(conn, "publish.done", {"item": found.label, "approval": record.id, "url": url,
