@@ -46,3 +46,9 @@ Every criterion above passes, `uv run pytest` passes, and the report is in. Then
 - `.scratch/mission-control/reviews/technical-v2.md`: N5 (the release hash binds the SHA); `.scratch/mission-control/reviews/functional.md`: B3
 - `.scratch/mission-control/reviews/test-strategy-v3.md`: §4.1 (AC-M9.7 to AC-M9.9), §3 (D9, D13), §11.2 row MC-10
 - Code: `jura_growth/agents/apps/`, `jura_growth/paths.py` (`site_repo`), `tests/conftest.py`
+
+## Comments
+
+### 2026-10-26T21:44+0800 conductor: from ticket 10
+
+Update the PRD template (jurasolutions/prd/templates/prd-app-template.md) and prd.py BUILD_RE together for the "approved, build" header and §7 text, so the PRD attached to an app-build card carries it (crew recommendation adopted).
