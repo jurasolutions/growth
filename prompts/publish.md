@@ -64,9 +64,9 @@ end with `FAIL:` and the reason.
    `posting_identity` from step 2, as the platform's section describes. If it shows anyone else,
    or you can't tell, run `jura-growth publish stopped <A-id> --reason wrong-identity`, close your
    tab and end with `FAIL: <A-id> wrong posting identity`.
-7. Post it as the platform's section says: attach the images, in order, with `file_upload` (only
-   the paths from step 2), and type the text exactly as given, in one go, with `computer` and
-   `"action": "type"`. Then submit once.
+7. Post it as the platform's section says: attach every image, each once, in the order given, with
+   `file_upload` (only the paths from step 2), and type the text exactly as given, in one go, with
+   `computer` and `"action": "type"`. Then submit once.
 8. Read it back. Open the live post's own page with `navigate` (its permalink, on the platform's
    own host), read its text with `get_page_text`, and write that text, as it reads on the page,
    to `<A-id>-live.txt` in your scratch folder with the Write tool.
@@ -87,14 +87,69 @@ end with `FAIL:` and the reason.
 - **Permalink:** after posting, the post appears at the top of the Page. Its timestamp links to
   its own page, an address on `www.facebook.com` with `/posts/` or `story_fbid` in it. Use that
   address, never a feed or notification link.
+- **Stop signals:** the "Log in to Facebook" page (`login`); "Confirm you're human" or a security
+  check (`captcha`); "We noticed unusual activity" or a checkpoint asking you to confirm who you
+  are (`checkpoint`); "You're temporarily restricted" or "Your Page has been restricted"
+  (`restriction`); "You can't post right now" or "try again later" (`rate-limit`); "goes against
+  our Community Standards" (`removed`); a composer posting as a person, not the Page
+  (`wrong-identity`).
 
-### Social post: Instagram (not yet enabled; BP-04)
+### Social post: Instagram
 
-Not yet enabled. Follow step 3.
+- **Target:** the Jura Solutions Instagram account's own profile (`target_url`, an address on
+  `www.instagram.com`).
+- **Identity:** the browser must already be signed in as the account named in
+  `posting_identity`. On its profile page you see "Edit profile" (only the signed-in account sees
+  that on its own profile), and the profile link at the foot of the left-hand menu shows the same
+  account name and picture. "Follow" or "Message" on the profile, a different account name in the
+  menu, or a "Switch accounts" prompt is the wrong identity: never use "Switch" or "Switch
+  accounts" yourself.
+- **Post:** click "Create" (the plus sign) in the left-hand menu, then "Post", then "Select from
+  computer". Attach every image in the order given, in one `file_upload` call with all the paths
+  from step 2, first to last. On a carousel day there are several: they become the carousel's
+  slides in that order, so never reorder, crop, remove or add a slide, and never add a filter or
+  an edit. Click "Next" on the crop step and again on the edit step. In "Write a caption…", type
+  the text exactly as given, in one go. If a list of hashtag suggestions opens while you type,
+  never pick from it. Then click "Share" once, and wait for "Your post has been shared".
+- **Permalink:** close the dialog and open the profile again: the new post is first in the grid.
+  Open it with `navigate` to its own address, `https://www.instagram.com/p/<code>/`, never a
+  feed, explore or reel-tab link. For the live text, write only the caption under the account
+  name: not the account name, the date, likes or comments.
+- **Stop signals:** the Instagram login page or "Log in to continue" (`login`); "Help us confirm
+  it's you" or a security code request (`checkpoint`); "Confirm you're human" (`captcha`); "We
+  suspended your account" or "Your account has been restricted" (`restriction`); "Try again
+  later" or "We restrict certain activity" (`rate-limit`); "Your post goes against our Community
+  Guidelines" or "Your post has been removed" (`removed`); a warning about the account
+  (`warning`); a different account signed in (`wrong-identity`).
 
-### Social post: LinkedIn company page (not yet enabled; BP-04)
+### Social post: LinkedIn company page
 
-Not yet enabled. Follow step 3.
+- **Target:** the Jura Solutions LinkedIn company page (`target_url`, an address on
+  `www.linkedin.com` under `/company/`).
+- **Identity:** you post as the company page from its admin view, never from the personal feed.
+  The page shows the company name from `posting_identity` with its logo, and the admin view's
+  "Create" or "Start a post" button. In the composer, the name and logo at the top must be the
+  company page's, never a person's. If the page shows "Follow" with no admin view, a person's
+  name in the composer, or an "Acting as" or "Switch" control set to anyone else, that is the
+  wrong identity: never use "Switch" or change who you post as yourself.
+- **Post:** click "Create", then "Start a post", in the admin view. If there are images, attach
+  them in the order given with the composer's media (photo) button and one `file_upload` call,
+  then click "Next" or "Done" if the editor asks, without editing them. Click into "What do you
+  want to talk about?" and type the text exactly as given, in one go. If a hashtag or mention
+  suggestion list opens while you type, never pick from it. Click "Post" once, and wait for
+  "Post successful".
+- **Permalink:** use "View post" in the confirmation, or open the newest post on the company
+  page. Its own address is `https://www.linkedin.com/feed/update/urn:li:activity:<number>/`;
+  open it with `navigate`, never a feed, notification or short link. For the
+  live text, write only the post's text under the company name: not the name, the follower
+  count, the time, reactions or comments. If the text is cut short with "…more", click it once
+  to show it all.
+- **Stop signals:** the LinkedIn "Sign in" page (`login`); "Let's do a quick security check"
+  (`captcha`); a request to verify your identity or a code sent to you (`checkpoint`); "Your
+  account has been restricted" (`restriction`); "You've reached the limit" or "try again later"
+  (`rate-limit`); "This post goes against our Professional Community Policies" or "This post was
+  removed" (`removed`); a warning about the account or the page (`warning`); a person's name, not
+  the company page, in the composer (`wrong-identity`).
 
 ### Community post: a Facebook group as the Jura Page (not yet enabled; BP-05)
 
