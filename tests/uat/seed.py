@@ -23,15 +23,21 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
+import yaml
+
 from jura_growth import config, db, holidays, paths, schedule, suppression, timeutil
+from jura_growth.agents.outreach import send, store
 
 FOLDERS = ("JURA_GROWTH_DATA_DIR", "JURA_GROWTH_OUTPUTS_DIR", "JURA_PRD_DIR")
+# Folders the seed writes to only when they are set, and then only inside the UAT folder.
+OPTIONAL_FOLDERS = ("JURA_GROWTH_CONFIG_DIR",)
 HISTORY_DAYS = 8  # S1: run history from eight days before the seeded day
 
 # Datasets D2 and D3 (test strategy v3 §3), as uat.md S5 and S6 plant them.
@@ -52,6 +58,7 @@ class Refused(RuntimeError):
 # read it through `today()` and `previous_business_day()`, never a fixed date.
 
 _day: date | None = None
+_folder: Path | None = None  # the UAT folder being seeded
 
 
 def today() -> date:
@@ -93,7 +100,19 @@ def refusal(folder: str | os.PathLike[str]) -> str | None:
             return f"{variable} isn't set: point it inside {folder}"
         if not paths.is_within(value, folder):
             return f"{variable} ({value}) is outside {folder}"
+    for variable in OPTIONAL_FOLDERS:
+        value = os.environ.get(variable)
+        if value and not paths.is_within(value, folder):
+            return f"{variable} ({value}) is outside {folder}"
     return None
+
+
+def _prepare_config() -> None:
+    """A `JURA_GROWTH_CONFIG_DIR` inside the UAT folder starts as a copy of the repo's `config/`,
+    which is only read, so every command in the window has its settings."""
+    value = os.environ.get("JURA_GROWTH_CONFIG_DIR")
+    if value and not (Path(value) / "settings.yaml").exists():
+        shutil.copytree(paths.REPO_ROOT / "config", value, dirs_exist_ok=True)
 
 
 # --- building blocks ------------------------------------------------------------------------
@@ -258,35 +277,87 @@ def base(conn) -> None:
         step(conn)
 
 
-SCENARIOS: dict[str, Callable] = {"base": base}
+# --- the outreach scenarios (ticket 17) ----------------------------------------------------
+#
+# A4 and B6 run against these. None of them raises an approval request: requests come only from
+# the outreach commands themselves (`send-due`, `requeue-shadow`), as they would live.
+
+LIVE_SENDING_DOMAIN = "hello.jurasolutions.sg"  # only ever reaches the stub
+WARM_UP_DAY = 3  # cap 5 (caps.OUTREACH_WARMUP)
+
+
+def _rewrite_yaml(path: Path, change: Callable[[dict], None]) -> None:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    change(data)
+    path.write_text("# Written by tests/uat/seed.py for the UAT folder only.\n"
+                    + yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+def outreach_live(conn) -> list[str]:
+    """S3: `outreach.mode: live` in `$UAT/config` with every live pre-condition met except the
+    buttons switch (`approvals.discord_buttons: false`, which A4 turns on), warm-up day 3, and
+    Resend pointed at the stub. Returns any pre-condition the window still has to supply."""
+    folder = os.environ.get("JURA_GROWTH_CONFIG_DIR")
+    if not folder:
+        raise Refused("JURA_GROWTH_CONFIG_DIR isn't set: outreach-live writes live mode into $UAT/config, never config/")
+    if not os.environ.get(send.RESEND_BASE_ENV):
+        raise Refused(f"{send.RESEND_BASE_ENV} isn't set: start the stub (`uv run python -m tests.resend_stub`) and "
+                      f"export {send.RESEND_BASE_ENV}=http://127.0.0.1:{8025}, so no email can reach Resend")
+    problem = send.resend_stub_problem()
+    if problem:
+        raise Refused(problem)
+
+    def live(scout: dict) -> None:
+        scout.update(mode="live", legal_review_done=True, sending_domain=LIVE_SENDING_DOMAIN)
+
+    def buttons_off(settings: dict) -> None:
+        settings.setdefault("approvals", {})["discord_buttons"] = False
+
+    _rewrite_yaml(Path(folder) / "scout.yaml", live)
+    _rewrite_yaml(Path(folder) / "settings.yaml", buttons_off)
+    inputs = os.environ.get("JURA_INPUTS_DIR")
+    if inputs and _folder is not None and paths.is_within(inputs, _folder):  # never the real inputs/
+        dnc = Path(inputs) / "do-not-contact.csv"
+        dnc.parent.mkdir(parents=True, exist_ok=True)
+        if not dnc.exists():
+            dnc.write_text("company,domain,reason\n", encoding="utf-8")
+    first_live_send = today() - timedelta(days=WARM_UP_DAY - 1)
+    store.set_state(conn, "first_live_send_at", at(first_live_send, "10:00"))
+    config.reset_caches()
+    return [p for p in send.live_problems() if not p.startswith("approval buttons not set up")]
+
+
+SCENARIOS: dict[str, Callable] = {"base": base, "outreach-live": outreach_live}
 
 
 # --- seeding --------------------------------------------------------------------------------
 
 
-def seed(folder: str | os.PathLike[str], scenario: str = "base", *, today: date | None = None) -> None:
-    """Seed `scenario` into `folder`, dating it from `today` (default: today in SGT)."""
-    global _day
+def seed(folder: str | os.PathLike[str], scenario: str = "base", *, today: date | None = None) -> list[str]:
+    """Seed `scenario` into `folder`, dating it from `today` (default: today in SGT). Returns
+    notes for Ting Yu: anything the window must still supply before the scenario's steps."""
+    global _day, _folder
     problem = refusal(folder)
     if problem:
         raise Refused(problem)
     build = SCENARIOS.get(scenario)
     if build is None:
         raise Refused(f"no scenario {scenario!r}; known: {', '.join(SCENARIOS)}")
+    _prepare_config()
     config.reset_caches()
     day = today or timeutil.today()
     problem = day_refusal(day)
     if problem:
         raise Refused(problem)
-    _day = day
+    _day, _folder = day, Path(folder).resolve()
     try:
         with db.session() as conn:
             if scenario == "base" and db.scalar(conn, "SELECT count(*) FROM runs"):
                 raise Refused(f"{folder} is already seeded: start again from a fresh `mktemp -d`")
             with db.transaction(conn):
-                build(conn)
+                return list(build(conn) or [])
     finally:
-        _day = None
+        _day, _folder = None, None
 
 
 def _day_argument(value: str) -> date:
@@ -303,11 +374,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--today", type=_day_argument, help="the day to date the rows from (default: today in SGT)")
     options = parser.parse_args(argv)
     try:
-        seed(options.folder, options.scenario, today=options.today)
+        notes = seed(options.folder, options.scenario, today=options.today)
     except Refused as refused:
         print(f"refused: {refused}")
         return 2
     print(f"seeded {options.scenario} into {paths.data_dir()}")
+    for note in notes:
+        print(f"still needed: {note}")
     return 0
 
 
