@@ -689,3 +689,12 @@ artifacts: MC PRD §4.6 A11; BP PRD §5.4 social bullet and §5.5 social-post ro
 decisions: corrects the previous entry to match the code (BP-02a fix round 1, the G9 harness). sync() raises a fresh social-post request on the same item (subject publish_item:<id>) and supersedes that item's old request. It creates no new item and never leaves the item without a live request
 questions: BP AC-P1.3 still says a content change raises "a new item and request". For a queued social post the code keeps the item. Reword AC-P1.3 to "a fresh request on the same item (social posts); a new item for other kinds", keeping its id? rec yes
 evidence:  grep -> "fresh item" 0 in BP; same-item wording present in MC A11 and BP §5.4/§5.5
+
+## 2026-10-27T03:41+0800 conductor (PRD sync amendment)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: merged crew/mission-control-prd-sync-raiser; BP PRD AC-P1.3 reworded
+decisions: crew recommendation adopted: AC-P1.3 now says a fresh request on the same item for a queued social post, a new item and request otherwise (Amended 2026-10-27); AC ids unchanged
+questions: -
+evidence:  -
