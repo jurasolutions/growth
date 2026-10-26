@@ -133,6 +133,12 @@ def run_update(conn: sqlite3.Connection, run) -> list[str] | None:
             else f"{n} {word}" for word, n in words.items() if n]
 
 
+def run_update_channel(conn: sqlite3.Connection, run) -> str | None:
+    """The item's channel (BP §5.9): `#community` when the run claimed a group item."""
+    claimed = _claimed_by(conn, run.id) if run.id is not None else []
+    return "community" if any(item.kind in outcomes.GROUP_KINDS for item in claimed) else None
+
+
 def _claimed_by(conn: sqlite3.Connection, run_id: int) -> list[items.Item]:
     rows = conn.execute("SELECT * FROM publish_items WHERE run_id = ? AND claimed_at IS NOT NULL ORDER BY id",
                         (run_id,)).fetchall()

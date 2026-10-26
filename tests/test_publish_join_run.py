@@ -90,8 +90,28 @@ def test_an_approved_join_with_no_questions_is_requested_on_its_single_approval(
     assert community_groups.get(conn, join.ref_id)["join_status"] == "requested"
     assert db.scalar(conn, "SELECT count(*) FROM approvals") == 1  # no second request
     assert alerts(discord_double) == [] and not pause.is_paused(conn, "publish")
-    [update] = discord_double.contents("social-drafts")
+    [update] = discord_double.contents("community")  # a group item's run updates go to #community (§5.9)
+    assert discord_double.contents("social-drafts") == []
     assert request.id in update and "join requested" in update and "1 post" not in update
+
+
+def test_a_broken_channel_hook_still_posts_the_update_to_the_default_channel(
+        conn, fake, approved_join, monkeypatch, discord_double):
+    from jura_growth.agents import publish
+
+    def broken(conn, run):
+        raise RuntimeError("no channel")
+
+    monkeypatch.setattr(publish, "run_update_channel", broken)
+    join, request = approved_join
+    fake.scenario([*claim(), *at_group(join, click("ref_7", "Clicked Join group.")),
+                   done("--outcome", "requested"), chrome(t.closed())], "OK")
+
+    run()
+
+    [update] = discord_double.contents("social-drafts")
+    assert request.id in update
+    assert db.scalar(conn, "SELECT count(*) FROM events WHERE kind = 'run.after_run_error'") == 1
 
 
 # --- AC-P4.2 a group with membership questions ---------------------------------------------------------------
@@ -135,7 +155,7 @@ def test_questions_submit_nothing_and_a_later_run_submits_exactly_the_approved_a
     [second] = approvals.pending(conn)
     answers = items.of(conn, second.subject)
     assert second.kind == "group-join" and answers.kind == items.ANSWERS_ITEM and answers.parent_item == join.id
-    [update] = discord_double.contents("social-drafts")
+    [update] = discord_double.contents("community")
     assert f"Facebook group {join.ref_id} · membership questions" in update and second.id in update
     assert pw.QUESTIONS[0]["question"] not in update  # never the group's own words
     cards.sweep_safely(conn)  # the run's own command had Discord off; the card goes out on the next sweep
