@@ -32,7 +32,6 @@ import re
 import shlex
 import sqlite3
 import subprocess
-import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
@@ -65,11 +64,10 @@ def _built(conn: sqlite3.Connection, app_id: str) -> dict | None:
 
 def encode(row: dict) -> bytes:
     """The canonical content of a release: what `main` will receive, from where, and the preview
-    Ting Yu was shown."""
+    Ting Yu was shown, as their exact bytes with no Unicode normalisation (ADR 0003 as amended)."""
     fields = {"app_id": row["app_id"], "branch": row["branch"], "preview": row["preview_url"], "sha": row["head_sha"],
               "task_id": row["task_id"]}
-    text = json.dumps(fields, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-    return unicodedata.normalize("NFC", text).encode("utf-8")
+    return json.dumps(fields, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 # --- the preview link --------------------------------------------------------------------------------

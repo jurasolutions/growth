@@ -87,8 +87,9 @@ class Deadlines:
 class ApprovalKind(Protocol):
     """What a plug-in implements for each kind it owns.
 
-    `content` returns the canonical bytes of what would go out now (UTF-8,
-    NFC-normalised, JSON with sorted keys), or None when the item is gone.
+    `content` returns the exact bytes of what would go out now, with no
+    Unicode normalisation (UTF-8, JSON with sorted keys; ADR 0003 as
+    amended), or None when the item is gone.
     `deadlines` is asked at request time for the decide-by and at approval
     time for the use-by. The optional members are found with `getattr`:
 

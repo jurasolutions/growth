@@ -8,6 +8,7 @@ repository (D13, a temp repo at `paths.site_repo()`) contains it. The gate matri
 through `gate_adapter_app_release.py`.
 """
 
+import json
 import re
 import shutil
 from pathlib import Path
@@ -212,6 +213,19 @@ def test_built_with_a_new_commit_supersedes_the_request_and_raises_one_for_the_n
     old, new = release_requests(conn)
     assert old.status == "superseded" and new.status == "pending" and new.supersedes == old.number
     assert releases.current_build(conn, app_id)["head_sha"] == later
+
+
+# --- Final review St1: the hash covers the exact bytes (ADR 0003 as amended) ------------------------
+
+
+def test_the_release_content_is_the_exact_bytes_with_no_unicode_normalisation():
+    row = {"app_id": "APP-014", "branch": "claude/T-0031-café", "preview_url": "https://x.jura-site.pages.dev",
+           "head_sha": "a" * 40, "task_id": "T-0031"}
+    composed = {**row, "branch": "claude/T-0031-café"}
+    assert releases.encode(row) != releases.encode(composed)
+    fields = {"app_id": "APP-014", "branch": row["branch"], "preview": row["preview_url"], "sha": row["head_sha"],
+              "task_id": "T-0031"}
+    assert releases.encode(row) == json.dumps(fields, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 # --- AC-M9.8: `apps release-plan` claims, then prints the merge of exactly that commit ---------------

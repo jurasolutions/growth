@@ -9,6 +9,8 @@ amended 2026-10-26), so these tests decide with `aw.dispatch()` and the control 
 matrix for the kind runs through `gate_adapter_group_rules.py`.
 """
 
+import json
+
 import pytest
 from discord_double import discord_double  # noqa: F401 - a fixture
 from sweep import d2_secrets  # noqa: F401 - a fixture
@@ -55,6 +57,21 @@ def requests(conn, group_id=None) -> list[approvals.Approval]:
 def confirmation(conn, group_id) -> tuple:
     row = groups_mod.get(conn, group_id)
     return row["rules_confirmed"], row["promo_days_confirmed"], row["post_days_confirmed"]
+
+
+# --- Final review St1: the hash covers the exact bytes (ADR 0003 as amended) ------------------------
+
+
+def test_the_rules_content_is_the_exact_stored_text_with_no_unicode_normalisation(conn):
+    nfc, nfd = "Caf\u00e9 promos on Saturdays only.", "Cafe\u0301 promos on Saturdays only."
+    group_id = researched(conn, rules=nfc)
+    kind, subject = group_rules.GroupRules(), group_rules.subject(group_id)
+    composed = kind.content(conn, subject)
+    conn.execute("UPDATE community_groups SET promo_rules = ? WHERE id = ?", (nfd, group_id))
+    decomposed = kind.content(conn, subject)
+    assert composed != decomposed
+    assert decomposed == json.dumps({"group": group_id, "rules": nfd}, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    assert approvals.content_hash(composed) != approvals.content_hash(decomposed)
 
 
 # --- X9: `rules_confirmed=yes` raises a request and decides nothing ----------------------------------

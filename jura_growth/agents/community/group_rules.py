@@ -54,7 +54,9 @@ def group_id_of(subject: str) -> int:
 
 
 def _rules_text(group: dict | None) -> str:
-    return unicodedata.normalize("NFC", ((group or {}).get("promo_rules") or "").strip())
+    """The group's rules as stored, trimmed, with no Unicode normalisation: the request's content
+    hashes these exact bytes (ADR 0003 as amended)."""
+    return ((group or {}).get("promo_rules") or "").strip()
 
 
 def _open(conn: sqlite3.Connection, subject: str) -> dict | None:
