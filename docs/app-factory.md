@@ -13,8 +13,8 @@ build step).
 
 1. **06:30 SGT**, launchd runs `jura-growth run app-factory`.
 2. `precheck` first raises an `app-build` request for any factory PRD in `prd/pending/apps/`
-   that has never had one (the one-off pass for PRDs filed before requests existed; it does
-   nothing once each has one). Then it skips the run before Claude starts when:
+   that has never had one (the catch-up pass, which `submit-prd` also runs: it gives each PRD
+   filed before requests existed exactly one request, and does nothing once each has one). Then it skips the run before Claude starts when:
    - the factory already wrote a PRD today (one a day, `caps.APP_PRDS_PER_DAY`),
    - 7 or more app PRDs are waiting for an `app-build` decision (`caps.APP_PRDS_WAITING_MAX`), or
    - today's PRD failed the brand check twice and was dropped.
@@ -97,7 +97,7 @@ button.
 
 | Path | What |
 |---|---|
-| `jura_growth/agents/apps/` | The plug-in: `prd.py` (template and factory rules), `catalog.py` (PRD folders, registry, numbering, limits), `backlog.py`, `inputs.py` (D1 usage, scout insights), `factory.py` (`submit-prd`, the `app-copy` channel), `builds.py` (the `app-build` kind, handoffs, skip and expiry, the one-off pass) |
+| `jura_growth/agents/apps/` | The plug-in: `prd.py` (template and factory rules), `catalog.py` (PRD folders, registry, numbering, limits), `backlog.py`, `inputs.py` (D1 usage, scout insights), `factory.py` (`submit-prd`, the `app-copy` channel), `builds.py` (the `app-build` kind, handoffs, skip and expiry, the catch-up pass) |
 | `jura_growth/agents/apps/migrations/` | `0001` `app_prds`; `0002` `app_builds`; `0003` lets an expired idea's slug be filed again |
 | `jura_growth/agents/apps/backlog-seed.yaml` | The §5.7 seed, used when the data file is missing |
 | `jurasolutions/data/growth/app-backlog.yaml` | The live backlog |

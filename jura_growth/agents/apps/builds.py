@@ -14,8 +14,10 @@ request for it, subject `app:APP-014`, over the PRD file's bytes. Ting Yu answer
   backlog idea rests for 30 days before the factory may offer it again.
 
 A PRD changed by one byte after the request no longer matches it: the request is superseded, a
-new one raised, and no handoff is written (MC §4.6 A3). `raise_waiting()` is the one-off pass
-that raises a request for each factory PRD filed before requests existed; it is idempotent.
+new one raised, and no handoff is written (MC §4.6 A3). `raise_waiting()` is the catch-up pass
+(MC §5.9 step 7): it runs before every factory run and every `submit-prd`, and raises a request
+only for a factory PRD that has never had one, so each PRD filed before requests existed gets
+exactly one.
 """
 
 from __future__ import annotations
@@ -114,14 +116,15 @@ class AppBuild:
 
 
 def request(conn: sqlite3.Connection, app_id: str, *, reason: str, run_id: int | None) -> approvals.Approval | None:
-    """Raise the app's request (A11: only `apps submit-prd` and the one-off pass call this)."""
+    """Raise the app's request (A11: only `apps submit-prd` and the catch-up pass call this)."""
     return approvals.request(conn, KIND, subject(app_id), reason=reason, run_id=run_id)
 
 
 def raise_waiting(conn: sqlite3.Connection, *, run_id: int | None = None) -> list[approvals.Approval]:
-    """The one-off pass (MC §5.9 step 7, AC-M9.11): one request for each factory PRD in
-    `prd/pending/apps/` that has never had one and isn't handed off. Idempotent: a PRD with any
-    request on record, whatever became of it, is left alone."""
+    """The catch-up pass (MC §5.9 step 7, AC-M9.11): one request for each factory PRD in
+    `prd/pending/apps/` that has never had one and isn't handed off. It runs every time it is
+    called but raises at most once per PRD: a PRD with any request on record, whatever became
+    of it, is left alone."""
     raised: list[approvals.Approval] = []
     for found in catalog.prd_files():
         if found.state != "pending" or found.author != prd_mod.FACTORY_AUTHOR:

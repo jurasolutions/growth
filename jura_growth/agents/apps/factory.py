@@ -131,7 +131,7 @@ def submit(conn: sqlite3.Connection, text: str, *, dry_run: bool = False) -> Sub
     relative = parsed.build_path
     entry = parsed.registry_entry()
     run_id = log.current_run_id()
-    # The file is written first: if what follows fails, the next one-off pass
+    # The file is written first: if what follows fails, the next catch-up pass
     # (`builds.raise_waiting`) raises its request.
     with db.transaction(conn):
         conn.execute(

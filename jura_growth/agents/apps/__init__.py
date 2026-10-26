@@ -55,7 +55,7 @@ def permissions(job: str):
 
 
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
-    """Before the 06:30 run: the one-off pass first, so PRDs filed before requests existed count
+    """Before the 06:30 run: the catch-up pass first, so PRDs filed before requests existed count
     toward the waiting pile and get their cards, then the limits."""
     if job != JOB:
         return None
