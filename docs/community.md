@@ -36,15 +36,25 @@ and `community audit-run` proves the run fetched none of them from its transcrip
 
 - Join the good-fit groups you want, as yourself (see "Open questions"). Read each group's real
   rules inside, then:
-  `jura-growth community set <id> joined=yes rules="<the rules as stated>" rules_confirmed=yes promo_days=<days> post_days=<days>`
-  Every group needs both day fields, whatever its rules say: each is `any` (no day limit),
-  `none`, or days like `sat,sun` or `mon-fri`. For "No promotion on weekends", that is
-  `promo_days=mon-fri post_days=any`; for rules that say nothing about days, `promo_days=any
-  post_days=any`. Until both are set, the plan has no open day for that group, and
-  `rules_confirmed=yes` without them is refused.
-- **After upgrading to this version:** groups you had already confirmed stop getting posts until
-  you run `jura-growth community set <id> promo_days=... post_days=...` for each. `jura-growth
-  community groups --joined` lists them, with "no post until Ting Yu confirms the open days".
+  `jura-growth community set <id> joined=yes rules="<the rules as stated>" rules_confirmed=yes`
+  That records the rules and raises a `group-rules` card in #approvals (MC §5.7). Nothing in
+  Terminal confirms rules or sets open days. Confirm the card from Discord, typing the open days:
+  `/growth approve A-nnnn promo_days=<days> post_days=<days>`. Every group needs both day fields,
+  whatever its rules say: each is `any` (no day limit), `none`, or days like `sat,sun` or
+  `mon-fri`. For "No promotion on weekends", that is `promo_days=mon-fri post_days=any`; for rules
+  that say nothing about days, `promo_days=any post_days=any`. An approve without both days is
+  refused. Skip the card, or leave it for 14 days, and the rules stay unconfirmed: posts there
+  carry no link, and the group has no open day.
+- `community set` refuses `promo_days=` and `post_days=`, and refuses `rules_confirmed=yes` when
+  the group has no rules text yet ("set the rules first"). Running `rules_confirmed=yes` again
+  names the card already waiting. New rules text clears the confirmation and the days, and raises
+  a new card. Rules the community run found by web search never raise a card by themselves.
+- **Groups confirmed before group-rules approvals** keep their confirmation and days. Each is
+  written down once as a `community.group.rules_confirmed_earlier` event, before the next
+  community run or `community set`. A group confirmed before ticket 07 has no days and stays
+  closed: run `community set <id> rules_confirmed=yes` and confirm its card with the days.
+  `jura-growth community groups --joined` lists them, with "no post until Ting Yu confirms the
+  open days".
 - Post the plan's items yourself, then tick `- [x]` in the checklist or run
   `jura-growth community posted <item-id> [url]`.
 - If an admin removes a post or warns you: `jura-growth community removed <group-id>`. The group
@@ -57,7 +67,7 @@ and `community audit-run` proves the run fetched none of them from its transcrip
 | `community context --json` | Records checklist ticks, then the week, limits, register, plannable groups with parsed rules and open days, this week's plan, recent texts, live tools |
 | `community add-group --file <json>` | One group, a list, or `{"groups": [...]}`. Validates, dedupes by URL (and name), rejects Facebook source URLs |
 | `community groups [--fit] [--joined] [--channel] [--json]` | The register |
-| `community set <id> key=value ...` | `joined=yes`, `rules="..."`, `rules_confirmed=yes`, `promo_days=...`, `post_days=...`, `fit=...`, `fit_reason=...`, `notes=...` (also audience, size_hint, active_hint, name). New rules text clears the confirmed days |
+| `community set <id> key=value ...` | `joined=yes`, `rules="..."`, `rules_confirmed=yes`, `fit=...`, `fit_reason=...`, `notes=...` (also audience, size_hint, active_hint, name). `rules=` and `rules_confirmed=yes` raise a `group-rules` request; days are typed only in its decision. New rules text clears the confirmation and the days |
 | `community plan-add --file <json>` | Weekly plan items, checked in code, then brand-gated |
 | `community publish-plan [--week]` | Writes the checklist and posts it to `#community` |
 | `community posted <item-id> [url]` | Records a post (or a used reply idea) |
@@ -105,8 +115,8 @@ Structural problems reject the whole plan and store nothing, without touching th
 - **Days:** the day is in the plan week and not past, and it is one Ting Yu opened. Code never
   reads days out of the rules text: day, frequency and holiday rules ("promo Saturdays only",
   "#FridayPromo thread", "once a week") are too easy to invert or miss. Every group has no open
-  day, in `context`'s `days_open` or in a plan, until Ting Yu sets both `promo_days` and
-  `post_days`; then only those days count, and the checklist's "Planned as" line shows them.
+  day, in `context`'s `days_open` or in a plan, until Ting Yu types both `promo_days` and
+  `post_days` in the group's `group-rules` decision; then only those days count, and the checklist's "Planned as" line shows them.
   `promo_days` limits promotional posts and `post_days` limits every post. A post is
   promotional when it mentions Jura or carries a link. When the rules seem to mention timing,
   the register listing and the checklist say "the rules mention timing, so check the day
@@ -152,8 +162,8 @@ recorded on the next run; republishing a week keeps its ticks.
   example; nothing else depends on it.
 - **Open question 2:** 3 groups a week to start (`groups_per_week: 3`, the hard cap).
 - **Links need confirmed rules.** Rules found by web search are recorded as stated, but a link
-  goes in only after Ting Yu has read the group's real rules and set `rules_confirmed=yes`.
-  No group has an open day until he sets its days.
+  goes in only after Ting Yu has read the group's real rules and approved their `group-rules`
+  card. No group has an open day until he types its days in that decision.
 - **Promotion days apply to promotional posts.** `promo_days=sat` doesn't stop a plain value
   post on a Tuesday; it does stop the Jura closing line on a Tuesday.
 - **Source URLs must be real pages.** A search results page is not a source; the run cites the

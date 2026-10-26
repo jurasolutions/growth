@@ -229,7 +229,10 @@ A kind is an object with:
 
 The outreach plug-in's `outreach-email` kind (`agents/outreach/approval.py`) is the worked example:
 requests are raised only in live mode, only for emails due today and only up to today's remaining
-quota (MC §4.6 A14), and `send-due` claims before it calls Resend.
+quota (MC §4.6 A14), and `send-due` claims before it calls Resend. The community plug-in's
+`group-rules` kind (`agents/community/group_rules.py`) is the example of a kind applied on
+decide: its approve takes `promo_days=` and `post_days=`, and `on_approve` claims the request and
+sets the group's confirmation and days in the decision itself.
 
 ## Tests
 
