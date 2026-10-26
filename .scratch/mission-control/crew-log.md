@@ -475,3 +475,14 @@ decisions: new matrix case G38 (Terminal off, every state); G13 layer 5, S13, th
 questions: business analyst Q11: bring the PRD text (AC-M6.4, AC-M7.2-7.4, §4.6 A8, §4.8, §5.3, §5.12, §6 Q3, BP §4.2, §5.7) in line with the amendment, keeping AC ids (rec yes)
 evidence:  python check -> MC 80/80, BP 36/36 rows, same AC ids as the PRDs; 39 matrix rows (G1-G38 with G4a/G4b); Q1-Q11
 evidence:  uv run pytest tests/test_origin_processes.py tests/test_approvals_cli.py tests/test_origin.py @04a609e -> 90 passed; grep jura_growth for Origin.terminal / "terminal: -> no hits
+
+## 2026-10-26T21:24+0800 business-analyst (amendment: Terminal decisions off)
+status:    done
+persona:   business-analyst
+ticket:    05, 13 (issue text only)
+artifacts: jurasolutions/prd/pending/prd-jura-mission-control-2026-10-25.md; prd-jura-browser-publishing-2026-10-25.md; .scratch/mission-control/issues/05-group-rules-kind.md; 13-discord-channels-and-terminal-checks.md
+decisions: MC brought in line with Ting Yu's 2026-10-26 amendment. Every AC id is kept and each changed spot is marked "Amended 2026-10-26": header, AC-M6.4, SC7 intro, AC-M7.2-7.4, A8 (remote is the only origin), A11, §4.8 (nothing decided for real before MC-11a + D1-D4), §5.1 Q8, §5.3 origin and community rows, §5.4, §5.6 (no code on cards), §5.7, §5.12 MC-04/MC-05/"Live from the phone", §5.14, §6 Q3 (answered)
+decisions: BP header, §4.2 and §5.7 amended. publish queue and resolve stay in Terminal because they record no decision
+decisions: 05 X9: rules_confirmed=yes raises a group-rules request decided in #approvals. It refuses days given in the same command, and refuses when no rules text is recorded. 13 U1 now checks that approve and skip refuse with a pointer to #approvals
+questions: -
+evidence:  grep -> AC-M6.4 and AC-M7.1-7.7 each 1; AC counts MC 80, BP 36 unchanged; "code 3f9a1c|Origin.terminal|terminal:<macOS" -> 0; closing lines intact

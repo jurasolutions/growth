@@ -1,13 +1,13 @@
-# 13 — Ting Yu: add the two Discord channels, retire the morning-brief line, check from Terminal
+# 13 — Ting Yu: add the two Discord channels, retire the morning-brief line, check that Terminal can't decide
 
 Status: ready-for-human
 Blocked by: 03, 04b, 09
-PRD source: MC SC1, SC3, SC14, §4.6 (Terminal decisions), §5.12 ("until then every kind is decided from Terminal"); not a §5.12 ticket, because only Ting Yu can do it
+PRD source: MC SC1, SC3, SC14, SC7 and §4.6 A8 (amended 2026-10-26: no Terminal decisions), §5.12; not a §5.12 ticket, because only Ting Yu can do it
 Covers: test strategy v3 §7 U1 to U5; `uat.md` Part A
 
 ## What to do
 
-These steps need Ting Yu's own Discord server, his `.env`, his launchd schedule and his phone, so no agent can do them. They are the first time mission control runs for real, decided from Terminal, before Dispatch exists.
+These steps need Ting Yu's own Discord server, his `.env`, his launchd schedule and his phone, so no agent can do them. They are the first time mission control runs for real, before Dispatch exists. *Amended 2026-10-26:* nothing can be decided before Dispatch exists, because Terminal decisions are off, so requests raised now post and then lapse unanswered.
 
 1. Follow `outputs/growth/setup/discord.md` (drafted in 09, copied there at release): add `#mission-control` and `#approvals` in Jura HQ and set `#approvals` to notify on all messages.
 2. Store the two webhook URLs in `repos/growth/.env` yourself. If you'd like a guided walk-through, ask for the `wizard`; it prompts you without the values ever entering a file, log or chat. If Dispatch later needs to own the `#approvals` webhook for buttons, that swap happens in ticket 15.
@@ -17,7 +17,7 @@ These steps need Ting Yu's own Discord server, his `.env`, his launchd schedule 
 
 ## Checks
 
-- [ ] **U1.** `jura-growth approvals`, `approve` and `skip` on a request raised in shadow or by a test PRD. Decisions show `terminal:<user>`, and approving needs the six-character code from the card.
+- [ ] **U1** *(amended 2026-10-26)*. On a request raised by a test PRD: `jura-growth approvals` lists it; `jura-growth approve A-nnnn` and `jura-growth skip A-nnnn` each refuse with a pointer to `#approvals`; the request is still pending afterwards (`jura-growth approvals` shows it again); and its card in `#approvals` shows no code.
 - [ ] **U2.** After the next real social run, its run update appears in `#social-drafts` with the approval ids it raised.
 - [ ] **U3.** `jura-growth one-pager` once from Terminal, then the next 08:00 one-pager read on your phone, including the grid image.
 - [ ] **U4.** The Cowork morning-brief line is gone, and the 17:30 digest still writes `daily-summary.json`.
