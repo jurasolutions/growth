@@ -155,7 +155,7 @@ def create_social(conn: sqlite3.Connection, post_id: int, *, run_id: int | None,
         return Made(why=f"{platform.name} is in draft mode")
     if not platform.page_url:
         return Made(why=f"{platform.name} is in browser mode but its page_url isn't set in config/social.yaml")
-    wrong = hosts.problem(platform.name, platform.page_url)
+    wrong = hosts.page_problem(platform.name, platform.page_url)
     if wrong:
         return Made(why=f"{platform.name}'s page_url won't do: {wrong}")
     day = date.fromisoformat(post["date"])

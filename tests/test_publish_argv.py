@@ -87,11 +87,35 @@ def test_publish_has_no_domain_rule_for_a_platform_in_draft_mode(monkeypatch):
     assert not [r for r in allowed if r.startswith("ClaudeInChromeDomain(")]
 
 
-def test_platforms_this_build_cannot_drive_get_no_domain_rule(monkeypatch):
-    """BP-04 adds Instagram and LinkedIn; until then browser mode for them opens no host."""
-    pw.social_config(monkeypatch, browser=("facebook", "instagram", "linkedin"))
-    allowed, _ = rules(argv("publish"))
-    text = " ".join(allowed)
+FACEBOOK_HOSTS = ["www.facebook.com", "facebook.com", "m.facebook.com", "web.facebook.com", "business.facebook.com"]
+INSTAGRAM_HOSTS = ["www.instagram.com", "instagram.com"]
+LINKEDIN_HOSTS = ["www.linkedin.com", "linkedin.com"]
+
+
+def domains(built) -> list[str]:
+    allowed, _ = rules(built)
+    return [r[len("ClaudeInChromeDomain("):-1] for r in allowed if r.startswith("ClaudeInChromeDomain(")]
+
+
+@pytest.mark.parametrize("browser, expected", [
+    (("instagram",), INSTAGRAM_HOSTS),
+    (("linkedin",), LINKEDIN_HOSTS),
+    (("facebook", "instagram", "linkedin"), FACEBOOK_HOSTS + INSTAGRAM_HOSTS + LINKEDIN_HOSTS),
+])
+def test_bp04_one_domain_rule_per_host_of_each_platform_in_browser_mode(monkeypatch, browser, expected):
+    """AC-P9.2 for the new hosts: exactly each enabled platform's own hosts, once each. No CDN,
+    link-shim, short-link or help host, and never a Discord host."""
+    pw.social_config(monkeypatch, browser=browser)
+    found = domains(argv("publish"))
+    assert sorted(found) == sorted(expected)
+    assert len(found) == len(set(found))
+    for host in found:
+        assert not any(word in host for word in ("discord", "cdn", "fbcdn", "licdn", "lnkd", "l.instagram", "static"))
+
+
+def test_bp04_a_platform_in_draft_mode_opens_none_of_its_hosts(monkeypatch):
+    pw.social_config(monkeypatch, browser=("facebook",))
+    text = " ".join(domains(argv("publish")))
     assert "instagram" not in text and "linkedin" not in text
 
 

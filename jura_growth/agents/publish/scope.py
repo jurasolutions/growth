@@ -40,8 +40,12 @@ def enabled_platforms() -> tuple[str, ...]:
     return tuple(name for name in hosts.BROWSER_PLATFORMS if name in platforms and platforms[name].browser)
 
 
-def browser_hosts() -> tuple[str, ...]:
-    return tuple(dict.fromkeys(host for name in enabled_platforms() for host in hosts.BROWSER_HOSTS[name]))
+def browser_hosts(platforms: tuple[str, ...] | None = None) -> tuple[str, ...]:
+    """The hosts of `platforms`, or of every enabled platform when None. The domain rules take
+    the enabled union, since they are set before anything is claimed; the audit takes only the
+    claimed item's own platform (code review 04, B1)."""
+    names = enabled_platforms() if platforms is None else [p for p in platforms if p in hosts.BROWSER_HOSTS]
+    return tuple(dict.fromkeys(host for name in names for host in hosts.BROWSER_HOSTS[name]))
 
 
 def domain_rules() -> list[str]:

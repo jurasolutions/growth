@@ -161,7 +161,7 @@ def done(approval_id, url, live_text_file) -> str:
             raise click.ClickException(f"refused: publish done --url is {SOCIAL_ONLY}")
         if found.state != "claimed":
             raise click.ClickException(f"{record.id}'s item isn't claimed (it is {found.state})")
-        wrong = hosts.problem(found.platform, url)
+        wrong = hosts.post_problem(found.platform, url)
         if wrong:
             raise click.ClickException(f"refused: {wrong}")
         matches = same_text(found.content["text"], live)
@@ -269,9 +269,9 @@ def resolve(approval_id, outcome, url) -> str:
             raise click.ClickException(f"refused: resolve posted is {SOCIAL_ONLY}. Check the group, then settle "
                                        f"{record.id} as not-posted, or record what happened by hand")
         if outcome == "posted":
-            wrong = hosts.problem(found.platform, url)
+            wrong = hosts.post_problem(found.platform, url)
             if wrong:
-                raise click.ClickException(f"refused: posted needs --url on {found.platform}'s own host: {wrong}")
+                raise click.ClickException(f"refused: posted needs --url, the post's own address on {found.platform}: {wrong}")
         with db.transaction(conn):
             if outcome == "posted":
                 conn.execute("UPDATE publish_items SET state = 'done', outcome = 'posted', post_url = ?, finished_at = ? "

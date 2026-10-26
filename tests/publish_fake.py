@@ -22,7 +22,7 @@ The fake, started by `runner.run("publish")`:
 - ends with the scenario's `result` text.
 
 Placeholders in any string: `{A}` the claimed A-id, `{TEXT}` the approved text, `{IMG1}` the first
-image copy, `{WORK}` the scratch folder.
+image copy (`{IMG2}`, `{IMG3}` … the later ones, for a carousel), `{WORK}` the scratch folder.
 """
 
 from __future__ import annotations
@@ -93,6 +93,8 @@ for step in scenario["steps"]:
                 values["{A}"] = handed["approval"]
                 values["{TEXT}"] = handed["text"]
                 values["{IMG1}"] = handed["images"][0] if handed["images"] else ""
+                for number, image in enumerate(handed["images"][1:], start=2):
+                    values["{IMG%d}" % number] = image
                 db = sqlite3.connect(Path(os.environ["JURA_GROWTH_DATA_DIR"]).joinpath("growth.db").resolve().as_uri() + "?mode=ro", uri=True)
                 used = db.execute("SELECT used_at, used_by_run FROM approvals WHERE id = ?", (int(handed["approval"].split("-")[1]),)).fetchone()
                 state = db.execute("SELECT state FROM publish_items WHERE label = ?", (handed["item"],)).fetchone()
