@@ -1,4 +1,5 @@
-"""Nightly backup of `growth.db`, keeping 14 days, plus transcript pruning."""
+"""Nightly backup of `growth.db`, keeping 14 days, plus pruning of transcripts
+and the one-pager's grid PNGs (`retention` in config/settings.yaml)."""
 
 from __future__ import annotations
 
@@ -21,8 +22,28 @@ def backup(conn: sqlite3.Connection) -> Path:
         destination.close()
     removed = prune_backups()
     pruned = prune_transcripts()
-    log.event(conn, "backup.written", {"file": str(target), "removed": removed, "transcripts_pruned": pruned})
+    grids = prune_grids()
+    log.event(conn, "backup.written", {"file": str(target), "removed": removed, "transcripts_pruned": pruned,
+                                       "grids_pruned": grids})
     return target
+
+
+def prune_grids() -> int:
+    """Delete one-pager grids older than `retention.one_pager_days` (14 by
+    default, the grid's own span): each is a picture of what growth.db holds."""
+    keep = int(config.settings().get("retention", {}).get("one_pager_days", 14))
+    cutoff = timeutil.today() - timedelta(days=keep - 1)
+    folder = paths.one_pager_dir()
+    count = 0
+    for file in sorted(folder.glob("grid-*.png")) if folder.exists() else []:
+        try:
+            day = date.fromisoformat(file.stem.removeprefix("grid-"))
+        except ValueError:
+            continue
+        if day < cutoff:
+            file.unlink()
+            count += 1
+    return count
 
 
 def prune_backups() -> list[str]:

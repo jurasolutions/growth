@@ -41,6 +41,7 @@ jurasolutions/data/growth/
   runs/YYYY-MM-DD.jsonl       every event, one JSON line each
   transcripts/YYYY-MM-DD/     full stream-json transcript of each headless run (30 days)
   backups/                    nightly copies of growth.db (14 days)
+  one-pager/                  the one-pager's grid PNG, grid-YYYY-MM-DD.png, one a day (14 days)
   discord-outbox/             messages Discord didn't take: no webhook yet, or unreachable
   daily-summary.json          what the digest and the morning brief read
   work/<job>/                 scratch space a headless run may write drafts into

@@ -48,6 +48,7 @@ auto_pause_after_failures: 3
 retention:
   backups_days: 14
   transcripts_days: 30
+  one_pager_days: 14 # the one-pager's grid PNGs in data/growth/one-pager/
 
 # Jobs `pause all` leaves running: housekeeping, and the digest that reports
 # the pause.

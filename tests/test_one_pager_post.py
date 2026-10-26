@@ -206,6 +206,23 @@ def test_the_grid_is_kept_one_file_a_day(conn, discord_double, stub_grid):
     assert stub_grid[0].parent == paths.data_dir() / "one-pager"
 
 
+def test_the_2330_backup_keeps_fourteen_days_of_grids(conn, monkeypatch):
+    """Code review 09, S-1: `retention.one_pager_days`, pruned with the backups."""
+    assert config.settings()["retention"]["one_pager_days"] == 14
+    folder = paths.data_dir() / "one-pager"
+    folder.mkdir(parents=True)
+    for day in range(1, 21):
+        (folder / f"grid-2026-10-{day:02d}.png").write_bytes(tiny_png())
+    (folder / "notes.txt").write_text("not a grid")
+    monkeypatch.setenv("JURA_GROWTH_NOW", "2026-10-24T23:30:00+08:00")
+    result = CliRunner().invoke(cli, ["backup"])
+    assert result.exit_code == 0, result.output
+    names = sorted(f.name for f in folder.iterdir())
+    assert names == [f"grid-2026-10-{day:02d}.png" for day in range(11, 21)] + ["notes.txt"]  # 11 Oct to 24 Oct is 14 days
+    (written,) = aw.events(conn, "backup.written")
+    assert written["grids_pruned"] == 10
+
+
 # --- X12: the job writes the day's lapses before it builds -----------------------------------------
 
 

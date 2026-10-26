@@ -245,7 +245,7 @@ OFFLINE = False
 def grid_png(snapshot: mission.Snapshot) -> tuple[Path | None, str | None]:
     """The grid drawn to `data/growth/one-pager/grid-<day>.png` (one file a
     day, replaced by a later one-pager that day), or None and why not."""
-    out = paths.data_dir() / "one-pager" / f"grid-{snapshot.now:%Y-%m-%d}.png"
+    out = paths.one_pager_dir() / f"grid-{snapshot.now:%Y-%m-%d}.png"
     try:
         return render_grid(snapshot, out, chrome=images.Chrome(images.DEFAULT_CHROME), offline=OFFLINE), None
     except images.RenderError as error:
