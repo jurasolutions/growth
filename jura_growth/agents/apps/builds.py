@@ -149,17 +149,28 @@ def hand_off(conn: sqlite3.Connection, subject: str, *, run_id: int | None = Non
     """The gated action: claim the request, then write the handoff, in the caller's
     `db.transaction(conn)` (the decision's, through `on_approve`). Raises
     `approvals.NotApproved` unless the request is approved, unused and still over the PRD's
-    current bytes. Dispatch reads the row only after the transaction commits."""
+    current bytes. Dispatch reads the row only after the transaction commits.
+
+    The row carries the claimed approval's hash, never a hash of its own: the file is read once
+    more here and must still hold exactly those bytes, so an edit that lands between the claim
+    and this read refuses the handoff and rolls the claim back (code review 10, B1)."""
     approval = approvals.use(conn, KIND, subject, run_id=run_id)
     app_id = app_id_of(subject)
     found = pending_file(app_id)
-    if found is None:  # content() matched a moment ago, so this is a race with a file move
+    try:
+        data = found.path.read_bytes() if found is not None else None
+    except OSError:
+        data = None
+    if data is None:  # content() matched a moment ago, so this is a race with a file move
         raise approvals.NotApproved("superseded", f"the PRD for {app_id} left prd/pending/apps/", approval)
+    if approvals.content_hash(data) != approval.content_hash:
+        raise approvals.NotApproved("superseded", f"the PRD for {app_id} changed after it was claimed, so it isn't handed off",
+                                    approval)
     now = timeutil.stamp()
     build = {
         "app_id": app_id,
         "prd_path": catalog.rel(found.path),
-        "prd_sha256": approvals.content_hash(found.path.read_bytes()),
+        "prd_sha256": approval.content_hash,
         "approval_id": approval.id,
         "approval_at": approval.decided_at or now,
         "handed_off_at": now,

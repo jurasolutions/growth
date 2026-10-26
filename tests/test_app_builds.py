@@ -208,6 +208,29 @@ def test_dispatch_sees_the_handoff_only_after_the_claim_commits(tmp_path, conn, 
     assert double.seen == [{"app_id": "APP-003", "used": True}]
 
 
+def test_a_prd_edited_between_the_claim_and_the_handoff_is_never_handed_out(tmp_path, prd_tree, conn, monkeypatch):
+    """Code review 10, B1 (repro R1): the handoff carries exactly the bytes the claimed approval
+    covers. An edit that lands after the claim refuses the decision and rolls it back; the next
+    decision finds the content changed and raises a new request."""
+    request = filed(tmp_path, conn)
+    target = prd_tree / "pending" / "apps" / FILED
+    real_use = approvals.use
+
+    def use_then_edit(*args, **kwargs):
+        claimed = real_use(*args, **kwargs)
+        target.write_text(GOOD + "Edited after the claim.\n")
+        return claimed
+
+    monkeypatch.setattr(approvals, "use", use_then_edit)
+    answer = aw.approve(conn, request, args={})
+    assert answer.answer == "refused" and "changed" in answer.text
+    assert db.scalar(conn, "SELECT count(*) FROM app_builds") == 0 and aw.claims(conn) == 0
+    assert json.loads(invoke("apps", "handoffs", "--json").output)["handoffs"] == []
+    monkeypatch.setattr(approvals, "use", real_use)
+    assert aw.approve(conn, request, args={}).answer == "superseded"
+    assert filed_request(conn).content_hash == hashlib.sha256(target.read_bytes()).hexdigest()
+
+
 def test_a_failed_handoff_write_rolls_the_decision_back(tmp_path, conn):
     """G22 for app-build: the row and the claim commit together or neither does; the request is
     still pending and can be approved again."""
