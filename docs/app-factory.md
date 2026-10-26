@@ -154,12 +154,17 @@ Going to production is a second approval, bound to the exact commit (`agents/app
 MC §5.7 `app-release` row, §5.9 steps 3 and 4).
 
 1. **Built.** The builder pushes the task branch, based on `main`, and Cloudflare Pages gives it a
-   preview, protected by Cloudflare Access. `apps built` records the task, the branch, its full head
-   SHA and the preview on the build's `app_builds` row, and raises an `app-release` request over
-   the app id, task id, branch and SHA. The card shows the preview link and the short SHA. A build
-   that was never handed off is refused, and so is a short SHA or a preview that isn't an https
-   `*.pages.dev` link. A commit pushed later needs its own request: reporting it supersedes the old
-   one.
+   preview. Protecting previews with Cloudflare Access is still to do: it is Ting Yu's setup step
+   (Dispatch D8, ticket 16), and until then a preview link works for anyone who has it. `apps
+   built` records the task, the branch, its full head SHA and the preview on the build's
+   `app_builds` row, and raises an `app-release` request over the app id, task id, branch, SHA and
+   preview link. The card shows the preview link as plain text, the short SHA, and a reminder that
+   the preview follows the branch's latest push while the release is that one commit. Refused: a
+   build that was never handed off, a short SHA, a SHA `main` already contains, and any preview
+   other than a bare `https://<branch>.<pages_project>.pages.dev` link, where `pages_project` in
+   `config/apps.yaml` names the landing page's Pages project (unset, every preview is refused). A
+   commit pushed later, or another preview link, needs its own request: reporting it supersedes the
+   old one.
 2. **Approve.** Nothing happens yet. The approval has 14 days to be used.
 3. **Release plan.** `apps release-plan` claims the approval, stamps the row, and only then prints
    the commands: fetch the task branch, merge exactly the approved SHA into `main` (never the
@@ -167,7 +172,7 @@ MC §5.7 `app-release` row, §5.9 steps 3 and 4).
    request it prints nothing to run. It refuses while the factory is paused, or while the
    landing-page repository and its `main` aren't there.
 4. **Released.** `apps released` checks `git -C <repos/landing-page> merge-base --is-ancestor <sha>
-   main`. It never fetches, pulls or writes, so pull `main` after the merge. With the claimed
+   refs/heads/main`, the branch, so a tag named `main` can't stand in for it. It never fetches, pulls or writes, so pull `main` after the merge. With the claimed
    approval and the commit on `main`, the build becomes `released`, the PRD moves to
    `prd/done/apps/` with "Shipped on <date>" at the top and a sign-off line naming the build and
    release approvals, and the backlog row goes live.
