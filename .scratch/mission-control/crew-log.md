@@ -865,3 +865,12 @@ decisions: approve; 60 WHATWG probes, every accepted URL is loopback; M1 at merg
 decisions: AC3 (R1b file_upload) stays open for Ting Yu; ticket 07 stays open after the code merges
 questions: -
 evidence:  3016 passed, 0 skipped
+
+## 2026-10-27T06:08+0800 conductor (merge bp 07 code)
+status:    done
+persona:   conductor
+ticket:    bp-07
+artifacts: merge of bp 07 (59c4106 06bc555 8156f61 e737c4b)
+decisions: round-2 review approved; M1 resolved in the rebase (fixture override first; dry-run with the fixture on shows only publish-fixture.localhost; guard test fails without the override); code merged and pushed; ticket stays open until Ting Yu records R1b (AC3)
+questions: -
+evidence:  merged branch pytest -rs -> see commit
