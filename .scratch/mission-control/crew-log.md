@@ -614,3 +614,13 @@ decisions: "never for researched rules" means the engine never raises a request 
 decisions: re-confirming a confirmed group raises a new card. Approve replaces the days; skip or expiry keeps the days already confirmed. No AC ids changed
 questions: -
 evidence:  AC count 80 unchanged; "Amended 2026-10-27" 2 hits; closing line intact
+
+## 2026-10-27T03:23+0800 reviewer (bp 02) via conductor
+status:    done
+persona:   reviewer
+ticket:    bp-02
+artifacts: .scratch/browser-publishing/reviews/code-review-02.md
+decisions: changes-requested; B1 content change re-raises on the same item with the old day deadline (never posts) and sync can withdraw without a new card; B2 claim checks images against a second read, not content_hash (image swap after use() handed out)
+decisions: conductor: fix round 1 with rebase; exact-bytes hashing for publish too (BA amends A3 and ADR 0003)
+questions: -
+evidence:  2310 passed; repros r1-r5 prove the gaps; caps.py additions only
