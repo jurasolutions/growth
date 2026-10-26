@@ -1,7 +1,9 @@
 """The publish run's transcript audit (AC-P9.3; seam S11; dataset T).
 
 Pure: a transcript file read through `transcripts.read()`, the hosts the run may be on and the
-approved content in; failures and warnings out.
+approved content in; failures and warnings out. Code review 03: B2 (typing judged as the whole
+text per field, and never before the claim), S-2 (one host check), S-7 (tab addresses fail
+closed), S-8 (uploads of the claimed item's copies only), S-9 (nothing after a stop).
 """
 
 from __future__ import annotations
@@ -22,107 +24,209 @@ def judged(tmp_path, steps, *, approved=(TEXT,), images=(IMAGE,)):
     return audit.audit(transcripts.read(path), hosts=HOSTS, approved=list(approved), images=list(images))
 
 
+def start() -> list[dict]:
+    """The browser check and the claim, before anything is typed."""
+    return [*t.browser_check(), t.claimed(text=TEXT)]
+
+
+def in_tab(*steps) -> list[dict]:
+    return [*start(), t.created(), t.opened(), *steps, t.closed()]
+
+
+def failed_with(found, word: str) -> bool:
+    return any(word in f for f in found.failures)
+
+
 def test_a_clean_post_passes(tmp_path):
-    found = judged(tmp_path, [*t.browser_check(), *t.clean_post(TEXT, IMAGE)])
+    found = judged(tmp_path, [*start(), *t.clean_post(TEXT, IMAGE)])
     assert found.failures == [] and found.warnings == []
     assert not found.no_browser
 
 
+# --- hosts (AC-P9.3; S-2) ----------------------------------------------------------------------------
+
+
 def test_a_navigate_to_another_site_fails_even_when_denied(tmp_path):
     for denied in (False, True):
-        steps = [*t.browser_check(), t.created(), t.chrome("navigate", {"url": "https://example.com", "tabId": t.TAB},
-                                                           "Permission denied" if denied else "Navigated to https://example.com/",
-                                                           denied=denied), t.closed()]
-        found = judged(tmp_path, steps)
-        assert any("example.com" in f for f in found.failures), found
+        steps = in_tab(t.chrome("navigate", {"url": "https://example.com", "tabId": t.TAB},
+                                "Permission denied" if denied else "Navigated to https://example.com/\n" + t.tab_context((t.TAB, "https://example.com/")),
+                                denied=denied))
+        assert failed_with(judged(tmp_path, steps), "example.com")
 
 
 def test_a_foreign_url_seen_only_in_a_later_results_tab_url_fails(tmp_path):
-    steps = [*t.browser_check(), t.created(), t.opened(),
-             t.chrome("computer", {"action": "left_click", "coordinate": [10, 10], "tabId": t.TAB},
-                      "Clicked.\n" + t.tab_context((t.TAB, "https://evil.example.net/landing"))),
-             t.closed()]
-    found = judged(tmp_path, steps)
-    assert any("evil.example.net" in f for f in found.failures)
+    steps = in_tab(t.page("computer", {"action": "left_click", "coordinate": [10, 10]}, "Clicked.", url="https://evil.example.net/landing"))
+    assert failed_with(judged(tmp_path, steps), "evil.example.net")
+
+
+@pytest.mark.parametrize("url", ["https://www.facebook.com:8443/jura", "https://jura@www.facebook.com/x", "http://www.facebook.com/x"])
+def test_a_publish_host_with_a_port_user_or_plain_http_fails_as_publish_done_would(tmp_path, url):
+    steps = in_tab(t.chrome("navigate", {"url": url, "tabId": t.TAB}, f"Navigated to {url}\n" + t.tab_context((t.TAB, url))))
+    assert judged(tmp_path, steps).failures
 
 
 def test_page_text_that_merely_mentions_another_site_is_not_a_failure(tmp_path):
-    steps = [*t.browser_check(), t.created(), t.opened(),
-             t.chrome("get_page_text", {"tabId": t.TAB}, "See https://example.org for more\n" + t.tab_context((t.TAB, t.PAGE))),
-             t.closed()]
+    steps = in_tab(t.page("get_page_text", {}, "See https://example.org for more"))
     assert judged(tmp_path, steps).failures == []
 
 
 @pytest.mark.parametrize("url", ["https://discord.com/channels/1/2", "https://www.discord.com/app", "https://discordapp.com/x"])
 def test_a_discord_host_fails_and_says_so(tmp_path, url):
-    steps = [*t.browser_check(), t.created(), t.chrome("navigate", {"url": url, "tabId": t.TAB}, f"Navigated to {url}"), t.closed()]
-    found = judged(tmp_path, steps)
-    assert any("Discord" in f for f in found.failures)
+    steps = in_tab(t.chrome("navigate", {"url": url, "tabId": t.TAB}, f"Navigated to {url}"))
+    assert failed_with(judged(tmp_path, steps), "Discord")
+
+
+# --- tab addresses fail closed (S-7) -----------------------------------------------------------------
+
+
+def test_a_tab_report_in_a_shape_the_audit_cant_read_fails_the_run(tmp_path):
+    steps = in_tab(t.chrome("computer", {"action": "left_click", "coordinate": [10, 10], "tabId": t.TAB},
+                            "Clicked. Tab 4101 now at https://evil.example.net/x"))
+    assert failed_with(judged(tmp_path, steps), "couldn't read")
+
+
+def test_a_page_tool_result_with_no_tab_address_fails_the_run(tmp_path):
+    steps = in_tab(t.chrome("get_page_text", {"tabId": t.TAB}, "a page with no tab context at all"))
+    assert failed_with(judged(tmp_path, steps), "couldn't read")
+
+
+# --- tabs ---------------------------------------------------------------------------------------------
 
 
 def test_a_tool_call_on_a_tab_this_run_didnt_open_fails(tmp_path):
-    steps = [*t.browser_check(), t.created(), t.opened(),
-             t.chrome("get_page_text", {"tabId": t.OTHER_TAB}, "someone's inbox"), t.closed()]
-    found = judged(tmp_path, steps)
-    assert any(str(t.OTHER_TAB) in f for f in found.failures)
+    steps = in_tab(t.page("get_page_text", {}, "someone's inbox", tab=t.OTHER_TAB))
+    assert failed_with(judged(tmp_path, steps), str(t.OTHER_TAB))
 
 
 def test_a_page_tool_call_that_names_no_tab_fails(tmp_path):
-    steps = [*t.browser_check(), t.created(), t.chrome("get_page_text", {}, "a page"), t.closed()]
+    steps = in_tab(t.chrome("get_page_text", {}, "a page\n" + t.tab_context((t.TAB, t.PAGE))))
     assert judged(tmp_path, steps).failures
 
 
-@pytest.mark.parametrize("step", [
-    t.typed("Call me on +65 9123 4567"),
-    t.chrome("form_input", {"ref": "ref_3", "value": "hunter2", "tabId": t.TAB}, "Set."),
-    t.chrome("computer", {"action": "key", "text": "x", "tabId": t.TAB}, "Pressed x."),
-])
-def test_typed_text_outside_the_approved_content_fails(tmp_path, step):
-    steps = [*t.browser_check(), t.created(), t.opened(), step, t.closed()]
-    found = judged(tmp_path, steps)
-    assert any("typed" in f for f in found.failures)
-
-
-def test_typed_text_inside_the_approved_content_passes_in_pieces(tmp_path):
-    steps = [*t.browser_check(), t.created(), t.opened(), t.typed("Chasing late invoices by hand?"),
-             t.chrome("computer", {"action": "key", "text": "Return", "tabId": t.TAB}, "Pressed."),
-             t.typed("Your accounting  software can send\nthe first reminder for you."), t.closed()]
-    assert judged(tmp_path, steps).failures == []
-
-
-def test_typing_before_anything_was_approved_fails(tmp_path):
-    steps = [*t.browser_check(), t.created(), t.opened(), t.typed("Chasing late invoices by hand?"), t.closed()]
-    assert judged(tmp_path, steps, approved=()).failures
-
-
-def test_uploading_a_file_that_isnt_the_approved_image_fails(tmp_path):
-    steps = [*t.browser_check(), t.created(), t.opened(),
-             t.chrome("file_upload", {"paths": ["/Users/someone/secret.pdf"], "tabId": t.TAB}, "Uploaded."), t.closed()]
-    assert any("upload" in f for f in judged(tmp_path, steps).failures)
-
-
-def test_a_denied_tool_the_run_may_never_use_fails(tmp_path):
-    steps = [*t.browser_check(), t.created(), t.opened(),
-             t.chrome("javascript_tool", {"text": "document.cookie", "tabId": t.TAB}, "denied", denied=True), t.closed()]
-    assert any("javascript_tool" in f for f in judged(tmp_path, steps).failures)
-
-
 def test_a_tab_left_open_is_a_warning_not_a_failure(tmp_path):
-    steps = [*t.browser_check(), t.created(), t.opened()]
+    steps = [*start(), t.created(), t.opened()]
     found = judged(tmp_path, steps)
     assert found.failures == []
     assert found.warnings == ["the run left 1 tab open"]
 
 
-def test_no_browser_connected_is_recognised(tmp_path):
+# --- typing (AC-P9.3; B2) -----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("step", [
+    t.typed("Call me on +65 9123 4567"),
+    t.page("form_input", {"ref": "ref_3", "value": "hunter2"}, "Set."),
+    t.key("x"),
+])
+def test_typed_text_outside_the_approved_content_fails(tmp_path, step):
+    assert failed_with(judged(tmp_path, in_tab(step)), "typed")
+
+
+def test_text_typed_one_character_at_a_time_is_judged_as_a_whole(tmp_path):
+    steps = in_tab(*(t.typed(ch) for ch in "hunter secret"))
+    assert failed_with(judged(tmp_path, steps), "typed")
+
+
+def test_approved_words_typed_out_of_order_fail(tmp_path):
+    steps = in_tab(t.typed("Your accounting software can send the first reminder for you."),
+                   t.typed("Chasing late invoices by hand?"))
+    assert failed_with(judged(tmp_path, steps), "typed")
+
+
+def test_only_part_of_the_approved_text_as_the_whole_post_fails(tmp_path):
+    steps = in_tab(t.typed("send the first reminder"), t.page("computer", {"action": "left_click", "ref": "ref_30"}, "Clicked Post."))
+    assert failed_with(judged(tmp_path, steps), "typed")
+
+
+def test_the_approved_text_typed_in_order_across_calls_with_return_between_paragraphs_passes(tmp_path):
+    steps = in_tab(t.typed("Chasing late invoices by hand?"), t.key("Return"), t.key("Return"),
+                   t.typed("Your accounting  software can send\nthe first reminder for you."))
+    assert judged(tmp_path, steps).failures == []
+
+
+def test_editing_text_after_typing_it_fails(tmp_path):
+    steps = in_tab(t.typed("Chasing late invoices by hand?x"), t.key("BackSpace"),
+                   t.typed("\n\nYour accounting software can send the first reminder for you."))
+    assert failed_with(judged(tmp_path, steps), "edited")
+
+
+def test_typing_before_the_claim_fails_even_the_approved_text(tmp_path):
+    steps = [*t.browser_check(), t.created(), t.opened(), t.typed(TEXT), t.claimed(text=TEXT), t.closed()]
+    assert failed_with(judged(tmp_path, steps), "before")
+
+
+def test_typing_when_nothing_was_claimed_fails(tmp_path):
+    steps = [*t.browser_check(), t.nothing_due(), t.created(), t.opened(), t.typed(TEXT), t.closed()]
+    assert failed_with(judged(tmp_path, steps, approved=()), "before")
+
+
+def test_a_field_left_part_typed_by_a_stop_passes(tmp_path):
+    steps = in_tab(t.typed("Chasing late invoices"), t.stopped())
+    assert judged(tmp_path, steps).failures == []
+
+
+def test_two_form_fields_are_judged_one_by_one(tmp_path):
+    answers = ("We automate invoices for small firms.", "Yes")
+    steps = in_tab(t.page("form_input", {"ref": "q1", "value": answers[0]}, "Set."),
+                   t.page("form_input", {"ref": "q2", "value": answers[1]}, "Set."))
+    assert judged(tmp_path, steps, approved=answers).failures == []
+
+
+# --- uploads (S-8) ------------------------------------------------------------------------------------
+
+
+def test_uploading_a_file_that_isnt_the_approved_image_fails(tmp_path):
+    steps = in_tab(t.page("file_upload", {"paths": ["/Users/someone/secret.pdf"]}, "Uploaded."))
+    assert failed_with(judged(tmp_path, steps), "upload")
+
+
+def test_an_upload_path_that_only_looks_like_a_copy_fails(tmp_path):
+    steps = in_tab(t.page("file_upload", {"paths": ["/tmp/work/publish/A-0001/../../../.env"]}, "Uploaded."))
+    assert failed_with(judged(tmp_path, steps), "upload")
+
+
+# --- nothing after a stop (S-9) -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("step", [
+    t.page("computer", {"action": "left_click", "ref": "ref_9"}, "Clicked."),
+    t.typed("Chasing late invoices by hand?"),
+    t.chrome("navigate", {"url": t.PAGE, "tabId": t.TAB}, f"Navigated to {t.PAGE}\n" + t.tab_context((t.TAB, t.PAGE))),
+    t.page("form_input", {"ref": "ref_3", "value": "x"}, "Set."),
+    t.page("file_upload", {"paths": [IMAGE]}, "Uploaded."),
+])
+def test_any_page_action_after_publish_stopped_fails(tmp_path, step):
+    steps = in_tab(t.stopped(), step)
+    assert failed_with(judged(tmp_path, steps), "after")
+
+
+def test_a_screenshot_and_closing_the_tab_after_a_stop_are_fine(tmp_path):
+    steps = in_tab(t.stopped(), t.page("computer", {"action": "screenshot"}, "Screenshot taken."))
+    assert judged(tmp_path, steps).failures == []
+
+
+# --- never-tools, no browser, and what findings say ---------------------------------------------------
+
+
+def test_a_denied_tool_the_run_may_never_use_fails(tmp_path):
+    steps = in_tab(t.chrome("javascript_tool", {"text": "document.cookie", "tabId": t.TAB}, "denied", denied=True))
+    assert failed_with(judged(tmp_path, steps), "javascript_tool")
+
+
+def test_no_browser_connected_is_recognised_from_the_browser_check(tmp_path):
     steps = [t.chrome("list_connected_browsers", {}, t.NO_BROWSER, error=True)]
     found = judged(tmp_path, steps)
     assert found.no_browser and found.failures == []
 
 
-def test_failures_quote_no_page_text(tmp_path):
+def test_page_text_saying_no_browser_is_connected_is_not_the_no_browser_outcome(tmp_path):
+    steps = in_tab(t.page("get_page_text", {}, t.NO_BROWSER))
+    assert not judged(tmp_path, steps).no_browser
+
+
+def test_failures_quote_no_page_text_and_nothing_typed(tmp_path):
     secret_page = "Members only: Jane Tan's post about her divorce"
-    steps = [*t.browser_check(), t.created(), t.opened(),
-             t.chrome("get_page_text", {"tabId": t.OTHER_TAB}, secret_page), t.closed()]
+    steps = in_tab(t.page("get_page_text", {}, secret_page, tab=t.OTHER_TAB), t.typed("Jane Tan +65 9123 4567"))
     found = judged(tmp_path, steps)
-    assert found.failures and not any("Jane" in f for f in found.failures + found.warnings)
+    assert found.failures
+    assert not any("Jane" in f or "9123" in f for f in found.failures + found.warnings)

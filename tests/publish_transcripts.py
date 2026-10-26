@@ -52,8 +52,30 @@ def browser_check() -> list[dict]:
     ]
 
 
+def page(tool: str, input: dict, text: str = "ok", url: str = PAGE, tab: int = TAB, **flags) -> dict:
+    """A page tool call on `tab`, whose result reports the tab's address, as the extension does."""
+    return chrome(tool, {**input, "tabId": tab}, f"{text}\n" + tab_context((tab, url)), **flags)
+
+
 def typed(text: str, tab: int = TAB) -> dict:
-    return chrome("computer", {"action": "type", "text": text, "tabId": tab}, "Typed.\n" + tab_context((tab, PAGE)))
+    return page("computer", {"action": "type", "text": text}, "Typed.", tab=tab)
+
+
+def key(name: str, tab: int = TAB) -> dict:
+    return page("computer", {"action": "key", "text": name}, f"Pressed {name}.", tab=tab)
+
+
+def claimed(approval: str = "A-0001", text: str = "the approved text") -> dict:
+    """`publish next --json` handing out an item: the claim, as the audit sees it."""
+    return bash("jura-growth publish next --json", json.dumps({"due": True, "approval": approval, "text": text}))
+
+
+def nothing_due() -> dict:
+    return bash("jura-growth publish next --json", json.dumps({"due": False, "reasons": ["no item is waiting"]}))
+
+
+def stopped(approval: str = "A-0001", reason: str = "login") -> dict:
+    return bash(f"jura-growth publish stopped {approval} --reason {reason}", f"{approval}: stopped ({reason}); publish is paused")
 
 
 def closed(tab: int = TAB) -> dict:
@@ -63,15 +85,15 @@ def closed(tab: int = TAB) -> dict:
 def clean_post(text: str, image: str | None = None) -> list[dict]:
     """The browser half of a clean post: open, check identity, type, upload, publish, read back,
     close."""
-    steps = [created(), opened(), chrome("get_page_text", {"tabId": TAB}, "Jura Solutions\nCreate post\n" + tab_context((TAB, PAGE)))]
-    steps.append(chrome("find", {"query": "What's on your mind?", "tabId": TAB}, "ref_12 textbox\n" + tab_context((TAB, PAGE))))
-    steps.append(chrome("computer", {"action": "left_click", "ref": "ref_12", "tabId": TAB}, "Clicked.\n" + tab_context((TAB, PAGE))))
+    steps = [created(), opened(), page("get_page_text", {}, "Jura Solutions\nCreate post")]
+    steps.append(page("find", {"query": "What's on your mind?"}, "ref_12 textbox"))
+    steps.append(page("computer", {"action": "left_click", "ref": "ref_12"}, "Clicked."))
     steps.append(typed(text))
     if image:
-        steps.append(chrome("file_upload", {"paths": [image], "ref": "ref_20", "tabId": TAB}, "Uploaded 1 file."))
-    steps.append(chrome("computer", {"action": "key", "text": "Return", "tabId": TAB}, "Pressed Return.\n" + tab_context((TAB, PAGE))))
-    steps.append(chrome("navigate", {"url": POST, "tabId": TAB}, f"Navigated to {POST}\n" + tab_context((TAB, POST))))
-    steps.append(chrome("get_page_text", {"tabId": TAB}, text + "\n" + tab_context((TAB, POST))))
+        steps.append(page("file_upload", {"paths": [image], "ref": "ref_20"}, "Uploaded 1 file."))
+    steps.append(page("computer", {"action": "left_click", "ref": "ref_30"}, "Clicked Post."))
+    steps.append(opened(POST))
+    steps.append(page("get_page_text", {}, text, url=POST))
     steps.append(closed())
     return steps
 

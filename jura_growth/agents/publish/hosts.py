@@ -37,6 +37,14 @@ def problem(platform: str, url: str | None) -> str | None:
     allowed = HOSTS.get(platform)
     if not allowed:
         return f"{platform} has no known hosts"
+    return url_problem(url, allowed, f"{platform}'s hosts ({', '.join(allowed)})")
+
+
+def url_problem(url: str | None, allowed: tuple[str, ...] | list[str], named: str = "the allowed hosts") -> str | None:
+    """Why `url` isn't an `https://` address with no user name, password or port on exactly one
+    of `allowed`, or None when it is. The one check for post URLs (`problem`) and for the
+    addresses a publish run's tab went to (`audit.py`). It names the host, never the rest of the
+    address."""
     text = (url or "").strip()
     if not text:
         return "no URL given"
@@ -44,14 +52,14 @@ def problem(platform: str, url: str | None) -> str | None:
         parts = urlsplit(text)
         port = parts.port
     except ValueError:
-        return f"{text!r} isn't a URL"
+        return "an address that isn't a URL"
+    host = (parts.hostname or "").lower() or "an empty host"
     if parts.scheme != "https":
-        return f"{text!r} isn't an https:// address"
+        return f"{host} isn't an https:// address"
     if parts.username is not None or parts.password is not None or "@" in parts.netloc:
-        return f"{text!r} carries a user name"
+        return f"the address on {host} carries a user name"
     if port is not None:
-        return f"{text!r} names a port"
-    host = (parts.hostname or "").lower()
+        return f"the address on {host} names a port"
     if host not in allowed:
-        return f"{host or 'an empty host'} isn't one of {platform}'s hosts ({', '.join(allowed)})"
+        return f"{host} isn't one of {named}"
     return None
