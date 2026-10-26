@@ -444,3 +444,12 @@ artifacts: -
 decisions: Ting Yu: "dont ask me questions, just make the decisions and push". From here the conductor decides using the crew recommendations, logs each decision, pushes crew/mission-control after merges and opens the PR at the end
 questions: -
 evidence:  -
+
+## 2026-10-26T21:11+0800 conductor (merge mc 08)
+status:    done
+persona:   conductor
+ticket:    08
+artifacts: merge of 08 (rebased on ed609a3)
+decisions: fix round verified by the conductor with window_probe (08:00:05 -> previous day window, A-0160 listed, undelivered 1); merged and pushed
+questions: -
+evidence:  merged branch pytest -> see commit
