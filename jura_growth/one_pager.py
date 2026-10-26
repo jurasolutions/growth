@@ -2,12 +2,12 @@
 
 Built from a `mission.Snapshot`, never from the database, in this order: the
 header, Needs you (the health strip), Approvals waiting, Today, Yesterday and
-Ask me. `messages()` is what goes to Discord: the text through
-`privacy.for_discord()`, split by `discord.split()` only past 2,000
-characters. `post()` sends it to #mission-control with the 14-day grid as a
-PNG (`grid_html`, drawn by the core Chrome helper in `images.py`); the 08:00
-`one-pager` job and `/growth one-pager` both run `jura-growth one-pager`, and
-`--no-post` prints it instead.
+Ask me. `post()` sends `text()` to #mission-control through `discord.post()`,
+which masks it and splits it only past 2,000 characters, with the 14-day grid
+as a PNG on the last piece (`grid_html`, drawn by the core Chrome helper in
+`images.py`). The 08:00 `one-pager` job and `/growth one-pager` both run
+`jura-growth one-pager`; `--no-post` prints `messages()`, the same text masked
+and split the same way.
 
 The one-pager is for Ting Yu only and shows only figures the engine recorded.
 """
@@ -145,24 +145,24 @@ _PAD, _TITLE, _HEAD_ROW, _ROW, _LEGEND, _NOTE = 32, 76, 44, 34, 72, 40
 
 _GRID_CSS = """
 html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--white); }
-.page { box-sizing: border-box; width: 100%; height: 100%; padding: 32px; display: flex; flex-direction: column; }
-.overline { font-family: var(--font-mono); font-size: 12px; letter-spacing: var(--tracking-overline);
+.page { box-sizing: border-box; width: 100%; height: 100%; padding: var(--space-6); display: flex; flex-direction: column; }
+.overline { font-family: var(--font-mono); font-size: var(--text-overline); letter-spacing: var(--tracking-overline);
   text-transform: uppercase; color: var(--text-brand); height: 20px; }
 h1 { font-family: var(--font-display); font-size: 26px; line-height: 40px; height: 56px; color: var(--text-strong); }
 .note { font-family: var(--font-body); font-size: 16px; line-height: 40px; color: var(--text-muted); }
 table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 3px; margin: 0 -3px; }
-th { font-family: var(--font-mono); font-weight: var(--weight-regular); color: var(--text-muted); font-size: 12px; }
+th { font-family: var(--font-mono); font-weight: var(--weight-regular); color: var(--text-muted); font-size: var(--text-overline); }
 thead th { height: 38px; line-height: 15px; text-align: center; }
 thead th.job, tbody th { width: 168px; text-align: left; }
-tbody th { font-size: 13px; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+tbody th { font-size: var(--text-caption); color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 thead th.today { color: var(--text-brand); font-weight: var(--weight-medium); }
 td.cell { height: 28px; padding: 0; text-align: center; border-radius: var(--radius-xs); font-family: var(--font-mono);
-  font-size: 13px; font-weight: var(--weight-medium); white-space: nowrap; border: 1px solid transparent; }
+  font-size: var(--text-caption); font-weight: var(--weight-medium); white-space: nowrap; border: 1px solid transparent; }
 .count { font-weight: var(--weight-regular); margin-left: 4px; }
 .legend { margin-top: auto; height: 48px; display: flex; flex-wrap: wrap; align-content: flex-end; gap: 8px 20px;
-  font-family: var(--font-body); font-size: 13px; color: var(--text-body); }
+  font-family: var(--font-body); font-size: var(--text-caption); color: var(--text-body); }
 .key { display: inline-block; min-width: 40px; padding: 2px 6px; margin-right: 6px; text-align: center;
-  border-radius: var(--radius-xs); font-family: var(--font-mono); font-size: 12px; font-weight: var(--weight-medium);
+  border-radius: var(--radius-xs); font-family: var(--font-mono); font-size: var(--text-overline); font-weight: var(--weight-medium);
   border: 1px solid transparent; }
 .s-failed { background: var(--danger-bg); color: var(--danger-fg); }
 .s-missed { background: var(--warning-bg); color: var(--warning-fg); }

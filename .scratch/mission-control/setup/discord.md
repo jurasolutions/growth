@@ -69,8 +69,9 @@ A webhook URL is a password for posting into that channel. Don't paste it anywhe
 leaks, delete that webhook in the same Integrations screen and make a new one.
 
 The Approve and Skip buttons on `#approvals` cards come later, through a webhook Dispatch's own
-application owns (`approvals.post_buttons`). Until then, answer a card by typing
-`/growth approve A-nnnn` or `/growth skip A-nnnn` in Discord.
+application owns (`approvals.post_buttons`). Until then, once Dispatch is connected
+(`remote-control.md`), answer a card by typing `/growth approve A-nnnn` or `/growth skip A-nnnn`
+in Discord. Before that, nothing can be decided, and a request lapses unanswered.
 
 ## 4. Put the URLs in `.env`
 
