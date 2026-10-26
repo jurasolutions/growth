@@ -118,6 +118,7 @@ def check_args(lead: dict, email: compose.Email, *, kind: str, tool: str | None)
             "tools": registry.live_slugs(),
             "tool": tool,
             "kind": kind,
+            "recipient": email.to,
         },
     }
 

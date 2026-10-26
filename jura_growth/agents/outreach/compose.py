@@ -49,6 +49,10 @@ NO_SECRET_SIG = "UNSUBSCRIBE_SECRET-not-set"
 
 GREETING_RE = re.compile(r"^(?:hi|hello|dear|good (?:morning|afternoon|day))\b[^.!?\n]{0,40}[,.]?\s*$", re.I)
 JURA_LINK_RE = re.compile(r"(?:https?://)?(?:www\.)?jurasolutions\.sg(?:/[^\s<>()\[\]\"']*)?", re.I)
+# The first line of a draft when it is a greeting, and who it greets.
+GREETING_TO_RE = re.compile(r"^(?:hi|hello|hey|dear|good (?:morning|afternoon|day|evening))\b[\s,]*(?P<who>[^,.!?:\n]*)", re.I)
+# Who an email may greet besides the company: nobody in particular (MC §4.4).
+NOBODY = frozenset({"", "there", "again", "there again", "team", "all", "everyone", "everybody", "folks", "sir", "madam", "sir or madam", "sir/madam"})
 FOLLOW_UP_REF_RE = re.compile(
     r"\b(?:my (?:last |earlier |previous |first )?(?:note|email|message)|i wrote|wrote to you|"
     r"last week|earlier this|following up|a short follow-up|back in touch)\b",
@@ -99,6 +103,7 @@ class Email:
     check_text: str  # what the brand gate checks (site name masked)
     unsubscribe_url: str
     site: str
+    to: str = ""  # the recipient address, lower-cased
 
 
 def tidy_draft(body: str) -> str:
@@ -125,7 +130,7 @@ def compose(*, subject: str, body: str, company: str, site: str, email: str, sec
     link = unsubscribe_url(email, secret)
     text = f"{draft}\n\n{SIGNATURE}\n\n{footer(company, site, link)}\n"
     check_text = f"{draft}\n\n{SIGNATURE}\n\n{footer(company, SITE_PLACEHOLDER, link)}\n"
-    return Email(subject, draft, text, to_html(draft, company, site, link), check_text, link, site)
+    return Email(subject, draft, text, to_html(draft, company, site, link), check_text, link, site, (email or "").strip().lower())
 
 
 def with_utm(url: str) -> str:
@@ -303,6 +308,10 @@ def check_email(text: str, ctx: dict) -> list[brand_check.Issue]:
     for link in other:
         issues.append(Issue("channel", "Only the tool link and jurasolutions.sg/apps in the body", link))
 
+    # Emails greet the company, never a person (MC §4.4), so a card shows the
+    # draft exactly as it goes out.
+    issues += _person_issues(draft, company, ctx.get("recipient"))
+
     # The first line is about this company.
     opening = first_line(draft)
     if not opening:
@@ -316,6 +325,47 @@ def check_email(text: str, ctx: dict) -> list[brand_check.Issue]:
         if not (named or observed or refers_back):
             issues.append(Issue("channel", "The first line should be about this company: name it or what you saw on its site", opening))
     return issues
+
+
+def greets_a_person(draft: str, company: str | None) -> str | None:
+    """The greeting line, when it greets someone other than the company or
+    nobody in particular ("Hi there,", "Hello Acme Aircon team,")."""
+    lines = [line.strip() for line in draft.split("\n") if line.strip()]
+    match = GREETING_TO_RE.match(lines[0]) if lines else None
+    if not match:
+        return None
+    who = re.sub(r"^the\s+", "", match.group("who").strip().lower())
+    if who in NOBODY or re.search(r"\bteam\b", who):
+        return None
+    if company and any(form.lower() in who for form in _name_forms(company)):
+        return None
+    return lines[0]
+
+
+def name_parts(address: str | None) -> list[str]:
+    """The name in an address that names a person (`jane.tan@` gives Jane
+    and Tan); nothing for a shared inbox such as info@ or sales@."""
+    from jura_growth import role_addresses
+
+    if not address or "@" not in address or role_addresses.is_shared_inbox(address):
+        return []
+    local = address.split("@", 1)[0]
+    return [part for part in re.split(r"[^A-Za-z]+", local) if len(part) >= 3]
+
+
+def _person_issues(draft: str, company: str | None, recipient: str | None) -> list[brand_check.Issue]:
+    Issue = brand_check.Issue
+    found = []
+    greeting = greets_a_person(draft, company)
+    if greeting:
+        found.append(Issue("channel", "Greet the company, not a person: write “Hi there,” or “Hello <Company> team,”", greeting))
+    for part in name_parts(recipient):
+        match = re.search(rf"\b{re.escape(part)}\b", draft, re.I)
+        if match and not greeting:
+            found.append(Issue("channel", "The email names the person the address belongs to; write to the company instead",
+                               match.group(0)))
+            break
+    return found
 
 
 def channel() -> brand_check.Channel:
