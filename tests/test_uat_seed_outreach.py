@@ -8,12 +8,17 @@ live mode in the temp config, a hand edit to one queued draft, and a shadow tria
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from datetime import date
+from pathlib import Path
 
 import pytest
 import yaml
 
+import resend_stub
 from discord_double import discord_double  # noqa: F401 - a fixture
+from mission_world import stat_snapshot
 from jura_growth import brand_check, config, db, paths
 from jura_growth.agents.outreach import approval, queue, requeue, send
 from test_scout_support import CONTROL_ID, REGISTRY, d1_env, decide, fake_d1, fake_resend, outreach_requests
@@ -320,6 +325,55 @@ def test_shadow_trial_twice_is_refused(live, window):
     seed.seed(window, "shadow-trial", today=TUESDAY)
     with pytest.raises(seed.Refused, match="already"):
         seed.seed(window, "shadow-trial", today=TUESDAY)
+
+
+# --- every scenario refuses a non-temp folder ------------------------------------------------
+
+LIVE_DATA = paths.JURA_ROOT / "data" / "growth"
+REAL_CONFIG = paths.REPO_ROOT / "config"
+# What the live engine itself may change meanwhile: its database and run locks. The seed's
+# refusals come before it opens anything, and the script's exit status shows they did.
+ENGINE_CHURN = ("growth.db", "locks")
+
+
+def untouched_snapshot() -> dict:
+    found = stat_snapshot(REAL_CONFIG, LIVE_DATA)
+    churn = [str(LIVE_DATA / name) for name in ENGINE_CHURN]
+    return {path: info for path, info in found.items() if not any(path.startswith(c) for c in churn)}
+
+
+@pytest.mark.parametrize("scenario", list(seed.SCENARIOS))
+def test_every_scenario_refuses_the_live_folders_and_changes_nothing(scenario, tmp_path):
+    before = untouched_snapshot()
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "JURA_ROOT": str(paths.JURA_ROOT),
+        "JURA_GROWTH_DATA_DIR": str(LIVE_DATA),
+        "JURA_GROWTH_OUTPUTS_DIR": str(tmp_path / "outputs"),
+        "JURA_PRD_DIR": str(tmp_path / "prd"),
+        "JURA_GROWTH_CONFIG_DIR": str(REAL_CONFIG),
+        send.RESEND_BASE_ENV: STUB,
+    }
+    args = [sys.executable, str(Path(seed.__file__)), str(LIVE_DATA), "--scenario", scenario, "--lead", "240"]
+    ran = subprocess.run(args, env=env, capture_output=True, text=True, timeout=60)
+    assert ran.returncode == 2 and ran.stdout.startswith("refused:"), ran.stdout + ran.stderr
+    assert untouched_snapshot() == before
+    assert not (tmp_path / "outputs").exists() and not (tmp_path / "prd").exists()
+
+
+@pytest.mark.parametrize("scenario", list(seed.SCENARIOS))
+def test_every_scenario_refuses_the_real_config_folder(window, monkeypatch, scenario):
+    before = untouched_snapshot()
+    monkeypatch.setenv("JURA_GROWTH_CONFIG_DIR", str(REAL_CONFIG))
+    with pytest.raises(seed.Refused, match="JURA_GROWTH_CONFIG_DIR"):
+        seed.seed(window, scenario, today=TUESDAY, lead=240)
+    assert untouched_snapshot() == before
+    assert not (window / "data").exists()
+
+
+def test_the_resend_stub_still_refuses_the_live_data_folder(monkeypatch):
+    monkeypatch.setenv("JURA_GROWTH_DATA_DIR", str(LIVE_DATA))
+    assert "not a temporary folder" in resend_stub.refusal()
 
 
 def test_edit_draft_refuses_a_lead_with_no_queued_email(live, window):

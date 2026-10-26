@@ -1,21 +1,32 @@
-"""The UAT harness for `.scratch/mission-control/uat.md` Part A (ticket 04b; X13).
+"""The UAT harness for `.scratch/mission-control/uat.md` (tickets 04b and 17; X13).
 
-Seeds the Part A data into a temporary folder, for Ting Yu to run the script against a test
-Discord server. From the repo root, in the Part A window (`uat.md`, "The window for Parts A and C"):
+Seeds the UAT data into a temporary folder, for Ting Yu to run the script against a test Discord
+server. From the repo root, in the window `uat.md` sets up ("The window for Parts A and C"):
 
-    uv run python -m tests.uat.seed "$UAT" [--scenario base]
+    uv run python -m tests.uat.seed "$UAT" [--scenario base] [--today YYYY-MM-DD] [--lead <id>]
 
 It refuses unless `$UAT` is a temporary folder (made with `mktemp -d`) outside `jurasolutions/`, and
-`JURA_GROWTH_DATA_DIR`, `JURA_GROWTH_OUTPUTS_DIR` and `JURA_PRD_DIR` all sit inside it. So it can
-never write to the live `data/growth/`, `outputs/growth/` or PRD folders. It also refuses a folder
-it has already seeded.
+`JURA_GROWTH_DATA_DIR`, `JURA_GROWTH_OUTPUTS_DIR` and `JURA_PRD_DIR` all sit inside it, as does
+`JURA_GROWTH_CONFIG_DIR` when it is set. So it can never write to the live `data/growth/`,
+`outputs/growth/`, PRD or `config/` folders. It also refuses a folder it has already seeded. A
+config folder inside `$UAT` starts as a copy of the repo's `config/`.
 
-The `base` scenario holds what today's schema can: S1 (run history from Mon 2 Nov, Deepavali's
-observed Monday without business-day runs, and the 6 Nov scout-send traces), S2 (today's
-app-factory and social runs), S4 (the queued emails for leads 233, 240 to 254 and 260), S5 and S6
-(the planted reply, phone number and Resend key), S7 (APP-014's PRD) and S8 (groups G4 and G7).
-The approval requests over them, and S3's live-mode config, are raised by the kinds' own tickets
-(06 for `outreach-email`, 10 for `app-build`, 05 for `group-rules`), each adding to `SCENARIOS`.
+Every row is dated from `--today` (default: today in SGT), which must be a business day: Dispatch
+stamps decisions with the real clock, so deadlines must line up with the day the UAT runs.
+
+- `base` holds S1 (eight days of run history, with the previous business day's scout-send
+  traces missing slots and a quiet run six minutes late), S2 (today's app-factory and social
+  runs), S4 (the queued emails for leads 233, 240 to 254 and 260), S5 and S6 (the planted reply,
+  phone number and Resend key), S7 (APP-014's PRD) and S8 (groups G4 and G7).
+- `outreach-live` (S3) puts live mode in `$UAT/config` with every pre-condition met but the
+  buttons switch. It needs `JURA_GROWTH_RESEND_BASE_URL` pointed at the stub
+  (`uv run python -m tests.resend_stub`), and writes `do-not-contact.csv` when `JURA_INPUTS_DIR`
+  is inside `$UAT`. It prints any pre-condition the window must still supply.
+- `edit-draft --lead <id>` (S9) changes that lead's queued draft by hand.
+- `shadow-trial` (S10) holds 40 shadow-sent emails for `requeue-shadow`.
+
+The seed never raises an approval request: the outreach commands raise them, as they would live.
+The other kinds' tickets add their own scenarios to `SCENARIOS`.
 """
 
 from __future__ import annotations
