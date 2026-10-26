@@ -111,3 +111,24 @@ def test_an_auth_variable_is_a_setup_gap_by_name_only(monkeypatch, name):
     assert [g.name for g in gaps] == [name]
     assert gaps[0].line == f"`{name}`: set, and must not be"
     assert "secret" not in gaps[0].line
+
+
+# --- Final review Sp1: an orphan settles before Claude could start ------------------------------------
+
+
+def test_an_orphan_whose_run_still_reads_running_settles_pauses_and_alerts_before_claude(conn, world, monkeypatch, tmp_path, discord_double):
+    pw.at(monkeypatch, pw.MORNING)
+    found, request = pw.approved(conn, monkeypatch)
+    pw.approved(conn, monkeypatch, "facebook", day=pw.DAY.replace(day=11))
+    pw.at(monkeypatch, pw.TEN)
+    dead = pw.run(conn)  # killed after its claim: the row still says running
+    assert pw.next_item(conn, dead).approval.id == request.id
+    pw.at(monkeypatch, "2026-11-11T10:00:00+08:00")
+
+    outcome = runner.run("publish", ignore_schedule=True)
+
+    assert not started(tmp_path), "claude started with an orphaned claim open"
+    assert outcome.status == "skipped" and "may or may not have been posted" in outcome.summary
+    assert pw.item_row(conn, found.id)["state"] == "unknown"
+    [alert] = [a for a in discord_double.contents("alerts") if request.id in a]
+    assert f"/growth publish resolve {request.id} not-posted" in alert

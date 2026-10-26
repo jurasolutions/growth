@@ -3,7 +3,9 @@
 - `precheck` (before Claude starts) raises when the fixture platform is set but refused (BP-07),
   so the run fails before anything is read. Then it runs `items.sync()` in a committed transaction and posts the
   cards that raised (`cards.sweep_safely()`), so a changed post gets its new card whether or not
-  anything is due (code review 02, B1). Then an auth variable that would hide the Chrome tools is
+  anything is due (code review 02, B1). Then a claim an earlier run left open settles as
+  `unknown`, pauses `publish` and alerts (`settle_orphans`, final review Sp1), and the run is
+  skipped as paused. Then an auth variable that would hide the Chrome tools is
   a plain skip Ting Yu should see (AC-P9.5), and nothing claimable (`claim.claimable()`,
   read-only) is `NothingToDo("nothing due")`, a quiet run with no Claude (AC-P8.2).
 - `setup_gaps`: the same auth variables, by name, for `jura-growth status`.
@@ -41,6 +43,8 @@ def precheck(job: str, conn: sqlite3.Connection):
     with db.transaction(conn):
         items.sync(conn)
     cards.sweep_safely(conn)
+    if settle_orphans(conn, None):  # the runner holds the publish lock and no run has claimed yet
+        return pause.is_paused(conn, items.AGENT)
     for name in AUTH_VARIABLES:
         if os.environ.get(name):
             return (f"{name} is set, so Claude Code would start without the Chrome tools; remove it from the "
@@ -281,6 +285,26 @@ def _no_browser(conn: sqlite3.Connection, run_id: int) -> None:
                         "today.", agent=items.AGENT)
 
 
+def settle_orphans(conn: sqlite3.Connection, run_id: int | None) -> list[str]:
+    """Settle the claims an earlier publish run left open, and alert (AC-P10.1, final review Sp1).
+
+    A run that was killed (a hard sleep, a reboot) never reaches its `after_run`, so its row can
+    still say `running` when the next slot starts. Only call this while holding the publish job's
+    lock: the precheck (`run_id` None, nothing claimed yet) or `publish next` inside a run. Then no
+    live sibling run can hold a claim, so every `claimed` item with a run other than `run_id` is
+    an orphan, whatever its run's row says. A Terminal claim (no run) is left to Ting Yu. Each
+    orphan settles as `unknown` and `publish` pauses, as `_settle_unknown` does; the lines are
+    alerted here, because no later `after_run` sees them. Returns those lines."""
+    rows = conn.execute(
+        "SELECT * FROM publish_items WHERE state = 'claimed' AND run_id IS NOT NULL AND run_id IS NOT ? ORDER BY id",
+        (run_id,),
+    ).fetchall()
+    lines = _settle(conn, run_id, rows)
+    if lines:
+        discord.alert(conn, " ".join(lines), agent=items.AGENT)
+    return lines
+
+
 def _settle_unknown(conn: sqlite3.Connection, run_id: int) -> list[str]:
     """Mark open claims `unknown`, pause `publish`, and return the #alerts lines that say how to
     settle each."""
@@ -289,6 +313,12 @@ def _settle_unknown(conn: sqlite3.Connection, run_id: int) -> list[str]:
         "AND p.run_id IS NOT NULL AND (p.run_id = ? OR r.id IS NULL OR r.status != 'running') ORDER BY p.id",
         (run_id,),
     ).fetchall()
+    return _settle(conn, run_id, rows)
+
+
+def _settle(conn: sqlite3.Connection, run_id: int | None, rows: list) -> list[str]:
+    """Mark these claimed rows `unknown`, pause `publish`, and return one #alerts line for each,
+    naming the run that claimed it and both `publish resolve` forms."""
     open_items = [items.Item.from_row(r) for r in rows]
     if not open_items:
         return []
@@ -300,9 +330,10 @@ def _settle_unknown(conn: sqlite3.Connection, run_id: int) -> list[str]:
             shown = _shown(conn, found)
             log.event(conn, "publish.unknown", {"item": found.label, "approval": shown}, level="error",
                       agent=items.AGENT, run_id=run_id)
-            settled.append(shown)
-        pause.pause(conn, items.AGENT, f"{', '.join(settled)} may or may not have been posted", notify=False)
-    return [f"{shown} was claimed in run {run_id}, but the run recorded neither done nor stopped, so it may or may "
-            f"not have been posted. It won't be tried again, and publish is paused. Check the page, then settle it: "
-            f"/growth publish resolve {shown} posted --url <url>, or /growth publish resolve {shown} not-posted."
-            for shown in settled]
+            settled.append((shown, found.run_id))
+        pause.pause(conn, items.AGENT, f"{', '.join(s for s, _ in settled)} may or may not have been posted",
+                    notify=False)
+    return [f"{shown} was claimed in run {claimed_in}, but the run recorded neither done nor stopped, so it may or "
+            f"may not have been posted. It won't be tried again, and publish is paused. Check the page, then settle "
+            f"it: /growth publish resolve {shown} posted --url <url>, or /growth publish resolve {shown} not-posted."
+            for shown, claimed_in in settled]

@@ -168,8 +168,9 @@ MC §5.7 `app-release` row, §5.9 steps 3 and 4).
 2. **Approve.** Nothing happens yet. The approval has 14 days to be used.
 3. **Release plan.** `apps release-plan` claims the approval, stamps the row, and only then prints
    the commands: fetch the task branch, merge exactly the approved SHA into `main` (never the
-   branch, whose head may have moved), push, then `apps released`. Without an approved, unused
-   request it prints nothing to run. It refuses while the factory is paused, or while the
+   branch, whose head may have moved), push, then `apps released`. Run again while the build is
+   still the claimed commit and preview, it prints the same commands with no new claim. Without
+   an approved request it prints nothing to run. It refuses while the factory is paused, or while the
    landing-page repository and its `main` aren't there.
 4. **Released.** `apps released` checks `git -C <repos/landing-page> merge-base --is-ancestor <sha>
    refs/heads/main`, the branch, so a tag named `main` can't stand in for it. It never fetches, pulls or writes, so pull `main` after the merge. With the claimed

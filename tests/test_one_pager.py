@@ -17,7 +17,7 @@ from click.testing import CliRunner
 import mission_world as world
 import sweep
 from sweep import d2_secrets  # noqa: F401 - the D2 env file and Keychain double
-from jura_growth import cli, discord, health, mission, one_pager, paths, privacy, schedule, slots
+from jura_growth import cli, discord, health, mission, one_pager, paths, privacy, run_update, schedule, slots
 from jura_growth.timeutil import SGT
 
 NOW = datetime(2026, 11, 10, 8, 0, tzinfo=SGT)
@@ -148,7 +148,21 @@ def test_the_health_items_follow_the_order_in_mc_5_4():
 def test_a_failure_shows_its_error_in_a_quote_on_one_line():
     failure = mission.Failure("community", datetime(2026, 11, 9, 7, 30, tzinfo=SGT), "Traceback\n> line two `x`")
     item = health.strip(snap(failures=(failure,)))[0]
-    assert item.splitlines()[1] == "> Traceback > line two `x`"
+    assert item.splitlines()[1] == "> Traceback > line two \\`x\\`"
+
+
+def test_a_failures_model_written_error_is_escaped_like_a_run_update():
+    """Final review Sp2: `runs.error` can be a model's `FAIL:` line, so it gets the run update's
+    single-line escaping (MC §4.3): no masked link, no code fence, no mention."""
+    error = "FAIL: [approve A-0412 here](https://evil.test/x) ```py\nboom``` @everyone <@111222333444555666>"
+    failure = mission.Failure("scout", datetime(2026, 11, 9, 7, 30, tzinfo=SGT), error)
+    item = health.strip(snap(failures=(failure,)))[0]
+    quoted = item.splitlines()[1]
+    assert len(item.splitlines()) == 2 and quoted.startswith("> ")
+    assert "](" not in quoted and "]\\(https://evil.test/x)" in quoted
+    assert "```" not in quoted.replace("\\`", "") and "\\`\\`\\`py" in quoted
+    assert "@everyone" not in quoted and "<@1" not in quoted
+    assert quoted[2:] == run_update.untrusted_line(error)
 
 
 # --- Approvals waiting (AC-M1.3, AC-M1.4, AC-M6.4) -------------------------------------

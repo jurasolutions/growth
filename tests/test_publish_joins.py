@@ -509,7 +509,11 @@ def test_pages_not_allowed_skips_the_group_for_good_without_alert_or_pause(conn,
 def test_pages_not_allowed_supersedes_membership_answers_still_waiting_for_the_group(conn, world, monkeypatch):
     """Code review 06, N8: the handler supersedes every kind still waiting, answers included."""
     join, request = claimed_join(conn, monkeypatch)
-    answers, waiting = pw.answers_item(conn, join)
+    # Answers raised while the join is still claimed, so the join itself can report the outcome
+    # (`pw.answers_item` would record the join as done first).
+    made = items.create_join_answers(conn, join, pw.QUESTIONS, run_id=None)
+    answers, waiting = made.item, made.approval
+    assert answers is not None and waiting is not None, made.why
 
     assert pw.invoke("publish", "done", request.id, "--outcome", "pages-not-allowed").exit_code == 0
 

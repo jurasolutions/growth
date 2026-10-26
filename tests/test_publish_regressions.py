@@ -18,7 +18,7 @@ import pytest
 
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, headless, paths, runner, timeutil
+from jura_growth import approvals, db, headless, pause, paths, runner, timeutil
 from jura_growth.agents import publish
 from jura_growth.agents.publish import kinds
 from test_publish_queue import next_json, state, world  # noqa: F401 - world is a fixture
@@ -164,6 +164,70 @@ def test_a_claim_by_a_run_still_running_cant_be_resolved(conn, world, monkeypatc
     next_json()
     result = pw.invoke("publish", "resolve", request.id, "not-posted")
     assert result.exit_code == 1 and "isn't unknown" in result.output
+
+
+# --- Final review Sp1: an orphan whose dead run still reads `running` ---------------------------------
+
+
+def _orphan_then_second_day(conn, monkeypatch):
+    """P-1 claimed by a run that was killed: no `after_run`, so its row still says `running`.
+    Then a second approved post for the next day, and the clock moved to it."""
+    found, request = pw.approved(conn, monkeypatch)
+    dead = pw.run(conn, monkeypatch=monkeypatch)
+    assert next_json()["approval"] == request.id
+    other, second = pw.approved(conn, monkeypatch, "facebook", day=date(2026, 11, 11))
+    pw.at(monkeypatch, "2026-11-11T10:00:00+08:00")
+    return found, request, other, second, dead
+
+
+def _resolve_lines(request) -> tuple[str, str]:
+    return (f"/growth publish resolve {request.id} posted --url <url>", f"/growth publish resolve {request.id} not-posted")
+
+
+def test_sp1_the_next_runs_claim_settles_an_orphan_pauses_alerts_and_claims_nothing(conn, world, monkeypatch, discord_double):
+    found, request, other, second, dead = _orphan_then_second_day(conn, monkeypatch)
+    later = pw.run(conn, monkeypatch=monkeypatch)
+    assert db.scalar(conn, "SELECT status FROM runs WHERE id = ?", (dead,)) == "running"
+
+    handed = next_json()
+
+    assert handed["due"] is False
+    assert any(all(line in reason for line in _resolve_lines(request)) for reason in handed["reasons"])
+    assert state(conn, found) == "unknown"
+    assert state(conn, other) == "ready" and approvals.get(conn, second.id).used_at is None
+    assert pause.is_paused(conn, "publish")
+    posted = [a for a in discord_double.contents("alerts") if request.id in a]
+    assert len(posted) == 1 and all(line in posted[0] for line in _resolve_lines(request))
+    assert f"run {dead}" in posted[0]
+
+    outcome = publish.after_run(conn, "publish", later, runner.Outcome("ok"))
+    assert outcome is not None and request.id not in outcome.error  # settled once, alerted once
+    assert len([a for a in discord_double.contents("alerts") if request.id in a]) == 1
+
+
+def test_sp1_the_precheck_settles_an_orphan_before_claude_could_start(conn, world, monkeypatch, discord_double):
+    found, request, other, _, _ = _orphan_then_second_day(conn, monkeypatch)
+    monkeypatch.delenv("JURA_GROWTH_RUN_ID")
+
+    reason = publish.precheck("publish", conn)
+
+    assert reason == pause.is_paused(conn, "publish") and reason
+    assert state(conn, found) == "unknown" and state(conn, other) == "ready"
+    posted = [a for a in discord_double.contents("alerts") if request.id in a]
+    assert len(posted) == 1 and all(line in posted[0] for line in _resolve_lines(request))
+
+
+def test_sp1_a_terminal_claim_leaves_a_live_runs_claim_alone(conn, world, monkeypatch, discord_double):
+    """Terminal `publish next` holds no job lock, so a run still marked `running` may be alive."""
+    found, request, other, _, _ = _orphan_then_second_day(conn, monkeypatch)
+    monkeypatch.delenv("JURA_GROWTH_RUN_ID")
+
+    handed = next_json()
+
+    assert state(conn, found) == "claimed"
+    assert not pause.is_paused(conn, "publish")
+    assert [a for a in discord_double.contents("alerts") if request.id in a] == []
+    assert handed["due"] is True and state(conn, other) == "claimed"
 
 
 # --- S7 ---------------------------------------------------------------------------------------------

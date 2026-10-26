@@ -7,8 +7,8 @@ _Read by every crew persona before acting. Repo rules outrank crew defaults. Las
 | Purpose | Command | Verified |
 |---|---|---|
 | Install dependencies | `uv sync` | verified 2026-10-24 (uv 0.12.21, Python 3.12 venv in `.venv/`) |
-| Test, all | `uv run pytest` | verified 2026-10-24: 515 passed in 16s. `testpaths = ["tests"]` keeps `.claude/worktrees/` out |
-| Test, one file | `uv run pytest tests/test_core.py` | verified 2026-10-24: 37 passed |
+| Test, all | `uv run pytest` | verified 2026-10-27: 3305 passed, none skipped, in 132s (`uv run pytest -rs -p no:cacheprovider -o addopts=""`, worktree exports below). `testpaths = ["tests"]` keeps `.claude/worktrees/` out |
+| Test, one file | `uv run pytest tests/test_core.py` | verified 2026-10-27: 44 passed |
 | Typecheck | none configured | unverified: no pyright or mypy config in the repo. `pyright --pythonpath .venv/bin/python jura_growth` reports 84 existing errors, so it is advisory only; don't add new errors in files you touch |
 | Lint | none configured | unverified: no linter in `pyproject.toml` |
 | Build | none | unverified: nothing is built or deployed; the package runs from `.venv/` |

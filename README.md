@@ -235,7 +235,7 @@ A kind is an object with:
 | Member | Purpose |
 |---|---|
 | `name` | The kind's name, the key in `approval_kinds()` |
-| `content(conn, subject)` | The canonical bytes of what would go out now (UTF-8, NFC-normalised, JSON with sorted keys), or `None` when the item is gone |
+| `content(conn, subject)` | The exact bytes of what would go out now, with no Unicode normalisation (UTF-8, JSON with sorted keys; ADR 0003), or `None` when the item is gone |
 | `preview(conn, subject)` | An `approvals.Preview`: title, text as it will go out, reason, at most ten files |
 | `deadlines(conn, subject, now)` | An `approvals.Deadlines`: asked at request time for the decide-by and at approval time for the use-by (`None` for a kind applied on decide). `caps.APPROVAL_DEADLINE_MAX_DAYS` caps both |
 | `decision_args` | Optional. The `key=value` arguments an approve must carry, such as `("promo_days", "post_days")` |

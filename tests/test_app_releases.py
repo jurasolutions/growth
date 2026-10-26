@@ -8,6 +8,7 @@ repository (D13, a temp repo at `paths.site_repo()`) contains it. The gate matri
 through `gate_adapter_app_release.py`.
 """
 
+import json
 import re
 import shutil
 from pathlib import Path
@@ -214,6 +215,19 @@ def test_built_with_a_new_commit_supersedes_the_request_and_raises_one_for_the_n
     assert releases.current_build(conn, app_id)["head_sha"] == later
 
 
+# --- Final review St1: the hash covers the exact bytes (ADR 0003 as amended) ------------------------
+
+
+def test_the_release_content_is_the_exact_bytes_with_no_unicode_normalisation():
+    row = {"app_id": "APP-014", "branch": "claude/T-0031-café", "preview_url": "https://x.jura-site.pages.dev",
+           "head_sha": "a" * 40, "task_id": "T-0031"}
+    composed = {**row, "branch": "claude/T-0031-café"}
+    assert releases.encode(row) != releases.encode(composed)
+    fields = {"app_id": "APP-014", "branch": row["branch"], "preview": row["preview_url"], "sha": row["head_sha"],
+              "task_id": "T-0031"}
+    assert releases.encode(row) == json.dumps(fields, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
 # --- AC-M9.8: `apps release-plan` claims, then prints the merge of exactly that commit ---------------
 
 
@@ -253,12 +267,36 @@ def test_release_plan_with_no_approved_release_exits_1_and_prints_nothing_to_run
     assert aw.claims(conn) == 1  # only the app-build handoff's claim
 
 
-def test_release_plan_a_second_time_refuses_and_prints_no_merge(conn):
+def test_release_plan_a_second_time_prints_the_same_merge_without_a_new_claim(conn):
+    """Final review Sp3: a lost answer can be fetched again. The retry isn't a second use (A6,
+    ADR 0003): the merge names a fixed SHA, so printing it again releases nothing new."""
+    app_id, sha, request = approved_release(conn)
+    first = invoke("apps", "release-plan", app_id)
+    assert first.exit_code == 0
+    used = aw.get(conn, request.id)
+    planned = releases.current_build(conn, app_id)["release_planned_at"]
+    claimed_events = aw.claims(conn)
+
+    again = invoke("apps", "release-plan", app_id)
+
+    assert again.exit_code == 0 and again.output == first.output
+    assert aw.get(conn, request.id) == used  # no new claim: the same use, the same run
+    assert releases.current_build(conn, app_id)["release_planned_at"] == planned
+    assert aw.claims(conn) == claimed_events
+
+
+def test_release_plan_after_its_claim_refuses_once_the_build_no_longer_hashes_to_it(conn):
+    """The re-print is only for the build the claim covers: a newer commit reported after the
+    claim gets a new request, and no merge until that one is approved."""
     app_id, sha, request = approved_release(conn)
     assert invoke("apps", "release-plan", app_id).exit_code == 0
+    newer = site_repo.commit_on(BRANCH)
+    assert built(app_id, newer).exit_code == 0
+
     again = invoke("apps", "release-plan", app_id)
-    assert again.exit_code == 1 and "git merge" not in again.output and sha not in again.output
-    assert request.id in again.output
+
+    assert again.exit_code == 1 and "git merge" not in again.output
+    assert sha not in again.output and newer not in again.output
 
 
 def test_release_plan_refuses_a_release_whose_branch_moved_on_after_the_approval(conn):

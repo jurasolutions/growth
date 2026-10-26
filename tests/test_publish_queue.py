@@ -222,6 +222,8 @@ def test_line_6_the_gap_is_measured_between_the_runs_start_times(conn, world, mo
     pw.at(monkeypatch, "2026-11-10T10:03:00+08:00")
     first = pw.run(conn, "2026-11-10T10:00:00+08:00")
     assert pw.next_item(conn, first).item is not None
+    # The first run recorded its post; an open claim would be an orphan to the next run (Sp1).
+    conn.execute("UPDATE publish_items SET state = 'done' WHERE run_id = ?", (first,))
     pw.at(monkeypatch, "2026-11-10T10:21:00+08:00")
     early = pw.run(conn, "2026-11-10T10:15:00+08:00")
     refused = pw.next_item(conn, early)
@@ -433,6 +435,17 @@ def test_nfc_equivalent_text_matches():
 
     assert commands.same_text("Café au lait", "Café  au\nlait ")
     assert not commands.same_text("Cafe au lait", "Café au lait")
+
+
+def test_the_audit_and_publish_done_share_one_normal_form():
+    """Final review St3: the transcript audit and `publish done --live-text-file` must agree on
+    whether two texts match, so there is one normal form and both modules use it."""
+    from jura_growth.agents.publish import audit, commands, text
+
+    assert not hasattr(audit, "_normal") and not hasattr(commands, "_normal")
+    assert audit.normal is text.normal and commands.normal is text.normal
+    assert text.normal("  Café  au\n\tlait ") == "Café au lait"
+    assert commands.same_text is text.same
 
 
 # --- AC-P10.1 after_run settles an open claim ------------------------------------------------------

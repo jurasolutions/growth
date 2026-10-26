@@ -60,7 +60,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import unicodedata
 from dataclasses import dataclass, field
 from typing import Iterator
 
@@ -68,6 +67,7 @@ from jura_growth import transcripts
 from jura_growth.agents.publish import hosts as hosts_mod
 from jura_growth.agents.publish.fixture import Fixture
 from jura_growth.agents.publish.scope import CHROME, DENIED_TOOLS
+from jura_growth.agents.publish.text import normal
 
 NO_BROWSER = re.compile(r"no browsers are connected|browser extension is not connected", re.I)
 BLANK_TABS = ("chrome://newtab/", "chrome://newtab", "about:blank")
@@ -119,7 +119,7 @@ class _Fields:
         self.typed.setdefault(name, []).append(text)
 
     def holds_text(self, name: str) -> bool:
-        return bool(_normal("".join(self.typed.get(name, []))))
+        return bool(normal("".join(self.typed.get(name, []))))
 
 
 @dataclass
@@ -150,7 +150,7 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
     own addresses, which every address must also be inside (code review 06, B1)."""
     found = Audit()
     allowed = tuple(h.lower() for h in hosts)
-    texts = [_normal(text) for text in approved if text and text.strip()]
+    texts = [normal(text) for text in approved if text and text.strip()]
     uploads = _Uploads([os.path.normpath(path) for path in images])
     created: set[str] = set()
     closed: set[str] = set()
@@ -169,7 +169,7 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
             fail(f"{where}: an address outside the claimed item's own page")
 
     def typed(text: str, tool: str, name: str) -> None:
-        if not claimed and _normal(text):
+        if not claimed and normal(text):
             fail(f"{tool} typed {len(text)} characters before an item was claimed")
         fields.add(name, text)
 
@@ -243,7 +243,7 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
 
     filled: dict[str, int] = {}
     for name, pieces in fields.typed.items():
-        text = _normal("".join(pieces))
+        text = normal("".join(pieces))
         if text in texts:
             filled[text] = filled.get(text, 0) + 1
         if not text or text in texts or (stopped and any(t.startswith(text) for t in texts)):
@@ -312,10 +312,6 @@ def _paths(given: dict) -> list[str]:
     if isinstance(found, str):
         found = [found]
     return [str(p) for p in found] if isinstance(found, list) else [str(found)]
-
-
-def _normal(text: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFC", text)).strip()
 
 
 def _created_tab(text: str) -> str | None:
