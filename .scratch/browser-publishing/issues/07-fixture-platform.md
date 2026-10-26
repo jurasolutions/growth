@@ -21,3 +21,13 @@ Add a fixture platform the publish job accepts only when it points at a loopback
 ## Pointers
 
 - `.scratch/browser-publishing/issues/03-browser-job-facebook-page.md` (BP-03 report in crew-log); `jura_growth/agents/publish/scope.py`; `jura_growth/uat_stub.py`; `.scratch/mission-control/uat.md` R1-R6
+
+## Comments
+
+### 2026-10-27 developer: built
+
+The fixture platform is `JURA_GROWTH_PUBLISH_FIXTURE_URL` (`jura_growth/agents/publish/fixture.py`). It is a switch over the existing platforms, not a new platform name: while it is set, the fixture host replaces every platform's hosts, so the rehearsal drives Facebook's own prompt section and, for BP-04, each new platform's. Its guard takes only an `http://` URL on a loopback host (`localhost`, `*.localhost`, `127.0.0.1`, `::1`) with no user name or path, and a temporary data folder (`uat_stub.temporary_data_problem`). A refused fixture fails the publish run in its precheck before Claude starts, the argv can't be built, and `publish next` claims nothing. It never falls back to the real hosts.
+
+The rehearsal steps are in `uat.md` Part R. The UAT seed gains `fixture-post --page <page>` (R1 to R4, R6) and `fixture-join --page <page>` (R5).
+
+**The `file_upload` parameter allow rule (R1): not yet tried.** It needs real Chrome and a real `claude -p`, so it is Ting Yu's step. `uat.md` Part R, R1b, gives the two probes and how to read them. Result: _to record here after R1._

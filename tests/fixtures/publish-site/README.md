@@ -17,3 +17,12 @@ The composer (`page.html`) keeps a "posted" text in the browser's local storage 
 `post.html?id=<n>` as its permalink, which shows the live text back.
 
 `index.html` lists which page serves which rehearsal step.
+
+The publish job reaches these pages through the fixture platform (BP-07,
+`jura_growth/agents/publish/fixture.py`): set `JURA_GROWTH_PUBLISH_FIXTURE_URL` to the server's
+address, for example `http://publish-fixture.localhost:8765`, with a temporary data folder. While
+it is set, the fixture host is the run's only `ClaudeInChromeDomain` rule, and the publish commands
+and the audit accept no other address. The engine refuses it on a non-loopback host or with the live
+data folder. `uv run python -m tests.uat.seed "$UAT" --scenario fixture-post --page <page>` (or
+`fixture-join` for the join pages) seeds an approved item on one page. The steps are in
+`.scratch/mission-control/uat.md`, Part R.
