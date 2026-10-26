@@ -208,11 +208,13 @@ def refreeze(conn: sqlite3.Connection, item: Item, content: dict) -> None:
 def sync(conn: sqlite3.Connection, *, run_id: int | None = None) -> list[approvals.Approval]:
     """Bring every ready item in line with its requests, and return the requests it raised.
 
-    - A live request over content that differs from the item's frozen copy (the core raised
-      it over new content): the new content is frozen into the item.
-    - A request superseded because the post changed (by `expire_due()`, which raises nothing):
-      a request is raised over the new content and the content frozen into the item, so a
-      change never leaves Ting Yu without a card (A3, AC-P1.3). Only when the new content's
+    - A live request that still matches, over content that differs from the item's frozen copy
+      (the core raised it over new content): the new content is frozen into the item.
+    - A live request that no longer matches: it is superseded and the new card raised in this
+      same sync (`approvals.request` does both), with the new content frozen into the item.
+    - A request superseded because the post changed (by `expire_due()`, which raises nothing),
+      or because it went and came back: a request is raised over the content as it is now, so
+      a change never leaves Ting Yu without a card (A3, AC-P1.3). Only when that content's
       posting window has already closed is the item withdrawn instead.
     - A request skipped or expired, or superseded because the draft is gone (skipped or posted
       by hand): the item is withdrawn.
@@ -229,17 +231,29 @@ def sync(conn: sqlite3.Connection, *, run_id: int | None = None) -> list[approva
             continue  # not yet raised, or claimed
         content = kinds.social_content(conn, item.ref_id)
         digest = approvals.content_hash(kinds.hashed(content)) if content is not None else None
+        in_time = content is not None and timeutil.now_sgt() < limits.window_on(date.fromisoformat(content["day"]))[1]
         if latest.live:
-            if content is not None and digest == latest.content_hash and content != item.content:
+            if content is not None and digest == latest.content_hash:
+                if content != item.content:
+                    refreeze(conn, item, content)
+                continue
+            if content is not None and not in_time:
+                continue  # too late for a new card: `use()` and the lapses close the old one
+            # The post changed (or went) under a live request: supersede it now and raise the
+            # new card in this same sync, not at the next transition (code review 02, R2-S1).
+            if content is not None:
                 refreeze(conn, item, content)
-            continue
-        if latest.status == approvals.SUPERSEDED and content is not None and digest != latest.content_hash:
-            _, closes = limits.window_on(date.fromisoformat(content["day"]))
-            if timeutil.now_sgt() < closes:
-                refreeze(conn, item, content)
-                fresh = raise_request(conn, item, run_id=run_id)
-                if fresh is not None and fresh.live:
-                    raised.append(fresh)
-                    continue
+            fresh = raise_request(conn, item, run_id=run_id)
+            if fresh is not None and fresh.live:
+                raised.append(fresh)
+                continue
+            latest = latest_request(conn, item) or latest
+        elif latest.status == approvals.SUPERSEDED and content is not None and in_time:
+            # Changed, or gone and back again unchanged (R2-N1): either way it needs a live card.
+            refreeze(conn, item, content)
+            fresh = raise_request(conn, item, run_id=run_id)
+            if fresh is not None and fresh.live:
+                raised.append(fresh)
+                continue
         withdraw(conn, item, latest.status)
     return raised

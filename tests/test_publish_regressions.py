@@ -65,6 +65,35 @@ def test_an_item_is_withdrawn_only_when_there_is_nothing_to_replace_it_with(conn
     assert [a for a in approvals.pending(conn) if a.subject == found.subject] == []
 
 
+def test_p8_a_post_moved_to_today_after_approval_gets_its_card_in_the_same_sync(conn, world, monkeypatch, discord_double):
+    """Round 2, R2-S1: the live request no longer matches; sync supersedes it and raises the new
+    one at once, not at the next heartbeat."""
+    found, request = pw.approved(conn, monkeypatch, "facebook", day=date(2026, 11, 11))
+    conn.execute("UPDATE social_posts SET date = '2026-11-10' WHERE id = ?", (found.ref_id,))
+    assert next_json()["due"] is False
+    assert approvals.get(conn, request.id).status == "superseded"
+    [fresh] = [a for a in approvals.pending(conn) if a.subject == found.subject]
+    assert fresh.decide_by == "2026-11-10T18:00:00+08:00" and fresh.supersedes == request.number
+    assert pw.item_row(conn, found.id)["day"] == "2026-11-10" and state(conn, found) == "ready"
+    assert [c for c in discord_double.contents("approvals") if fresh.id in c]
+
+
+def test_p11_content_that_goes_missing_and_comes_back_unchanged_ends_with_a_live_card(conn, world, monkeypatch, discord_double):
+    """Round 2, R2-N1: an image is gone at the heartbeat, then back with the same bytes."""
+    image = pw.image("facebook-1.png")
+    found, request = pw.item(conn, images=[image])
+    saved = image.read_bytes()
+    image.unlink()
+    approvals.expire_due(conn)
+    assert approvals.get(conn, request.id).status == "superseded"
+    image.write_bytes(saved)
+    assert next_json()["due"] is False
+    assert state(conn, found) == "ready"
+    [fresh] = [a for a in approvals.pending(conn) if a.subject == found.subject]
+    assert fresh.content_hash == request.content_hash
+    assert [c for c in discord_double.contents("approvals") if fresh.id in c]
+
+
 # --- B2 ---------------------------------------------------------------------------------------------
 
 
