@@ -662,3 +662,12 @@ artifacts: merge of 18 (33ffd45 1054f37 591fd4d)
 decisions: review approved; fix round verified (either stub URL alone refused; one resolver uat_stub.base()); seed.py import conflict with 05 resolved by keeping both import sets; merged and pushed
 questions: -
 evidence:  merged branch pytest -rs -> 2433 passed, 0 skipped
+
+## 2026-10-27T03:40+0800 developer (bp 02, fix round 1) via conductor
+status:    done
+persona:   developer
+ticket:    bp-02
+artifacts: crew/browser-publishing-02-publish-queue rebased on d0b0119 (e5110e3 f74e3a5 cf4b5ac 26754fd)
+decisions: B1 and B2 fixed; conductor adopts the crew recommendation to record sync() raising requests in A11 (BA amends); BP-03 precheck must run sync() first (note on issues/03); sent to the reviewer for round 2
+questions: -
+evidence:  2586 passed, 0 skipped

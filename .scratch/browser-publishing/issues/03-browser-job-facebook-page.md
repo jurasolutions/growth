@@ -77,3 +77,9 @@ The agent's part is done when every criterion above passes, `security-review` ha
 - `.scratch/mission-control/reviews/test-strategy-v3.md`: §2 (fake `claude`, fixture site), §3 (T, F), §4.2 (AC-P rows by id), §4.3 (X4, X5, X8), §7 (R1 to R4, R6, U12), §11.2 row BP-03
 - `.scratch/browser-publishing/spike-headless-chrome.md`; `docs/adr/0005-…`
 - Code: `jura_growth/runner.py` (`claude_command`), `caps.py`, `transcripts.py`, `headless.py`, `agents/publish/job.py`, `config/settings.yaml`
+
+## Comments
+
+### 2026-10-27T03:40+0800 conductor: from BP-02a fix round
+
+The publish precheck (job.py) must run the queue's sync() first, so changed posts get their fresh request before anything is claimed.
