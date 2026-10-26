@@ -642,3 +642,14 @@ artifacts: reviews/code-review-18.md; merged crew/mission-control-adr-0003-exact
 decisions: 18 approved; SEC-1 (D1 stub with real Resend) must be fixed before UAT, plus uat.md conflict resolution and ST-1..3; sent as fix round 1
 questions: -
 evidence:  18 URL bypass probes all hit loopback, real token never sent; live and symlinked data folders refused; 2223 passed
+
+## 2026-10-27T03:29+0800 conductor (merge mc 05 and 10b)
+status:    done
+persona:   conductor
+ticket:    05, 10b
+artifacts: merges of 05 (round 2 approved) and 10b (fix round)
+decisions: 05 review round 2 approve (40 bypass probes refused; re-confirm works; empty rules refused only); merged
+decisions: 10b fix round verified by the conductor: all 5 reviewer probes now fail on their bug assertions (preview swap, masked link, any pages.dev, SHA on main, tag main); merged
+decisions: setup item: Ting Yu sets config/apps.yaml pages_project to the landing page Cloudflare Pages project before ticket 16 (UAT A5 uses example)
+questions: -
+evidence:  merged branch pytest -rs -> see next commit
