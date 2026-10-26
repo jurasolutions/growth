@@ -184,7 +184,9 @@ def _table(conn, world):
         (["approve", approval.id, *ARGS], 0, f"{approval.id} approved."),
         (["community", "removed", str(group_id)], 0, "is now skip, permanently"),
         (["community", "removed", "999"], 1, "999"),
-        (["one-pager"], 0, "posted to #mission-control"),  # MC-09; Discord off, so "not posted to …"
+        # MC-09. Discord is off here, so the one-pager waits in the outbox; AC-M1.6's
+        # "posted to #mission-control" through the Discord double is in test_one_pager_post.py.
+        (["one-pager"], 0, "not posted to #mission-control: DISCORD_WEBHOOK_MISSION_CONTROL not set; saved to outbox"),
         (["outreach", "requeue-shadow", "--dry-run"], 1, "live sending is ready"),
         (["pause", "all", "holiday"], 0, "paused all"),
         (["resume", "all"], 0, "resumed all"),
