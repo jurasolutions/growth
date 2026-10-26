@@ -24,6 +24,8 @@ from jura_growth.agents import community, publish
 from jura_growth.agents.community import groups as community_groups
 from jura_growth.agents.community import plan
 from jura_growth.agents.publish import items, kinds
+from sweep import AWKWARD, KEYCHAIN_VALUE, NAMED_ADDRESS, PHONE, RESEND_KEY, assert_clean, outbox_dir, planted
+from sweep import d2_secrets  # noqa: F401 - a fixture
 
 
 @pytest.fixture
@@ -638,3 +640,25 @@ def test_with_the_publish_plug_in_missing_a_community_approval_fails_closed(conn
     assert approvals.expire_due(conn) == []
     record = approvals.get(conn, request.id)
     assert record.status == "approved" and record.used_at is None
+
+
+# --- the sweep (AC-M11.1, AC-M12.1) over community-post and group-join cards, answers included ------
+
+
+def test_community_and_join_cards_carry_nothing_planted(conn, world, discord_double, d2_secrets):
+    marked = planted()
+    posted_in = pw.group(conn)
+    conn.execute("UPDATE community_groups SET name = ?, promo_rules = ? WHERE id = ?",
+                 (f"Owners {marked.marker} {RESEND_KEY}", f"Promotion is welcome. {PHONE}", posted_in))
+    pw.community_item(conn, posted_in, text=marked.text())
+    joining = pw.not_joined(conn)
+    conn.execute("UPDATE community_groups SET fit_reason = ? WHERE id = ?",
+                 (f"Owners asking {marked.marker} {KEYCHAIN_VALUE} {NAMED_ADDRESS}", joining))
+    join, _ = pw.join_item(conn, joining)
+    answers = [{"question": f"Why join? {marked.marker}", "answer": marked.text()},
+               {"question": f"Your email? {NAMED_ADDRESS}", "answer": f"{PHONE} {AWKWARD}"}]
+    pw.answers_item(conn, join, answers)
+    conn.commit()
+    cards.sweep(conn)
+    assert len(discord_double.posts("approvals")) == 3
+    assert_clean(discord_double, outbox_dir(), marked)
