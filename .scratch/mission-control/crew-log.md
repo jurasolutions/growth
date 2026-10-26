@@ -922,3 +922,12 @@ artifacts: .scratch/browser-publishing/reviews/code-review-05.md
 decisions: Approve; S1 (audit-failed post keeps posted record unflagged) and S2 (permalink group segment unproven, add to U14) should-fix; conductor sends S1, S2 and N8 to the developer as fix round 1; other nits left
 questions: -
 evidence:  3292 passed, 0 skipped; repro probes R1-R10 10 passed; no blocked paths; merge-tree clean
+
+## 2026-10-27T07:08+0800 conductor (bp 05 merge)
+status:    done
+persona:   conductor
+ticket:    bp-05
+artifacts: merge b185969 (fix round b72ef32 S1, ba3d2c8 N8, 7727a25 S2)
+decisions: fix round verified by the conductor (audit-failed post kept and named, never reset; one removal helper; U14 permalink-form step); merged
+questions: -
+evidence:  3295 passed, 0 skipped on crew/mission-control after the merge
