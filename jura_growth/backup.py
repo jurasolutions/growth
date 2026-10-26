@@ -22,9 +22,10 @@ def backup(conn: sqlite3.Connection) -> Path:
         destination.close()
     removed = prune_backups()
     pruned = prune_transcripts()
+    work = prune_browser_work()
     grids = prune_grids()
     log.event(conn, "backup.written", {"file": str(target), "removed": removed, "transcripts_pruned": pruned,
-                                       "grids_pruned": grids})
+                                       "browser_work_pruned": work, "grids_pruned": grids})
     return target
 
 
@@ -61,16 +62,40 @@ def prune_backups() -> list[str]:
     return removed
 
 
+def _browser_days() -> int:
+    """`caps.BROWSER_TRANSCRIPT_DAYS`, or `retention.browser_transcripts_days` if shorter."""
+    configured = config.settings().get("retention", {}).get("browser_transcripts_days")
+    return caps.effective(caps.BROWSER_TRANSCRIPT_DAYS, configured)
+
+
+def prune_browser_work() -> int:
+    """Delete what browser jobs left in their scratch folders (`work/<job>/`) once it is as old
+    as their transcripts may get: the live text a run read back from a page, and the read-only
+    image copies. Judged by the newest file in each entry. Returns how many entries went."""
+    cutoff = (timeutil.now_sgt() - timedelta(days=_browser_days())).timestamp()
+    count = 0
+    for job in sorted(caps.BROWSER_JOBS):
+        folder = paths.work_dir(job)
+        for entry in sorted(folder.iterdir()) if folder.exists() else []:
+            files = [entry, *entry.rglob("*")] if entry.is_dir() else [entry]
+            if max(f.stat().st_mtime for f in files) >= cutoff:
+                continue
+            if entry.is_dir():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
+            count += 1
+    return count
+
+
 def prune_transcripts() -> int:
     """Delete day folders older than `retention.transcripts_days` (30), and, sooner, the
     transcripts of browser jobs (`caps.BROWSER_JOBS`), which hold third-party page text: after
     `caps.BROWSER_TRANSCRIPT_DAYS` (7), or `retention.browser_transcripts_days` if shorter
     (BP §4.7). Returns how many folders and browser transcripts went."""
-    retention = config.settings().get("retention", {})
-    keep = int(retention.get("transcripts_days", 30))
-    keep_browser = caps.effective(caps.BROWSER_TRANSCRIPT_DAYS, retention.get("browser_transcripts_days"))
+    keep = int(config.settings().get("retention", {}).get("transcripts_days", 30))
     cutoff = timeutil.today() - timedelta(days=keep)
-    browser_cutoff = timeutil.today() - timedelta(days=keep_browser)
+    browser_cutoff = timeutil.today() - timedelta(days=_browser_days())
     count = 0
     root = paths.data_dir() / "transcripts"
     if not root.exists():

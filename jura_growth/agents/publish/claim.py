@@ -90,6 +90,17 @@ def _ready(conn: sqlite3.Connection, today: str) -> list[items.Item]:
     return [items.Item.from_row(r) for r in rows]
 
 
+def approved_ready(conn: sqlite3.Connection, today: str) -> list[items.Item]:
+    """The ready items `next_item()` looks at whose latest request is approved and unused: a plain
+    read, with none of the claim's checks, for the publish argv's upload rule (`scope.py`)."""
+    found = []
+    for item in _ready(conn, today):
+        latest = items.latest_request(conn, item)
+        if latest is not None and latest.status == approvals.APPROVED and latest.used_at is None:
+            found.append(item)
+    return found
+
+
 def _run_start(conn: sqlite3.Connection, run_id: int | None, now: datetime) -> datetime:
     started = db.scalar(conn, "SELECT started_at FROM runs WHERE id = ?", (run_id,)) if run_id else None
     return timeutil.parse(started) if started else now

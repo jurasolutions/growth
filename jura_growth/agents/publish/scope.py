@@ -16,7 +16,6 @@ Every list here is a deny or a narrowing. Nothing in config can add a host or a 
 
 from __future__ import annotations
 
-import json
 import sqlite3
 
 from jura_growth import paths, timeutil
@@ -64,29 +63,21 @@ def permissions():
 
 def next_has_image() -> bool:
     """Whether an approved, unclaimed item for today carries an image: the item `publish next`
-    could hand out. Read-only, and False (deny the upload) when growth.db can't be read."""
+    could hand out (`claim.approved_ready`). Read-only, through the read model's opener, and
+    False (deny the upload) when growth.db can't be read."""
+    from jura_growth import mission
+    from jura_growth.agents.publish import claim
+
     path = paths.db_path()
     if not path.exists():
         return False
     try:
-        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+        conn = mission.open_read_only(path)
     except sqlite3.Error:
         return False
     try:
-        rows = conn.execute(
-            "SELECT p.content_json FROM publish_items p WHERE p.state = 'ready' AND p.day = ? AND EXISTS ("
-            "SELECT 1 FROM approvals a WHERE a.subject = 'publish_item:' || p.id AND a.status = 'approved' "
-            "AND a.used_at IS NULL)",
-            (timeutil.today_str(),),
-        ).fetchall()
-    except sqlite3.Error:
+        return any(item.content.get("images") for item in claim.approved_ready(conn, timeutil.today_str()))
+    except (sqlite3.Error, ValueError):
         return False
     finally:
         conn.close()
-    for (content,) in rows:
-        try:
-            if json.loads(content).get("images"):
-                return True
-        except (ValueError, AttributeError):
-            continue
-    return False

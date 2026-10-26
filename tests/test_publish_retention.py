@@ -45,3 +45,30 @@ def test_config_may_shorten_publish_retention_but_never_lengthen_it(monkeypatch)
         path = transcript(today - timedelta(days=8 if days == 60 else 4), "50-publish.jsonl")
         backup.prune_transcripts()
         assert path.exists() is survives, days
+
+
+def test_the_publish_scratch_folders_go_after_7_days_too(monkeypatch):
+    """A run's `<A-id>-live.txt` is page text, and its image copies are read-only (code review 03)."""
+    import os
+    import time
+
+    monkeypatch.setenv("JURA_GROWTH_NOW", "2026-11-30T23:30:00+08:00")
+    work = paths.work_dir("publish")
+    old, fresh = work / "A-0001", work / "A-0002"
+    for folder in (old, fresh):
+        folder.mkdir(parents=True)
+        (folder / "live.txt").write_text("page text")
+        copy = folder / "1-facebook.png"
+        copy.write_bytes(b"png")
+        copy.chmod(0o444)
+    eight_days = time.mktime((2026, 11, 22, 12, 0, 0, 0, 0, -1))
+    yesterday = time.mktime((2026, 11, 29, 12, 0, 0, 0, 0, -1))  # the clock above is frozen, mtimes aren't
+    for path in (old / "live.txt", old / "1-facebook.png", old):
+        os.utime(path, (eight_days, eight_days))
+    for path in (fresh / "live.txt", fresh / "1-facebook.png", fresh):
+        os.utime(path, (yesterday, yesterday))
+
+    backup.prune_browser_work()
+
+    assert not old.exists()
+    assert (fresh / "live.txt").exists()
