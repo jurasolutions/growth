@@ -4,6 +4,10 @@ Status: accepted (2026-10-25, ticket MC-04a of `prd-jura-mission-control-2026-10
 
 Every outward action (an email, a post, a group join, an app build or release) needs an approval
 record whose content hash matches what will go out now, as computed by the kind's own `content()`.
+*Amended 2026-10-27 (code reviews 06 and BP-02):* the hash covers the exact bytes handed out, the
+text and every attachment, with no Unicode normalisation. Two drafts that differ in any byte, even an
+NFC and an NFD form of the same text, need separate approvals, because normalising would let a yes
+cover bytes Ting Yu never saw.
 The gated action claims the approval with `approvals.use()` inside a `BEGIN IMMEDIATE` transaction
 **before** the effect, because Resend, Chrome and Dispatch sit outside SQLite and no transaction can
 contain them. The claim is the point of no return: a skip is allowed until then, and no deadline is
