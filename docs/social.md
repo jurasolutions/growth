@@ -195,10 +195,15 @@ content, its day and its lifecycle (`ready`, `claimed`, `done`, `stopped`, `unkn
 `withdrawn`), the live URL and whether the live text matched. It holds no approval state: that
 lives only in `approvals`, under the subject `publish_item:<id>`.
 
-## Publishing through the browser (browser publishing PRD, BP-02a and BP-03)
+## Publishing through the browser (browser publishing PRD, BP-02a, BP-03 and BP-04)
 
 Nothing posts without Ting Yu's approval of that exact post (MC §4.6). The queue (BP-02a) works
-from Terminal and the tests; the scheduled `publish` job (BP-03, below) drives Chrome.
+from Terminal and the tests; the scheduled `publish` job (BP-03, below) drives Chrome. All three
+platforms can be put in `browser` mode: the Facebook Page (BP-03), then the Jura Instagram account
+and the Jura LinkedIn company page (BP-04), each on its own once its fixture rehearsal and first
+live post are done. With weekends on (`weekends: true`, kept per BP §6 Q1) and all three in
+`browser` mode, Saturday and Sunday bring up to three approval cards each; `weekends: false`
+stops weekend drafts for every platform.
 
 1. `social submit` makes a **publish item** for each platform in `browser` mode whose variant
    passed the brand gate, and raises one `social-post` approval request for it. The card in
@@ -216,6 +221,10 @@ from Terminal and the tests; the scheduled `publish` job (BP-03, below) drives C
    that text.
 4. The run then records `publish done <A-id> --url <url> --live-text-file <f>`, which marks the
    draft published with its URL, or `publish stopped <A-id> --reason <r>` on a stop signal.
+
+On Instagram's carousel days (Monday and Thursday) the item carries every slide, and the card
+says "N images attached, posted in this order". The approval covers each slide's bytes in that
+order, so changing any slide, or their order, raises a new card.
 
 Any change to the text, the images or their order, the page, the posting identity or the day
 supersedes the request and raises a new card over the new content, with deadlines from the new
@@ -258,14 +267,37 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
   not, the slot is a quiet run ("nothing due") and no Claude starts.
 - **What the run may do.** `--chrome`, only because `publish` is in `caps.BROWSER_JOBS`; no
   `--add-dir`. The tab tools by name, and the page tools only through one
-  `ClaudeInChromeDomain(<host>)` rule per Facebook host (`hosts.BROWSER_HOSTS`) while Facebook is
-  in `browser` mode. Scripting, network, console, shortcut, recording, browser-switching, batch and
+  `ClaudeInChromeDomain(<host>)` rule per host (`hosts.BROWSER_HOSTS`) of each platform in
+  `browser` mode, listed exactly until BP-01's check U18 shows how the rule treats subdomains:
+
+  | Platform | Hosts |
+  |---|---|
+  | Facebook Page | `www.facebook.com`, `facebook.com`, `m.facebook.com`, `web.facebook.com`, `business.facebook.com` |
+  | Instagram | `www.instagram.com`, `instagram.com` |
+  | LinkedIn company page | `www.linkedin.com`, `linkedin.com` |
+
+  No image CDN, link shim (`l.instagram.com`, `lnkd.in`) or country host (`sg.linkedin.com`) is
+  listed: a run never opens one in its tab, and `publish done` refuses a post URL on one.
+  Scripting, network, console, shortcut, recording, browser-switching, batch and
   resize tools, `upload_image`, web search and fetch are denied, and `file_upload` too unless the
   item due has an image. Bash runs only `publish next`, `done` and `stopped`.
 - **The prompt** (`prompts/publish.md`) checks the connected browser before `publish next` (no
-  browser ends `SKIP:` and claims nothing), opens its own tab, checks the page shows the Jura Page
-  as the posting identity before typing, posts exactly the approved text and images, reads the
-  live post back and records it, and closes its tab. Any stop signal ends in `publish stopped`.
+  browser ends `SKIP:` and claims nothing), opens its own tab, checks the posting identity before
+  typing, posts exactly the approved text and images, reads the live post back and records it,
+  and closes its tab. Any stop signal ends in `publish stopped`. Each platform has its own
+  section, with its target, identity check, posting steps, permalink and stop signals:
+  - **Facebook Page:** the Page's composer names the Page, not a person. Permalink on
+    `www.facebook.com` with `/posts/` or `story_fbid`.
+  - **Instagram:** signed in as the Jura account (its own profile shows "Edit profile"; "Follow"
+    or a "Switch accounts" prompt is the wrong identity). Create, Post, then every image in one
+    upload, in the order given, never reordered or edited; the caption typed once; Share once.
+    Permalink `https://www.instagram.com/p/<code>/`.
+  - **LinkedIn company page:** from the page's admin view, with the company name and logo at the
+    top of the composer, never a person's. Permalink
+    `https://www.linkedin.com/feed/update/urn:li:activity:<number>/`.
+
+  The run never uses a "Switch" control to change who it posts as: it stops with
+  `wrong-identity` instead.
 - **After the run** (`after_run`, before the run row is finished): an open claim becomes
   `unknown`. The transcript audit fails the run and pauses `publish` for:
   - a URL off the publish hosts, asked for or shown as a tab's address in any later result, or
@@ -276,6 +308,8 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
     before the claim;
   - an upload that isn't the claimed item's own read-only image copy, or a copy that no longer
     hashes to the approved image;
+  - images uploaded out of their approved order or more than once, or a post recorded as done
+    with fewer images than were approved (an Instagram carousel's slides go up in order);
   - a click, key, input, upload or navigation after `publish stopped`;
   - a never-tool.
 
