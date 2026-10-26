@@ -517,3 +517,13 @@ decisions: 10 changes-requested (B1 handoff SHA read after claim); apps/0003 saf
 decisions: UAT reaches its folder through a UAT-only SSH key whose forced command fixes the UAT folder variables, removed after UAT; seed-scenario lines added to mc 05, 10 and bp 02, 02b
 questions: -
 evidence:  reviewer: 1842 passed 10 skipped; main-built db migrates, rows equal
+
+## 2026-10-27T02:24+0800 reviewer (06, round 1) via conductor
+status:    done
+persona:   reviewer
+ticket:    06
+artifacts: reviews/code-review-06.md
+decisions: changes-requested; B1 email built before the claim, sent bytes never compared to content_hash; Sp1 unbounded claimed retries past Resend 24h idempotency; Sec2 NFC normalisation lets different bytes hash equal; every other attack held
+decisions: conductor: sent as fix round 1 (B1, Sp1, Sec2)
+questions: -
+evidence:  1932 passed; reviewer repros demonstrate both gaps; E14 holds
