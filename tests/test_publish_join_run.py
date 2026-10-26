@@ -24,6 +24,34 @@ from test_publish_run import alerts, browser, chrome, claim
 JOIN_PAGE = "Join group\nJoining as Jura Solutions"
 
 
+
+# --- typed reads: each asserts the row is there (pyright; code review 06, S5) ---------------------------
+
+
+def record_of(conn, approval_id: str) -> approvals.Approval:
+    found = approvals.get(conn, approval_id)
+    assert found is not None, approval_id
+    return found
+
+
+def item_of(conn, number: int | None) -> items.Item:
+    assert number is not None
+    found = items.get(conn, number)
+    assert found is not None, number
+    return found
+
+
+def group_of(conn, group_id: int) -> dict:
+    found = community_groups.get(conn, group_id)
+    assert found is not None, group_id
+    return found
+
+
+def row_of(conn, number: int) -> dict:
+    found = pw.item_row(conn, number)
+    assert found is not None, number
+    return found
+
 @pytest.fixture
 def fake(tmp_path, monkeypatch):
     found = publish_fake.install(tmp_path, monkeypatch)
@@ -68,7 +96,7 @@ def done(*words: str) -> dict:
 
 
 def item_row(conn, found) -> dict:
-    return pw.item_row(conn, found.id)
+    return row_of(conn, found.id)
 
 
 # --- AC-P4.1 a group with no questions -------------------------------------------------------------------
@@ -87,7 +115,7 @@ def test_an_approved_join_with_no_questions_is_requested_on_its_single_approval(
     assert handed["step"] == "join the group" and handed["approval"] == request.id
     row = item_row(conn, join)
     assert row["state"] == "done" and row["outcome"] == "requested"
-    assert community_groups.get(conn, join.ref_id)["join_status"] == "requested"
+    assert group_of(conn, join.ref_id)["join_status"] == "requested"
     assert db.scalar(conn, "SELECT count(*) FROM approvals") == 1  # no second request
     assert alerts(discord_double) == [] and not pause.is_paused(conn, "publish")
     [update] = discord_double.contents("community")  # a group item's run updates go to #community (§5.9)
@@ -150,10 +178,11 @@ def test_questions_submit_nothing_and_a_later_run_submits_exactly_the_approved_a
 
     assert first.status == "ok", first
     assert item_row(conn, join)["outcome"] == "questions"
-    assert community_groups.get(conn, join.ref_id)["join_status"] is None
+    assert group_of(conn, join.ref_id)["join_status"] is None
     assert alerts(discord_double) == [] and not pause.is_paused(conn, "publish")
     [second] = approvals.pending(conn)
     answers = items.of(conn, second.subject)
+    assert answers is not None
     assert second.kind == "group-join" and answers.kind == items.ANSWERS_ITEM and answers.parent_item == join.id
     [update] = discord_double.contents("community")
     assert f"Facebook group {join.ref_id} · membership questions" in update and second.id in update
@@ -175,8 +204,8 @@ def test_questions_submit_nothing_and_a_later_run_submits_exactly_the_approved_a
     assert later.status == "ok", later
     assert json.loads(fake.cli[0]["output"])["answers"] == pw.QUESTIONS
     assert item_row(conn, answers)["outcome"] == "requested"
-    assert community_groups.get(conn, join.ref_id)["join_status"] == "requested"
-    assert approvals.get(conn, request.id).used_at and approvals.get(conn, second.id).used_at
+    assert group_of(conn, join.ref_id)["join_status"] == "requested"
+    assert record_of(conn, request.id).used_at and record_of(conn, second.id).used_at
     assert not pause.is_paused(conn, "publish")
 
 
@@ -285,7 +314,7 @@ def test_a_join_screen_for_personal_profiles_only_skips_the_group_without_alert_
     outcome = run()
 
     assert outcome.status == "ok", outcome
-    group = community_groups.get(conn, join.ref_id)
+    group = group_of(conn, join.ref_id)
     assert group["pages_allowed"] == "no" and group["fit"] == "skip"
     assert alerts(discord_double) == [] and not pause.is_paused(conn, "publish")
     assert items.create_join(conn, join.ref_id, run_id=None).item is None
@@ -308,7 +337,7 @@ def test_another_joining_identity_stops_the_run_before_anything_is_submitted(con
     row = item_row(conn, join)
     assert row["state"] == "stopped" and row["stop_reason"] == "wrong-identity"
     assert pause.is_paused(conn, "publish")
-    assert community_groups.get(conn, join.ref_id)["pages_allowed"] == "unknown"  # a stop, not pages-not-allowed
+    assert group_of(conn, join.ref_id)["pages_allowed"] == "unknown"  # a stop, not pages-not-allowed
     [alert] = alerts(discord_double)
     assert request.id in alert and "expected posting identity" in alert
 
@@ -332,5 +361,5 @@ def test_a_fourth_join_in_the_iso_week_never_starts_a_run(conn, fake, approved_j
     run()
 
     assert not fake.started
-    record = approvals.get(conn, request.id)
+    record = record_of(conn, request.id)
     assert record.status == "approved" and record.used_at is None

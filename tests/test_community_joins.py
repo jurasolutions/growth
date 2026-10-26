@@ -38,8 +38,14 @@ def context() -> dict:
 # --- AC-P9.1 still holds, with propose-join in the community run's commands -----------------------------
 
 
+def commands() -> tuple[str, ...]:
+    declared = community.permissions("community")
+    assert declared is not None
+    return declared.commands
+
+
 def test_the_community_run_may_propose_joins_and_still_never_opens_facebook():
-    assert "community propose-join" in community.permissions("community").commands
+    assert "community propose-join" in commands()
     allowed, denied = headless.claude_rules("community")
     assert "Bash(jura-growth community propose-join:*)" in allowed or any("propose-join" in rule for rule in allowed)
     assert "WebFetch(domain:facebook.com)" in denied and "WebFetch(domain:*.facebook.com)" in denied
@@ -48,8 +54,8 @@ def test_the_community_run_may_propose_joins_and_still_never_opens_facebook():
 
 
 def test_proposing_a_join_never_joins_or_confirms_anything_itself():
-    commands = community.permissions("community").commands
-    assert "community set" not in commands and not any(c.startswith("publish ") for c in commands)
+    declared = commands()
+    assert "community set" not in declared and not any(c.startswith("publish ") for c in declared)
 
 
 def test_the_community_prompt_proposes_joins_within_the_room_and_still_never_opens_facebook():

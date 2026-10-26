@@ -16,8 +16,36 @@ import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
 from jura_growth import approvals, db, pause
 from jura_growth.agents.community import groups as community_groups
-from jura_growth.agents.publish import items
+from jura_growth.agents.publish import group_kinds, items
 
+
+
+# --- typed reads: each asserts the row is there (pyright; code review 06, S5) ---------------------------
+
+
+def record_of(conn, approval_id: str) -> approvals.Approval:
+    found = approvals.get(conn, approval_id)
+    assert found is not None, approval_id
+    return found
+
+
+def item_of(conn, number: int | None) -> items.Item:
+    assert number is not None
+    found = items.get(conn, number)
+    assert found is not None, number
+    return found
+
+
+def group_of(conn, group_id: int) -> dict:
+    found = community_groups.get(conn, group_id)
+    assert found is not None, group_id
+    return found
+
+
+def row_of(conn, number: int) -> dict:
+    found = pw.item_row(conn, number)
+    assert found is not None, number
+    return found
 
 @pytest.fixture
 def world(monkeypatch):
@@ -34,11 +62,11 @@ def claimed_join(conn, monkeypatch, group_id: int | None = None):
     run = pw.run(conn, monkeypatch=monkeypatch)
     handed = pw.next_item(conn, run)
     assert handed.approval is not None and handed.approval.id == request.id, handed.why
-    return items.get(conn, join.id), request
+    return item_of(conn, join.id), request
 
 
 def group_row(conn, item) -> dict:
-    return community_groups.get(conn, item.ref_id)
+    return group_of(conn, item.ref_id)
 
 
 def requests(conn) -> list[str]:
@@ -56,7 +84,7 @@ def test_a_join_records_its_outcome_and_join_status_and_raises_nothing(conn, wor
     result = pw.invoke("publish", "done", request.id, "--outcome", outcome)
 
     assert result.exit_code == 0, result.output
-    row = pw.item_row(conn, join.id)
+    row = row_of(conn, join.id)
     assert row["state"] == "done" and row["outcome"] == outcome
     assert group_row(conn, join)["join_status"] == outcome
     assert requests(conn) == before  # no second request
@@ -68,10 +96,10 @@ def test_a_join_may_carry_the_groups_url_on_facebooks_own_host(conn, world, monk
     join, request = claimed_join(conn, monkeypatch)
     wrong = pw.invoke("publish", "done", request.id, "--outcome", "requested", "--url", "https://facebook.com.evil.test/g")
     assert wrong.exit_code != 0 and "refused" in wrong.output
-    assert pw.item_row(conn, join.id)["state"] == "claimed"
+    assert row_of(conn, join.id)["state"] == "claimed"
     url = join.content["target_url"]
     assert pw.invoke("publish", "done", request.id, "--outcome", "requested", "--url", url).exit_code == 0
-    assert pw.item_row(conn, join.id)["post_url"] == url
+    assert row_of(conn, join.id)["post_url"] == url
 
 
 def test_an_outcome_needs_a_claimed_item(conn, world):
@@ -79,19 +107,21 @@ def test_an_outcome_needs_a_claimed_item(conn, world):
     pw.decide(conn, request)
     unclaimed = pw.invoke("publish", "done", request.id, "--outcome", "requested")
     assert unclaimed.exit_code != 0 and "isn't claimed" in unclaimed.output
-    assert pw.item_row(conn, join.id)["state"] == "ready"
+    assert row_of(conn, join.id)["state"] == "ready"
 
 
 def test_a_social_post_takes_no_join_outcome_and_an_outcome_no_live_text_file(conn, world, monkeypatch, tmp_path):
     social, social_request = pw.approved(conn, monkeypatch)
-    assert pw.next_item(conn, pw.run(conn, monkeypatch=monkeypatch)).approval.id == social_request.id
+    assert social_request is not None
+    handed = pw.next_item(conn, pw.run(conn, monkeypatch=monkeypatch)).approval
+    assert handed is not None and handed.id == social_request.id
     refused = pw.invoke("publish", "done", social_request.id, "--outcome", "member")
     assert refused.exit_code != 0 and "is for a join" in refused.output
     live = tmp_path / "live.txt"
     live.write_text("x")
     both = pw.invoke("publish", "done", social_request.id, "--outcome", "member", "--live-text-file", str(live))
     assert both.exit_code == 2
-    assert pw.item_row(conn, social.id)["state"] == "claimed"
+    assert row_of(conn, social.id)["state"] == "claimed"
 
 
 # --- AC-P4.4 member sets joined_as = page; rules still need a decision -------------------------------
@@ -111,7 +141,7 @@ def test_a_membership_joins_the_group_as_the_page_but_posts_wait_for_a_rules_dec
     pw.at(monkeypatch, "2026-11-10T11:00:00+08:00")
     handed = pw.next_item(conn, pw.run(conn))
     assert handed.item is None and any("rules aren't confirmed" in why for why in handed.why), handed.why
-    assert approvals.get(conn, made.approval.id).used_at is None
+    assert record_of(conn, made.approval.id).used_at is None
 
 
 def test_a_request_records_that_the_group_allows_pages_and_is_not_proposed_again(conn, world, monkeypatch):
@@ -163,7 +193,7 @@ def test_questions_record_the_join_and_raise_the_answers_as_their_own_item_and_c
     result = pw.invoke("publish", "done", request.id, "--outcome", "questions", "--file", q_file(tmp_path))
 
     assert result.exit_code == 0, result.output
-    row = pw.item_row(conn, join.id)
+    row = row_of(conn, join.id)
     assert row["state"] == "done" and row["outcome"] == "questions"
     [answers] = answers_items(conn, join)
     assert json.loads(answers["content_json"])["answers"] == pw.QUESTIONS and answers["state"] == "ready"
@@ -172,7 +202,7 @@ def test_questions_record_the_join_and_raise_the_answers_as_their_own_item_and_c
     assert second[0].id in result.output
     card = discord_double.contents("approvals")
     assert card and "Why do you want to join?" in card[-1] and pw.QUESTIONS[0]["answer"] in card[-1]
-    assert approvals.get(conn, request.id).used_at  # the join's own approval stays used
+    assert record_of(conn, request.id).used_at  # the join's own approval stays used
     assert group_row(conn, join)["join_status"] is None  # nothing was submitted
     assert discord_double.contents("alerts") == []
     assert not pause.is_paused(conn, "publish")
@@ -185,7 +215,7 @@ def test_answers_that_fail_the_brand_gate_raise_nothing_and_may_be_fixed_once(co
 
     assert failed.exit_code == 1
     assert "brand check" in failed.output and "exclamation" in failed.output.lower()
-    assert pw.item_row(conn, join.id)["outcome"] == "questions"  # the questions were met all the same
+    assert row_of(conn, join.id)["outcome"] == "questions"  # the questions were met all the same
     assert answers_items(conn, join) == [] and approvals.pending(conn) == []
     assert discord_double.contents("alerts") == [] and not pause.is_paused(conn, "publish")
 
@@ -234,7 +264,7 @@ def test_a_questions_file_that_cant_be_read_records_nothing(conn, world, monkeyp
     path.write_text(given, encoding="utf-8")
     result = pw.invoke("publish", "done", request.id, "--outcome", "questions", "--file", str(path))
     assert result.exit_code != 0
-    assert pw.item_row(conn, join.id)["state"] == "claimed" and answers_items(conn, join) == []
+    assert row_of(conn, join.id)["state"] == "claimed" and answers_items(conn, join) == []
 
 
 def test_the_questions_file_may_wrap_the_list(conn, world, monkeypatch, tmp_path):
@@ -249,7 +279,7 @@ def test_questions_need_their_file_and_only_questions_take_one(conn, world, monk
     join, request = claimed_join(conn, monkeypatch)
     assert pw.invoke("publish", "done", request.id, "--outcome", "questions").exit_code == 2
     assert pw.invoke("publish", "done", request.id, "--outcome", "member", "--file", q_file(tmp_path)).exit_code == 2
-    assert pw.item_row(conn, join.id)["state"] == "claimed"
+    assert row_of(conn, join.id)["state"] == "claimed"
 
 
 def test_new_questions_met_while_submitting_answers_raise_fresh_answers_for_the_same_join(conn, world, monkeypatch, tmp_path):
@@ -257,16 +287,16 @@ def test_new_questions_met_while_submitting_answers_raise_fresh_answers_for_the_
     changed = [{"question": "Which industry are you in?", "answer": "We help small teams automate their admin."}]
     result = pw.invoke("publish", "done", request.id, "--outcome", "questions", "--file", q_file(tmp_path, changed))
     assert result.exit_code == 0, result.output
-    assert pw.item_row(conn, answers.id)["outcome"] == "questions"
-    fresh = [row for row in answers_items(conn, items.get(conn, answers.parent_item)) if row["id"] != answers.id]
+    assert row_of(conn, answers.id)["outcome"] == "questions"
+    fresh = [row for row in answers_items(conn, item_of(conn, answers.parent_item)) if row["id"] != answers.id]
     assert len(fresh) == 1 and json.loads(fresh[0]["content_json"])["answers"] == changed
 
 
 def test_approved_answers_submitted_record_the_join_status(conn, world, monkeypatch):
     answers, request = claimed_answers(conn, monkeypatch)
     assert pw.invoke("publish", "done", request.id, "--outcome", "requested").exit_code == 0
-    assert pw.item_row(conn, answers.id)["outcome"] == "requested"
-    assert community_groups.get(conn, answers.ref_id)["join_status"] == "requested"
+    assert row_of(conn, answers.id)["outcome"] == "requested"
+    assert group_of(conn, answers.ref_id)["join_status"] == "requested"
 
 
 # --- X10 note-rules raises one group-rules request for the rules seen inside the group ------------------
@@ -380,7 +410,7 @@ def claimed_answers(conn, monkeypatch):
     pw.at(monkeypatch, "2026-11-10T10:30:00+08:00")
     handed = pw.next_item(conn, pw.run(conn, monkeypatch=monkeypatch))
     assert handed.approval is not None and handed.approval.id == request.id, handed.why
-    return items.get(conn, answers.id), request
+    return item_of(conn, answers.id), request
 
 
 def claimed_post(conn, monkeypatch):
@@ -388,7 +418,7 @@ def claimed_post(conn, monkeypatch):
     pw.decide(conn, request)
     handed = pw.next_item(conn, pw.run(conn, monkeypatch=monkeypatch))
     assert handed.approval is not None and handed.approval.id == request.id, handed.why
-    return items.get(conn, found.id), request
+    return item_of(conn, found.id), request
 
 
 @pytest.mark.parametrize("kind", ["join", "answers", "community post"])
@@ -398,9 +428,9 @@ def test_pages_not_allowed_skips_the_group_for_good_without_alert_or_pause(conn,
     result = pw.invoke("publish", "done", request.id, "--outcome", "pages-not-allowed")
 
     assert result.exit_code == 0, result.output
-    row = pw.item_row(conn, found.id)
+    row = row_of(conn, found.id)
     assert row["state"] == "done" and row["outcome"] == "pages-not-allowed"
-    group = community_groups.get(conn, found.content["group"])
+    group = group_of(conn, found.content["group"])
     assert group["pages_allowed"] == "no" and group["fit"] == "skip"
     assert group["fit_reason"] == "only personal profiles can join or post"
     assert discord_double.contents("alerts") == []
@@ -416,9 +446,9 @@ def test_pages_not_allowed_supersedes_membership_answers_still_waiting_for_the_g
 
     assert pw.invoke("publish", "done", request.id, "--outcome", "pages-not-allowed").exit_code == 0
 
-    record = approvals.get(conn, waiting.id)
+    record = record_of(conn, waiting.id)
     assert record is not None and record.status == "superseded"
-    assert pw.item_row(conn, answers.id)["state"] == "withdrawn"
+    assert row_of(conn, answers.id)["state"] == "withdrawn"
 
 
 def test_pages_not_allowed_supersedes_every_item_still_waiting_for_the_group(conn, world, monkeypatch, discord_double):
@@ -426,16 +456,18 @@ def test_pages_not_allowed_supersedes_every_item_still_waiting_for_the_group(con
     group_id = found.content["group"]
     waiting = items.create_community_post(conn, pw.planned(conn, group_id, day=pw.DAY.replace(day=12)), run_id=None)
     approved = items.create_community_post(conn, pw.planned(conn, group_id, day=pw.DAY.replace(day=13)), run_id=None)
+    assert approved.approval is not None
     pw.decide(conn, approved.approval)
     other_group = pw.community_item(conn, day=pw.DAY.replace(day=12))
 
     assert pw.invoke("publish", "done", request.id, "--outcome", "pages-not-allowed").exit_code == 0
 
+    kind = group_kinds.CommunityPost()
     for made in (waiting, approved):
-        record = approvals.get(conn, made.approval.id)
+        assert made.approval is not None and made.item is not None
+        record = record_of(conn, made.approval.id)
         assert record.status == "superseded", record
-        assert pw.item_row(conn, made.item.id)["state"] == "withdrawn"
-        assert approvals.kinds()["community-post"].kind.superseded_note(conn, made.item.subject) == (
-            "only personal profiles can join or post in the group")
-    assert approvals.get(conn, other_group[1].id).status == "pending"
-    assert pw.item_row(conn, other_group[0].id)["state"] == "ready"
+        assert row_of(conn, made.item.id)["state"] == "withdrawn"
+        assert kind.superseded_note(conn, made.item.subject) == "only personal profiles can join or post in the group"
+    assert record_of(conn, other_group[1].id).status == "pending"
+    assert row_of(conn, other_group[0].id)["state"] == "ready"
