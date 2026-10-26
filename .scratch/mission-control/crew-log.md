@@ -624,3 +624,12 @@ decisions: changes-requested; B1 content change re-raises on the same item with 
 decisions: conductor: fix round 1 with rebase; exact-bytes hashing for publish too (BA amends A3 and ADR 0003)
 questions: -
 evidence:  2310 passed; repros r1-r5 prove the gaps; caps.py additions only
+
+## 2026-10-27T03:23+0800 business-analyst (amendment: content hash covers exact bytes)
+status:    done
+persona:   business-analyst
+ticket:    -
+artifacts: jurasolutions/prd/pending/prd-jura-mission-control-2026-10-25.md (§4.6 A3 and header, "Amended 2026-10-27"); docs/adr/0003-an-approval-binds-to-content-and-is-claimed-once.md
+decisions: A3 and ADR 0003: the content hash covers the exact bytes handed out (text and every attachment, UTF-8 JSON with sorted keys), with no Unicode normalisation, as code reviews 06 (Sec2) and BP-02 established. NFC-only matching on live text read back (BP AC-P7.3) is a separate rule and is unchanged
+questions: -
+evidence:  grep A3 -> "no Unicode normalisation" present, "NFC-normalised" gone; AC count unchanged; ADR diff one paragraph added
