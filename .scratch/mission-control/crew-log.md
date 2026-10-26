@@ -495,3 +495,15 @@ artifacts: merge of 11 (rebased on c2b468f; fixes d81d895 33ec43b 03bece3)
 decisions: review approved; fix round verified by the conductor (shared waiting() helper, execv refusal, masking-degraded event); merged and pushed
 questions: -
 evidence:  merged branch pytest -> see commit
+## 2026-10-27T02:20+0800 qa-lead (uat.md for Discord-only decisions; ticket 17)
+status:    done
+persona:   qa-lead
+ticket:    17
+artifacts: .scratch/mission-control/uat.md; .scratch/mission-control/issues/17-uat-seed-outreach.md
+decisions: every decision step goes through #approvals via Dispatch (/growth approve|skip, buttons once post_buttons is on); Terminal approve/skip appear only as refusals (A3, A7); AC refs moved to the PRD's AC-M/AC-P ids
+decisions: outreach steps follow ticket 06: live refused until approvals.discord_buttons (UAT config only), requests only for emails due today within the quota (5 open, rest wait for a slot, top-up after send/skip), decide-by and use-by lapses, declined_by_ty on skip
+decisions: Parts A-C run on the real clock (decisions are stamped with it), seeded from --today; clock-jump steps last in each part
+decisions: ticket 17 (blocked by 06): --today, outreach-live, requests via the first send-due, edit-draft --lead, shadow-trial; other kinds' scenarios left with tickets 10, 05, BP-02a, BP-02b
+questions: tech lead: how does Dispatch reach the UAT folder? rec a UAT-only key whose authorized_keys forced command fixes the UAT folder variables, removed after UAT; Parts A-C wait on it
+questions: PM: tickets 10, 05, BP-02a, BP-02b don't list their uat.md seed scenarios; rec add one line each
+evidence:  grep uat.md for "jura-growth approve|skip" -> 2 hits, both refusal steps (A3 Terminal, A7 headless); jura-growth --help, outreach --help, log events --help -> the commands named in uat.md exist
