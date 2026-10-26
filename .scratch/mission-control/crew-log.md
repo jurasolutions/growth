@@ -633,3 +633,12 @@ artifacts: jurasolutions/prd/pending/prd-jura-mission-control-2026-10-25.md (§4
 decisions: A3 and ADR 0003: the content hash covers the exact bytes handed out (text and every attachment, UTF-8 JSON with sorted keys), with no Unicode normalisation, as code reviews 06 (Sec2) and BP-02 established. NFC-only matching on live text read back (BP AC-P7.3) is a separate rule and is unchanged
 questions: -
 evidence:  grep A3 -> "no Unicode normalisation" present, "NFC-normalised" gone; AC count unchanged; ADR diff one paragraph added
+
+## 2026-10-27T03:23+0800 reviewer (18) via conductor; ADR 0003 merged
+status:    done
+persona:   reviewer
+ticket:    18
+artifacts: reviews/code-review-18.md; merged crew/mission-control-adr-0003-exact-bytes (A3 and ADR 0003: exact bytes, no normalisation)
+decisions: 18 approved; SEC-1 (D1 stub with real Resend) must be fixed before UAT, plus uat.md conflict resolution and ST-1..3; sent as fix round 1
+questions: -
+evidence:  18 URL bypass probes all hit loopback, real token never sent; live and symlinked data folders refused; 2223 passed
