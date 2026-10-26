@@ -348,6 +348,67 @@ def test_an_image_copy_rewritten_during_the_run_fails_it_and_pauses_publish(conn
     assert pause.is_paused(conn, "publish")
 
 
+def test_an_image_copy_deleted_during_the_run_fails_it_too(conn, fake, approved, discord_double):
+    """Code review 03, N1: a missing copy is one the audit can't clear."""
+    steps = [*claim(), {"unlink": "{IMG1}"}, *post_steps()]
+    fake.scenario(steps, "OK: posted")
+
+    outcome = run()
+
+    assert outcome.status == "failed" and "is missing" in outcome.error
+    assert pause.is_paused(conn, "publish")
+
+
+# --- B3 (code review 03, round 2): nothing a page holds, and no bug, turns the checks off ----------------
+
+
+def shown_anywhere(conn, double) -> list[str]:
+    row = run_row(conn)
+    return [row["error"] or "", row["summary"] or "", *alerts(double), *double.contents("social-drafts")]
+
+
+@pytest.mark.parametrize("bomb", [t.ARRAY_BOMB, t.OBJECT_BOMB], ids=["arrays", "objects"])
+def test_a_json_bomb_on_the_page_still_fails_unapproved_typing_and_pauses(conn, fake, approved, discord_double, bomb):
+    steps = [*claim(), *post_steps()]
+    steps.insert(len(claim()) + 2, chrome(t.page("get_page_text", {}, PAGE_TEXT + "\n" + bomb)))
+    steps.insert(len(claim()) + 3, chrome(t.typed("hunter2 not approved")))
+    fake.scenario(steps, "OK: posted {A} " + PAGE_TEXT)
+
+    outcome = run()
+
+    assert outcome.status == "failed" and run_row(conn)["status"] == "failed"
+    assert "typed" in outcome.error
+    assert pause.is_paused(conn, "publish")
+    assert not [text for text in shown_anywhere(conn, discord_double) if PAGE_TEXT in text]
+    assert not mirrored_errors()
+
+
+def mirrored_errors() -> list[dict]:
+    from runner_support import mirrored
+
+    return mirrored("run.after_run_error")
+
+
+@pytest.mark.parametrize("error", [RecursionError("maximum recursion depth exceeded"), KeyError("text"), ValueError("x")])
+def test_any_error_in_the_checks_fails_the_run_closed(conn, fake, approved, monkeypatch, discord_double, error):
+    from jura_growth.agents.publish import job as publish_job
+
+    def broken(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(publish_job, "_audit", broken)
+    fake.scenario([*claim(), *post_steps()], "OK: posted {A} " + PAGE_TEXT)
+
+    outcome = run()
+
+    row = run_row(conn)
+    assert outcome.status == "failed" and row["status"] == "failed"
+    assert pause.is_paused(conn, "publish")
+    sent = alerts(discord_double)
+    assert len(sent) == 1 and f"run {row['id']}" in sent[0] and "couldn't" in sent[0]
+    assert not [text for text in shown_anywhere(conn, discord_double) if PAGE_TEXT in text]
+
+
 # --- AC-P9.4: no browser connected -------------------------------------------------------------------
 
 

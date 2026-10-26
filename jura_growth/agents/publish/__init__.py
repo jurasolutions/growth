@@ -102,9 +102,18 @@ def run_update(conn: sqlite3.Connection, run) -> list[str] | None:
 
 
 def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
+    """The publish run's checks, failing closed (code review 03, B3).
+
+    The runner keeps a run's own outcome when a plug-in's `after_run` raises, and for publish
+    that outcome holds the model's words and has had no audit. So any exception in the checks,
+    whatever its cause (page content, a parser bug, the database), fails the run here, with a
+    fixed reason naming the run, and pauses publishing (`job.failed_closed`)."""
     from jura_growth.agents.publish import job as publish_job
 
-    return publish_job.after_run(conn, job, run_id, outcome)
+    try:
+        return publish_job.after_run(conn, job, run_id, outcome)
+    except Exception as error:  # noqa: BLE001 - fail closed, whatever went wrong
+        return publish_job.failed_closed(conn, run_id, outcome, error)
 
 
 def approval_kinds() -> dict:

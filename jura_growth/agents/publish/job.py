@@ -184,15 +184,42 @@ def _approved_texts(item: items.Item) -> list[str]:
 
 
 def _copy_problems(conn: sqlite3.Connection, claimed: list[items.Item]) -> list[str]:
-    """Each claimed item's image copies must still hold exactly the approved bytes."""
+    """Each claimed item's image copies must still be there and hold exactly the approved bytes:
+    a missing copy is one the audit can't clear (code review 03, N1)."""
     problems = []
     for item in claimed:
         images = item.content.get("images") or []
         for number, (copy, image) in enumerate(zip(item.content.get("copies") or [], images), start=1):
             path = Path(copy)
-            if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() != image.get("sha256"):
+            if not path.is_file():
+                problems.append(f"image copy {number} of {_shown(conn, item)} is missing")
+            elif hashlib.sha256(path.read_bytes()).hexdigest() != image.get("sha256"):
                 problems.append(f"image copy {number} of {_shown(conn, item)} no longer holds the approved image")
     return problems
+
+
+def failed_closed(conn: sqlite3.Connection, run_id: int | None, outcome, error: Exception):
+    """The outcome when the checks themselves broke (`publish.after_run`, B3): failed, with a
+    fixed reason naming the run and the error's type only, and publishing paused. Logging and
+    the pause are tried, and neither can stop the failed outcome from standing."""
+    from jura_growth import runner
+
+    name = type(error).__name__
+    for step in (
+        lambda: log.event(conn, "publish.checks_failed", {"error": name}, level="error", agent=items.AGENT, run_id=run_id),
+        lambda: pause.pause(conn, items.AGENT, f"the checks after run {run_id} couldn't run", notify=False),
+    ):
+        try:
+            step()
+        except Exception:  # noqa: BLE001 - the failed outcome stands whatever happens here
+            pass
+    return runner.Outcome(
+        "failed",
+        summary=f"the checks after run {run_id} couldn't run",
+        error=(f"The checks after run {run_id} couldn't run ({name}), so the run is treated as failed. Publishing "
+               f"is paused for every item until you resume it: {commands.RESUME}."),
+        cost_usd=getattr(outcome, "cost_usd", None),
+    )
 
 
 def _no_browser(conn: sqlite3.Connection, run_id: int) -> None:

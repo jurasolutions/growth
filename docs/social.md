@@ -279,7 +279,10 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
   - a click, key, input, upload or navigation after `publish stopped`;
   - a never-tool.
 
-  A tab left open is a warning. A run that found no browser alerts once a day.
+  A tab left open is a warning. A run that found no browser alerts once a day. The tab address
+  is read only from the tab context that ends each result, never from page text, and nothing a
+  page holds can make the audit raise. If the checks fail for any reason at all, the run fails
+  with a fixed reason naming it, and publishing pauses (`publish.after_run` fails closed).
 - **No model text goes out.** Every publish run's summary and error are written from the item's
   record: the A-id, the platform, what happened, the URL or the closed stop reason, and the run
   id. The model's own summary and `FAIL:` line stay in the transcript.

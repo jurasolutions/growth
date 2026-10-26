@@ -103,6 +103,9 @@ for step in scenario["steps"]:
         os.chmod(target, 0o644)
         target.write_bytes(b"not the approved image")
         emit("Write", {"file_path": str(target), "content": "(bytes)"}, "File written")
+    elif "unlink" in step:
+        Path(step["unlink"]).unlink()
+        emit("Write", {"file_path": step["unlink"], "content": "(removed)"}, "File removed")
     elif "write" in step:
         target = work / step["write"]
         target.parent.mkdir(parents=True, exist_ok=True)
