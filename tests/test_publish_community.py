@@ -106,6 +106,13 @@ def _plan_week(conn) -> dict[str, int]:
     return posts
 
 
+def test_a_post_whose_time_to_decide_has_passed_says_when_it_closed_as_a_card_would(conn, world, monkeypatch):
+    """Final code review St7: the same time format as the cards."""
+    pw.at(monkeypatch, "2026-11-10T18:30:00+08:00")
+    made = items.create_community_post(conn, pw.planned(conn, pw.group(conn)), run_id=None)
+    assert made.item is None and "its time to be decided has passed (Tue 10 Nov, 18:00 SGT)" in made.why
+
+
 def test_publish_plan_raises_a_community_post_request_only_in_groups_joined_as_the_page(conn, world, discord_double):
     posts = _plan_week(conn)
     result = pw.invoke("community", "publish-plan", "--week", "2026-W46")

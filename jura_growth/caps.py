@@ -1,5 +1,5 @@
 """Hard limits. Config may only tighten any of these: lower a count, narrow the
-publish window, or lengthen a minimum gap (PUBLISH_MINUTES_BETWEEN_ACTIONS).
+posting window, or lengthen a minimum gap (PUBLISH_MINUTES_BETWEEN_ACTIONS).
 Loosening one is a code change.
 
 The outreach caps sit below the Spam Control Act's bulk thresholds (more than

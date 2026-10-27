@@ -81,6 +81,14 @@ def parse(value: str) -> datetime:
     return moment if moment.tzinfo else moment.replace(tzinfo=SGT)
 
 
+def when(moment: datetime | str) -> str:
+    """A moment as Discord shows it, in cards, the health strip, the
+    one-pager and publish items alike: `Tue 10 Nov, 16:30 SGT`. Takes a
+    datetime or a stored ISO stamp."""
+    moment = (parse(moment) if isinstance(moment, str) else moment).astimezone(SGT)
+    return f"{moment:%a} {moment.day} {moment:%b}, {moment:%H:%M} SGT"
+
+
 def midnight(day: date) -> datetime:
     """The start of an SGT day."""
     return datetime(day.year, day.month, day.day, tzinfo=SGT)

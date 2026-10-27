@@ -20,7 +20,7 @@ from datetime import timedelta
 from html import escape
 from pathlib import Path
 
-from jura_growth import discord, health, images, log, mission, paths, privacy, slots
+from jura_growth import discord, health, images, log, mission, paths, privacy, slots, timeutil
 
 ASK_ME = ("`/growth status`", "`/growth approvals`", "`/growth one-pager`", "`/growth pause <agent|all>`", "`/growth resume <agent|all>`")
 SLOTS_LISTED = 3  # a job with more slots in a day shows counts per status instead
@@ -78,12 +78,12 @@ def _approvals(snapshot: mission.Snapshot) -> list[str]:
     lines = [", ".join(f"{kind} {counts[kind]}" for kind in sorted(counts))]
     oldest = min(waiting, key=lambda r: (r.requested_at, r.id))
     lines.append(
-        f"Oldest: {oldest.id} ({oldest.kind}), waiting since {health.when(oldest.requested_at)}, "
-        f"decide by {health.when(oldest.decide_by)}"
+        f"Oldest: {oldest.id} ({oldest.kind}), waiting since {timeutil.when(oldest.requested_at)}, "
+        f"decide by {timeutil.when(oldest.decide_by)}"
     )
     lapsing = sorted((r for r in waiting if r.decide_by < following), key=lambda r: (r.decide_by, r.id))
     if lapsing:
-        lines.append("Lapsing before the next one-pager: " + ", ".join(f"{r.id} ({health.when(r.decide_by)})" for r in lapsing))
+        lines.append("Lapsing before the next one-pager: " + ", ".join(f"{r.id} ({timeutil.when(r.decide_by)})" for r in lapsing))
     # Decisions are made in Discord only (Ting Yu, 2026-10-26): point there.
     lines.append(f"Decide in #approvals: {len(waiting)} waiting for you.")
     return lines

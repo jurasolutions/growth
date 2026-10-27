@@ -131,10 +131,6 @@ def day_label(moment: datetime) -> str:
     return f"{moment:%a} {moment.day} {moment:%b}"
 
 
-def when(moment: datetime) -> str:
-    return f"{day_label(moment)} {moment:%H:%M}"
-
-
 def _plural(n: int, word: str, many: str | None = None) -> str:
     return f"{n} {word if n == 1 else many or word + 's'}"
 
@@ -162,7 +158,7 @@ def strip(snapshot) -> list[str]:
     for agent, reason in snapshot.paused:
         items.append(f"`{agent}` is paused: {reason}. Send `/growth resume {agent}`.")
     for failure in snapshot.failures:
-        item = f"`{failure.job}` failed on {when(failure.at)}."
+        item = f"`{failure.job}` failed on {timeutil.when(failure.at)}."
         if failure.error:
             # A claude job's error is the model's own `FAIL:` line: untrusted (MC §4.3, final review Sp2).
             item += "\n> " + untrusted_line(failure.error)
@@ -181,7 +177,7 @@ def strip(snapshot) -> list[str]:
         items.append(f"Not posted to #approvals yet: {', '.join(unposted)}. The heartbeat posts {'it' if len(unposted) == 1 else 'them'}.")
     for r in requests:
         if r.state == mission.LAPSED_UNUSED:
-            items.append(f"{r.id} ({r.kind}) was approved but not used before its use-by" + (f", {when(r.use_by)}." if r.use_by else "."))
+            items.append(f"{r.id} ({r.kind}) was approved but not used before its use-by" + (f", {timeutil.when(r.use_by)}." if r.use_by else "."))
     for state, text in ((NOT_INSTALLED, "Jobs not installed: {}. Run `jura-growth schedule install` on the Mac."),
                         (OUT_OF_DATE, "Jobs installed but out of date: {}. Run `jura-growth schedule install` again.")):
         jobs = [job for job, found in snapshot.installs.items() if found == state]
@@ -204,7 +200,8 @@ def _missed(snapshot) -> list[str]:
         if not times:
             continue
         times.sort()
-        shown = ", ".join(when(at) for at in times[:MISSED_SHOWN])
+        # "; " because each time holds a comma of its own.
+        shown = "; ".join(timeutil.when(at) for at in times[:MISSED_SHOWN])
         more = f" and {len(times) - MISSED_SHOWN} more" if len(times) > MISSED_SHOWN else ""
         items.append(f"`{job}` missed {_plural(len(times), 'slot')} since {day_label(since)}: {shown}{more}.")
     return items

@@ -209,7 +209,7 @@ def _too_late(item_kind: str, day: str, content: dict) -> str | None:
 
     closes = kinds.closes(_probe(item_kind, 0, day=day), content)
     if timeutil.now_sgt() >= closes:
-        return f"its time to be decided has passed ({closes.astimezone(timeutil.SGT):%a %d %b %H:%M} SGT)"
+        return f"its time to be decided has passed ({timeutil.when(closes)})"
     return None
 
 

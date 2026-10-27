@@ -59,16 +59,6 @@ class CardRefused(ValueError):
 # --- the text -------------------------------------------------------------------
 
 
-def when(stamp: str) -> str:
-    """`Tue 10 Nov, 16:30 SGT`."""
-    return when_at(timeutil.parse(stamp))
-
-
-def when_at(moment) -> str:
-    moment = moment.astimezone(timeutil.SGT)
-    return f"{moment:%a} {moment.day} {moment:%b}, {moment:%H:%M} SGT"
-
-
 def _clock(stamp: str | None) -> str:
     return timeutil.parse(stamp).astimezone(timeutil.SGT).strftime("%H:%M") if stamp else "?"
 
@@ -85,7 +75,7 @@ def state(approval: approvals.Approval) -> str:
 def status_line(conn: sqlite3.Connection, approval: approvals.Approval) -> str:
     shown = state(approval)
     if shown == approvals.PENDING:
-        return f"decide by {when(approval.decide_by)}"
+        return f"decide by {timeutil.when(approval.decide_by)}"
     if shown in (approvals.APPROVED, CLAIMED):
         line = f"Approved by {APPROVER}, {_clock(approval.decided_at)} SGT"
         return line + (f" · claimed at {_clock(approval.used_at)} SGT" if shown == CLAIMED else "")

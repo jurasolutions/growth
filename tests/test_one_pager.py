@@ -102,12 +102,12 @@ LAPSED_EMAIL = request(412, state=mission.LAPSED_UNUSED, use_by=datetime(2026, 1
 HEALTH_ITEMS = [
     ("PAUSE file", dict(pause_file="holiday"), "The PAUSE file is in place"),
     ("paused agent", dict(paused=(("outreach", "3 failed runs in a row"),)), "`outreach` is paused: 3 failed runs in a row"),
-    ("latest run failed", dict(failures=(mission.Failure("community", datetime(2026, 11, 9, 7, 30, tzinfo=SGT), "boom"),)), "`community` failed on Mon 9 Nov 07:30"),
-    ("missed slot", dict(slots={("scout-send", MISSED.at.date()): [MISSED]}), "`scout-send` missed 1 slot since Fri 6 Nov"),
+    ("latest run failed", dict(failures=(mission.Failure("community", datetime(2026, 11, 9, 7, 30, tzinfo=SGT), "boom"),)), "`community` failed on Mon 9 Nov, 07:30 SGT"),
+    ("missed slot", dict(slots={("scout-send", MISSED.at.date()): [MISSED]}), "`scout-send` missed 1 slot since Fri 6 Nov: Fri 6 Nov, 10:00 SGT."),
     ("undelivered post", dict(undelivered=2), "2 Discord messages since the last one-pager wait in the outbox"),
     ("outbox file", dict(outbox=1), "1 Discord message since the last one-pager waits in the outbox"),
     ("unposted request", dict(approvals=(request(412, posted=False),)), "Not posted to #approvals yet: A-0412"),
-    ("approved email lapsed unsent", dict(approvals=(LAPSED_EMAIL,)), "A-0412 (outreach-email) was approved but not used before its use-by, Tue 10 Nov 07:59"),
+    ("approved email lapsed unsent", dict(approvals=(LAPSED_EMAIL,)), "A-0412 (outreach-email) was approved but not used before its use-by, Tue 10 Nov, 07:59 SGT"),
     ("job not installed", dict(installs={"backup": health.NOT_INSTALLED, "social": health.INSTALLED}), "Jobs not installed: backup."),
     ("job out of date", dict(installs={"social": health.OUT_OF_DATE}), "Jobs installed but out of date: social."),
     ("setup gap", dict(gaps=(health.Gap("RESEND_API_KEY_OUTREACH"),)), "`RESEND_API_KEY_OUTREACH`: not set"),
@@ -129,6 +129,12 @@ def test_each_health_item_appears_when_its_cause_is_planted(cause, fields, line)
 def test_a_missed_slot_before_the_previous_business_day_is_not_listed():
     old = slots.SlotStatus("scout-send", datetime(2026, 11, 5, 16, 30, tzinfo=SGT), "missed")  # Thu; Fri 6 Nov is the previous business day
     assert health.strip(snap(slots={("scout-send", old.at.date()): [old]})) == []
+
+
+def test_missed_slot_times_are_set_apart_by_semicolons_since_each_time_holds_a_comma():
+    times = [slots.SlotStatus("scout-send", datetime(2026, 11, 6, 10, minute, tzinfo=SGT), "missed") for minute in (0, 10)]
+    [line] = health.strip(snap(slots={("scout-send", times[0].at.date()): times}))
+    assert line.endswith("missed 2 slots since Fri 6 Nov: Fri 6 Nov, 10:00 SGT; Fri 6 Nov, 10:10 SGT.")
 
 
 def test_the_health_items_follow_the_order_in_mc_5_4():
@@ -179,7 +185,8 @@ def five_waiting(conn):
 def test_approvals_waiting_counts_by_kind_names_the_oldest_and_what_lapses_first(five_waiting):
     lines = section(one_pager.text(mission.read(world.source())), "Approvals waiting")
     assert lines[0] == "outreach-email 4, social-post 1"
-    assert lines[1].startswith("Oldest: A-0101 (outreach-email)")
+    assert lines[1].startswith("Oldest: A-0101 (outreach-email), waiting since Mon 9 Nov, 09:11 SGT, decide by ")
+    assert lines[1].endswith(" SGT")
     lapsing = next(line for line in lines if line.startswith("Lapsing before the next one-pager:"))
     for number in (101, 102, 103, 104, 105):
         assert f"A-0{number}" in lapsing

@@ -129,7 +129,7 @@ def _listing(conn, kind: str | None) -> list[str]:
     lines = []
     for approval, due in live[:LIST_LIMIT]:
         title = _title(conn, approval, registry.get(approval.kind))
-        lines.append(f"{approval.id} · {cards.label(approval.kind)} · decide by {cards.when_at(due)} · {title}")
+        lines.append(f"{approval.id} · {cards.label(approval.kind)} · decide by {timeutil.when(due)} · {title}")
     if lapsed:
         lines.append(f"{lapsed} more passed {'their' if lapsed != 1 else 'its'} decide-by and "
                      f"expire{'' if lapsed != 1 else 's'} unanswered.")
