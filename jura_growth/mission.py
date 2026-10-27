@@ -272,7 +272,7 @@ def _failures(conn: sqlite3.Connection, now: datetime) -> tuple[Failure, ...]:
         " ORDER BY started_at, id",
         (day_ago,),
     ).fetchall()
-    return tuple(Failure(_clean(row["job"]), _at(row["started_at"]), _clean((row["error"] or "")[:300]) or None) for row in rows)
+    return tuple(Failure(_clean(row["job"]), timeutil.parse(row["started_at"]).astimezone(SGT), _clean((row["error"] or "")[:300]) or None) for row in rows)
 
 
 def _yesterday(conn: sqlite3.Connection, now: datetime) -> tuple[Yesterday | None, float]:
@@ -333,7 +333,7 @@ def _last_one_pager(conn: sqlite3.Connection, now: datetime, scheduled: datetime
     ).fetchone()[0]
     if not found:
         return scheduled
-    ran = _at(found)
+    ran = timeutil.parse(found).astimezone(SGT)
     return ran if ran >= now - ONE_PAGER_LOOKBACK else scheduled
 
 
@@ -354,7 +354,8 @@ def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: dateti
 
 
 def _request(row: sqlite3.Row, now: datetime) -> Request:
-    decide_by, use_by = _at(row["decide_by"]), _at_or_none(row["use_by"])
+    decide_by = timeutil.parse(row["decide_by"]).astimezone(SGT)
+    use_by = timeutil.parse(row["use_by"]).astimezone(SGT) if row["use_by"] else None
     status = row["status"]
     if status == "pending":
         state = WAITING if now < decide_by else LAPSED
@@ -370,20 +371,12 @@ def _request(row: sqlite3.Row, now: datetime) -> Request:
         id=f"A-{row['id']:04d}",
         kind=_clean(row["kind"]),
         state=state,
-        requested_at=_at(row["requested_at"]),
+        requested_at=timeutil.parse(row["requested_at"]).astimezone(SGT),
         decide_by=decide_by,
         use_by=use_by,
         posted=row["posted_at"] is not None,
         close_reason=_clean_or_none(row["close_reason"]),
     )
-
-
-def _at_or_none(value: str | None) -> datetime | None:
-    return _at(value) if value else None
-
-
-def _at(value: str) -> datetime:
-    return timeutil.parse(value).astimezone(SGT)
 
 
 # --- records for the slot classifier (MC §4.5) -------------------------------------
