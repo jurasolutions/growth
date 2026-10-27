@@ -410,8 +410,9 @@ def zone(monkeypatch):
 
 
 @pytest.mark.parametrize("name", ["Asia/Singapore", "UTC", "America/New_York"])
-def test_an_app_build_has_seven_days_to_decide_and_one_day_to_use(conn, monkeypatch, zone, name):
-    """X2: whatever the machine's time zone."""
+def test_an_app_build_has_seven_days_to_decide_and_no_use_by(conn, monkeypatch, zone, name):
+    """X2: whatever the machine's time zone. It is applied on decide, so like group-rules it has
+    no use-by: the approval claims it at once (final code review St5)."""
     zone(name)
     aw.at(monkeypatch, aw.NOW)
     request = raise_for(conn, file_prd(101))
@@ -419,19 +420,20 @@ def test_an_app_build_has_seven_days_to_decide_and_one_day_to_use(conn, monkeypa
     approved_at = "2026-11-12T09:00:00+08:00"
     aw.at(monkeypatch, approved_at)
     aw.approve(conn, request, args={})
-    assert aw.get(conn, request.id).use_by == "2026-11-13T09:00:00+08:00"
+    record = aw.get(conn, request.id)
+    assert record.use_by is None and record.used_at == approved_at
 
 
 def test_a_configured_app_build_deadline_may_shorten_and_never_lengthen(conn, monkeypatch):
-    """X3 for this kind: the deadlines come from the `approvals:` block, capped by caps.py."""
+    """X3 for this kind: the decide-by comes from the `approvals:` block, capped by caps.py."""
     aw.at(monkeypatch, aw.NOW)
     patched = dict(config.settings())
-    patched["approvals"] = {"deadlines": {"app-build": {"decide_by_days": 3, "use_by_days": 5}}}
+    patched["approvals"] = {"deadlines": {"app-build": {"decide_by_days": 3}}}
     monkeypatch.setattr(config, "settings", lambda: patched)
     shorter = raise_for(conn, file_prd(101))
     assert shorter.decide_by == aw.later(aw.NOW, days=3)
     aw.approve(conn, shorter, args={})
-    assert aw.get(conn, shorter.id).use_by == aw.later(aw.NOW, days=1)  # 5 reads as the cap, 1
+    assert aw.get(conn, shorter.id).use_by is None
     patched["approvals"] = {"deadlines": {"app-build": {"decide_by_days": 30}}}
     assert raise_for(conn, file_prd(102)).decide_by == aw.later(aw.NOW, days=7)
 

@@ -112,7 +112,10 @@ class AppBuild:
         return approvals.Preview(title=f"{found.app_id} {found.name}", text=text, reason="", files=(found.path,))
 
     def deadlines(self, conn: sqlite3.Connection, subject: str, now: datetime) -> approvals.Deadlines:
-        return day_deadlines(KIND, now)
+        # Applied on decide: `on_approve` claims at the decision, so like
+        # group-rules there is no use-by to wait for.
+        return approvals.Deadlines(decide_by=now + timedelta(days=approval_settings.deadline(KIND, "decide_by_days")),
+                                   use_by=None)
 
     def on_approve(self, conn: sqlite3.Connection, subject: str, args: dict[str, str]) -> str:
         build = hand_off(conn, subject, run_id=log.current_run_id())
