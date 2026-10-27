@@ -208,14 +208,5 @@ def _missed(snapshot) -> list[str]:
 
 
 def _database(snapshot, mission) -> list[str]:
-    if snapshot.db_state == mission.UNFINISHED_WRITE:
-        return ["growth.db has an unfinished write. Send `/growth status` to clear it."]
-    if snapshot.db_state == mission.MISSING:
-        return ["growth.db doesn't exist yet, so nothing has been recorded."]
-    if snapshot.db_state == mission.UNREADABLE:
-        return [f"growth.db couldn't be read ({snapshot.db_error}). Send `/growth status` to check it."]
-    if snapshot.missing_migrations:
-        names = list(snapshot.missing_migrations)
-        listed = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
-        return [f"growth.db isn't migrated yet ({listed}). Send `/growth status` to migrate it."]
-    return []
+    problem = mission.db_problem(snapshot)
+    return [problem.strip] if problem else []

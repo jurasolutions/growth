@@ -58,13 +58,9 @@ def _needs_you(snapshot: mission.Snapshot) -> list[str]:
 
 
 def _unavailable(snapshot: mission.Snapshot) -> str:
-    if snapshot.db_state == mission.MISSING:
-        return "Nothing recorded yet: growth.db doesn't exist"
-    if snapshot.db_state == mission.UNFINISHED_WRITE:
-        return "Not available: growth.db has an unfinished write"
-    if snapshot.db_state == mission.UNREADABLE:
-        return "Not available: growth.db couldn't be read"
-    return "Not available: growth.db isn't migrated yet"
+    # A section is missing with nothing else wrong only when its table is.
+    problem = mission.db_problem(snapshot)
+    return (problem or mission.NOT_MIGRATED).unavailable
 
 
 def _approvals(snapshot: mission.Snapshot) -> list[str]:

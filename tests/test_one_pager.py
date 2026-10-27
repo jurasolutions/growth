@@ -220,6 +220,22 @@ def test_without_an_approvals_table_the_section_says_so():
     assert lines == ["Not available: growth.db isn't migrated yet"]
 
 
+@pytest.mark.parametrize("db_state", [s for s in mission.DB_STATES if s != mission.OK])
+def test_the_strip_and_the_sections_word_each_database_state_from_one_map(db_state):
+    """Code review 08 ST-3: one map beside the states in mission.py words each one, for the health
+    strip and for a section the database can't fill, so a new state can't reach only one of them."""
+    assert set(mission.DB_WORDING) == set(mission.DB_STATES) - {mission.OK}
+    wording = mission.DB_WORDING[db_state]
+    shown = snap(db_state=db_state, db_error="SQLITE_CORRUPT", approvals=None)
+    assert health.strip(shown)[0] == wording.strip.format(error="SQLITE_CORRUPT")
+    assert section(one_pager.text(shown), "Approvals waiting") == [wording.unavailable]
+
+
+def test_a_database_state_with_no_wording_fails_loudly_rather_than_reading_as_unmigrated():
+    with pytest.raises(KeyError):
+        mission.db_problem(snap(db_state="a state added later"))
+
+
 # --- Today and Yesterday ------------------------------------------------------------------
 
 

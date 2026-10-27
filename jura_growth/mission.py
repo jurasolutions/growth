@@ -34,6 +34,31 @@ from jura_growth import agents, discord, health, paths, privacy, schedule, slots
 from jura_growth.timeutil import SGT
 
 OK, MISSING, UNFINISHED_WRITE, UNREADABLE = "ok", "missing", "unfinished write", "unreadable"
+DB_STATES = (OK, MISSING, UNFINISHED_WRITE, UNREADABLE)
+
+
+@dataclass(frozen=True)
+class DbWording:
+    """How a database problem reads: `strip` is the health strip's item,
+    with what to send (`{error}` or `{listed}` filled in), and
+    `unavailable` stands in for a section growth.db couldn't fill."""
+
+    strip: str
+    unavailable: str
+
+
+# One map, so the health strip and the one-pager word a state alike, and a
+# new state can't reach only one of them (code review 08 ST-3).
+DB_WORDING = {
+    MISSING: DbWording("growth.db doesn't exist yet, so nothing has been recorded.",
+                       "Nothing recorded yet: growth.db doesn't exist"),
+    UNFINISHED_WRITE: DbWording("growth.db has an unfinished write. Send `/growth status` to clear it.",
+                                "Not available: growth.db has an unfinished write"),
+    UNREADABLE: DbWording("growth.db couldn't be read ({error}). Send `/growth status` to check it.",
+                          "Not available: growth.db couldn't be read"),
+}
+NOT_MIGRATED = DbWording("growth.db isn't migrated yet ({listed}). Send `/growth status` to migrate it.",
+                         "Not available: growth.db isn't migrated yet")
 BUSY_TIMEOUT = 2  # seconds: scout-send writes every 10 minutes, so reads stay short
 _BUSY = {"SQLITE_READONLY_ROLLBACK", "SQLITE_BUSY", "SQLITE_LOCKED"}
 
@@ -87,6 +112,20 @@ class Snapshot:
     broken: tuple[str, ...] = ()  # plug-ins that failed to load
     yesterday: Yesterday | None = None
     spend_today: float = 0.0
+
+
+def db_problem(snapshot: Snapshot) -> DbWording | None:
+    """What is wrong with growth.db, worded from `DB_WORDING` with the
+    details filled in, or None when nothing is. A state with no wording
+    raises KeyError rather than reading as unmigrated."""
+    if snapshot.db_state != OK:
+        wording = DB_WORDING[snapshot.db_state]
+        return DbWording(wording.strip.format(error=snapshot.db_error), wording.unavailable)
+    if snapshot.missing_migrations:
+        names = list(snapshot.missing_migrations)
+        listed = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+        return DbWording(NOT_MIGRATED.strip.format(listed=listed), NOT_MIGRATED.unavailable)
+    return None
 
 
 @dataclass(frozen=True)
