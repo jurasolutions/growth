@@ -998,3 +998,25 @@ artifacts: reviews/quality-gate.md, reviews/qa-release.md, reviews/release.md, p
 decisions: quality gate NO-GO at 0354503. Crew closes what it can rather than waive: developer adds G34 and G38 tests, drafts docs/setup browser-publishing guide, writes the UAT authorized_keys line in uat.md; reviewer re-verifies the eight changes-requested fix rounds (E10). E5 timing: no growth job is loaded in launchd, so a run inside a window would change nothing; recorded, not re-run. E6 copies to outputs/growth/setup/ happen after merge so the copies match main. Live steps (E1 BP-01 clause, E2 manual parts, E13) cannot happen before merge: deferred to the go-live gates, stated in the PR so the merge is the acceptance
 questions: -
 evidence:  3305 passed, 0 skipped
+
+## 2026-10-27T08:10+0800 reviewer (E10 fix-round re-verification)
+status:    done
+persona:   reviewer
+ticket:    02, 04b, 06, 08, 10, 10b, bp-03, bp-04
+artifacts: .scratch/mission-control/reviews/code-review-fix-rounds.md
+decisions: all eight reviews close on approve: every blocking finding fixed at 6e341c9, pinned by a passing test, original probes re-run and refused
+decisions: open should-fix (not blocking, follow-up tickets): mc 08 ST-2 vocabulary, ST-3 db_state switch twice, S-4 collapse by slot count; partial: mc 06 Sp1 use-by on retry, bp 03 S-10 trailing-block assumption (R1), bp 04 S4 Facebook permalink (deferred)
+decisions: closing round kept in one file per the brief; the eight review files are not edited
+questions: QA lead: accept code-review-fix-rounds.md as the closing approve of each of the eight for E10's wording? Recommended: yes
+evidence:  uv run pytest -rs -p no:cacheprovider -o addopts="" (temp data/outputs) -> 3305 passed, 0 skipped, 139.19s
+evidence:  named regression tests -> 18 + 48 + 89 cases passed; orphaned-expect probe ppid=1 refused from a Claude session; mc 08 grace=0 mutation fails its test
+evidence:  git status clean; blocked-path grep on main...HEAD -> none
+
+## 2026-10-27T08:09+0800 conductor (E10 closed)
+status:    done
+persona:   conductor
+ticket:    release
+artifacts: .scratch/mission-control/reviews/code-review-fix-rounds.md
+decisions: accept the fix-rounds file as the closing approve of reviews mc 02, 04b, 06, 08, 10, 10b and bp 03, 04 (E10 met). Seven non-blocking should-fixes become follow-ups: mc 06 Sp1 retry not bounded by use-by (same approved email, same idempotency key, claimed before use-by: at most one delivery), mc 08 ST-1/ST-2/ST-3/S-4, bp 03 S-10 and bp 04 S4 (both wait on R1)
+questions: -
+evidence:  3305 passed, 0 skipped; 155 regression cases passed; blocker probes refused at HEAD
