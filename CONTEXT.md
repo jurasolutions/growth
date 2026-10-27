@@ -135,7 +135,9 @@ _Avoid_: "expiry" alone
 Using an approval at the point of no return: inside a `BEGIN IMMEDIATE` transaction, before the
 outward effect (a Resend call, a click in Chrome, a build handoff), re-checking that the record is
 approved, before its use-by, unused and matching, and marking it used. After a claim, a skip is too
-late and no deadline is checked again.
+late and no deadline is checked again, with one exception (amended 2026-10-27): an outreach retry
+under the same claim is also bounded by the approval's use-by and by 23 hours from the claim. Past
+either, the email is marked uncertain and Ting Yu is alerted; it is never resent.
 _Avoid_: use (in prose), consume
 
 **Human origin**:
