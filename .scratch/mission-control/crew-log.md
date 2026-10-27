@@ -1020,3 +1020,12 @@ artifacts: .scratch/mission-control/reviews/code-review-fix-rounds.md
 decisions: accept the fix-rounds file as the closing approve of reviews mc 02, 04b, 06, 08, 10, 10b and bp 03, 04 (E10 met). Seven non-blocking should-fixes become follow-ups: mc 06 Sp1 retry not bounded by use-by (same approved email, same idempotency key, claimed before use-by: at most one delivery), mc 08 ST-1/ST-2/ST-3/S-4, bp 03 S-10 and bp 04 S4 (both wait on R1)
 questions: -
 evidence:  3305 passed, 0 skipped; 155 regression cases passed; blocker probes refused at HEAD
+
+## 2026-10-27T08:22+0800 conductor (gate gaps merged, PR)
+status:    done
+persona:   conductor
+ticket:    release
+artifacts: merge 310cb97 (f8edc8d G34, f44bd12 G38, 9161672 UAT key line, 22e08f6 browser-publishing guide); pr-body.md and release-notes.md updated
+decisions: verified by the conductor (UAT entry keeps restrict, from= and the forced command; the guide defers live UI detail to R1); merged. Crew-side exit criteria closed (E2 tests, E6 guide and key line, E10). Live-only criteria (E1 BP-01 clause, E2 manual parts, E13) deferred to the go-live gates; the PR says merging accepts that. Opening the PR into main; Ting Yu merges
+questions: -
+evidence:  3624 passed, 0 skipped after the merge

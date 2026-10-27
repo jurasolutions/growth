@@ -175,15 +175,14 @@ server and a UAT-only SSH key. Remove that key and binding when you finish.
 - Move both PRDs to `prd/done/` with the ship date, and bring AC-P1.3's wording in line with the
   amended A11 (final review Sp5).
 
-## Gaps found during release prep
+## Gaps found during release prep (closed)
 
-- **The browser-publishing setup guide was never drafted.** bp 01 step 1 names
-  `.scratch/browser-publishing/setup/browser-publishing.md`, which doesn't exist. Step 5 above and
-  bp 01 itself carry what it would say. The crew can draft it on request.
-- **The UAT SSH entry's exact form isn't written down.** `uat.md` "Before you start" step 4 still
-  says it waits on the tech lead. The approach was decided (crew-log 2026-10-27T02:22: a UAT-only
-  key whose forced command fixes the UAT folder variables), but not the `authorized_keys` line
-  itself. Parts A to C need it.
+- **The browser-publishing setup guide** is now drafted at
+  `.scratch/browser-publishing/setup/browser-publishing.md` (22e08f6). Copy it to
+  `outputs/growth/setup/` with the other guides after acceptance.
+- **The UAT SSH entry** is written in `uat.md`, "Before you start" step 4 (9161672): a UAT-only key
+  whose forced command sets the UAT folder variables through `/usr/bin/env`, with the live entry's
+  `restrict` and `from=` restrictions. Parts A to C can run.
 
 ## Known limits
 

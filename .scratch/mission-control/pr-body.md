@@ -54,7 +54,7 @@ Seven new migrations, all forward-only. Only `app-factory/0003` rewrites a table
 ## Evidence
 
 - **Before:** `main` (855e48c) is the blocker-fix release, whose suite recorded 987 passed. Emails in live mode would send with no review, nothing posts on social platforms, and `jura-growth approve` doesn't exist.
-  **After:** on this branch (0354503), `uv run pytest -rs -p no:cacheprovider -o addopts=""` gives **3305 passed, 0 skipped, in 146s**, with `JURA_ROOT` set and temp data and outputs folders. The live `growth.db` was untouched (same mtime before and after), and `git status` was clean.
+  **After:** on this branch (310cb97), `uv run pytest -rs -p no:cacheprovider -o addopts=""` gives **3624 passed, 0 skipped, in 146s**, with `JURA_ROOT` set and temp data and outputs folders. The live `growth.db` was untouched (same mtime before and after), and `git status` was clean.
 
 ```text
                                                 main                       this branch
@@ -70,8 +70,15 @@ FAIL: [approve here](https://evil.test) ```     n/a                        escap
 ```
 
 - **Upgrade and rollback path.** A database built with `main`'s code, migrated by this branch, then opened by `main`'s code again runs `status`, `community groups` and `outreach status` without error. All 16 migration ids are recorded once.
-- **Reviews.** Every ticket was reviewed. The final review of the merged branch (`.scratch/mission-control/reviews/code-review-final.md`) approves with follow-ups and found no blocker on standards, spec or security. Its should-fix findings (Sp1, Sp2, Sp3, St1, St2, St3, St8) are fixed in 8d6640e. Nine ticket reviews end on changes-requested, and their fix rounds were verified by the conductor with the reviewers' repros, as recorded in the crew-log. `.scratch/mission-control/reviews/release.md` lists them.
-- **Quality gate:** _QA lead's verdict to be added here (`.scratch/mission-control/reviews/quality-gate.md`)._
+- **Reviews.** Every ticket was reviewed. The final review of the merged branch (`.scratch/mission-control/reviews/code-review-final.md`) approves with follow-ups and found no blocker on standards, spec or security. Its should-fix findings (Sp1, Sp2, Sp3, St1, St2, St3, St8) are fixed in 8d6640e. Eight ticket reviews (mc 02, 04b, 06, 08, 10, 10b; bp 03, 04) ended on changes-requested with conductor-checked fix rounds. A reviewer then re-verified every finding in them (`.scratch/mission-control/reviews/code-review-fix-rounds.md`): all eight close on approve, every blocker is fixed and pinned by a passing test, and each original probe is refused at HEAD.
+- **Quality gate** (`.scratch/mission-control/reviews/quality-gate.md`, trace in `qa-release.md`): the first call at 0354503 was **no-go** on six exit criteria, none of them a code defect (0 critical, 0 major, 7 minor). The crew closed its share since:
+  - **E2:** G34 (no generic request command, a static call-graph test) and G38 (Terminal refused for 9 kinds × every state × approve/skip, and `decide()` refused for every non-SSH origin) were added in f8edc8d and f44bd12. Mutations make both fail.
+  - **E6:** the browser-publishing setup guide (`.scratch/browser-publishing/setup/browser-publishing.md`) and the UAT `authorized_keys` line (`uat.md`, Before you start, step 4) are written.
+  - **E10:** met by the re-verification above.
+  - **E5 timing:** the gate ran outside the job windows. No growth job is loaded in launchd, so a run inside a window would touch nothing; the before/after snapshot, `git status` and `pgrep` were identical.
+  - **E6 copies:** the `outputs/growth/setup/` copies are refreshed after merge so they match `main` (step 10 below).
+  - **Live-only, deferred to the go-live gates by this merge:** E1's BP-01 clause, E2's manual parts (U4, U11, U16, U17, R6) and E13 (every U and R step). They need the merged code on your Mac, so they can't come first. Nothing outward is switched on until you've run them; that is the gate for each switch in the steps below.
+  **Merging this PR accepts those deferrals.**
 - No blocked path changed (`inputs/`, `design-system/`, `.env`, `data/growth`, `.github`). The secrets scan of the added lines found only test fixtures and the planted UAT value.
 
 ## Release notes
@@ -99,7 +106,7 @@ What you do after merging, in this order. `release-notes.md` has the detail and 
 9. **Ticket mc 16.** Merge the landing page's `toolbox` branch. **Give `landing-page` a `dev` branch behind Cloudflare Access**, together with every `*.pages.dev` preview. **Set `pages_project` in `config/apps.yaml`**, check Dispatch D6, set `dispatch_builds`, then run U8.
 10. **After acceptance.** Copy `.scratch/mission-control/setup/*.md` to `outputs/growth/setup/`, because the copies there are older. Move both PRDs to `prd/done/`.
 
-Two gaps found while preparing the release: the browser-publishing setup guide that bp 01 names was never drafted, and the exact UAT `authorized_keys` line (`uat.md` step 4) isn't written down yet.
+Both gaps found while preparing the release are closed: the browser-publishing setup guide is in `.scratch/browser-publishing/setup/browser-publishing.md` (copy it to `outputs/growth/setup/` with the others in step 10), and the UAT `authorized_keys` line is in `uat.md`, Before you start, step 4.
 
 ## Known limits
 
@@ -114,12 +121,15 @@ Two gaps found while preparing the release: the browser-publishing setup guide t
 - **St6.** The `NotApproved` docstring doesn't list every reason it is raised with.
 - **St7.** `caps.py` says "publish window" where CONTEXT.md says "posting window", and times reach Discord in three formats.
 - **Sp4.** The schema still accepts a `terminal` origin, and `use()` doesn't check the origin. Add a refusal and a trigger in a later migration.
+- **mc 06 Sp1.** An outreach retry is bounded by the 23-hour window but not by the approval's use-by. It resends only the same approved email under the same Resend idempotency key, claimed before the use-by, so it reaches the prospect at most once.
+- **mc 08 ST-1, ST-2, ST-3, S-4.** One-pager tidy-ups: a one-line wrapper, the glossary's avoided word "state", the `db_state` switch written twice, and Today collapsing jobs by slot count.
+- **bp 03 S-10 and bp 04 S4.** The audit's trailing-block assumption and a Facebook permalink shape check. Both need the real formats R1 records.
 
 ## Merge danger
 
 **Door:** two-way, as long as you switch outward actions off first
 
-Reverting the merge restores the old engine. Before you revert, set `outreach.mode: shadow`, because the revert brings back a `send.py` with no gate. Set every platform back to `draft` and community `browser: false`, and settle any claimed or unknown publish item. Then run `jura-growth schedule uninstall publish one-pager`, and `git revert -m 1 <merge commit>` as a PR (the range is `855e48c..0354503`). After that, `uv sync` and `schedule install`. To stop everything in the meantime, `touch repos/growth/PAUSE`.
+Reverting the merge restores the old engine. Before you revert, set `outreach.mode: shadow`, because the revert brings back a `send.py` with no gate. Set every platform back to `draft` and community `browser: false`, and settle any claimed or unknown publish item. Then run `jura-growth schedule uninstall publish one-pager`, and `git revert -m 1 <merge commit>` as a PR (the range starts at `855e48c`). After that, `uv sync` and `schedule install`. To stop everything in the meantime, `touch repos/growth/PAUSE`.
 
 The seven migrations stay in `growth.db`, and `main`'s code ignores them (checked above). The new launchd jobs have to be uninstalled by hand, as above. What a revert can't undo: posts already published, groups joined, answers submitted, emails sent, app releases merged into `landing-page`, PRDs moved by decisions, and the setup outside the repo (Chrome profile, Remote Login, Tailscale, Dispatch).
 
