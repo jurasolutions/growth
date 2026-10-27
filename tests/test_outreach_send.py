@@ -15,6 +15,7 @@ from jura_growth.agents.scout import registry
 
 from test_scout_support import (  # noqa: F401
     MONDAY_10AM,
+    approve_due,
     at,
     configure,
     d1_env,
@@ -198,6 +199,7 @@ def test_live_send_calls_resend_with_the_right_email(conn, monkeypatch):
     seeded = seed(conn, 1)
     d1_calls = live_ready(monkeypatch)
     sent = fake_resend(monkeypatch)
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     result = send.send_due(conn)
     assert result.summary == f"sent message {seeded['message_id']} to alderlogistics.sg"
     assert len(d1_calls) == 1  # suppression synced at the start of the send
@@ -359,6 +361,7 @@ def test_back_to_back_send_due_calls_send_live_only_once(conn, monkeypatch):
     seed(conn, 2)
     live_ready(monkeypatch)
     sent = fake_resend(monkeypatch)
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     at(monkeypatch, MONDAY_10AM)
     assert send.send_due(conn).summary.startswith("sent message")
     second = send.send_due(conn)  # same minute
@@ -377,6 +380,7 @@ def test_the_next_ten_minute_slot_still_sends_live(conn, monkeypatch):
     seed(conn, 2)
     live_ready(monkeypatch)
     sent = fake_resend(monkeypatch)
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     at(monkeypatch, "2026-10-26T10:00:04+08:00")
     assert send.send_due(conn).summary.startswith("sent message")
     at(monkeypatch, "2026-10-26T10:10:01+08:00")
@@ -402,6 +406,9 @@ def _parallel_send_due(monkeypatch, *, per_day=None):
     live_ready(monkeypatch)
     if per_day is not None:
         configure(monkeypatch, mode="live", legal_review_done=True, sending_domain="hello.jurasolutions.sg", send={"per_day": per_day})
+    approver = db.connect()
+    approve_due(approver, monkeypatch)  # the approval fixture (AC-M8.12)
+    approver.close()
     a_done, b_in_sync = threading.Event(), threading.Event()
 
     def d1(request):
@@ -448,6 +455,7 @@ def test_first_live_day_sends_at_most_five_spread_across_the_window(conn, monkey
     seed_many(conn, monkeypatch, 9)
     live_ready(monkeypatch)
     sent = fake_resend(monkeypatch)
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     sends = run_slots(conn, monkeypatch, chance=random.Random(seed_value).random)
     assert len(sends) == 5 and len(sent) == 5
     times = [t for t, _ in sends]
@@ -512,6 +520,7 @@ def test_one_first_email_per_company(conn, monkeypatch):
     other = seed(conn, 2)
     live_ready(monkeypatch)
     fake_resend(monkeypatch)
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     assert send.send_due(conn).summary == f"sent message {other['message_id']} to birchlogistics.sg"
     lead = db.one(conn, "SELECT * FROM leads WHERE id = ?", (other["lead_id"],))
     row = db.one(conn, "SELECT * FROM contacts WHERE lead_id = ?", (other["lead_id"],))
@@ -559,6 +568,7 @@ def test_resend_auth_quota_and_domain_errors_pause(conn, monkeypatch, status, bo
     message = seed(conn, 1)["message_id"]
     live_ready(monkeypatch)
     fake_resend(monkeypatch, lambda request: httpx.Response(status, json={"statusCode": status, **body}))
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     result = send.send_due(conn)
     assert "outreach paused" in result.summary
     assert words in pause.is_paused(conn, "outreach")
@@ -571,6 +581,7 @@ def test_resend_server_errors_retry_then_fail(conn, monkeypatch):
     message = seed(conn, 1)["message_id"]
     live_ready(monkeypatch)
     fake_resend(monkeypatch, lambda request: httpx.Response(500, json={"message": "internal"}))
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     assert "will retry" in send.send_due(conn).summary
     assert "will retry" in send.send_due(conn).summary
     assert status_of(conn, message) == "queued"
@@ -584,6 +595,7 @@ def test_resend_bad_request_fails_the_message(conn, monkeypatch):
     message = seed(conn, 1)["message_id"]
     live_ready(monkeypatch)
     fake_resend(monkeypatch, lambda request: httpx.Response(400, json={"name": "validation_error", "message": "Invalid `to` field"}))
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     send.send_due(conn)
     assert status_of(conn, message) == "failed"
 
@@ -594,6 +606,7 @@ def test_failed_suppression_sync_pauses_before_sending(conn, monkeypatch):
     live_ready(monkeypatch)
     fake_d1(monkeypatch, lambda request: httpx.Response(500, json={"success": False, "errors": [{"message": "D1 down"}]}))
     sent = fake_resend(monkeypatch)
+    approve_due(conn, monkeypatch)  # the approval fixture (AC-M8.12)
     result = send.send_due(conn)
     assert "suppression sync failed" in result.summary
     assert "suppression sync" in pause.is_paused(conn, "outreach")

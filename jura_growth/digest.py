@@ -14,7 +14,14 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from jura_growth import agents, db, discord, holidays, log, pause, paths, timeutil
+from jura_growth import agents, db, discord, holidays, log, pause, paths, privacy, timeutil
+
+
+def spend(conn: sqlite3.Connection, day: str) -> float:
+    """Headless Claude spend on one SGT day: the `cost_usd` recorded on runs
+    that started that day (every stamp is SGT). Recorded figures only: a run
+    still going has none yet, and nothing is projected."""
+    return db.scalar(conn, "SELECT round(sum(cost_usd), 2) FROM runs WHERE substr(started_at, 1, 10) = ?", (day,)) or 0.0
 
 
 def build(conn: sqlite3.Connection, day: str | None = None) -> dict:
@@ -36,9 +43,7 @@ def build(conn: sqlite3.Connection, day: str | None = None) -> dict:
     paused = pause.flags(conn)
     if pause.pause_file_active():
         paused.insert(0, {"agent": "all", "reason": "PAUSE file present"})
-    cost = db.scalar(
-        conn, "SELECT round(sum(cost_usd), 2) FROM runs WHERE substr(started_at, 1, 10) = ?", (day,)
-    )
+    cost = spend(conn, day)
 
     figures: dict = {}
     lines: list[str] = []
@@ -100,6 +105,8 @@ def render(summary: dict) -> str:
 
 
 def run(conn: sqlite3.Connection, day: str | None = None, *, post: bool = True) -> dict:
+    if post:
+        privacy.load_for_masking(conn)  # the runs it reports were written by other processes
     summary = build(conn, day)
     json_path = paths.writable(paths.data_dir() / "daily-summary.json")
     json_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False, default=str), encoding="utf-8")

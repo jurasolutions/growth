@@ -7,8 +7,8 @@ _Read by every crew persona before acting. Repo rules outrank crew defaults. Las
 | Purpose | Command | Verified |
 |---|---|---|
 | Install dependencies | `uv sync` | verified 2026-10-24 (uv 0.12.21, Python 3.12 venv in `.venv/`) |
-| Test, all | `uv run pytest` | verified 2026-10-24: 515 passed in 16s. `testpaths = ["tests"]` keeps `.claude/worktrees/` out |
-| Test, one file | `uv run pytest tests/test_core.py` | verified 2026-10-24: 37 passed |
+| Test, all | `uv run pytest` | verified 2026-10-27: 3305 passed, none skipped, in 132s (`uv run pytest -rs -p no:cacheprovider -o addopts=""`, worktree exports below). `testpaths = ["tests"]` keeps `.claude/worktrees/` out |
+| Test, one file | `uv run pytest tests/test_core.py` | verified 2026-10-27: 44 passed |
 | Typecheck | none configured | unverified: no pyright or mypy config in the repo. `pyright --pythonpath .venv/bin/python jura_growth` reports 84 existing errors, so it is advisory only; don't add new errors in files you touch |
 | Lint | none configured | unverified: no linter in `pyproject.toml` |
 | Build | none | unverified: nothing is built or deployed; the package runs from `.venv/` |
@@ -52,7 +52,7 @@ the two data variables before running it by hand.
 - **Versioning:** `version` in `pyproject.toml` (0.1.0). No release tags so far.
 - **Changelog:** none yet. Release notes go in the PR body.
 - **Deploy target and how:** none. The engine runs on Ting Yu's Mac from this checkout: after merge, `uv sync`, and `jura-growth schedule install` again if the job list or times changed.
-- **Rollback:** revert the merge commit on `main`; `jura-growth pause <agent>` or `jura-growth schedule uninstall <job>` stops a job meanwhile. Migrations so far add tables, columns and indexes (`outreach/0002` replaces one index), and none drops data, but check a PR's migrations before assuming an older checkout runs against a newer `growth.db`.
+- **Rollback:** revert the merge commit on `main`; `jura-growth pause <agent>` or `jura-growth schedule uninstall <job>` stops a job meanwhile. Migrations so far add tables, columns and indexes (`outreach/0002` replaces one index), and none drops data. `apps/0003` (mission control ticket 10) drops and rebuilds `app_prds` to make its slug non-unique, copying every row with its id; an older checkout still runs against the rebuilt table, because `submit-prd` checks slugs before it inserts. Check a PR's migrations before assuming an older checkout runs against a newer `growth.db`.
 
 ## Tracker
 

@@ -41,7 +41,11 @@ def blocked_client(**kwargs) -> httpx.Client:
 
 @pytest.fixture(autouse=True)
 def scout_env(isolated, monkeypatch):
-    tmp = isolated
+    return prepare_scout(isolated, monkeypatch)
+
+
+def prepare_scout(tmp, monkeypatch):
+    """What `scout_env` sets up, for code that isn't a test module (a gate adapter)."""
     inputs = tmp / "inputs"
     inputs.mkdir()
     (inputs / "icp.md").write_text("# ICP\n\n## Industries\n\n- logistics and delivery\n- events\n- property agencies\n")
@@ -207,13 +211,59 @@ def fake_d1(monkeypatch, rows_or_handler) -> list:
     return calls
 
 
-def live_ready(monkeypatch, *, d1_rows=()) -> list:
+def buttons(monkeypatch, on: bool = True) -> None:
+    """Set `approvals.discord_buttons` in the settings the code reads (ticket 15's switch)."""
+    patched = dict(config.settings())
+    patched["approvals"] = {**(patched.get("approvals") or {}), "discord_buttons": on}
+    monkeypatch.setattr(config, "settings", lambda: patched)
+
+
+def live_ready(monkeypatch, *, d1_rows=(), approval_buttons=True) -> list:
+    """Every live-mode pre-condition holds. With `approval_buttons`, Ting Yu
+    has checked the Discord buttons and set `approvals.discord_buttons: true`,
+    the last line `live_problems()` lists (MC-06)."""
     configure(monkeypatch, mode="live", legal_review_done=True, sending_domain="hello.jurasolutions.sg")
+    buttons(monkeypatch, approval_buttons)
     monkeypatch.setenv("RESEND_API_KEY_OUTREACH", "re_test_key_not_real_123456")
     monkeypatch.setenv("UNSUBSCRIBE_SECRET", "test-secret")
     d1_env(monkeypatch)
     (paths.inputs_dir() / "do-not-contact.csv").write_text("company,domain,reason\nZOLL Medical Singapore,,Ting Yu's choice\n")
     return fake_d1(monkeypatch, d1_rows)
+
+
+# --- approvals: Ting Yu's decisions, as Dispatch delivers them (ADR 0004) --------------
+
+CONTROL_ID = "111"  # CONTROL_DISCORD_USER_ID in the tests
+
+
+def decide(conn, approval, decision: str = "approve", monkeypatch=None):
+    """Ting Yu's decision on one request, through the only origin that decides."""
+    from jura_growth import approvals
+    from jura_growth.origin import Origin
+
+    if monkeypatch is not None:
+        monkeypatch.setenv("CONTROL_DISCORD_USER_ID", CONTROL_ID)
+    return approvals.decide(conn, approval.id, decision, actor=f"discord:{CONTROL_ID}", origin=Origin.ssh(),
+                            source_ref=None, args={})
+
+
+def outreach_requests(conn, status: str | None = None) -> list:
+    from jura_growth import approvals
+
+    rows = conn.execute("SELECT * FROM approvals WHERE kind = 'outreach-email' ORDER BY id").fetchall()
+    found = [approvals.Approval.from_row(r) for r in rows]
+    return [a for a in found if status is None or a.status == status]
+
+
+def approve_due(conn, monkeypatch) -> list:
+    """The approval fixture for live sending (AC-M8.12): raise today's requests up to the
+    remaining quota, as `send-due` would, and approve every pending one."""
+    from jura_growth.agents.outreach import approval
+
+    approval.raise_due(conn)
+    answers = [decide(conn, a, "approve", monkeypatch) for a in outreach_requests(conn, "pending")]
+    assert all(a.answer == "recorded" for a in answers), [a.text for a in answers]
+    return answers
 
 
 def fake_resend(monkeypatch, responder=None) -> list:

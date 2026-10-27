@@ -8,7 +8,12 @@ files it with `jura-growth apps submit-prd`. The code enforces one PRD a day,
 the waiting-pile limit, the template's shape, numbering, duplicates, the
 guardrails and the brand gate.
 
-Commands: `jura-growth apps status | context | backlog | submit-prd`.
+Each filed PRD waits for an `app-build` decision in #approvals; approving it
+writes a build handoff (`builds.py`, MC §5.9). The finished build waits for a
+second, `app-release` decision bound to its commit (`releases.py`).
+
+Commands: `jura-growth apps status | context | backlog | submit-prd | handoffs
+| built | release-plan | released`.
 """
 
 from __future__ import annotations
@@ -20,8 +25,8 @@ from pathlib import Path
 
 import click
 
-from jura_growth import brand_check, db, timeutil
-from jura_growth.agents.apps import backlog, catalog, factory, inputs
+from jura_growth import approval_settings, brand_check, cards, db, handoff_fit, log, timeutil
+from jura_growth.agents.apps import backlog, builds, catalog, factory, inputs, releases
 
 NAME = catalog.NAME
 MIGRATIONS = Path(__file__).parent / "migrations"
@@ -52,16 +57,30 @@ def permissions(job: str):
 
 
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
+    """Before the 06:30 run: the catch-up pass first, so PRDs filed before requests existed count
+    toward the waiting pile and get their cards, then the limits."""
     if job != JOB:
         return None
     if not catalog.template_path().exists():
         return f"the app PRD template is missing ({catalog.template_path()})"
+    if builds.raise_waiting(conn):
+        cards.sweep_safely(conn)
     return catalog.limit_reason(conn)
+
+
+def approval_kinds() -> dict:
+    return {builds.KIND: builds.AppBuild(), releases.KIND: releases.AppRelease()}
+
+
+def health(conn: sqlite3.Connection) -> list[str]:
+    """Build handoffs waiting for a builder, and built apps not yet released (MC §5.4), on the
+    read model's read-only connection."""
+    return builds.health_lines(conn) + releases.health_lines(conn)
 
 
 def digest(conn: sqlite3.Connection, day: str) -> dict:
     written = catalog.factory_prd_on(conn, day)
-    waiting = len(catalog.waiting())
+    waiting = len(catalog.waiting(conn))
     figures = {"app_prd_today": None, "app_prds_waiting": waiting, "app_factory_note": None}
     if written:
         first = written[0]
@@ -69,7 +88,7 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         figures["app_prd_today"] = label
         return {
             "figures": figures,
-            "lines": [f"App factory: {label} written ({first['path']}); {waiting} app PRDs waiting to be built."],
+            "lines": [f"App factory: {label} written ({first['path']}); {waiting} app PRDs waiting for a decision."],
             "brief": [f"app PRD: {label}"],
         }
     runs = db.rows(
@@ -77,19 +96,32 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         "SELECT status, summary, error FROM runs WHERE job = ? AND substr(started_at, 1, 10) = ? ORDER BY id DESC",
         (JOB, day),
     )
+    # The digest's lines name no day: the digest is headed with its date, and
+    # the one-pager repeats them under "Yesterday" (MC X15).
     if not runs:
-        note, brief = "no run today", "no app PRD today"
+        note, brief = "no run", "no app PRD today"
     elif runs[0]["status"] == "skipped":
-        note = f"skipped today: {runs[0]['summary']}"
+        note = f"skipped: {runs[0]['summary']}"
         brief = f"app PRD skipped ({runs[0]['summary']})"
     elif runs[0]["status"] == "failed":
-        note = f"no PRD today; the run failed ({(runs[0]['error'] or '')[:160]})"
+        note = f"no PRD; the run failed ({(runs[0]['error'] or '')[:160]})"
         brief = "no app PRD today (run failed)"
     else:
-        note = f"no PRD today: {(runs[0]['summary'] or '').strip()[:200]}"
+        note = f"no PRD: {(runs[0]['summary'] or '').strip()[:200]}"
         brief = "no app PRD today"
     figures["app_factory_note"] = note
     return {"figures": figures, "lines": [f"App factory: {note}; {waiting} app PRDs waiting."], "brief": [brief]}
+
+
+RUN_UPDATE_DISCORD_CHANNEL = "app-factory"
+
+
+def run_update(conn: sqlite3.Connection, run) -> list[str]:
+    """The "Produced:" items of a factory run: the app PRDs it filed, by id."""
+    from jura_growth.run_update import count
+
+    ids = [r["app_id"] for r in db.rows(conn, "SELECT app_id FROM app_prds WHERE run_id = ? ORDER BY id", (run.id,))]
+    return [f"{count(len(ids), 'app PRD')} ({', '.join(ids)})"] if ids else []
 
 
 # --- commands ----------------------------------------------------------------
@@ -112,7 +144,7 @@ def _overview(conn: sqlite3.Connection) -> dict:
     today = timeutil.today_str()
     return {
         "today": today,
-        "waiting": {"count": len([f for f in files if f.state == "pending"]), "max": catalog.waiting_max()},
+        "waiting": {"count": len(catalog.waiting(conn)), "max": catalog.waiting_max()},
         "next_number": f"APP-{catalog.next_number(conn):03d}",
         "factory_prd_today": catalog.factory_prd_on(conn, today),
         "limit_reason": catalog.limit_reason(conn, today),
@@ -129,7 +161,7 @@ def status_cmd() -> str:
     """Waiting PRDs, the next APP number, live tools and the backlog."""
     with db.session() as conn:
         view = _overview(conn)
-    click.echo(f"waiting PRDs   {view['waiting']['count']} of {view['waiting']['max']} in prd/pending/apps")
+    click.echo(f"waiting PRDs   {view['waiting']['count']} of {view['waiting']['max']} waiting for an app-build decision")
     click.echo(f"next number    {view['next_number']}")
     today = view["factory_prd_today"]
     click.echo("today          " + (", ".join(f"{t['app_id']} {t['name']}" for t in today) if today else "no factory PRD yet"))
@@ -206,9 +238,80 @@ def submit_prd_cmd(file, dry_run) -> str:
     """Check an app PRD written by the factory and file it in prd/pending/apps/."""
     text = file.read_text(encoding="utf-8")
     with db.session() as conn:
+        if not dry_run:
+            builds.raise_waiting(conn, run_id=log.current_run_id())
         result = factory.submit(conn, text, dry_run=dry_run)
+        if not dry_run:
+            cards.sweep_safely(conn)  # the cards go out once the requests are committed (A12)
     for line in result.lines:
         click.echo(line)
     if not result.ok:
         sys.exit(1)
     return result.summary
+
+
+@apps.command("handoffs")
+@click.option("--json", "as_json", is_flag=True, help="What Dispatch polls: each open handoff with its PRD text and SHA-256.")
+def handoffs_cmd(as_json) -> None:
+    """Build handoffs waiting for a builder, oldest first."""
+    with db.session() as conn:
+        if as_json:
+            click.echo(handoff_fit.encode(builds.handoffs_json(conn)))  # measured as printed
+            return
+        waiting = builds.open_handoffs(conn)
+    if not waiting:
+        click.echo("No build handoffs are waiting.")
+        return
+    dispatch = approval_settings.switch("dispatch_builds")
+    for build in waiting:
+        click.echo(f"{build['app_id']} {build['name']} · approval {build['approval_id']} · handed off "
+                   f"{build['handed_off_at'][:16].replace('T', ' ')} · {build['prd_path']} · sha256 {build['prd_sha256'][:12]}")
+        click.echo("  handed to Dispatch" if dispatch else f"  {builds.build_it(build['prd_path'], build['approval_id'])}")
+
+
+@apps.command("built")
+@click.argument("app_id")
+@click.option("--task", required=True, help="The Dispatch task that built it, e.g. T-0031.")
+@click.option("--branch", required=True, help="The task branch, based on main.")
+@click.option("--sha", required=True, help="The branch's full head commit SHA.")
+@click.option("--preview", required=True, help="The branch's Cloudflare Pages preview link.")
+def built_cmd(app_id, task, branch, sha, preview) -> str:
+    """Report a handed-off build as built, and ask for its release in #approvals."""
+    with db.session() as conn:
+        outcome = releases.report_built(conn, app_id, task=task, branch=branch, sha=sha, preview=preview,
+                                        run_id=log.current_run_id())
+        if outcome.ok:
+            cards.sweep_safely(conn)  # the card goes out once the request is committed (A12)
+    for line in outcome.lines:
+        click.echo(line)
+    if not outcome.ok:
+        sys.exit(1)
+    return outcome.lines[0]
+
+
+@apps.command("release-plan")
+@click.argument("app_id")
+def release_plan_cmd(app_id) -> str:
+    """Claim the approved release and print the merge of exactly its commit into main."""
+    with db.session() as conn:
+        outcome = releases.plan_release(conn, app_id, run_id=log.current_run_id(), emit=click.echo)
+        cards.sweep_safely(conn, post=False)  # the card's first line says it was claimed
+    if not outcome.ok:
+        for line in outcome.lines:
+            click.echo(line)
+        sys.exit(1)
+    return outcome.lines[0]
+
+
+@apps.command("released")
+@click.argument("app_id")
+@click.option("--task", required=True, help="The task whose build was merged, e.g. T-0031.")
+def released_cmd(app_id, task) -> str:
+    """Record a release once main of the landing-page repository holds the approved commit."""
+    with db.session() as conn:
+        outcome = releases.record_released(conn, app_id, task=task)
+    for line in outcome.lines:
+        click.echo(line)
+    if not outcome.ok:
+        sys.exit(1)
+    return outcome.lines[0]

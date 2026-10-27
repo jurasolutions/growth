@@ -16,7 +16,10 @@ import click
 
 from jura_growth import (
     agents,
+    approvals,
+    approvals_cli,
     backup as backup_mod,
+    cards,
     brand_check,
     config,
     copy_check,
@@ -24,10 +27,15 @@ from jura_growth import (
     digest as digest_mod,
     discord,
     headless,
+    health,
     holidays,
     log,
+    mission,
+    one_pager as one_pager_mod,
     pause as pause_mod,
     paths,
+    privacy,
+    remote,
     runner,
     schedule as schedule_mod,
     suppression,
@@ -182,10 +190,25 @@ def db_path() -> None:
     click.echo(paths.db_path())
 
 
+def _approval_upkeep(conn, *, post: bool) -> None:
+    """Write the lapses that are due (MC §4.6 A17), then edit the cards they
+    changed, and with `post` post the unposted ones (A12). Never stops the
+    job that calls it."""
+    try:
+        approvals.expire_due(conn)
+    except Exception as error:  # noqa: BLE001
+        log.event(conn, "approval.upkeep_error", {"step": "expire_due", "error": f"{type(error).__name__}: {error}"},
+                  level="error")
+    cards.sweep_safely(conn, post=post)
+
+
 @cli.command()
 def backup() -> str:
-    """Back up growth.db (kept 14 days) and prune old transcripts."""
+    """Back up growth.db (kept 14 days) and prune old transcripts; write due approval lapses."""
     with db.session() as conn:
+        # Lapsed cards are edited (edits don't notify); new cards wait for
+        # the heartbeat or a raising command, so nothing new posts at 23:30.
+        _approval_upkeep(conn, post=False)
         target = backup_mod.backup(conn)
     click.echo(f"backup written: {target}")
     return f"backup written: {target.name}"
@@ -225,6 +248,7 @@ def discord_test() -> None:
 def discord_post(channel, text, files) -> None:
     """Post TEXT to CHANNEL (internal notes only; agent output has its own commands)."""
     with db.session() as conn:
+        privacy.load_for_masking(conn)  # TEXT comes from outside this process
         result = discord.post(conn, channel, text, files=list(files), username=f"Jura growth · {log.current_agent() or 'manual'}")
     click.echo("posted" if result.delivered else f"not posted: {result.reason}")
 
@@ -279,6 +303,8 @@ def status() -> None:
     click.echo("")
     configured = [c for c in discord.channels() if discord.webhook(c)]
     click.echo(f"discord    {len(configured)} of {len(discord.channels())} channel webhooks set")
+    for gap in health.setup_gaps():  # the same list as the one-pager's health strip
+        click.echo(f"setup gap  {gap.line}")
     loaded = ", ".join(m.NAME for m in agents.plugins() if getattr(m, "NAME", None)) or "none"
     click.echo(f"agents     {loaded}")
     for name, error in agents.BROKEN.items():
@@ -354,13 +380,41 @@ def schedule_uninstall(jobs) -> None:
 
 @cli.command()
 def heartbeat() -> str:
-    """Post a heartbeat to #daily-digest (proves the scheduler is alive)."""
+    """Post a heartbeat to #daily-digest (proves the scheduler is alive), write
+    due approval lapses, and post or edit approval cards."""
     with db.session() as conn:
+        _approval_upkeep(conn, post=True)
         installed = sum(1 for name in runner.jobs() if schedule_mod.installed(name))
         text = f"Heartbeat {timeutil.stamp()}: the scheduler is running ({installed} of {len(runner.jobs())} jobs loaded)."
         result = discord.post(conn, "daily-digest", text, username="Jura growth · heartbeat", dedupe=False)
     click.echo(text if result.delivered else f"{text} (not posted: {result.reason})")
     return "heartbeat posted" if result.delivered else f"heartbeat not posted: {result.reason}"
+
+
+@cli.command("one-pager")
+@click.option("--no-post", is_flag=True, help="Print the one-pager instead of posting it.")
+def one_pager_cmd(no_post) -> str | None:
+    """Post the one-pager to #mission-control, with the 14-day grid.
+
+    First write the approval lapses that are due (MC §4.2, A17), then build
+    from growth.db read-only. With --no-post, only print it: nothing is written."""
+    if no_post:
+        pieces = one_pager_mod.messages(mission.read(mission.Source.here()))
+        for index, piece in enumerate(pieces):
+            if index:
+                click.echo(f"\n(message {index + 1} of {len(pieces)})\n")
+            click.echo(piece)
+        return None
+    with db.session() as conn:
+        # Lapsed cards are edited (edits don't notify); new cards wait for the
+        # heartbeat or a raising command, and the one-pager lists them.
+        _approval_upkeep(conn, post=False)
+    snapshot = mission.read(mission.Source.here())
+    with db.session() as conn:
+        result = one_pager_mod.post(conn, snapshot)
+    answer = f"posted to #{result.channel}" if result.delivered else f"not posted to #{result.channel}: {result.reason}"
+    click.echo(answer)
+    return answer
 
 
 @cli.command()
@@ -404,6 +458,16 @@ def suppression_check(email) -> None:
         reason = suppression.is_suppressed(conn, email)
     click.echo(f"suppressed: {reason}" if reason else "not suppressed")
     sys.exit(1 if reason else 0)
+
+
+# --- approvals, approve, skip (ticket 04b) -----------------------------------
+
+approvals_cli.register(cli)
+
+
+# --- remote (ticket 11) --------------------------------------------------------
+
+remote.register(cli)
 
 
 # --- agent plug-ins --------------------------------------------------------

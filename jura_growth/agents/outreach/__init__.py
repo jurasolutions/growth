@@ -14,6 +14,15 @@ from pathlib import Path
 from jura_growth import db
 
 NAME = "outreach"
+# Setup gaps (health.setup_gaps): what live sending and the suppression sync need.
+# The OUTREACH_IMAP_* settings are left out on purpose: reply detection is opt-in (replies.py).
+REQUIRED_SETTINGS = (
+    "RESEND_API_KEY_OUTREACH",
+    "UNSUBSCRIBE_SECRET",
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "D1_DATABASE_ID",
+)
 MIGRATIONS = Path(__file__).parent / "migrations"
 
 
@@ -27,6 +36,13 @@ def channels() -> dict:
     from jura_growth.agents.outreach import compose
 
     return {"email": compose.channel()}
+
+
+def approval_kinds() -> dict:
+    """`outreach-email`: every live email waits for Ting Yu's approval (MC §5.8)."""
+    from jura_growth.agents.outreach import approval
+
+    return approval.kinds()
 
 
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
@@ -72,7 +88,7 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         if unsubscribes:
             brief.append(f"{unsubscribes} unsubscribe{'s' if unsubscribes != 1 else ''}")
     elif queued:
-        lines.append(f"Outreach ({mode}): nothing sent today; {queued} queued")
+        lines.append(f"Outreach ({mode}): nothing sent; {queued} queued")  # no day: see MC X15
     return {
         "figures": {
             "outreach_mode": mode,
@@ -86,4 +102,17 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         },
         "lines": lines,
         "brief": brief,
+    }
+
+
+def privacy_terms(conn) -> dict:
+    """For `privacy`: Ting Yu's sender address, kept only in previews of Jura's own
+    email, and his name, which signs them and is never read as a prospect's."""
+    from jura_growth.agents.scout import settings
+
+    local = str(settings.get().get("from_local_part") or "tingyu").strip().lower()
+    domains = {"jurasolutions.sg", str(settings.get().get("sending_domain") or "").strip().lower()}
+    return {
+        "owner_addresses": sorted(f"{local}@{d}" for d in domains if d),
+        "kept_names": [settings.SIGNATURE_NAME],
     }

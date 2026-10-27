@@ -1,8 +1,10 @@
 """Filing a factory-written app PRD: `jura-growth apps submit-prd`.
 
 Order: the daily limits, the template and factory rules (`prd.py`), then the
-brand gate with its one regeneration, then the file, the backlog, the
-database row and the #app-factory post. A structural rejection never uses up
+brand gate with its one regeneration, then the file, the database row and the
+`app-build` approval request (MC §5.9 step 1), then the backlog. The request's
+card goes to #approvals when the command ends (`cards.sweep_safely`); it
+replaces the old #app-factory post and its "approved, build …" line. A structural rejection never uses up
 the brand gate's attempts.
 """
 
@@ -12,8 +14,8 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 
-from jura_growth import brand_check, db, discord, gate, log, paths, timeutil
-from jura_growth.agents.apps import backlog, catalog
+from jura_growth import brand_check, db, gate, log, paths, privacy, timeutil
+from jura_growth.agents.apps import backlog, builds, catalog
 from jura_growth.agents.apps import prd as prd_mod
 
 NAME = catalog.NAME
@@ -77,6 +79,21 @@ def brand_parts(parsed: prd_mod.AppPrd) -> dict:
     }
 
 
+def private_problems(conn: sqlite3.Connection, text: str) -> list[str]:
+    """The PRD goes to #approvals and, approved, to Dispatch as the build's brief, verbatim. So
+    nothing the privacy filter would change may be in it: a person's name or address, a phone
+    number or a secret-looking value (code review 12, Q1). The problem names lines, never what
+    is on them."""
+    privacy.load_for_masking(conn)
+    if privacy.for_discord(text) == text:
+        return []
+    lines = [str(n) for n, line in enumerate(text.splitlines(), 1) if privacy.for_discord(line) != line]
+    where = f"line{'s' if len(lines) != 1 else ''} {', '.join(lines)}" if lines else "the text as a whole"
+    return [f"{where}: the PRD holds what the privacy filter would mask (a person's name or address, a phone "
+            "number or a secret-looking value). PRDs go to #approvals and to the builder exactly as written, "
+            "so leave it out"]
+
+
 def rejections_today(conn: sqlite3.Connection) -> int:
     return db.scalar(
         conn,
@@ -95,7 +112,7 @@ def submit(conn: sqlite3.Connection, text: str, *, dry_run: bool = False) -> Sub
         return Submission(False, [f"refused: {max_rejections} rejected submissions today; stop and report FAIL"], status="refused")
 
     ctx = context(conn)
-    errors = prd_mod.validate_factory(text, ctx)
+    errors = prd_mod.validate_factory(text, ctx) + private_problems(conn, text)
     parsed = prd_mod.parse(text)
     if errors:
         if not dry_run:
@@ -128,10 +145,17 @@ def submit(conn: sqlite3.Connection, text: str, *, dry_run: bool = False) -> Sub
     target.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
     relative = parsed.build_path
     entry = parsed.registry_entry()
-    conn.execute(
-        "INSERT INTO app_prds (app_id, slug, name, tier, category, path, day, run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (parsed.app_id, parsed.slug, parsed.name, parsed.tier, parsed.category, relative, today, log.current_run_id(), timeutil.stamp()),
-    )
+    run_id = log.current_run_id()
+    # The file is written first: if what follows fails, the next catch-up pass
+    # (`builds.raise_waiting`) raises its request.
+    with db.transaction(conn):
+        conn.execute(
+            "INSERT INTO app_prds (app_id, slug, name, tier, category, path, day, run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (parsed.app_id, parsed.slug, parsed.name, parsed.tier, parsed.category, relative, today, run_id, timeutil.stamp()),
+        )
+        request = builds.request(conn, parsed.app_id, reason=f"the app factory filed {parsed.app_id} on {today}", run_id=run_id)
+        log.event(conn, "apps.prd.written", {"app": parsed.app_id, "name": parsed.name, "path": relative,
+                                             "approval": request.id if request else None}, agent=NAME)
     backlog.mark_written(
         name=parsed.name,
         slug=parsed.slug,
@@ -141,13 +165,10 @@ def submit(conn: sqlite3.Connection, text: str, *, dry_run: bool = False) -> Sub
         category=parsed.category,
         does=entry.get("description", parsed.one_line),
     )
-    message = discord_message(parsed)
-    posted = discord.post(conn, "app-factory", message, username="Jura growth · app factory")
-    log.event(conn, "apps.prd.written", {"app": parsed.app_id, "name": parsed.name, "path": relative, "discord": posted.delivered or posted.reason}, agent=NAME)
     lines = [
         f"filed: {parsed.app_id} {parsed.name} at {relative}",
         "backlog updated",
-        "posted to #app-factory" if posted.delivered else f"#app-factory: {posted.reason}",
+        f"approval request {request.id} raised; its card goes to #approvals" if request else "no approval request raised",
     ]
     return Submission(True, lines, app_id=parsed.app_id, name=parsed.name, path=relative, status="filed")
 
@@ -166,22 +187,6 @@ def pitch(parsed: prd_mod.AppPrd) -> tuple[str, str]:
     one = parsed.one_line.strip()
     paragraph = " ".join(p for p in [one if one.endswith(".") else one + ".", f"It is for {who.rstrip('.')}." if who else "", *rest] if p)
     return paragraph, leads or parsed.why
-
-
-def discord_message(parsed: prd_mod.AppPrd) -> str:
-    paragraph, leads = pitch(parsed)
-    return "\n".join(
-        [
-            f"**New app PRD: {parsed.app_id} {parsed.name}**",
-            "",
-            paragraph,
-            "",
-            f"Tier: {parsed.tier}. Category: {parsed.category}.",
-            f"Lead types it suits: {leads}.",
-            "",
-            f"To build: open Claude Code in jurasolutions/ and say \"approved, build {parsed.build_path}\".",
-        ]
-    )
 
 
 # --- the app-copy brand channel ---------------------------------------------

@@ -1,11 +1,15 @@
 # Social content agent
 
 Daily drafts for Jura's LinkedIn page, Facebook Page and Instagram, with branded image cards,
-delivered to `#social-drafts` for Ting Yu to post by hand.
+delivered to `#social-drafts`. A platform in `draft` mode is posted by Ting Yu by hand; a platform
+in `browser` mode is posted through Chrome once he approves that day's post in `#approvals`.
 
 PRD: `jurasolutions/prd/pending/prd-jura-social-content-2026-10-24.md`. Blocks 1 (drafts and
-images) and 2 (schedule and history) are built. Block 3 (auto-publishing) is not: `publish_mode`
-is `draft` for every platform and any other value is treated as `draft`.
+images) and 2 (schedule and history) are built. Block 3 is replaced by browser publishing
+(`prd-jura-browser-publishing-2026-10-25.md`, which supersedes the social PRD's §1 last sentence,
+§2 criterion 5, the "Later block", §5.6 block 3 and §6 question 3; see its §3.3): the Graph API,
+the Posts API, `publish_mode: auto` and the two-hour skip window are dropped. `publish_mode` is
+`draft` (the default, and every platform today) or `browser`.
 
 ## How a day runs
 
@@ -17,7 +21,8 @@ is `draft` for every platform and any other value is treated as `draft`.
    `data/growth/work/social/YYYY-MM-DD/`, then `jura-growth social submit`.
 3. `submit` enforces the rules in code (below), renders the cards, writes
    `outputs/growth/social/YYYY-MM-DD/`, logs `social_posts` and posts to `#social-drafts`.
-4. Ting Yu copies each post, or skips one, and can record that it went out.
+4. For a platform in `draft` mode, Ting Yu copies the post, or skips it, and can record that it
+   went out. For a platform in `browser` mode, see "Publishing through the browser" below.
 
 ## Commands
 
@@ -163,7 +168,7 @@ post says the images use fallback fonts. `--offline` blocks the network (the tes
 | `weekends` | `true` | `false` makes the 07:00 job skip Saturday and Sunday (PRD open question 2) |
 | `rhythm` | PRD §5.2 | Weekday to theme. Fallbacks are the following days' themes, in order |
 | `themes.<id>` | | `label`, `brief`, `layout`, `news`, `min_sources`, `max_sources`, `max_source_age_days`, `needs_tool` |
-| `platforms.<name>` | PRD §5.3 | `label`, `enabled`, `words`, `hashtags_max`, `links` (`post` or `bio`), `image`, `carousel`, `publish_mode` |
+| `platforms.<name>` | PRD §5.3 | `label`, `enabled`, `words`, `hashtags_max`, `links` (`post` or `bio`), `image`, `carousel`, `publish_mode` (`draft` or `browser`), `page_url` (the page a browser run posts to; `https://` on the platform's own host; for LinkedIn the company page, `/company/<page>/`, and for Instagram the account's profile, `/<account>/`), `identity` (the posting identity the run must see; defaults to the Jura Solutions page or account) |
 | `eligibility_line` | "Check the official page for current eligibility." | |
 | `max_quote_words` | 12 | |
 | `blocked_topics` | elections, parties, tragedies | Whole words or phrases |
@@ -185,11 +190,164 @@ created_at, updated_at. Unique on (date, platform).
 `social_submissions`: each gated submission and each "No draft today", for the one-regeneration
 rule and the digest.
 
+`publish_items` (the publish plug-in's migration): one row per publish item, with its frozen
+content, its day and its lifecycle (`ready`, `claimed`, `done`, `stopped`, `unknown`,
+`withdrawn`), the live URL and whether the live text matched. It holds no approval state: that
+lives only in `approvals`, under the subject `publish_item:<id>`.
+
+## Publishing through the browser (browser publishing PRD, BP-02a, BP-03 and BP-04)
+
+Nothing posts without Ting Yu's approval of that exact post (MC §4.6). The queue (BP-02a) works
+from Terminal and the tests; the scheduled `publish` job (BP-03, below) drives Chrome. All three
+platforms can be put in `browser` mode: the Facebook Page (BP-03), then the Jura Instagram account
+and the Jura LinkedIn company page (BP-04), each on its own once its fixture rehearsal and first
+live post are done.
+
+**Weekends stay on.** This was decided at sign-off (BP1, for the Facebook Page). BP-04 asked again
+(BP §6 Q1), and the crew's recorded decision keeps weekends on with all three platforms in
+`browser` mode, so Saturday and Sunday bring up to three approval cards each. To turn weekend
+posts off, set `weekends: false` in `config/social.yaml`: the 07:00 social job then skips
+Saturday and Sunday, so no weekend draft, item or card is made for any platform. There is no
+per-platform weekend switch.
+
+1. `social submit` makes a **publish item** for each platform in `browser` mode whose variant
+   passed the brand gate, and raises one `social-post` approval request for it. The card in
+   `#approvals` shows the A-id, the page and its URL, the day, the exact text, the image, the
+   links in the text, the brand-gate result and "decide by <day>, 18:00 SGT". That platform's
+   `#social-drafts` message points at the card instead of repeating the post. Drafts written
+   before a platform moved to `browser` mode get no item. A platform in `browser` mode without
+   `page_url` set is posted by hand as before, with a note.
+2. Ting Yu approves or skips in `#approvals`. A skip, until the item is claimed, withdraws it and
+   records `social skip <date> <platform>`. Unanswered or unclaimed by the end of the posting
+   window (18:00 SGT on its day), the request expires and the draft stays as it is.
+3. `publish next` claims at most one approved item inside one `BEGIN IMMEDIATE` transaction. In
+   that transaction it reads the text and every image once, refuses unless exactly those bytes
+   hash to the approval, writes those bytes to `data/growth/work/publish/<A-id>/`, and prints
+   that text.
+4. The run then records `publish done <A-id> --url <url> --live-text-file <f>`, which marks the
+   draft published with its URL, or `publish stopped <A-id> --reason <r>` on a stop signal.
+
+On Instagram's carousel days (Monday and Thursday) the item carries every slide, and the card
+says "N images attached, posted in this order". The approval covers each slide's bytes in that
+order, so changing any slide, or their order, raises a new card.
+
+Any change to the text, the images or their order, the page, the posting identity or the day
+supersedes the request and raises a new card over the new content, with deadlines from the new
+content's day, and the item freezes the new content. A claim or a decision that finds the change
+raises the card at once; one the heartbeat finds is raised by the next `publish next` (and, from
+BP-03, by the publish job's precheck, which runs the same `items.sync()` every slot). Posting the draft by hand (`social published`) or skipping it (`social skip`)
+supersedes the request too, and then the item is withdrawn with no new card. The hash covers the
+exact bytes, with no Unicode normalisation (ADR 0003).
+
+| Command | Who | Does |
+|---|---|---|
+| `jura-growth publish next [--json]` | the publish run | Claims at most one item, or prints "nothing due" with the reasons |
+| `jura-growth publish done <A-id> --url <url> --live-text-file <f>` | the publish run | Records the post. The URL must be `https://` on the platform's own host, and for Instagram and LinkedIn the post's own address: Instagram `/p/<code>/` or `/reel/<code>/`; LinkedIn `/feed/update/urn:li:activity:<n>/` (or `share`, `ugcPost`) or a `/posts/…-activity-<n>-…` address. A profile, feed or company page is refused (`hosts.post_problem`). For a community post it is one post's own address inside the item's group, `/groups/<group>/posts/<n>/` or `/permalink/<n>/` (`hosts.group_post_problem`), and the planned post becomes `posted` with `posted_via = browser`. Live text that differs from the approved text (after Unicode NFC, collapsing whitespace and trimming) is recorded, alerts and pauses `publish` |
+| `jura-growth publish done <A-id> --outcome <o> [--url <group url>] [--file <q.json>]` | the publish run | What a group join came to (`requested`, `member`, `declined`, `questions`) or that a group's screen takes only personal profiles (`pages-not-allowed`). No alert, no pause. See docs/community.md |
+| `jura-growth publish note-rules <group-id> --file <f>` | the publish run that claimed an item in that group | Records the rules seen inside the group and raises a `group-rules` card |
+| `jura-growth publish stopped <A-id> --reason <r>` | the publish run | A stop signal (`login`, `captcha`, `checkpoint`, `warning`, `restriction`, `rate-limit`, `removed`, `admin-warning`, `wrong-identity`, `unidentified`): the item stops, `publish` pauses for every item, and `#alerts` gives the reason and the run id. `removed` or `admin-warning` on a group item also does what `community removed` does for that group (AC-P6.2) |
+| `jura-growth publish queue [--json]` | Ting Yu | Every item, its state and its A-id |
+| `jura-growth publish resolve <A-id> posted --url <url>` or `not-posted` | Ting Yu only (refused in any scheduled run) | Settles an item whose outcome is unknown |
+
+**Limits, in `jura_growth/caps.py`**, which `config/publish.yaml` may only tighten: one post per
+platform per day, one item per run, 20 minutes between the start times of the runs that claim two
+items, and claims only from 09:00 to 18:00 SGT. A cap counts an item from its claim, so a stopped
+or unknown item still uses its platform's day. The PAUSE file, `pause publish`, `pause all`,
+auto-pause after three failed runs and `publish_mode: draft` each stop every claim, and the
+approval stays unused.
+
+**A claim left open.** If a run ends having claimed an item without `done` or `stopped`, the
+item becomes `unknown`: it is never claimed again, `publish` pauses, and `#alerts` names
+`/growth publish resolve A-nnnn posted --url <url>` and `… not-posted`. A claim left by a run
+whose process died is settled the same way by the next run, and `publish resolve` also settles a
+claim nobody will close: one whose run has ended, or one made in Terminal with no run.
+`/growth publish queue` and `/growth publish resolve …` work from Discord too.
+
+### The `publish` job (BP-03, ADR 0005)
+
+Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/settings.yaml`).
+
+- **Precheck, before Claude starts.** With `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` in
+  the environment the run is skipped and says why, because either one silently removes the Chrome
+  tools; `jura-growth status` lists the variable as a setup gap. Otherwise the precheck runs the
+  queue's `items.sync()` and posts any fresh card, then asks whether anything can be claimed. If
+  not, the slot is a quiet run ("nothing due") and no Claude starts.
+- **What the run may do.** `--chrome`, only because `publish` is in `caps.BROWSER_JOBS`; no
+  `--add-dir`. The tab tools by name, and the page tools only through one
+  `ClaudeInChromeDomain(<host>)` rule per host of each platform in `browser` mode. The lists are
+  `hosts.BROWSER_HOSTS`, one per platform, exact (`www.` and the bare host, plus
+  `business.facebook.com` for the Page's composer) until BP-01's check U18 shows how the rule
+  treats subdomains. No image CDN, link shim or country host is listed: a run never opens one
+  in its tab, and `publish done` refuses a post URL on one. The rules are the union of the
+  enabled platforms, because they are set before anything is claimed; the audit holds each run to
+  its claimed item's own platform (below). Facebook's rules are also set while `browser` is on
+  in `config/community.yaml` (group joins and posts), and a group item's run is held to its own
+  group's address.
+  Scripting, network, console, shortcut, recording, browser-switching, batch and
+  resize tools, `upload_image`, web search and fetch are denied, and `file_upload` too unless the
+  item due has an image. Bash runs only `publish next`, `done`, `stopped` and `note-rules`.
+- **The prompt** (`prompts/publish.md`) checks the connected browser before `publish next` (no
+  browser ends `SKIP:` and claims nothing), opens its own tab, checks the posting identity before
+  typing, posts exactly the approved text and images, reads the live post back and records it,
+  and closes its tab. Any stop signal ends in `publish stopped`. Each platform has its own
+  section, with its target, identity check, posting steps, permalink and stop signals:
+  - **Facebook Page:** the Page's composer names the Page, not a person. Permalink on
+    `www.facebook.com` with `/posts/` or `story_fbid`.
+  - **Instagram:** signed in as the Jura account (its own profile shows "Edit profile"; "Follow"
+    or a "Switch accounts" prompt is the wrong identity). Create, Post, then every image in the
+    order given, never reordered or edited; the caption typed once; Share once. Permalink
+    `https://www.instagram.com/p/<code>/` (or `/reel/<code>/`).
+  - **LinkedIn company page:** from the page's admin view, with the company name and logo at the
+    top of the composer, never a person's. Permalink
+    `https://www.linkedin.com/feed/update/urn:li:activity:<number>/` (or `share`, `ugcPost`).
+    `page_url` must be the company page (`/company/<page>/`): a person's profile (`/in/…`)
+    raises no item.
+
+  Images go up only through the composer's file input (`find`, then `file_upload` with its ref),
+  never by clicking an upload button, which opens a file picker the extension can't see or
+  close. The run never uses a "Switch" control to change who it posts as: it stops with
+  `wrong-identity` instead.
+- **After the run** (`after_run`, before the run row is finished): an open claim becomes
+  `unknown`. The transcript audit fails the run and pauses `publish` for:
+  - a URL off the claimed item's own platform hosts (any enabled platform's hosts when nothing
+    was claimed), asked for or shown as a tab's address in any later result, or a tab address it
+    can't read; so an Instagram item posted on the LinkedIn company page or the Facebook Page
+    fails;
+  - a Discord host;
+  - a tool call on a tab the run didn't open;
+  - a field typed with anything but an approved text, judged whole and in order, or typing
+    before the claim;
+  - an upload that isn't the claimed item's own read-only image copy, or a copy that no longer
+    hashes to the approved image;
+  - images uploaded out of their approved order or more than once, or a run that went on to
+    `publish done` with fewer images sent than were approved; a failed or denied upload sends
+    nothing (an Instagram carousel's slides go up in order);
+  - a click, key, input, upload or navigation after `publish stopped`;
+  - a never-tool.
+
+  A tab left open is a warning. A run that found no browser alerts once a day. The tab address
+  is read only from the tab context that ends each result, never from page text, and nothing a
+  page holds can make the audit raise. If the checks fail for any reason at all, the run fails
+  with a fixed reason naming it, and publishing pauses (`publish.after_run` fails closed).
+- **No model text goes out.** Every publish run's summary and error are written from the item's
+  record: the A-id, the platform, what happened, the URL or the closed stop reason, and the run
+  id. The model's own summary and `FAIL:` line stay in the transcript.
+- **Run updates** (`run_update: claimed-only`) post in `#social-drafts` only for a run that
+  claimed an item. Stops, mismatches and unknown items also go to `#alerts`, once each: a stop's
+  one alert comes from `publish stopped` and names the run, whose transcript keeps what the page
+  showed (there is no screenshot file).
+- **Transcripts** of publish runs hold page text, so they are kept 7 days
+  (`caps.BROWSER_TRANSCRIPT_DAYS`), not 30, and so are the files a run leaves in
+  `work/publish/` (its read-back live text and its image copies).
+
 ## Digest
 
 `social.digest(conn, day)` gives `social_drafts_waiting`, `social_skipped` and
 `social_published` (published by `published_at` day), a `#daily-digest` line, and a brief
 fragment such as "3 social drafts waiting" or "no social draft today".
+
+`publish.digest(conn, day)` adds the day's publish items: `publish_posted`, `publish_skipped`,
+`publish_expired` and `publish_stopped`, and a "Publishing: …" line, on days that had items.
 
 ## Toolbox registry
 

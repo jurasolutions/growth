@@ -8,15 +8,17 @@ the brand checker with each platform's own rules, image cards rendered from
 the design system, the output folder, the `social_posts` log and delivery to
 #social-drafts.
 
-Blocks 1 and 2 are built. Block 3 (auto-publishing) is not: `publish_mode`
-stays `draft`, and Ting Yu posts by hand. `social skip` already records skips
-so block 3 can honour them.
+Blocks 1 and 2 are built. Block 3 became browser publishing
+(prd-jura-browser-publishing-2026-10-25.md): a platform in `browser` mode gets
+a publish item and an approval card for each draft, and the publish plug-in
+posts it once Ting Yu approves. In `draft` mode Ting Yu posts by hand.
 
 See docs/social.md.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -71,9 +73,25 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         lines.append(f"Social: no drafts waiting, {skipped} skipped, {published} published")
     if no_draft and not rows:
         figures["social_no_draft"] = no_draft["reason"]
-        lines.append(f"Social: no draft today ({no_draft['reason']})")
+        lines.append(f"Social: no draft ({no_draft['reason']})")  # no day: see MC X15
         brief.append("no social draft today")
     return {"figures": figures, "lines": lines, "brief": brief}
+
+
+RUN_UPDATE_DISCORD_CHANNEL = "social-drafts"
+
+
+def run_update(conn: sqlite3.Connection, run) -> list[str]:
+    """The "Produced:" items of a social run: its drafts and their images."""
+    from jura_growth import db
+    from jura_growth.run_update import count
+
+    rows = db.rows(conn, "SELECT image_paths FROM social_posts WHERE run_id = ?", (run.id,))
+    images = sum(len(json.loads(r["image_paths"] or "[]")) for r in rows)
+    produced = [count(len(rows), "draft")] if rows else []
+    if images:
+        produced.append(count(images, "image"))
+    return produced
 
 
 def permissions(job: str):

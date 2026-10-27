@@ -11,7 +11,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from jura_growth import caps, config, db, paths, timeutil
+from jura_growth import approvals, caps, config, db, paths, timeutil
 from jura_growth.agents.apps import prd as prd_mod
 
 NAME = "app-factory"
@@ -105,8 +105,11 @@ def prd_files() -> list[PrdFile]:
     return found
 
 
-def waiting() -> list[PrdFile]:
-    return [f for f in prd_files() if f.state == "pending"]
+def waiting(conn: sqlite3.Connection) -> list[PrdFile]:
+    """The waiting pile (MC §5.9 step 6): PRDs in `prd/pending/apps/` waiting for an `app-build`
+    decision. Handed-off builds and Ting Yu's own PRDs, which have no request, don't count."""
+    asked = {request.subject for request in approvals.pending(conn, "app-build")}
+    return [f for f in prd_files() if f.state == "pending" and f"app:{f.app_id}" in asked]
 
 
 def waiting_max() -> int:
@@ -138,8 +141,17 @@ def live_apps() -> list[dict]:
     return [e for e in entries if e.get("status") == "live"]
 
 
+def skipped_dir() -> Path:
+    return paths.prd_dir() / "skipped" / "apps"
+
+
 def numbers_in_use(conn: sqlite3.Connection | None = None) -> set[int]:
     used = {f.number for f in prd_files()}
+    if skipped_dir().is_dir():  # a skipped or expired PRD keeps its number
+        for path in skipped_dir().glob("prd-app-*.md"):
+            m = prd_mod.FILENAME_RE.match(path.name)
+            if m:
+                used.add(int(m["num"]))
     entries, _ = registry()
     for entry in entries:
         m = re.match(r"^APP-(\d+)$", str(entry.get("prd", "")))
@@ -182,16 +194,28 @@ def taken(conn: sqlite3.Connection | None = None) -> tuple[dict[str, str], dict[
     from jura_growth.agents.apps import backlog
 
     for row in backlog.load():
-        if row.get("status") in (None, "idea"):
+        if row.get("status") in (None, "idea") and not backlog.resting(row):
             continue
         where = f"backlog: {row.get('app_id') or row.get('status')}"
         slugs.setdefault(str(row.get("slug") or prd_mod.slugify(row["name"])), where)
         names.setdefault(prd_mod.normalise_name(row["name"]), where)
     if conn is not None:
-        for row in db.rows(conn, "SELECT app_id, slug, name FROM app_prds"):
+        for row in db.rows(conn, _NOT_EXPIRED):
             slugs.setdefault(row["slug"], f"{row['app_id']}, written by the factory")
             names.setdefault(prd_mod.normalise_name(row["name"]), f"{row['app_id']}, written by the factory")
     return slugs, names
+
+
+# The factory's PRDs, less those whose latest `app-build` request expired unanswered: those
+# ideas may be proposed again once their backlog row stops resting (MC §5.9 step 5).
+_NOT_EXPIRED = """
+SELECT p.app_id, p.slug, p.name FROM app_prds p
+WHERE NOT EXISTS (
+  SELECT 1 FROM approvals a
+  WHERE a.kind = 'app-build' AND a.subject = 'app:' || p.app_id AND a.status = 'expired' AND a.used_at IS NULL
+    AND a.id = (SELECT max(b.id) FROM approvals b WHERE b.kind = a.kind AND b.subject = a.subject)
+)
+"""
 
 
 def factory_prd_on(conn: sqlite3.Connection, day: str) -> list[dict]:
@@ -212,9 +236,9 @@ def limit_reason(conn: sqlite3.Connection, day: str | None = None) -> str | None
     if len(written) >= per_day():
         first = written[0]
         return f"app PRD already written today ({first['app_id']} {first['name']}); one a day"
-    count = len(waiting())
+    count = len(waiting(conn))
     if count >= waiting_max():
-        return f"{count} app PRDs waiting in prd/pending/apps (limit {waiting_max()}); skipping until some are built"
+        return f"{count} app PRDs waiting for an app-build decision (limit {waiting_max()}); skipping until some are decided"
     dropped = db.one(conn, "SELECT attempts FROM qa_attempts WHERE item_key = ?", (gate_key(day),))
     from jura_growth import gate
 

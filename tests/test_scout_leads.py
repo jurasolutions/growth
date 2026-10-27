@@ -437,7 +437,9 @@ def test_named_addresses_stay_out_of_discord(conn):
     data = lead_data(1, contact={"email": "jane@alderlogistics.sg", "source_url": "https://www.alderlogistics.sg/contact", "enquiry_contact": True})
     assert add(conn, data, page_html="<p>Enquiries: jane@alderlogistics.sg</p>").status == "added"
     post = outbox("scout-leads")[-1]["content"]
-    assert "jane@" not in post and "named enquiry address" in post
+    # MC §4.4: masked, with its source page so Ting Yu can check it there.
+    assert "jane@" not in post
+    assert "j***@alderlogistics.sg (named address), listed on https://www.alderlogistics.sg/contact" in post
 
 
 def test_check_command_on_the_email_channel():

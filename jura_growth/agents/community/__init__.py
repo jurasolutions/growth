@@ -20,7 +20,8 @@ from pathlib import Path
 
 import click
 
-from jura_growth import brand_check, db, discord, log, timeutil
+from jura_growth import brand_check, cards, db, discord, log, timeutil
+from jura_growth.agents.community import group_rules
 from jura_growth.agents.community import groups as groups_mod
 from jura_growth.agents.community import plan as plan_mod
 from jura_growth.agents.community import rules as rules_mod
@@ -50,8 +51,10 @@ def channels() -> dict[str, brand_check.Channel]:
 
 def permissions(job: str):
     """The `jura-growth` commands `prompts/community.md` uses. Joining a
-    group, confirming its rules and recording posts or removals (`set`,
-    `posted`, `removed`) are Ting Yu's steps.
+    group by hand, confirming its rules and recording posts or removals
+    (`set`, `posted`, `removed`) are Ting Yu's steps. `propose-join` only asks
+    him, in #approvals, to join a group as the Jura Page (browser publishing);
+    a publish run joins once he approves.
 
     The run may not fetch any blocked domain or its subdomains
     (`groups.fetch_denials()`)."""
@@ -62,14 +65,30 @@ def permissions(job: str):
     return Permissions(
         commands=(
             "community context", "community add-group", "community summary",
-            "community plan-add", "community publish-plan", "social render", "check",
+            "community plan-add", "community publish-plan", "community propose-join", "social render", "check",
         ),
         disallowed_tools=groups_mod.fetch_denials(),
     )
 
 
+def approval_kinds() -> dict:
+    return {group_rules.KIND: group_rules.GroupRules()}
+
+
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
-    return None  # the register part runs every Monday, even with nothing joined
+    """Never skips: the register part runs every Monday, even with nothing joined.
+
+    It has one side effect: the one-off pass that writes down rules confirmed before group-rules
+    approvals existed (`group_rules.record_earlier_confirmations`). A failure there is logged as
+    `community.group.rules_pass_error` and retried next time, never a reason to skip the run."""
+    if job == "community":
+        try:
+            with db.transaction(conn):
+                group_rules.record_earlier_confirmations(conn)
+        except Exception as error:  # noqa: BLE001 - the run goes ahead whatever the pass does
+            log.event(conn, "community.group.rules_pass_error", {"error": f"{type(error).__name__}: {error}"},
+                      level="warning", agent=NAME)
+    return None
 
 
 def digest(conn: sqlite3.Connection, day: str) -> dict:
@@ -110,6 +129,29 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
                 brief.append(f"community run {run['id']} audit not clean")
     figures["community_audit_clean"] = audits_clean
     return {"figures": figures, "lines": lines, "brief": brief}
+
+
+RUN_UPDATE_DISCORD_CHANNEL = "community"
+
+
+def run_update(conn: sqlite3.Connection, run) -> list[str]:
+    """The "Produced:" items of a community run: groups it added to the
+    register, and the posts and reply ideas it planned."""
+    from jura_growth.run_update import count
+
+    groups = db.scalar(conn, "SELECT count(*) FROM community_groups WHERE run_id = ?", (run.id,)) or 0
+    planned = dict(
+        (r["kind"], r["n"])
+        for r in db.rows(conn, "SELECT kind, count(*) AS n FROM community_posts WHERE run_id = ? GROUP BY kind", (run.id,))
+    )
+    produced = []
+    if groups:
+        produced.append(count(groups, "new group"))
+    if planned.get("post"):
+        produced.append(count(planned["post"], "planned post"))
+    if planned.get("reply_idea"):
+        produced.append(count(planned["reply_idea"], "reply idea"))
+    return produced
 
 
 # --- commands ----------------------------------------------------------------
@@ -195,20 +237,30 @@ def groups_cmd(fit, joined, channel, as_json) -> None:
 @click.argument("group_id", type=int)
 @click.argument("pairs", nargs=-1, required=True)
 def set_cmd(group_id, pairs) -> None:
-    """Update a group: joined=yes rules="..." rules_confirmed=yes promo_days=... post_days=... [fit=...] [notes=...].
+    """Update a group: joined=yes rules="..." rules_confirmed=yes [fit=...] [notes=...].
 
-    Confirming rules needs both day keys: each any, none, or days like sat,sun
-    or mon-fri. New rules text clears the confirmed days."""
+    rules="..." (as the group states them) and rules_confirmed=yes raise a
+    group-rules request. Confirm the rules in #approvals, typing the open days:
+    /growth approve A-nnnn promo_days=... post_days=..., each any, none, or days
+    like sat,sun or mon-fri. Days are never set here. New rules text clears the
+    confirmation and the confirmed days."""
     with db.session() as conn:
         try:
-            group = groups_mod.set_fields(conn, group_id, list(pairs))
+            with db.transaction(conn):
+                group_rules.record_earlier_confirmations(conn)
+                outcome = group_rules.set_by_hand(conn, group_id, list(pairs))
         except groups_mod.GroupError as error:
             raise click.ClickException(str(error)) from None
+        cards.sweep_safely(conn)  # the card goes out once the request is committed (A12)
+    group = outcome.group
     click.echo(
         f"group {group['id']} {group['name']}: fit {group['fit']}, joined {'yes' if group['joined'] else 'no'}, "
         f"rules confirmed {'yes' if group['rules_confirmed'] else 'no'}; rules: {group['promo_rules'] or '-'} "
         f"({groups_mod.rules_for(group).summary()})"
     )
+    line = group_rules.answer(outcome)
+    if line:
+        click.echo(line)
 
 
 @community.command("removed")
@@ -218,9 +270,11 @@ def removed_cmd(group_id, reason) -> None:
     """A group's admin removed a post or warned you: skip it for good."""
     with db.session() as conn:
         try:
-            group = groups_mod.remove(conn, group_id, reason)
+            with db.transaction(conn):
+                group = groups_mod.remove_for_good(conn, group_id, reason)
         except groups_mod.GroupError as error:
             raise click.ClickException(str(error)) from None
+        cards.sweep_safely(conn)  # the superseded cards, after the commit (MC §4.6 A12)
     click.echo(f"group {group['id']} {group['name']} is now skip, permanently; its planned posts are skipped")
 
 
@@ -229,6 +283,8 @@ def removed_cmd(group_id, reason) -> None:
 @click.option("--week", help="Plan week, default this week (2026-W44).")
 def context_cmd(as_json, week) -> None:
     """Everything the weekly run needs, in one call (records checklist ticks first)."""
+    from jura_growth.agents.publish import items as publish_items
+
     week = week or plan_mod.current_week()
     with db.session() as conn:
         ticks = plan_mod.sync_ticks(conn)
@@ -272,6 +328,7 @@ def context_cmd(as_json, week) -> None:
             (timeutil.stamp(timeutil.days_ago(int(plan_mod.settings().get("compare_days", 28)))),),
         )
         counts = groups_mod.counts(conn)
+        joins = publish_items.join_room(conn)
     tools, registry_ok = plan_mod.live_tools()
     from jura_growth.cli import cli as root
 
@@ -297,6 +354,7 @@ def context_cmd(as_json, week) -> None:
             for g in everything
         ],
         "eligible": eligible,
+        "joins": joins,
         "planned_this_week": [{k: p[k] for k in ("id", "group_id", "kind", "planned_day", "status", "text")} for p in planned],
         "recent_post_texts": recent,
         "toolbox_live": sorted(tools),
@@ -334,16 +392,49 @@ def plan_add_cmd(file_, week) -> str:
 @click.option("--week", help="Plan week, default this week.")
 def publish_plan_cmd(week) -> str:
     """Write outputs/growth/community/YYYY-Www.md and post it to #community."""
+    from jura_growth.agents.publish import items as publish_items
+
     with db.session() as conn:
         try:
             target, posted, posts, replies = plan_mod.publish(conn, week)
         except ValueError as error:
             raise click.ClickException(str(error)) from None
+        # Each planned post in a group joined as the Jura Page also gets its publish item and its
+        # community-post card in #approvals (browser publishing PRD §5.4); A12: after the commit.
+        made = publish_items.raise_for_plan(conn, week or plan_mod.current_week(), run_id=log.current_run_id())
+        cards.sweep_safely(conn)
     click.echo(f"checklist: {target}")
     click.echo("posted to #community" if posted.delivered else f"#community: {posted.reason}")
+    for result in made:
+        if result.why:
+            click.echo(f"No new approval card: {result.why}")
+        elif result.item is not None and result.approval is not None and result.approval.live:
+            click.echo(f"Approval requested: community post item {result.item.ref} ({result.item.label}) as "
+                       f"{result.approval.id} in #approvals")
     summary = f"plan published: {posts} posts, {replies} reply ideas ({target.name})"
     click.echo(summary)
     return summary
+
+
+@community.command("propose-join")
+@click.argument("group_id", type=int)
+def propose_join_cmd(group_id) -> str:
+    """Ask Ting Yu, in #approvals, to join a good-fit group as the Jura Page (browser publishing).
+
+    Up to the weekly join cap. Nothing is joined until he approves the card and a publish run
+    claims it."""
+    from jura_growth.agents.publish import items as publish_items
+
+    with db.session() as conn:
+        with db.transaction(conn):
+            made = publish_items.create_join(conn, group_id, run_id=log.current_run_id())
+        cards.sweep_safely(conn)
+    if made.why or made.item is None or made.approval is None or not made.approval.live:
+        click.echo(f"no join proposed: {made.why or 'no request raised'}")
+        sys.exit(1)
+    line = f"join proposed for group {group_id} as {made.approval.id} ({made.item.label}); decide it in #approvals"
+    click.echo(line)
+    return line
 
 
 @community.command("posted")
@@ -404,10 +495,10 @@ def register_summary(counts: dict, new: list[dict]) -> str:
             "",
             "No group is marked joined and good fit yet, so there is no posting plan this week. Join the good-fit "
             "groups you want (as yourself), read their rules inside, then run:",
-            "`jura-growth community set <id> joined=yes rules=\"<the rules as the group states them>\" rules_confirmed=yes "
-            "promo_days=<days> post_days=<days>`",
-            "Each `<days>` is any, none, or days like sat,sun or mon-fri: promo_days for promotional posts, "
-            "post_days for every post.",
+            "`jura-growth community set <id> joined=yes rules=\"<the rules as the group states them>\" rules_confirmed=yes`",
+            "That raises a group-rules card in #approvals. Confirm it there with the open days: "
+            "`/growth approve A-nnnn promo_days=<days> post_days=<days>`. Each `<days>` is any, none, or days like "
+            "sat,sun or mon-fri: promo_days for promotional posts, post_days for every post.",
         ]
     return "\n".join(lines)
 

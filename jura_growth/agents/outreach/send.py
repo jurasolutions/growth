@@ -19,6 +19,23 @@ Every rule is code. In order:
  7. Per message: suppression (address and domain), the do-not-contact list,
     `contacted_domains`, the per-company rule, and the brand gate again on the
     exact text being sent.
+ 8. Live only: the claim (mission control §5.8, ADR 0003). Live mode considers
+    only emails Ting Yu approved in #approvals (`due(approved_only=True)`,
+    which also feeds the spacing in step 5). After every check above, one
+    `BEGIN IMMEDIATE` transaction re-reads the email, checks that what will go
+    out hashes to the approval, claims the `outreach-email` approval and
+    counts the attempt; then exactly that email goes to Resend under
+    `Idempotency-Key: jura-outreach-<id>`; then it is marked sent. A claimed
+    email that Resend errored on, or that the process lost before the mark,
+    is retried under the same key with no second claim, but only within
+    `caps.OUTREACH_RETRY_WINDOW_HOURS` of the claim; after that it is marked
+    `uncertain`, Ting Yu is alerted, and sending again needs a fresh approval.
+
+In live mode each run also tops up the approval requests (`approval.raise_due`)
+and posts or edits their cards when it ends. Live mode waits for
+`approvals.discord_buttons: true` (`approval_gate_problem`). Before rolling back
+past the mission-control outreach gate, set `mode: shadow` in config/scout.yaml: an older
+`send.py` has no gate.
 """
 
 from __future__ import annotations
@@ -31,12 +48,21 @@ from email.utils import formataddr
 
 import httpx
 
-from jura_growth import caps, cloudflare, config, db, discord, holidays, locks, log, pause, timeutil
-from jura_growth.agents.outreach import compose, queue, replies, store, sync
+from jura_growth import approval_settings, approvals, caps, cloudflare, config, db, discord, holidays, locks, log, pause, timeutil, uat_stub
+from jura_growth.agents.outreach import approval, compose, queue, replies, store, sync
 from jura_growth.agents.scout import contact as contact_rules
 from jura_growth.agents.scout import dnc, registry, settings
 
 RESEND_URL = "https://api.resend.com/emails"
+# The UAT harness only (uat.md Part A): point Resend at the local stub,
+# `uv run python -m tests.resend_stub`, together with D1. `uat_stub` decides
+# whether it may be used, so a real run can never send through it or be
+# fooled into thinking it sent.
+RESEND_BASE_ENV = uat_stub.RESEND_ENV
+
+
+class ResendStubRefused(uat_stub.StubRefused):
+    pass
 
 
 @dataclass
@@ -67,10 +93,42 @@ def from_address() -> str:
     return formataddr((settings.SENDER_NAME, f"{local}@{sending_domain()}"))
 
 
+def resend_stub_problem() -> str | None:
+    """Why `JURA_GROWTH_RESEND_BASE_URL` may not be used, or None (also None when unset)."""
+    return uat_stub.url_problem(RESEND_BASE_ENV)
+
+
+def resend_url() -> str:
+    """Where emails are sent: Resend, or the UAT stub when that is allowed."""
+    base = uat_stub.base(RESEND_BASE_ENV, ResendStubRefused)
+    return base + "/emails" if base else RESEND_URL
+
+
+def approval_gate_problem() -> str | None:
+    """Why the approval gate stops live sending, or None (MC §5.8, AC-M8.11).
+
+    Every live email needs an `outreach-email` approval claimed first, and
+    approvals come only from the Approve and Skip buttons in #approvals,
+    through Dispatch. So live sending waits until Ting Yu has checked the
+    buttons work and set `approvals.discord_buttons: true` (ticket 15). The
+    switch is read here only; nothing in the engine sets it.
+    """
+    if approval_settings.switch("discord_buttons"):
+        return None
+    return (
+        "approval buttons not set up: every live email needs Ting Yu's approval from #approvals first. "
+        "Set approvals.discord_buttons: true in config/settings.yaml only after checking the Approve and "
+        "Skip buttons work (mission-control ticket 15)"
+    )
+
+
 def live_problems() -> list[str]:
     """Every reason live sending may not start. Empty means ready."""
     cfg = settings.get()
     problems = []
+    gate = approval_gate_problem()
+    if gate:
+        problems.append(gate)
     mode = settings.mode()
     if mode != "live":
         problems.append(f"mode is {mode!r} in config/scout.yaml (live sending needs `mode: live`)")
@@ -95,6 +153,9 @@ def live_problems() -> list[str]:
         problems.append(f"{dnc.path()} does not exist (create it, even with only a header row)")
     if not cloudflare.configured():
         problems.append("D1 is not configured (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, D1_DATABASE_ID), so suppression can't sync")
+    for stub in (cloudflare.stub_problem(), resend_stub_problem(), uat_stub.pair_problem()):
+        if stub:
+            problems.append(stub)
     return problems
 
 
@@ -217,12 +278,19 @@ def quota(conn: sqlite3.Connection, mode: str) -> tuple[int, str]:
     return max(0, left), why
 
 
-def due(conn: sqlite3.Connection) -> list[dict]:
-    return db.rows(
-        conn,
-        "SELECT * FROM outreach_messages WHERE status = 'queued' AND send_after <= ? ORDER BY send_after, id",
-        (timeutil.today_str(),),
-    )
+def due(conn: sqlite3.Connection, *, approved_only: bool = False) -> list[dict]:
+    """Queued emails due today. With `approved_only` (live mode), only those
+    Ting Yu approved: unclaimed, or claimed by an attempt that is retried
+    under the same idempotency key. That list also feeds the spacing
+    probability, so spacing spreads only what can actually go out."""
+    sql = "SELECT * FROM outreach_messages WHERE status = 'queued' AND send_after <= ?"
+    if approved_only:
+        sql += (
+            " AND EXISTS (SELECT 1 FROM approvals a WHERE a.kind = ? AND a.status = 'approved'"
+            " AND a.subject = 'outreach_message:' || outreach_messages.id)"
+        )
+    params = (timeutil.today_str(), approval.KIND) if approved_only else (timeutil.today_str(),)
+    return db.rows(conn, sql + " ORDER BY send_after, id", params)
 
 
 # --- the run ---------------------------------------------------------------
@@ -239,7 +307,13 @@ def send_due(conn: sqlite3.Connection, *, client: httpx.Client | None = None) ->
     with locks.held(SEND_LOCK) as acquired:
         if not acquired:
             return SendResult(None, "skipped: another send-due run is still going")
-        return _send_due(conn, client)
+        result = _send_due(conn, client)
+        if outside_window(timeutil.now_sgt()) is None:
+            # Live mode tops the requests up to today's room (A14): after a
+            # send, a skip, or a decision since the last slot.
+            approval.raise_due(conn)
+    approval.post_cards(conn)
+    return result
 
 
 def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> SendResult:
@@ -259,9 +333,9 @@ def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> SendResu
         if problems:
             return _refuse(conn, problems)
 
-    waiting = due(conn)
+    waiting = due(conn, approved_only=mode == "live")
     if not waiting:
-        return SendResult(None, "nothing queued")
+        return SendResult(None, _nothing_waiting(conn, mode))
     left, binding = quota(conn, mode)
     if left <= 0:
         return SendResult(None, f"nothing more today: {binding} reached")
@@ -300,7 +374,7 @@ def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> SendResu
         return SendResult(text, text)
 
     skipped = []
-    for message in due(conn):
+    for message in due(conn, approved_only=mode == "live"):
         try:
             lead, row = queue.recipient(conn, message["lead_id"])
         except queue.QueueError as error:
@@ -316,13 +390,28 @@ def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> SendResu
             continue
         if db.scalar(conn, "SELECT status FROM outreach_messages WHERE id = ?", (message["id"],)) != "queued":
             continue  # cancelled meanwhile (a reply or an unsubscribe)
-        result = _send_one(conn, message, lead, row, mode, client)
+        try:
+            result = _send_one(conn, message, lead, row, mode, client)
+        except _NotClaimed as refused:
+            skipped.append(store.mask(str(refused)))
+            continue  # the next approved email may still go
         summary = "; ".join([result] + notes + (["skipped " + "; ".join(skipped)] if skipped else []))
         return SendResult(summary, summary)
     if skipped:
         text = "skipped " + "; ".join(skipped)
         return SendResult(text, text)
     return SendResult(None, "nothing sendable")
+
+
+def _nothing_waiting(conn: sqlite3.Connection, mode: str) -> str:
+    if mode != "live":
+        return "nothing queued"
+    pending = approval.pending_requests(conn)
+    unasked = len(approval.without_request(conn))
+    if not pending and not unasked:
+        return "nothing queued"
+    return (f"nothing approved to send: {pending} waiting for a decision, "
+            f"{unasked} waiting for a request slot")
 
 
 def _follow_up_send_problems(conn: sqlite3.Connection, lead_id: int) -> list[str]:
@@ -359,6 +448,81 @@ def _skip(conn: sqlite3.Connection, message: dict, lead: dict, found: list[str])
     log.event(conn, "outreach.skipped", {"message": message["id"], "domain": lead["domain"], "reasons": [store.mask(f) for f in found]}, agent=store.AGENT)
 
 
+class _NotClaimed(Exception):
+    """Live: the email's approval couldn't be claimed, so it isn't sent."""
+
+
+@dataclass
+class _Claimed:
+    """What the claim checked, and so exactly what goes out."""
+
+    message: dict  # the message row, read inside the claim
+    row: dict  # the recipient's contact row, read inside the claim
+    email: compose.Email  # built from those rows; its hash is the approval's
+    attempts: int  # counted by the claim, before the call
+
+
+def _claim(conn: sqlite3.Connection, message: dict, gated: compose.Email) -> _Claimed:
+    """The claim (MC §4.6 A6, §5.8). In one `BEGIN IMMEDIATE` transaction it
+    re-reads the email and its recipient, builds the email from those rows,
+    refuses unless that is the email the brand gate just passed and its hash
+    is the approval's `content_hash`, then claims the approval and counts the
+    attempt (the in-flight marker). The commit comes before Resend is called,
+    and only the email built here is sent. Raises `_NotClaimed`.
+
+    An email whose approval an earlier attempt already claimed (Resend
+    errored, or the process died before the mark) is the same action
+    instance: it is retried under its `Idempotency-Key` without a second
+    claim, if it still hashes to what was approved, and only inside
+    `caps.OUTREACH_RETRY_WINDOW_HOURS` of the claim (Resend's key lasts 24
+    hours). Past that it may already have gone out, so it is marked
+    `uncertain` and needs a fresh approval."""
+    refusal, alert, claimed = None, None, None
+    try:
+        with db.transaction(conn):
+            current = db.one(conn, "SELECT * FROM outreach_messages WHERE id = ? AND status = 'queued'", (message["id"],))
+            if current is None:
+                raise approvals.NotApproved("gone", "it is no longer queued")
+            lead, row = queue.recipient(conn, current["lead_id"])
+            email = queue.build(conn, lead, row, subject=current["subject"], body=current["draft_body"])
+            if (email.to, email.subject, email.draft) != (gated.to, gated.subject, gated.draft):
+                raise approvals.NotApproved("changed", "it changed during this run, so it isn't sent; the next slot reads it again")
+            sending = approval.content_hash_of(row["email"], email.subject, email.draft)
+            earlier = approval.claimed(conn, current["id"])
+            if earlier is None:
+                used = approvals.use(conn, approval.KIND, approval.subject_of(current["id"]), run_id=log.current_run_id())
+                if used.content_hash != sending:
+                    raise approvals.NotApproved("mismatch", f"what would go out isn't what {used.id} approved, so it isn't sent")
+            elif sending != earlier.content_hash:
+                refusal = f"it changed after {earlier.id} was used, so it isn't sent again"
+                conn.execute("UPDATE outreach_messages SET status = 'failed', error = ? WHERE id = ?", (refusal, current["id"]))
+            elif timeutil.now_sgt() - timeutil.parse(earlier.used_at) >= timedelta(hours=caps.OUTREACH_RETRY_WINDOW_HOURS):
+                refusal = (f"it may already have gone out: Resend was called under {earlier.id} more than "
+                           f"{caps.OUTREACH_RETRY_WINDOW_HOURS} hours ago and the send was never confirmed")
+                conn.execute(
+                    "UPDATE outreach_messages SET status = 'uncertain', error = ? WHERE id = ?",
+                    (refusal + ". Check Resend's log; it won't be retried, and sending again needs a fresh approval",
+                     current["id"]),
+                )
+                alert = f"Message {current['id']} {refusal}. It won't be retried; sending again needs a fresh approval."
+            if refusal is None:
+                conn.execute("UPDATE outreach_messages SET attempts = attempts + 1 WHERE id = ?", (current["id"],))
+                claimed = _Claimed(current, row, email, current["attempts"] + 1)
+    except approvals.NotApproved as error:
+        # Nothing is claimed. A lapse or supersede `use()` wrote is rolled back
+        # with it, and written again at the next read.
+        refusal = error.text
+    except queue.QueueError as error:
+        refusal = str(error)
+    if claimed is not None:
+        return claimed
+    log.event(conn, "outreach.not_claimed", {"message": message["id"], "why": store.mask(refusal or "")},
+              level="warning", agent=store.AGENT)
+    if alert:
+        discord.alert(conn, alert, agent=store.AGENT)
+    raise _NotClaimed(refusal or "not claimed")
+
+
 def _send_one(conn, message: dict, lead: dict, row: dict, mode: str, client) -> str:
     # Recomposed from the draft so the footer carries the current token, then
     # gated again on exactly the text that goes out.
@@ -383,24 +547,32 @@ def _send_one(conn, message: dict, lead: dict, row: dict, mode: str, client) -> 
             "outreach-sent",
             f"**SHADOW** (not sent) message {message['id']} to {domain} for {lead['company']} (lead {lead['id']})\n"
             f"Subject: {email.subject}\n\n{email.draft}",
+            own_copy=(email.subject, email.draft),
         )
         return f"SHADOW message {message['id']} to {domain}"
 
+    try:
+        claimed = _claim(conn, message, email)
+    except _NotClaimed as refused:
+        raise _NotClaimed(f"message {message['id']} ({lead['domain']}): {refused}") from None
+    message, row, email = claimed.message, claimed.row, claimed.email
     outcome, detail = _resend(conn, message, row, email, client)
     if outcome == "sent":
-        _mark_sent(conn, message, lead, row, email, mode="live", resend_id=detail)
+        with db.transaction(conn):
+            _mark_sent(conn, message, lead, row, email, mode="live", resend_id=detail)
         store.post(
             conn,
             "outreach-sent",
             f"**Sent** message {message['id']} to {domain} ({lead['company']}, lead {lead['id']})\n"
             f"Subject: {email.subject}\nFirst line: {first_line}",
+            own_copy=(email.subject, first_line),
         )
         return f"sent message {message['id']} to {domain}"
     if outcome == "pause":
         conn.execute("UPDATE outreach_messages SET error = ? WHERE id = ?", (detail[:500], message["id"]))
         store.auto_pause(conn, f"Resend refused the send: {detail}")
         return f"Resend error, outreach paused: {detail}"
-    attempts = message["attempts"] + 1
+    attempts = claimed.attempts
     if outcome == "retry" and attempts < 3:
         conn.execute("UPDATE outreach_messages SET attempts = ?, error = ? WHERE id = ?", (attempts, detail[:500], message["id"]))
         log.event(conn, "outreach.retry", {"message": message["id"], "error": detail}, level="warning", agent=store.AGENT)
@@ -465,11 +637,15 @@ def classify(status: int, body: dict) -> tuple[str, str]:
 
 def _resend(conn, message: dict, row: dict, email: compose.Email, client) -> tuple[str, str]:
     key = config.require("RESEND_API_KEY_OUTREACH")
+    try:
+        url = resend_url()
+    except ResendStubRefused as refused:
+        return "pause", str(refused)
     owns = client is None
     client = client or resend_client()
     try:
         response = client.post(
-            RESEND_URL,
+            url,
             headers={"Authorization": f"Bearer {key}", "Idempotency-Key": f"jura-outreach-{message['id']}"},
             json=resend_payload(message, row, email),
         )

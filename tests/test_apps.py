@@ -50,7 +50,7 @@ GOOD = """\
 *Domain: `jurasolutions/` | Created: 2026-10-26 | Author: app factory (for Ting Yu)*
 *Status: **PENDING SIGN-OFF** | Tier: browser | Category: Documents*
 *Follows: `prd/pending/prd-jura-app-factory-2026-10-24.md` (toolbox shell, limiter, conventions).*
-*To build: "approved, build prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md"*
+*To build: approve its app-build request in #approvals (prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md)*
 
 ---
 
@@ -137,9 +137,10 @@ None.
 
 **Do not start building. This PRD requires explicit sign-off before any code is written.**
 
-To proceed: reply "approved, build prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md".
-Claude Code builds in one pass, shows the tool locally, and deploys only after Ting Yu's
-go-ahead. Once live, this file moves to `prd/done/apps/` with the ship date recorded at the top.
+To proceed: approve its app-build request in #approvals. Approving hands this PRD to a builder,
+who builds it on its own branch from `main` with a preview. Going live is a second approval, of
+the exact commit. Once released, this file moves to `prd/done/apps/` with the ship date and both
+approvals recorded.
 
 Signed off by: ________________  Date: ____________
 """
@@ -208,8 +209,14 @@ BROKEN = {
     "missing subsection": lambda t: t.replace("### 5.4 Done-check", "Done-check:"),
     "bad tier": lambda t: t.replace("Tier: browser", "Tier: web"),
     "bad category": lambda t: t.replace("Category: Documents", "Category: Logistics"),
-    "no to-build line": lambda t: t.replace('*To build: "approved, build prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md"*\n', ""),
-    "to-build wrong number": lambda t: t.replace("build prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md\"*", "build prd/pending/apps/prd-app-004-delivery-order-maker-2026-10-26.md\"*"),
+    "no to-build line": lambda t: t.replace('*To build: approve its app-build request in #approvals (prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md)*\n', ""),
+    "to-build wrong number": lambda t: t.replace("(prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md)*", "(prd/pending/apps/prd-app-004-delivery-order-maker-2026-10-26.md)*"),
+    "old to-build line": lambda t: t.replace(
+        "*To build: approve its app-build request in #approvals (prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md)*",
+        '*To build: "approved, build prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md"*'),
+    "old sign-off reply": lambda t: t.replace(
+        "To proceed: approve its app-build request in #approvals.",
+        'To proceed: reply "approved, build prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md".'),
     "to-build wrong date": lambda t: t.replace("Created: 2026-10-26", "Created: 2026-10-25"),
     "slug not from name": lambda t: t.replace("# PRD — APP-003 Delivery order maker", "# PRD — APP-003 Delivery note maker"),
     "no gate sentence": lambda t: t.replace("**Do not start building. This PRD requires explicit sign-off before any code is written.**", "Build when ready."),
@@ -230,6 +237,28 @@ def test_broken_variants_fail(label):
     broken = BROKEN[label](GOOD)
     assert broken != GOOD, "the mutation must change the text"
     assert prd_mod.validate_shape(broken, strict=True), label
+
+
+def test_the_template_says_a_build_starts_with_its_app_build_request_not_a_typed_reply():
+    """Ticket 10b: the template's "To build:" header and §7 point at the `app-build` request in
+    #approvals, so the PRD attached to its card no longer says "approved, build …" (AC-M9.1)."""
+    template = (REAL_PRD / "templates" / "prd-app-template.md").read_text()
+    assert "approved, build" not in template
+    assert "*To build: approve its app-build request in #approvals (prd/pending/apps/prd-app-NNN-<slug>-YYYY-MM-DD.md)*" in template
+    assert "To proceed: approve its app-build request in #approvals." in template
+    assert "approved, build" not in GOOD
+
+
+def test_a_prd_filed_before_the_new_header_still_reads_but_the_factory_needs_the_new_one():
+    """APP-001 to APP-003 keep the old header (their bytes are what was asked about); the parser
+    still reads it, and only a new factory PRD must use the template's new wording."""
+    old = BROKEN["old sign-off reply"](BROKEN["old to-build line"](GOOD))
+    parsed = prd_mod.parse(old)
+    assert parsed.build_path == "prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md"
+    assert parsed.slug == "delivery-order-maker"
+    assert prd_mod.validate_shape(old) == []
+    assert any("To build" in e for e in prd_mod.validate_shape(old, strict=True))
+    assert any("§7" in e for e in prd_mod.validate_shape(BROKEN["old sign-off reply"](GOOD), strict=True))
 
 
 def test_strict_mode_needs_the_template_wording():
@@ -355,7 +384,8 @@ def test_app_copy_channel_blocks_saving_claims():
 # --- submit-prd, the limits and the digest ---------------------------------
 
 
-def test_submit_prd_files_updates_backlog_and_posts(tmp_path, prd_tree):
+def test_submit_prd_files_updates_backlog_and_raises_an_app_build_request(tmp_path, prd_tree):
+    """The card itself is in `test_app_builds.py` (AC-M9.1); the old #app-factory post is gone."""
     result = invoke("apps", "submit-prd", str(write(tmp_path, GOOD)))
     assert result.exit_code == 0, result.output
     target = prd_tree / "pending" / "apps" / "prd-app-003-delivery-order-maker-2026-10-26.md"
@@ -363,16 +393,11 @@ def test_submit_prd_files_updates_backlog_and_posts(tmp_path, prd_tree):
     row = next(r for r in backlog.load() if r["name"] == "Delivery order maker")
     assert row["status"] == "prd-pending" and row["app_id"] == "APP-003"
     assert backlog.path().exists()
-    [message] = outbox("app-factory")
-    content = message["content"]
-    assert "APP-003 Delivery order maker" in content and "Tier: browser" in content
-    assert "Lead types it suits: wholesale and distribution" in content
-    assert (
-        'To build: open Claude Code in jurasolutions/ and say "approved, build '
-        'prd/pending/apps/prd-app-003-delivery-order-maker-2026-10-26.md".'
-    ) in content
+    assert outbox("app-factory") == []
+    assert "approval request A-0001 raised" in result.output
     with db.session() as c:
         assert db.scalar(c, "SELECT app_id FROM app_prds") == "APP-003"
+        assert db.scalar(c, "SELECT subject FROM approvals WHERE kind = 'app-build'") == "app:APP-003"
 
 
 def test_dry_run_files_nothing(tmp_path, prd_tree):
@@ -399,16 +424,14 @@ def test_one_a_day(tmp_path, conn):
     assert part["figures"]["app_prd_today"] == "APP-003 Delivery order maker"
 
 
-def test_waiting_pile_guard(tmp_path, prd_tree, conn):
+def test_prds_with_no_app_build_request_are_not_in_the_waiting_pile(tmp_path, prd_tree, conn):
+    """MC §5.9 step 6: the pile counts PRDs waiting for an `app-build` decision. Ting Yu's own
+    PRDs never get a request, so seven of them don't stop the factory; AC-M9.10 is in
+    `test_app_builds.py`."""
     for n in range(3, 8):
         (prd_tree / "pending" / "apps" / f"prd-app-{n:03d}-tool-{n}-2026-10-20.md").write_text(f"# PRD — APP-{n:03d} Tool\n")
-    reason = apps_plugin.precheck("app-factory", conn)
-    assert reason and reason.startswith("7 app PRDs waiting")
-    outcome = runner.run("app-factory", ignore_schedule=True)
-    assert outcome.status == "skipped"
-    assert "skipped today: 7 app PRDs waiting" in apps_plugin.digest(conn, TODAY)["lines"][0]
-    result = invoke("apps", "submit-prd", str(write(tmp_path, GOOD)))
-    assert result.exit_code == 1 and "waiting" in result.output
+    assert apps_plugin.precheck("app-factory", conn) is None
+    assert invoke("apps", "submit-prd", str(write(tmp_path, GOOD.replace("APP-003", "APP-008").replace("prd-app-003", "prd-app-008")))).exit_code == 0
 
 
 def test_brand_failure_allows_one_regeneration_then_drops(tmp_path, conn):
@@ -427,6 +450,34 @@ def test_structural_rejection_does_not_use_the_brand_attempt(tmp_path, conn):
     assert result.exit_code == 1 and "brand check has not run" in result.output
     assert db.scalar(conn, "SELECT count(*) FROM qa_attempts") == 0
     assert invoke("apps", "submit-prd", str(write(tmp_path, GOOD))).exit_code == 0
+
+
+PRIVATE = {
+    # code review 12, Q1: what the privacy filter would change never goes into a PRD
+    "a named address": "Asked by jane.tan@example.com during a call.",
+    "a phone number": "Call the owner on 9123 4567 to check the wording.",
+    "a secret-looking value": "Test key: sk-ant-abcdefghijklmnop0123",
+}
+
+
+@pytest.mark.parametrize("label", sorted(PRIVATE))
+@pytest.mark.parametrize("dry_run", [False, True], ids=["submit", "dry run"])
+def test_a_prd_the_privacy_filter_would_change_is_rejected_before_the_brand_check(tmp_path, conn, label, dry_run):
+    private = PRIVATE[label]
+    text = GOOD.replace("## 2. Success criteria", f"{private}\n\n## 2. Success criteria")
+    line = text.splitlines().index(private) + 1
+    result = invoke("apps", "submit-prd", *(["--dry-run"] if dry_run else []), str(write(tmp_path, text)))
+    assert result.exit_code == 1, result.output
+    assert "brand check has not run" in result.output and f"line {line}" in result.output
+    assert "a person's name or address, a phone number or a secret-looking value" in result.output
+    assert private not in result.output and "jane.tan" not in result.output and "sk-ant-" not in result.output
+    assert not list((paths.prd_dir() / "pending" / "apps").glob("prd-app-003-*"))
+    assert db.scalar(conn, "SELECT count(*) FROM qa_attempts") == 0
+    assert db.scalar(conn, "SELECT count(*) FROM approvals") == 0
+
+
+def test_the_good_prd_is_unchanged_by_the_privacy_filter(tmp_path):
+    assert invoke("apps", "submit-prd", "--dry-run", str(write(tmp_path, GOOD))).exit_code == 0
 
 
 def test_cited_source_must_be_fetched_in_the_run(tmp_path, monkeypatch, conn):
@@ -475,7 +526,7 @@ def test_context_json_has_everything_the_prompt_needs():
     result = invoke("apps", "context", "--json")
     assert result.exit_code == 0
     view = json.loads(result.output)
-    assert view["next_number"] == "APP-003" and view["waiting"] == {"count": 2, "max": 7}
+    assert view["next_number"] == "APP-003" and view["waiting"] == {"count": 0, "max": 7}
     assert view["usage"]["status"] == "not configured"
     assert {"industries", "observations", "source"} <= set(view["scout_insights"])
     assert len(view["backlog"]) == 20 and view["limit_reason"] is None

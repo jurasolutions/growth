@@ -30,7 +30,6 @@ The core never imports an agent by name: it asks the job's agent plug-in.
 from __future__ import annotations
 
 import functools
-import os
 from dataclasses import dataclass
 from typing import Callable, Iterator
 
@@ -39,8 +38,19 @@ import click
 from jura_growth import agents, config, log, paths, timeutil
 
 # Commands no run may use, whatever a plug-in declares: starting, resuming or
-# scheduling jobs, and posting or uploading to Discord directly.
-NEVER = ("run", "resume", "schedule", "discord")
+# scheduling jobs, posting or uploading to Discord directly, deciding an
+# approval or sending a control command, which only a human may do, and
+# settling a publish item whose outcome is unknown (browser publishing §5.7).
+# Not `one-pager`: that is a scheduled job's own command. An entry of several
+# words matches a command that starts with those words.
+NEVER = ("run", "resume", "schedule", "discord", "approve", "skip", "approvals", "remote", "publish resolve")
+
+
+def never(command: str) -> bool:
+    """Whether `command` ("publish resolve A-0001 posted") starts with an entry of `NEVER`,
+    matched word by word, so "publish resolve" refuses it and "publish next" doesn't."""
+    words = command.split()
+    return any(words[: len(entry.split())] == entry.split() for entry in NEVER)
 
 
 @dataclass(frozen=True)
@@ -51,10 +61,14 @@ class Permissions:
         "check"; each one allows its options and arguments.
     disallowed_tools: extra Claude Code deny rules for the job, for example
         "WebFetch(domain:example.com)".
+    allowed_tools: extra Claude Code allow rules for the job, for example the publish job's
+        Chrome tab tools and `ClaudeInChromeDomain(<host>)` rules (ADR 0005). Never a Bash rule:
+        commands are declared in `commands`, so code enforces them too.
     """
 
     commands: tuple[str, ...] = ()
     disallowed_tools: tuple[str, ...] = ()
+    allowed_tools: tuple[str, ...] = ()
 
 
 class Refused(click.ClickException):
@@ -74,7 +88,7 @@ def permissions(job: str) -> Permissions:
 
 
 def may_use(job: str, command: str) -> bool:
-    if command.split()[0] in NEVER:
+    if never(command):
         return False
     return command in permissions(job).commands
 
@@ -106,8 +120,9 @@ def secret_read_rules() -> list[str]:
 
 def claude_rules(job: str) -> tuple[list[str], list[str]]:
     """(allowed, disallowed) Claude Code rules for a claude job: its own
-    `jura-growth` commands and help, and a denial for every other command,
-    for `NEVER`, for secret files, and for the plug-in's own extra rules.
+    `jura-growth` commands and help, the plug-in's own extra allow rules, and a
+    denial for every other command, for `NEVER`, for secret files, and for the
+    plug-in's own extra deny rules.
 
     Each command is written both bare and with `:*`, so it matches with or
     without arguments.
@@ -115,14 +130,16 @@ def claude_rules(job: str) -> tuple[list[str], list[str]]:
     from jura_growth.cli import cli
 
     declared = permissions(job)
-    commands = [c for c in declared.commands if c.split()[0] not in NEVER]
+    commands = [c for c in declared.commands if not never(c)]
     allowed = ["Bash(jura-growth --help)"]
     allowed += [f"Bash(jura-growth {group} --help)" for group in sorted({c.split()[0] for c in commands if " " in c})]
     for command in commands:
         allowed += [f"Bash(jura-growth {command})", f"Bash(jura-growth {command}:*)"]
+    allowed += [rule for rule in declared.allowed_tools if not rule.startswith("Bash")]
 
     disallowed = secret_read_rules()
-    disallowed += [f"Bash(jura-growth {name}:*)" for name in NEVER]
+    for name in NEVER:  # bare too, for the ones not written yet
+        disallowed += [f"Bash(jura-growth {name})", f"Bash(jura-growth {name}:*)"]
     for name, _ in leaves(cli):
         if name in commands:
             continue
@@ -168,7 +185,7 @@ def _guarded(kind: click.Path) -> GuardedPath:
 def _enforced(name: str, callback: Callable) -> Callable:
     @functools.wraps(callback)
     def run(*args, **kwargs):
-        job = os.environ.get("JURA_GROWTH_JOB")
+        job = log.current_job()
         if job and not may_use(job, name):
             try:
                 log.mirror({

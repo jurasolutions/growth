@@ -13,7 +13,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from jura_growth import caps, config, db, gate, log, suppression, timeutil
-from jura_growth.agents.outreach import compose, store, sync
+from jura_growth.agents.outreach import approval, compose, store, sync
 from jura_growth.agents.scout import contact as contact_rules
 from jura_growth.agents.scout import dnc, registry, settings
 
@@ -32,9 +32,11 @@ class Queued:
     message_id: int | None = None
     reasons: list[str] = field(default_factory=list)
     send_after: str | None = None
+    approval: str | None = None  # the A-nnnn request raised for it in live mode, if there was room
 
     def as_dict(self) -> dict:
-        return {"status": self.status, "message_id": self.message_id, "reasons": self.reasons, "send_after": self.send_after}
+        return {"status": self.status, "message_id": self.message_id, "reasons": self.reasons, "send_after": self.send_after,
+                "approval": self.approval}
 
 
 def site_of(source_url: str) -> str:
@@ -116,6 +118,7 @@ def check_args(lead: dict, email: compose.Email, *, kind: str, tool: str | None)
             "tools": registry.live_slugs(),
             "tool": tool,
             "kind": kind,
+            "recipient": email.to,
         },
     }
 
@@ -206,5 +209,11 @@ def queue(conn: sqlite3.Connection, lead_id: int, data: dict) -> Queued:
     )
     if kind == "first":
         store.set_lead_status(conn, [lead_id], "queued")
-    log.event(conn, "outreach.queued", {"message": cursor.lastrowid, "lead": lead_id, "kind": kind, "tool": slug}, agent=store.AGENT)
-    return Queued("queued", message_id=cursor.lastrowid, send_after=send_after.isoformat())
+    message_id = int(cursor.lastrowid or 0)
+    log.event(conn, "outreach.queued", {"message": message_id, "lead": lead_id, "kind": kind, "tool": slug}, agent=store.AGENT)
+    # Live mode: a request for it, and for anything older still waiting, if
+    # it is due today and today's quota has room (A14); then the cards (A12).
+    approval.raise_due(conn)
+    request = approval.live_request(conn, message_id)
+    approval.post_cards(conn)
+    return Queued("queued", message_id=message_id, send_after=send_after.isoformat(), approval=request.id if request else None)

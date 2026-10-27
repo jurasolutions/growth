@@ -17,6 +17,22 @@ discord:
     - social-drafts
     - community
     - alerts
+    - approvals
+    - mission-control
+
+# Approval requests (mission control PRD §4.6, §5.7). Read through
+# jura_growth/approval_settings.py; the kinds and `remote` only read this block.
+approvals:
+  discord_buttons: false   # buttons checked by Ting Yu (U17); unlocks live outreach (06)
+  post_buttons: false      # send Approve/Skip components on cards (11); needs Dispatch's own webhook
+  dispatch_builds: false   # Dispatch D6 polls handoffs (10)
+  # In the units of jura_growth/caps.py. A value may shorten a deadline, never
+  # lengthen it: anything above the cap reads as the cap.
+  deadlines:
+    outreach-email: {decide_by_business_days: 1, use_by_business_days: 3}
+    app-build: {decide_by_days: 7, use_by_days: 1}
+    app-release: {decide_by_days: 7, use_by_days: 14}
+    group-rules: {decide_by_days: 14}
 
 # Headless Claude Code runs (`claude -p`).
 claude:
@@ -32,6 +48,9 @@ auto_pause_after_failures: 3
 retention:
   backups_days: 14
   transcripts_days: 30
+  # Publish transcripts hold page text: at most 7 days (caps.BROWSER_TRANSCRIPT_DAYS); may only be lower.
+  browser_transcripts_days: 7
+  one_pager_days: 14 # the one-pager's grid PNGs in data/growth/one-pager/
 
 # Jobs `pause all` leaves running: housekeeping, and the digest that reports
 # the pause.
@@ -50,6 +69,7 @@ jobs:
     prompt: app-factory.md
     tools: [WebSearch, WebFetch]
     schedule: {daily: "06:30"}
+    run_update: true # one message per run in #app-factory
 
   social:
     agent: social
@@ -57,6 +77,7 @@ jobs:
     prompt: social.md
     tools: [WebSearch, WebFetch]
     schedule: {daily: "07:00"}
+    run_update: true # one message per run in #social-drafts
 
   scout-research:
     agent: scout
@@ -65,6 +86,7 @@ jobs:
     tools: [WebSearch, WebFetch]
     max_budget_usd: 5.00
     schedule: {business_days: "09:00"}
+    run_update: true # one message per run in #scout-leads
 
   scout-send:
     agent: outreach
@@ -85,6 +107,14 @@ jobs:
     command: [digest]
     schedule: {daily: "17:30"}
 
+  # The one-pager (mission control PRD SC1): writes the day's approval lapses,
+  # then posts to #mission-control. Not in headless.NEVER: it is this job's own command.
+  one-pager:
+    agent: digest
+    kind: command
+    command: [one-pager]
+    schedule: {daily: "08:00"}
+
   community:
     agent: community
     kind: claude
@@ -93,6 +123,22 @@ jobs:
     # No WebFetch denials here: the community plug-in denies every domain in
     # config/community.yaml blocked_fetch_domains, and every subdomain of it.
     schedule: {weekly: {day: mon, time: "07:30"}}
+    run_update: true # one message per run in #community
+
+  # Browser publishing (prd-jura-browser-publishing §5.8; ADR 0005). Posts one
+  # approved item per run through Claude in Chrome. `browser: true` gives it
+  # `--chrome`, and only because `publish` is in caps.BROWSER_JOBS: any other
+  # job that sets it fails. Its tools come from the publish plug-in (domain
+  # rules for the platforms in `browser` mode), never from this file. The
+  # precheck skips without starting Claude when nothing can be claimed.
+  publish:
+    agent: publish
+    kind: claude
+    prompt: publish.md
+    quiet: true
+    browser: true
+    schedule: {daily_every: {start: "09:00", end: "17:40", minutes: 20}}
+    run_update: claimed-only # one message per run that claimed an item
 
   backup:
     agent: backup

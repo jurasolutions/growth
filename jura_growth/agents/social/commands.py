@@ -46,8 +46,13 @@ def today(day, as_json) -> None:
 @click.option("--offline", is_flag=True, help="Render without the web fonts or network (testing).")
 def submit(folder, theme_id, offline) -> str:
     """Check, render, save, log and post the drafts in FOLDER."""
+    from jura_growth.agents.publish.fixture import FixtureRefused
+
     with db.session() as conn:
-        outcome = submit_mod.submit(conn, folder, theme_id=theme_id, offline=offline)
+        try:
+            outcome = submit_mod.submit(conn, folder, theme_id=theme_id, offline=offline)
+        except FixtureRefused as refused:  # the publish rehearsal's fixture platform, set but refused (BP-07)
+            raise click.ClickException(f"refused: {refused}") from None
     click.echo(outcome.text())
     if outcome.exit_code:
         sys.exit(outcome.exit_code)

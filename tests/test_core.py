@@ -1,7 +1,6 @@
 import json
 import os
 import plistlib
-import stat
 from datetime import date
 from pathlib import Path
 
@@ -27,6 +26,8 @@ from jura_growth import (
 )
 from jura_growth.cli import cli
 
+from runner_support import fake_claude, settings_with
+
 
 def invoke(*args, input=None):
     return CliRunner().invoke(cli, list(args), input=input, catch_exceptions=False)
@@ -47,6 +48,87 @@ def test_events_are_append_only(conn):
         conn.execute("DELETE FROM events")
     with pytest.raises(Exception):
         conn.execute("UPDATE events SET kind = 'x'")
+
+
+def mirrored_kinds() -> list[str]:
+    folder = paths.data_dir() / "runs"
+    return [json.loads(line)["kind"] for path in sorted(folder.glob("*.jsonl")) for line in path.read_text().splitlines()]
+
+
+def test_an_event_in_a_rolled_back_transaction_leaves_no_mirror_line(conn):
+    """The mirror is append-only, so it waits for the commit: an event that
+    the database rolls back never reaches it either."""
+    with pytest.raises(RuntimeError):
+        with db.transaction(conn):
+            log.event(conn, "test.rolled_back", {})
+            raise RuntimeError("the caller's write failed")
+    with db.transaction(conn):
+        log.event(conn, "test.committed", {})
+        assert "test.committed" not in mirrored_kinds()
+    assert "test.rolled_back" not in mirrored_kinds() and mirrored_kinds().count("test.committed") == 1
+    assert db.scalar(conn, "SELECT COUNT(*) FROM events WHERE kind = 'test.rolled_back'") == 0
+
+
+def test_a_rolled_back_savepoint_drops_only_its_own_mirror_lines(conn):
+    with db.transaction(conn):
+        log.event(conn, "test.outer", {})
+        with pytest.raises(RuntimeError):
+            with db.atomic(conn):
+                log.event(conn, "test.inner", {})
+                raise RuntimeError("one step failed")
+        with db.atomic(conn):
+            log.event(conn, "test.kept", {})
+    assert [k for k in mirrored_kinds() if k.startswith("test.")] == ["test.outer", "test.kept"]
+    assert db.scalar(conn, "SELECT COUNT(*) FROM events WHERE kind = 'test.inner'") == 0
+
+
+def test_a_mirror_write_that_fails_after_the_commit_never_raises_and_the_rest_are_written(conn, monkeypatch, capsys):
+    """R2-S1 (code review 04): the work is committed, so the caller sees no
+    error; the failed line is reported and every later line still goes."""
+    real = log.mirror
+    failures = iter([True])
+
+    def flaky(record):
+        if next(failures, False):
+            raise OSError("OneDrive held the file")
+        real(record)
+
+    monkeypatch.setattr(log, "mirror", flaky)
+    with db.transaction(conn):
+        log.event(conn, "test.first", {})
+        log.event(conn, "test.second", {})
+    assert db.scalar(conn, "SELECT COUNT(*) FROM events WHERE kind IN ('test.first', 'test.second')") == 2
+    assert "test.first" not in mirrored_kinds() and mirrored_kinds().count("test.second") == 1
+    assert "OneDrive held the file" in capsys.readouterr().err
+
+
+def test_in_transaction_is_true_only_inside_db_transaction(conn):
+    assert not db.in_transaction(conn)
+    with db.transaction(conn):
+        assert db.in_transaction(conn)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        assert conn.in_transaction and not db.in_transaction(conn)
+    finally:
+        conn.execute("ROLLBACK")
+
+
+def test_atomic_inside_a_raw_begin_is_refused(conn):
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        with pytest.raises(RuntimeError, match="raw BEGIN"):
+            with db.atomic(conn):
+                pass
+    finally:
+        conn.execute("ROLLBACK")
+
+
+def test_atomic_outside_a_transaction_is_its_own_transaction(conn):
+    with pytest.raises(RuntimeError):
+        with db.atomic(conn):
+            log.event(conn, "test.alone", {})
+            raise RuntimeError("failed")
+    assert not conn.in_transaction and "test.alone" not in mirrored_kinds()
 
 
 def test_log_test_writes_both_stores(isolated):
@@ -196,33 +278,9 @@ def test_paused_agent_is_skipped(isolated):
     assert runner.run("heartbeat").status == "skipped"
 
 
-def _fake_claude(tmp_path, result_text, *, is_error=False):
-    script = tmp_path / "fake-claude"
-    record = {"type": "result", "subtype": "success", "is_error": is_error, "result": result_text, "total_cost_usd": 0.12}
-    script.write_text(
-        "#!/bin/sh\n"
-        f"cat > {tmp_path}/stdin.txt\n"
-        f"echo '{{\"type\": \"system\", \"argv\": \"'\"$*\"'\"}}'\n"
-        f"echo '{json.dumps(record)}'\n"
-    )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    return script
-
-
-def _settings_with(monkeypatch, **claude):
-    base = config.settings()
-    patched = dict(base)
-    patched["claude"] = {**base["claude"], **claude}
-    patched["jobs"] = {
-        **base["jobs"],
-        "fake": {"agent": "fake-agent", "kind": "claude", "prompt": "fake.md", "tools": ["WebSearch"], "schedule": {"daily": "06:00"}},
-    }
-    monkeypatch.setattr(config, "settings", lambda: patched)
-
-
 def test_claude_job_runs_headless_with_allowlist(isolated, monkeypatch, tmp_path):
-    fake = _fake_claude(tmp_path, "OK: wrote one thing")
-    _settings_with(monkeypatch, binary=str(fake))
+    fake = fake_claude(tmp_path, "OK: wrote one thing")
+    settings_with(monkeypatch, binary=str(fake))
     prompt = paths.prompts_dir() / "fake.md"
     prompt.write_text("Do the fake job.")
     try:
@@ -235,7 +293,7 @@ def test_claude_job_runs_headless_with_allowlist(isolated, monkeypatch, tmp_path
 
 
 def test_claude_command_is_locked_down(monkeypatch):
-    _settings_with(monkeypatch)
+    settings_with(monkeypatch)
     prompt = paths.prompts_dir() / "fake.md"
     prompt.write_text("x")
     try:
@@ -251,8 +309,8 @@ def test_claude_command_is_locked_down(monkeypatch):
 
 
 def test_claude_fail_summary_marks_run_failed(isolated, monkeypatch, tmp_path):
-    fake = _fake_claude(tmp_path, "FAIL: no ICP file")
-    _settings_with(monkeypatch, binary=str(fake))
+    fake = fake_claude(tmp_path, "FAIL: no ICP file")
+    settings_with(monkeypatch, binary=str(fake))
     prompt = paths.prompts_dir() / "fake.md"
     prompt.write_text("x")
     try:

@@ -13,8 +13,10 @@ AGENT = "outreach"
 USERNAME = "Jura growth · outreach"
 # Message statuses that count as "went out" (or would have, in shadow).
 SENT_STATUSES = ("shadow", "sent", "bounced", "complained", "replied")
+# Ting Yu skipped an email to this company (MC §5.7): nothing more goes to it.
+DECLINED = "declined_by_ty"
 # Lead statuses after which nothing more is sent to the company.
-FINAL_LEAD_STATUSES = ("replied", "unsubscribed", "bounced", "complained", "suppressed", "do_not_contact")
+FINAL_LEAD_STATUSES = ("replied", "unsubscribed", "bounced", "complained", "suppressed", "do_not_contact", DECLINED)
 
 
 def mask(text: str) -> str:
@@ -127,5 +129,6 @@ def bounce_rate_pause(conn: sqlite3.Connection, *, notify: bool = True) -> str |
     return None
 
 
-def post(conn: sqlite3.Connection, channel: str, text: str) -> None:
-    discord.post(conn, channel, text, username=USERNAME)
+def post(conn: sqlite3.Connection, channel: str, text: str, *, own_copy: tuple[str, ...] = ()) -> None:
+    """`own_copy`: the parts of `text` that are Jura's own email, shown as written (privacy.py)."""
+    discord.post(conn, channel, text, username=USERNAME, own_copy=own_copy)

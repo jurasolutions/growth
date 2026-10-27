@@ -1,6 +1,8 @@
+import ipaddress
 import os
 import shutil
 import sys
+import urllib.parse
 
 import pytest
 
@@ -49,6 +51,10 @@ class WriteGuard:
             value = os.fsdecode(value)
         if not isinstance(value, (str, os.PathLike)) or str(value) in ("", ":memory:"):
             return None
+        if isinstance(value, str) and value.startswith("file:"):  # a SQLite URI: judge the file it names
+            value = urllib.parse.unquote(urllib.parse.urlsplit(value).path)
+            if value in ("", ":memory:"):
+                return None
         target = os.path.realpath(value)
         if not any(target == root or target.startswith(root + os.sep) for root in self.roots):
             return None
@@ -78,6 +84,63 @@ GUARD = WriteGuard(paths.REPO_ROOT, paths.JURA_ROOT)
 sys.addaudithook(GUARD.hook)
 
 
+class NetworkGuard:
+    """Refuses every lookup and connection that isn't loopback.
+
+    Installed as a second audit hook for the whole session, on
+    `socket.getaddrinfo` and `socket.connect`, so no test can reach Discord,
+    Resend, Cloudflare, IMAP or any other real service by mistake. A refusal
+    raises PermissionError and is recorded, so a test that swallows the error
+    still fails. Unix sockets and the loopback addresses and names are
+    allowed. Subprocesses are outside the hook, as for the write guard.
+    """
+
+    LOOPBACK_NAMES = {"localhost", "localhost.", "ip6-localhost", "ip6-loopback"}
+
+    def __init__(self):
+        self.violations: list[str] = []
+
+    def take(self) -> list[str]:
+        found, self.violations = self.violations, []
+        return found
+
+    @classmethod
+    def _loopback(cls, host) -> bool:
+        if host is None:
+            return True  # a passive lookup for binding: no remote host
+        if isinstance(host, bytes):
+            host = host.decode("ascii", "replace")
+        host = str(host).strip().lower()
+        if host in cls.LOOPBACK_NAMES or host.endswith(".localhost") or host.endswith(".localhost."):
+            return True
+        try:
+            return ipaddress.ip_address(host.split("%")[0]).is_loopback
+        except ValueError:
+            return False
+
+    def hook(self, event, args):
+        if event == "socket.getaddrinfo":
+            host, port = args[0], args[1]
+        elif event == "socket.connect":
+            address = args[1]
+            if not isinstance(address, tuple):
+                return  # a Unix socket path
+            host, port = address[0], address[1]
+        else:
+            return
+        if self._loopback(host):
+            return
+        if isinstance(host, bytes):
+            host = host.decode("ascii", "replace")
+        target = f"{host}:{port}" if port not in (None, "", 0) else str(host)
+        self.violations.append(f"{event} {target}")
+        raise PermissionError(f"tests must not reach the network: {event} {target}")
+
+
+NETWORK = NetworkGuard()
+sys.addaudithook(NETWORK.hook)
+
+
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
     """Every test gets its own data, outputs and launchd folders, no Discord
@@ -99,13 +162,24 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("JURA_SITE_REPO", str(tmp_path / "site"))
     for name in ("JURA_GROWTH_RUN_ID", "JURA_GROWTH_AGENT", "JURA_GROWTH_JOB", "JURA_GROWTH_NOW"):
         monkeypatch.delenv(name, raising=False)
+    # The UAT window's stub URLs (X13), so a shell that exported them doesn't change a test.
+    for name in ("JURA_GROWTH_RESEND_BASE_URL", "JURA_GROWTH_D1_BASE_URL", "JURA_GROWTH_PUBLISH_FIXTURE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    # Claude Code auth variables: the publish precheck skips and status lists a gap when either is
+    # set (BP-03, AC-P9.5), so a shell that exported one doesn't change a test.
+    for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
     config.reset_caches()
     GUARD.take()
+    NETWORK.take()
     yield tmp_path
     config.reset_caches()
     refused = GUARD.take()
+    reached = NETWORK.take()
     if refused:
         pytest.fail("this test wrote into the repo or jurasolutions/:\n  " + "\n  ".join(refused))
+    if reached:
+        pytest.fail("this test reached for the network outside loopback:\n  " + "\n  ".join(reached))
 
 
 @pytest.fixture
@@ -113,6 +187,13 @@ def write_guard():
     """The session's write guard. A test that provokes it on purpose calls
     `write_guard.take()` so its own refusals don't fail it."""
     return GUARD
+
+
+@pytest.fixture
+def network_guard():
+    """The session's network guard. A test that provokes it on purpose calls
+    `network_guard.take()` so its own refusals don't fail it."""
+    return NETWORK
 
 
 @pytest.fixture

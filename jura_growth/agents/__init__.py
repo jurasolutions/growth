@@ -7,6 +7,11 @@ core. A plug-in module may define any of:
     NAME: str
         The agent name used for pause flags, runs and Discord usernames.
 
+    REQUIRED_SETTINGS: tuple[str, ...]
+        The `.env` settings the agent needs, by name. Each one not set is a
+        setup gap in `jura-growth status` and the one-pager (`health.py`).
+        The shorthand for a `setup_gaps()` that only checks names.
+
     MIGRATIONS: pathlib.Path
         A folder of `NNNN_name.sql` files, applied in order after the core
         schema and recorded as `<NAME>/<file>` in `schema_migrations`.
@@ -25,6 +30,10 @@ core. A plug-in module may define any of:
     precheck(job: str, conn) -> str | None
         Called before a scheduled job starts. Return a reason to skip the run
         (for example "7 app PRDs already waiting"), or None to go ahead.
+        Return a `NothingToDo` (for example `NothingToDo("nothing due")`)
+        when the run simply has nothing to do: the runner then writes a
+        `run.quiet` event with that reason and no run row, whatever the job's
+        `quiet` flag (ADR 0001). A plain string is a skip Ting Yu should see.
 
     permissions(job: str) -> headless.Permissions | None
         For a `claude` job this agent runs: the `jura-growth` commands its
@@ -32,6 +41,48 @@ core. A plug-in module may define any of:
         The run may use those commands and no others, in Claude Code's own
         rules and again in code (see `jura_growth/headless.py`). Return None
         for jobs the agent doesn't run.
+
+    after_run(conn, job: str, run_id: int | None, outcome) -> runner.Outcome | None
+        Called after the job body of a run that actually started, before its
+        run row is finished. Return an `Outcome` to replace the run's final
+        outcome (the run row, the #alerts post and auto-pause all see it), or
+        None to keep it. An exception is logged as `run.after_run_error` and
+        the original outcome stands. `run_id` is None for a quiet command job
+        that has no row yet.
+
+    RUN_UPDATE_DISCORD_CHANNEL: str
+        The Discord channel this agent's run updates go to (ticket MC-03),
+        for a job with `run_update: true` in `config/settings.yaml`.
+
+    run_update(conn, run: run_update.Run) -> list[str] | None
+        The "Produced:" items of this agent's run update (`["3 drafts"]`;
+        an empty list reads "nothing"); None posts no update for this run.
+        Asked only when the run has a database connection. An exception is
+        logged as `run.after_run_error` and the update posts without it.
+
+    approval_kinds() -> dict[str, approvals.ApprovalKind]
+        The approval kinds this agent owns, by name (MC §4.6, ADR 0003). A
+        gated action of one of them claims its approval with
+        `approvals.use()`; the agent's pause flag stops the claim. A kind
+        two plug-ins declare, or one whose plug-in failed to load, fails
+        closed.
+
+    setup_gaps() -> list[health.Gap]
+        The agent's setup checks, in place of `REQUIRED_SETTINGS`: names and
+        booleans only (`health.Gap("PUBLISH_AUTH", ok=False)`), never a
+        value, prefix, length or Keychain service. Read by
+        `health.setup_gaps()`, so by `jura-growth status` and the health
+        strip alike. An exception, or a name that isn't a setting, shows as
+        one gap, `<NAME>_SETUP_CHECK`; only the core reports Discord.
+
+    health(conn) -> list[str]
+        Extra "Needs you" lines for the one-pager (for example a build
+        handoff waiting for a builder). `conn` is the read model's read-only
+        connection (`mission.py`, ADR 0002), so a write raises; an
+        exception shows as one line saying the check failed.
+
+The optional hooks are found with `getattr`, like `digest()`, so a plug-in
+that defines none of them still loads.
 """
 
 from __future__ import annotations
@@ -41,6 +92,11 @@ import pkgutil
 import sys
 from functools import lru_cache
 from types import ModuleType
+
+
+class NothingToDo(str):
+    """What a precheck returns for a run that found nothing to do. The
+    runner records it as a quiet run; any other string is a skip."""
 
 
 BROKEN: dict[str, str] = {}

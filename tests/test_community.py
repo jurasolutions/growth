@@ -57,7 +57,7 @@ def group(name, url_slug, *, rules="not stated in public sources", fit="good fit
 def joined(conn, record, *pairs):
     status, group_id, messages = groups_mod.add(conn, record)
     assert status == "added", messages
-    groups_mod.set_fields(conn, group_id, ["joined=yes", *pairs])
+    groups_mod.set_fields(conn, group_id, ["joined=yes", *pairs], by_decision=True)  # days as a group-rules decision sets them
     return groups_mod.get(conn, group_id)
 
 
@@ -322,38 +322,46 @@ def test_add_group_command_takes_a_batch(tmp_path):
 def test_set_uses_the_prd_syntax(conn):
     _, group_id, _ = groups_mod.add(conn, group("SG SME owners", "sgsme", fit="possible"))
     result = invoke("community", "set", str(group_id), "joined=yes", "rules=promo Saturdays only", "fit=good fit", "notes=Joined 26 Oct",
-                    "rules_confirmed=yes", "promo_days=sat", "post_days=any")
+                    "rules_confirmed=yes")
     assert result.exit_code == 0, result.output
-    assert "promotion only on sat" in result.output
+    assert "decide it in #approvals with promo_days=… post_days=…" in result.output
     row = groups_mod.get(conn, group_id)
-    assert row["joined"] == 1 and row["rules_confirmed"] == 1 and row["fit"] == "good fit"
+    assert row["joined"] == 1 and row["rules_confirmed"] == 0 and row["fit"] == "good fit"
     assert row["promo_rules"] == "promo Saturdays only" and row["notes"] == "Joined 26 Oct"
-    assert (row["promo_days_confirmed"], row["post_days_confirmed"]) == ("sat", "any")
+    assert (row["promo_days_confirmed"], row["post_days_confirmed"]) == (None, None)
     assert invoke("community", "set", str(group_id), "joined=maybe").exit_code != 0
 
 
 @pytest.mark.parametrize("rules", ["No promotion on weekends.", "Be kind and respectful.", "not stated in public sources"])
-def test_confirming_rules_needs_the_open_days_for_every_group(conn, rules):
+def test_confirming_rules_needs_the_open_days_for_every_group(conn, monkeypatch, rules):
+    """Ticket 07's rule, kept by the group-rules decision (ticket MC-05): no group's rules are
+    confirmed without its open days, and the days are typed only in the decision."""
+    import approval_world as aw
+    from jura_growth import approvals
+
+    monkeypatch.setenv("CONTROL_DISCORD_USER_ID", aw.CONTROL_ID)
     _, group_id, _ = groups_mod.add(conn, group("SG cafe owners", "sgcafe", rules=rules))
-    refused = invoke("community", "set", str(group_id), "joined=yes", "rules_confirmed=yes")
-    assert refused.exit_code != 0
-    assert "promo_days=" in refused.output and "post_days=" in refused.output
+    conn.commit()
+    assert invoke("community", "set", str(group_id), "joined=yes", "rules_confirmed=yes").exit_code == 0
+    [request] = approvals.pending(conn)
     assert groups_mod.get(conn, group_id)["rules_confirmed"] == 0
     assert invoke("community", "set", str(group_id), "rules_confirmed=yes", "promo_days=any").exit_code != 0
     assert invoke("community", "set", str(group_id), "promo_days=funday").exit_code != 0
+    assert aw.approve(conn, request, args={"promo_days": "any"}).answer == "refused"
+    assert groups_mod.get(conn, group_id)["rules_confirmed"] == 0
 
-    done = invoke("community", "set", str(group_id), "rules_confirmed=yes", "promo_days=Mon to Fri", "post_days=any")
-    assert done.exit_code == 0, done.output
-    assert groups_mod.get(conn, group_id)["promo_days_confirmed"] == "mon,tue,wed,thu,fri"
+    assert aw.approve(conn, request, args={"promo_days": "Mon to Fri", "post_days": "any"}).answer == "recorded"
+    row = groups_mod.get(conn, group_id)
+    assert row["rules_confirmed"] == 1 and row["promo_days_confirmed"] == "mon,tue,wed,thu,fri"
 
 
 def test_new_rules_text_clears_the_confirmed_days(conn):
     _, group_id, _ = groups_mod.add(conn, group("SG cafe owners", "sgcafe", rules="No promotion on weekends."))
-    groups_mod.set_fields(conn, group_id, ["rules_confirmed=yes", "promo_days=mon-fri", "post_days=any"])
+    groups_mod.set_fields(conn, group_id, ["rules_confirmed=yes", "promo_days=mon-fri", "post_days=any"], by_decision=True)
     row = groups_mod.set_fields(conn, group_id, ["rules=Promo on Saturdays only."])
     assert row["promo_days_confirmed"] is None and row["post_days_confirmed"] is None
     assert not groups_mod.rules_for(row).days_confirmed
-    kept = groups_mod.set_fields(conn, group_id, ["rules=Promo on Fridays only.", "promo_days=fri", "post_days=any"])
+    kept = groups_mod.set_fields(conn, group_id, ["rules=Promo on Fridays only.", "promo_days=fri", "post_days=any"], by_decision=True)
     assert kept["promo_days_confirmed"] == "fri"
 
 
@@ -366,7 +374,10 @@ def test_summary_posts_to_community_and_says_nobody_joined(conn):
 
 
 def test_the_summary_hint_is_a_command_community_set_accepts(conn):
-    """Ting Yu copies this line from #community into Terminal, so it must pass `community set`'s checks."""
+    """Ting Yu copies this line from #community into Terminal, so it must pass `community set`'s checks.
+    It raises the group-rules request; the days are typed in #approvals (ticket MC-05)."""
+    from jura_growth import approvals
+
     _, group_id, _ = groups_mod.add(conn, group("SG SME owners", "sgsme"))
     summary = invoke("community", "summary", "--no-post").output
     [hint] = re.findall(r"`(jura-growth community set [^`]*)`", summary)
@@ -374,8 +385,9 @@ def test_the_summary_hint_is_a_command_community_set_accepts(conn):
     result = invoke(*shlex.split(filled)[1:])
     assert result.exit_code == 0, result.output
     row = groups_mod.get(conn, group_id)
-    assert row["joined"] == 1 and row["rules_confirmed"] == 1
-    assert (row["promo_days_confirmed"], row["post_days_confirmed"]) == ("any", "any")
+    assert row["joined"] == 1 and row["rules_confirmed"] == 0
+    assert [a.kind for a in approvals.pending(conn)] == ["group-rules"]
+    assert "/growth approve A-nnnn promo_days=<days> post_days=<days>" in summary
 
 
 def test_set_help_names_the_day_keys():

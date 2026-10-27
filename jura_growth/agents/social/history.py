@@ -166,7 +166,9 @@ def skip(conn: sqlite3.Connection, day: date, platform: str, reason: str) -> str
     return outcome
 
 
-def mark_published(conn: sqlite3.Connection, day: date, platform: str, url: str | None) -> None:
+def mark_published(conn: sqlite3.Connection, day: date, platform: str, url: str | None, *, how: str = "by hand") -> None:
+    """Record that the draft went out: by hand (`social published`), or through the browser
+    (`publish done` and `publish resolve`, which pass `how`)."""
     row = db.one(conn, "SELECT id, status FROM social_posts WHERE date = ? AND platform = ?", (day.isoformat(), platform))
     if not row:
         raise ValueError(f"no {platform} draft for {day}")
@@ -178,4 +180,4 @@ def mark_published(conn: sqlite3.Connection, day: date, platform: str, url: str 
         "published_at = coalesce(published_at, ?), updated_at = ? WHERE id = ?",
         (url, now, now, row["id"]),
     )
-    log.event(conn, "social.published", {"date": day.isoformat(), "platform": platform, "url": url, "how": "by hand"}, agent="social")
+    log.event(conn, "social.published", {"date": day.isoformat(), "platform": platform, "url": url, "how": how}, agent="social")

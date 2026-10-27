@@ -7,6 +7,7 @@ Fake secret values only. Nothing here reads a real `.env`.
 import re
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from jura_growth import config, headless, paths, runner
@@ -339,6 +340,77 @@ def test_every_command_the_preamble_names_is_in_the_jobs_allowlist(job):
     assert not refused, f"{job}: the preamble names {refused}"
     for command in headless.permissions(job).commands:
         assert f"`jura-growth {command}`" in preamble
+
+
+# --- decisions and control commands are a human's (AC-M7.1, layers 1 and 2) ---------
+
+DECISION_COMMANDS = ("approve", "skip", "approvals", "remote")
+ALL_JOBS = sorted(config.settings()["jobs"])
+
+
+def test_never_holds_the_decision_and_remote_commands_and_not_the_one_pager():
+    for name in DECISION_COMMANDS:
+        assert name in headless.NEVER
+    assert "one-pager" not in headless.NEVER  # a scheduled job (AC-M1.5)
+
+
+@pytest.mark.parametrize("job", ALL_JOBS)
+def test_no_job_may_use_a_decision_or_remote_command(job):
+    for name in DECISION_COMMANDS:
+        assert not headless.may_use(job, name)
+        assert not headless.may_use(job, f"{name} A-0001")
+
+
+@pytest.mark.parametrize("job", CLAUDE_JOBS)
+def test_claude_rules_deny_the_decision_and_remote_commands_bare_and_with_arguments(job):
+    allowed, denied = rules(job)
+    for name in DECISION_COMMANDS:
+        assert f"Bash(jura-growth {name})" in denied
+        assert f"Bash(jura-growth {name}:*)" in denied
+        assert not allowed_by(f"jura-growth {name}", allowed)
+        assert not allowed_by(f"jura-growth {name} A-0001", allowed)
+
+
+def test_a_never_entry_of_several_words_matches_a_leading_run_of_command_words():
+    """N7 (BP-02a): `publish resolve` is refused to every run, with or without arguments, and
+    `publish next` is not caught by it."""
+    assert "publish resolve" in headless.NEVER
+    assert headless.never("publish resolve A-0001 posted --url x") and headless.never("publish resolve")
+    assert not headless.never("publish next") and not headless.never("publish") and not headless.never("resolve")
+    for job in ALL_JOBS + ["not-a-job"]:
+        assert not headless.may_use(job, "publish resolve")
+        assert not headless.may_use(job, "publish resolve A-0001 posted")
+
+
+@pytest.mark.parametrize("job", CLAUDE_JOBS)
+def test_claude_rules_deny_publish_resolve_bare_and_with_arguments(job):
+    allowed, denied = rules(job)
+    assert "Bash(jura-growth publish resolve)" in denied and "Bash(jura-growth publish resolve:*)" in denied
+    assert not allowed_by("jura-growth publish resolve A-0001 not-posted", allowed)
+
+
+# --- every scheduled command job may run its own command (AC-M1.5) -------------------
+
+COMMAND_JOBS = sorted(
+    name
+    for name, spec in yaml.safe_load((paths.config_dir() / "settings.yaml").read_text(encoding="utf-8"))["jobs"].items()
+    if spec["kind"] == "command"
+)
+
+
+def test_the_command_jobs_are_read_from_settings():
+    assert {"heartbeat", "scout-send", "digest", "backup"} <= set(COMMAND_JOBS)
+
+
+@pytest.mark.parametrize("job", COMMAND_JOBS)
+def test_every_scheduled_command_job_may_use_its_own_command(job):
+    """With JURA_GROWTH_JOB=<job>, the command the runner calls in process
+    passes the same check the enforced callback makes."""
+    spec = config.settings()["jobs"][job]
+    name = headless.command_name(list(spec["command"]))
+    assert name, f"{job}: {spec['command']} is not a jura-growth command"
+    assert name in {leaf for leaf, _ in headless.leaves(cli)}
+    assert headless.may_use(job, name)
 
 
 def outbox_files(tmp_path):
