@@ -53,11 +53,36 @@ class UnknownKind(LookupError):
 
 
 class NotApproved(Exception):
-    """`use()` refused the claim. `reason` is one of `missing`, `pending`,
-    `skipped`, `expired`, `superseded`, `used`, `unknown-kind`, `paused` or
-    `switched-off`; `approval` is the record it judged, if there is one."""
+    """A claim was refused, so nothing goes out. `approval` is the record
+    judged, if there is one. `reason` is one of `REASONS`:
+
+    From `use()`:
+        `missing`       no request exists for the kind and subject
+        `pending`       the request is waiting for a decision
+        `skipped`       Ting Yu skipped it
+        `expired`       past its decide-by, or approved and past its use-by
+        `superseded`    the item changed or went away
+        `used`          it was already claimed
+        `unknown-kind`  no loaded plug-in declares the kind
+        `paused`        the PAUSE file or the agent's pause flag is set
+        `switched-off`  the kind's own switch is off (shadow mode, a draft platform)
+
+    From a kind's own checks inside the claim's transaction:
+        `gone`          outreach: the email is no longer queued
+        `changed`       outreach: the email changed during the run
+        `mismatch`      outreach: what would go out isn't what was approved
+        `unwritten`     app-build: the build handoff couldn't be written
+    """
+
+    MISSING, PENDING, SKIPPED, EXPIRED, SUPERSEDED, USED = "missing", "pending", "skipped", "expired", "superseded", "used"
+    UNKNOWN_KIND, PAUSED, SWITCHED_OFF = "unknown-kind", "paused", "switched-off"
+    GONE, CHANGED, MISMATCH, UNWRITTEN = "gone", "changed", "mismatch", "unwritten"
+    REASONS = (MISSING, PENDING, SKIPPED, EXPIRED, SUPERSEDED, USED, UNKNOWN_KIND, PAUSED, SWITCHED_OFF,
+               GONE, CHANGED, MISMATCH, UNWRITTEN)
 
     def __init__(self, reason: str, text: str, approval: "Approval | None" = None):
+        if reason not in self.REASONS:
+            raise ValueError(f"NotApproved has no reason {reason!r}; expected one of {self.REASONS}")
         super().__init__(text)
         self.reason = reason
         self.text = text
@@ -425,16 +450,16 @@ def _lapse_if_due(conn, registered: _Registered, approval: Approval, now: dateti
 
 
 _REFUSALS = {
-    PENDING: ("pending", "{id} is waiting for a decision"),
-    SKIPPED: ("skipped", "{id} was skipped"),
-    EXPIRED: ("expired", "{id} expired: {why}"),
-    SUPERSEDED: ("superseded", "{id} was superseded: {why}"),
+    PENDING: (NotApproved.PENDING, "{id} is waiting for a decision"),
+    SKIPPED: (NotApproved.SKIPPED, "{id} was skipped"),
+    EXPIRED: (NotApproved.EXPIRED, "{id} expired: {why}"),
+    SUPERSEDED: (NotApproved.SUPERSEDED, "{id} was superseded: {why}"),
 }
 
 
 def _not_approved(approval: Approval) -> NotApproved:
     if approval.status == APPROVED:
-        return NotApproved("used", f"{approval.id} was already used at {approval.used_at}", approval)
+        return NotApproved(NotApproved.USED, f"{approval.id} was already used at {approval.used_at}", approval)
     reason, text = _REFUSALS[approval.status]
     return NotApproved(reason, text.format(id=approval.id, why=approval.close_reason), approval)
 
@@ -456,19 +481,19 @@ def use(conn: sqlite3.Connection, kind: str, subject: str, *, run_id: int | None
         raise RuntimeError("approvals.use() runs inside the caller's db.transaction(conn)")
     registered = _kind(kind)
     if registered is None:
-        raise NotApproved("unknown-kind", f"no loaded plug-in declares {kind}, so nothing is claimed")
+        raise NotApproved(NotApproved.UNKNOWN_KIND, f"no loaded plug-in declares {kind}, so nothing is claimed")
     paused = pause.is_paused(conn, registered.agent)
     if paused:
-        raise NotApproved("paused", f"{registered.agent} is paused ({paused})")
+        raise NotApproved(NotApproved.PAUSED, f"{registered.agent} is paused ({paused})")
     switched_off = _hook(registered.kind, "switched_off")
     switch = switched_off(conn, subject) if switched_off is not None else None
     if switch:
-        raise NotApproved("switched-off", switch)
+        raise NotApproved(NotApproved.SWITCHED_OFF, switch)
     live = _live(conn, kind, subject)
     if live is None:
         latest = _latest(conn, kind, subject)
         if latest is None:
-            raise NotApproved("missing", f"there is no approval request for {kind} {subject}")
+            raise NotApproved(NotApproved.MISSING, f"there is no approval request for {kind} {subject}")
         raise _not_approved(latest)
     now = timeutil.now_sgt()
     current = _refresh(conn, registered, live, now, raise_new=True)

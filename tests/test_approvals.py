@@ -436,6 +436,32 @@ def test_use_refuses_with_its_reason_and_claims_nothing(conn, world, state):
     assert len(aw.events(conn, "approval.used")) == (1 if state == "used" else 0)
 
 
+def test_not_approved_takes_only_the_reasons_its_docstring_lists():
+    """Final code review St6: the reasons are constants, and the docstring names each one."""
+    N = approvals.NotApproved
+    assert N.REASONS == (
+        N.MISSING, N.PENDING, N.SKIPPED, N.EXPIRED, N.SUPERSEDED, N.USED, N.UNKNOWN_KIND, N.PAUSED,
+        N.SWITCHED_OFF, N.GONE, N.CHANGED, N.MISMATCH, N.UNWRITTEN,
+    )
+    assert N.UNKNOWN_KIND == "unknown-kind" and N.SWITCHED_OFF == "switched-off"
+    for reason in N.REASONS:
+        assert f"`{reason}`" in N.__doc__, reason
+    with pytest.raises(ValueError):
+        N("not-a-reason", "text")
+
+
+def test_every_not_approved_in_the_engine_names_its_reason_by_constant():
+    import re
+    from pathlib import Path
+
+    import jura_growth
+
+    root = Path(jura_growth.__file__).parent
+    literal = re.compile(r"NotApproved\(\s*[\"']")
+    found = [f"{path.relative_to(root)}" for path in root.rglob("*.py") if literal.search(path.read_text(encoding="utf-8"))]
+    assert found == []
+
+
 def test_a_claim_sets_used_at_and_used_by_run_and_logs_one_used_event(conn, world):
     subject, approval = approved_one(conn, world)
     run_id = aw.run(conn)
