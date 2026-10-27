@@ -252,6 +252,20 @@ def test_today_has_one_line_per_job_with_scout_send_and_publish_as_counts(conn, 
     assert by_job["community"] == "`community` no slot today"
 
 
+def _day_of(job: str, *times: tuple[int, int, str]) -> dict:
+    return {(job, NOW.date()): [slots.SlotStatus(job, NOW.replace(hour=h, minute=m), status) for h, m, status in times]}
+
+
+def test_today_counts_scout_send_and_publish_by_job_and_lists_every_other_job_slot_by_slot():
+    """Code review 08 S-4, PRD §5.4.4: the rule is the job, not how many slots it has today."""
+    assert one_pager.COUNTED_JOBS == frozenset({"scout-send", "publish"})
+    short_publish = _day_of("publish", (9, 0, "ok"), (9, 20, "upcoming"))
+    busy_other = _day_of("backup", *[(h, 0, "ok") for h in range(1, 6)])
+    lines = section(one_pager.text(snap(slots={**short_publish, **busy_other}, approvals=())), "Today")
+    assert "`publish` 1 ok, 1 upcoming" in lines
+    assert "`backup` 01:00 ok, 02:00 ok, 03:00 ok, 04:00 ok, 05:00 ok" in lines
+
+
 def test_yesterday_is_the_digest_for_yesterday_and_both_spend_figures(conn):
     from jura_growth import digest
 

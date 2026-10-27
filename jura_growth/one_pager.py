@@ -23,7 +23,9 @@ from pathlib import Path
 from jura_growth import discord, health, images, log, mission, paths, privacy, slots, timeutil
 
 ASK_ME = ("`/growth status`", "`/growth approvals`", "`/growth one-pager`", "`/growth pause <agent|all>`", "`/growth resume <agent|all>`")
-SLOTS_LISTED = 3  # a job with more slots in a day shows counts per status instead
+# Today shows these jobs as counts per status, whatever their slot count,
+# and lists every other job slot by slot (MC §5.4.4; code review 08 S-4).
+COUNTED_JOBS = frozenset({"scout-send", "publish"})
 
 
 def text(snapshot: mission.Snapshot) -> str:
@@ -95,7 +97,7 @@ def _today(snapshot: mission.Snapshot) -> list[str]:
             continue
         if not statuses:
             lines.append(f"`{job}` no slot today")
-        elif len(statuses) > SLOTS_LISTED:
+        elif job in COUNTED_JOBS:
             cell = slots.day_cell(statuses)
             lines.append(f"`{job}` " + ", ".join(f"{n} {status}" for status, n in cell.counts.items()))
         else:
