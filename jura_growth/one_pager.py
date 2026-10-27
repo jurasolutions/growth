@@ -70,7 +70,7 @@ def _unavailable(snapshot: mission.Snapshot) -> str:
 def _approvals(snapshot: mission.Snapshot) -> list[str]:
     if snapshot.approvals is None:
         return [_unavailable(snapshot)]
-    waiting = [r for r in snapshot.approvals if r.state == mission.WAITING]
+    waiting = [r for r in snapshot.approvals if r.reading == mission.Reading.WAITING]
     if not waiting:
         return ["Nothing waiting"]
     following = snapshot.next_one_pager or snapshot.now + timedelta(days=1)
@@ -94,16 +94,16 @@ def _today(snapshot: mission.Snapshot) -> list[str]:
         return [_unavailable(snapshot)]
     today = snapshot.now.date()
     lines = []
-    for (job, day), states in snapshot.slots.items():
+    for (job, day), statuses in snapshot.slots.items():
         if day != today:
             continue
-        if not states:
+        if not statuses:
             lines.append(f"`{job}` no slot today")
-        elif len(states) > SLOTS_LISTED:
-            cell = slots.day_cell(states)
+        elif len(statuses) > SLOTS_LISTED:
+            cell = slots.day_cell(statuses)
             lines.append(f"`{job}` " + ", ".join(f"{n} {status}" for status, n in cell.counts.items()))
         else:
-            lines.append(f"`{job}` " + ", ".join(_slot(slot) for slot in states))
+            lines.append(f"`{job}` " + ", ".join(_slot(slot) for slot in statuses))
     return lines
 
 
@@ -215,14 +215,14 @@ def grid_html(snapshot: mission.Snapshot) -> str:
     )
 
 
-def _grid_cell(job: str, day, states: list[slots.SlotStatus]) -> str:
-    cell = slots.day_cell(states)
+def _grid_cell(job: str, day, statuses: list[slots.SlotStatus]) -> str:
+    cell = slots.day_cell(statuses)
     if cell.status is None:
         css, status, inner = "none", "none", GRID_NO_SLOT
     else:
         css, status = cell.status.replace(" ", "-"), cell.status
         inner = escape(GRID_LABELS[status][0])
-        if len(states) > 1:
+        if len(statuses) > 1:
             inner += f'<span class="count">{cell.counts[status]}</span>'
     return f'<td class="cell s-{css}" data-job="{escape(job)}" data-day="{day.isoformat()}" data-status="{escape(status)}">{inner}</td>'
 

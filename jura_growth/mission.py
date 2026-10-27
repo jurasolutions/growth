@@ -107,12 +107,17 @@ class Yesterday:
     spend: float
 
 
-# What a request means now, judged by the clock (MC §4.2): stored statuses
-# don't change until something writes them, so a pending request past its
-# decide-by already reads as lapsed here.
-WAITING, LAPSED, APPROVED, LAPSED_UNUSED, USED, SKIPPED, SUPERSEDED = (
-    "waiting", "lapsed", "approved", "lapsed unused", "used", "skipped", "superseded",
-)
+class Reading:
+    """A request reading (CONTEXT.md): what an approval request means now,
+    judged by the clock (MC §4.2). A stored status doesn't change until
+    something writes it, so a pending request past its decide-by already
+    reads as lapsed here. Kept apart from `approvals`' stored statuses, so
+    the two vocabularies can't be compared by mistake (code review 08 ST-2)."""
+
+    WAITING, LAPSED, APPROVED, LAPSED_UNUSED, USED, SKIPPED, SUPERSEDED = (
+        "waiting", "lapsed", "approved", "lapsed unused", "used", "skipped", "superseded",
+    )
+    ALL = (WAITING, LAPSED, APPROVED, LAPSED_UNUSED, USED, SKIPPED, SUPERSEDED)
 
 
 @dataclass(frozen=True)
@@ -121,7 +126,7 @@ class Request:
 
     id: str  # A-nnnn
     kind: str
-    state: str
+    reading: str  # one of Reading.ALL
     requested_at: datetime
     decide_by: datetime
     use_by: datetime | None
@@ -250,7 +255,7 @@ def _from_db(
         records = _records(conn, tables, Path(source.data) / "runs", set(source.jobs), days[0])
         loaded = {job for job, state in installs.items() if state != health.NOT_INSTALLED}
         found = slots.classify(source.jobs, records, now, days, installed=loaded)
-        facts["slots"] = {key: [_clean_slot(slot) for slot in states] for key, states in found.items()}
+        facts["slots"] = {key: [_clean_slot(slot) for slot in statuses] for key, statuses in found.items()}
         facts["failures"] = _failures(conn, now)
         facts["yesterday"], facts["spend_today"] = _yesterday(conn, now)
     if "pause_flags" in tables:
@@ -358,19 +363,19 @@ def _request(row: sqlite3.Row, now: datetime) -> Request:
     use_by = timeutil.parse(row["use_by"]).astimezone(SGT) if row["use_by"] else None
     status = row["status"]
     if status == "pending":
-        state = WAITING if now < decide_by else LAPSED
+        reading = Reading.WAITING if now < decide_by else Reading.LAPSED
     elif status == "approved" and row["used_at"]:
-        state = USED
+        reading = Reading.USED
     elif status == "approved":
-        state = APPROVED if use_by is None or now < use_by else LAPSED_UNUSED
+        reading = Reading.APPROVED if use_by is None or now < use_by else Reading.LAPSED_UNUSED
     elif status == "expired":
-        state = LAPSED_UNUSED if row["decided_at"] else LAPSED  # expired after a yes, or unanswered
+        reading = Reading.LAPSED_UNUSED if row["decided_at"] else Reading.LAPSED  # expired after a yes, or unanswered
     else:
-        state = SKIPPED if status == "skipped" else SUPERSEDED
+        reading = Reading.SKIPPED if status == "skipped" else Reading.SUPERSEDED
     return Request(
         id=f"A-{row['id']:04d}",
         kind=_clean(row["kind"]),
-        state=state,
+        reading=reading,
         requested_at=timeutil.parse(row["requested_at"]).astimezone(SGT),
         decide_by=decide_by,
         use_by=use_by,

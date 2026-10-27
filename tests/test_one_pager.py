@@ -35,11 +35,11 @@ def snap(**fields) -> mission.Snapshot:
     return mission.Snapshot(NOW, fields.pop("db_state", mission.OK), **fields)
 
 
-def request(number, kind="outreach-email", state=mission.WAITING, **fields) -> mission.Request:
+def request(number, kind="outreach-email", reading=mission.Reading.WAITING, **fields) -> mission.Request:
     values = dict(
         id=f"A-{number:04d}",
         kind=kind,
-        state=state,
+        reading=reading,
         requested_at=datetime(2026, 11, 9, 9, number % 60, tzinfo=SGT),
         decide_by=datetime(2026, 11, 10, 16, 30, tzinfo=SGT),
         use_by=None,
@@ -97,7 +97,7 @@ def test_nothing_in_the_health_strip_reads_nothing_needs_you():
 
 
 MISSED = slots.SlotStatus("scout-send", datetime(2026, 11, 6, 10, 0, tzinfo=SGT), "missed")
-LAPSED_EMAIL = request(412, state=mission.LAPSED_UNUSED, use_by=datetime(2026, 11, 10, 7, 59, tzinfo=SGT))
+LAPSED_EMAIL = request(412, reading=mission.Reading.LAPSED_UNUSED, use_by=datetime(2026, 11, 10, 7, 59, tzinfo=SGT))
 
 HEALTH_ITEMS = [
     ("PAUSE file", dict(pause_file="holiday"), "The PAUSE file is in place"),

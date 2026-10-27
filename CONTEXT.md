@@ -102,6 +102,13 @@ a preview, a decide-by, a use-by and the content the kind computed. Its status i
 skipped, expired or superseded; an approved one is claimed at most once.
 _Avoid_: ticket, confirmation, sign-off (a PRD sign-off is a different thing), `P-nnnn` in commands
 
+**Request reading**:
+What an approval request means now, judged by growth's clock for the one-pager and the health strip,
+before anything writes the change: **waiting**, **lapsed** (unanswered past its decide-by),
+**approved**, **lapsed unused** (approved, never claimed, past its use-by), **used**, **skipped** or
+**superseded**. Kept apart from the stored status, which changes only when something writes it.
+_Avoid_: state, status (that is the stored one)
+
 **Approval kind**:
 The type of action an approval request covers, declared by the plug-in that owns it, with its own
 content, preview, deadlines and skip, expiry and lapse actions: `outreach-email`, `app-build`,
