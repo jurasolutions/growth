@@ -162,7 +162,8 @@ MC §5.7 `app-release` row, §5.9 steps 3 and 4).
    the preview follows the branch's latest push while the release is that one commit. Refused: a
    build that was never handed off, a short SHA, a SHA `main` already contains, and any preview
    other than a bare `https://<branch>.<pages_project>.pages.dev` link, where `pages_project` in
-   `config/apps.yaml` names the landing page's Pages project (unset, every preview is refused). A
+   `config/apps.yaml` names the landing page's Pages project, `landing-page` (unset, every preview
+   is refused). A
    commit pushed later, or another preview link, needs its own request: reporting it supersedes the
    old one.
 2. **Approve.** Nothing happens yet. The approval has 14 days to be used.
