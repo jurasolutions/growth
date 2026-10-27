@@ -229,7 +229,7 @@ def test_each_stored_status_reads_as_what_it_means_now(conn):
                    use_by="2026-11-10T07:00:00+08:00", closed_at="2026-11-10T07:00:01+08:00", close_reason="approved but not used in time")
     world.approval(conn, 4, "fake", status="expired", closed_at="2026-11-10T07:30:00+08:00", close_reason="not approved in time")
     world.approval(conn, 5, "fake", **approved, use_by="2026-11-12T16:30:00+08:00", used_at="2026-11-10T07:40:00+08:00")
-    world.approval(conn, 6, "fake", status="skipped", decided_at="2026-11-10T07:41:00+08:00", decided_origin="terminal")
+    world.approval(conn, 6, "fake", status="skipped", decided_at="2026-11-10T07:41:00+08:00")
     found = requests(mission.read(world.source()))
     assert {id_: r.reading for id_, r in found.items()} == {
         "A-0001": mission.Reading.APPROVED,
@@ -263,8 +263,8 @@ def test_a_request_reading_has_its_own_names_apart_from_the_stored_statuses():
 
 def test_only_live_requests_and_those_closed_since_the_last_one_pager_are_read(conn):
     world.approval(conn, 1, "fake", status="expired", closed_at="2026-11-09T07:59:00+08:00", close_reason="not approved in time")
-    world.approval(conn, 2, "fake", status="skipped", decided_at="2026-11-09T07:00:00+08:00", decided_origin="terminal")
-    world.approval(conn, 3, "fake", status="skipped", decided_at="2026-11-09T08:00:01+08:00", decided_origin="terminal")
+    world.approval(conn, 2, "fake", status="skipped", decided_at="2026-11-09T07:00:00+08:00")
+    world.approval(conn, 3, "fake", status="skipped", decided_at="2026-11-09T08:00:01+08:00")
     snapshot = mission.read(world.source())
     assert snapshot.last_one_pager.isoformat() == "2026-11-09T08:00:00+08:00"
     assert snapshot.next_one_pager.isoformat() == "2026-11-11T08:00:00+08:00"

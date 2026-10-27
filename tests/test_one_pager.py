@@ -17,7 +17,7 @@ from click.testing import CliRunner
 import mission_world as world
 import sweep
 from sweep import d2_secrets  # noqa: F401 - the D2 env file and Keychain double
-from jura_growth import cli, discord, health, mission, one_pager, paths, privacy, run_update, schedule, slots
+from jura_growth import cli, db, discord, health, mission, one_pager, paths, privacy, run_update, schedule, slots
 from jura_growth.timeutil import SGT
 
 NOW = datetime(2026, 11, 10, 8, 0, tzinfo=SGT)
@@ -206,11 +206,20 @@ def test_approvals_waiting_points_to_the_approvals_channel_with_the_count(five_w
     assert lines[-1] == "Decide in #approvals: 5 waiting for you."
 
 
-def test_decisions_are_discord_only_so_the_one_pager_never_mentions_terminal(conn):
-    world.approval(conn, 153, "outreach-email", status="approved", decided_at="2026-11-09T21:14:00+08:00",
+def test_decisions_are_discord_only_so_the_one_pager_never_mentions_terminal(tmp_path, monkeypatch):
+    """A Terminal decision can only be one written before core 0005, so it is planted at 0004."""
+    import dataclasses
+
+    import approval_world
+
+    legacy = approval_world.connect_before_0005(tmp_path / "legacy.db", monkeypatch)
+    world.approval(legacy, 153, "outreach-email", status="approved", decided_at="2026-11-09T21:14:00+08:00",
                    decided_origin="terminal", use_by="2026-11-12T16:30:00+08:00")
-    world.approval(conn, 154, "outreach-email")
-    text = one_pager.text(mission.read(world.source()))
+    world.approval(legacy, 154, "outreach-email")
+    legacy.commit()
+    db.migrate(legacy)
+    legacy.close()
+    text = one_pager.text(mission.read(dataclasses.replace(world.source(), db=tmp_path / "legacy.db")))
     assert "terminal" not in text.lower()
     assert "Decide in #approvals: 1 waiting for you." in section(text, "Approvals waiting")
 

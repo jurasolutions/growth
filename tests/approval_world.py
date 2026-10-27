@@ -151,6 +151,27 @@ def install(monkeypatch, world: World | None = None) -> World:
     return world
 
 
+BEFORE_0005 = ("0001_core.sql", "0002_sync_cursors.sql", "0003_approvals.sql", "0004_approval_cards.sql")
+
+
+def connect_before_0005(path, monkeypatch) -> sqlite3.Connection:
+    """A database at `path` migrated only to core 0004, where a Terminal decision could still be
+    written, as on a Mac before Terminal decisions were refused in the schema. `db.migrate(conn)`
+    then brings it to the current schema."""
+    import shutil
+    from pathlib import Path
+
+    old = Path(path).parent / "core-before-0005"
+    old.mkdir(exist_ok=True)
+    for name in BEFORE_0005:
+        shutil.copy(db.CORE_MIGRATIONS / name, old / name)
+    with monkeypatch.context() as patch:
+        patch.setattr(db, "CORE_MIGRATIONS", old)
+        conn = db.connect(path)
+    prepare(conn)
+    return conn
+
+
 def prepare(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE TABLE IF NOT EXISTS fake_in_flight (subject TEXT NOT NULL)")
 
