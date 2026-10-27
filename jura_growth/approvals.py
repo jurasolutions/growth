@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Protocol
 
 from jura_growth import agents, caps, config, db, log, pause, timeutil
-from jura_growth.origin import NOT_DISPATCH, Origin
+from jura_growth.origin import NOT_DISPATCH, SSH, Origin
 
 PENDING, APPROVED, SKIPPED, EXPIRED, SUPERSEDED = "pending", "approved", "skipped", "expired", "superseded"
 
@@ -66,6 +66,7 @@ class NotApproved(Exception):
         `unknown-kind`  no loaded plug-in declares the kind
         `paused`        the PAUSE file or the agent's pause flag is set
         `switched-off`  the kind's own switch is off (shadow mode, a draft platform)
+        `not-ssh`       it was decided with an origin other than SSH (ADR 0004)
 
     From a kind's own checks inside the claim's transaction:
         `gone`          outreach: the email is no longer queued
@@ -75,9 +76,9 @@ class NotApproved(Exception):
     """
 
     MISSING, PENDING, SKIPPED, EXPIRED, SUPERSEDED, USED = "missing", "pending", "skipped", "expired", "superseded", "used"
-    UNKNOWN_KIND, PAUSED, SWITCHED_OFF = "unknown-kind", "paused", "switched-off"
+    UNKNOWN_KIND, PAUSED, SWITCHED_OFF, NOT_SSH = "unknown-kind", "paused", "switched-off", "not-ssh"
     GONE, CHANGED, MISMATCH, UNWRITTEN = "gone", "changed", "mismatch", "unwritten"
-    REASONS = (MISSING, PENDING, SKIPPED, EXPIRED, SUPERSEDED, USED, UNKNOWN_KIND, PAUSED, SWITCHED_OFF,
+    REASONS = (MISSING, PENDING, SKIPPED, EXPIRED, SUPERSEDED, USED, UNKNOWN_KIND, PAUSED, SWITCHED_OFF, NOT_SSH,
                GONE, CHANGED, MISMATCH, UNWRITTEN)
 
     def __init__(self, reason: str, text: str, approval: "Approval | None" = None):
@@ -469,8 +470,8 @@ def use(conn: sqlite3.Connection, kind: str, subject: str, *, run_id: int | None
     before the outward call, and write the in-flight marker in the same
     transaction. The outward call comes after the commit.
 
-    It refuses with `NotApproved` unless the record is approved, before its
-    use-by, unused and matching the content the kind computes now, and
+    It refuses with `NotApproved` unless the record is approved over SSH,
+    before its use-by, unused and matching the content the kind computes now, and
     while neither the PAUSE file, the agent's pause flag nor the kind's own
     switch stops it. A lapse or supersede it finds is written in the same
     transaction: catch `NotApproved` inside the `with` block to keep it.
@@ -499,6 +500,10 @@ def use(conn: sqlite3.Connection, kind: str, subject: str, *, run_id: int | None
     current = _refresh(conn, registered, live, now, raise_new=True)
     if current.status != APPROVED:
         raise _not_approved(current)
+    if current.decided_origin != SSH:
+        # decide() writes only SSH decisions, and 0005's triggers refuse a new
+        # Terminal one; this refuses a record written before them (Sp4).
+        raise NotApproved(NotApproved.NOT_SSH, f"{current.id} wasn't decided over SSH from Dispatch, so it isn't claimed", current)
     at = timeutil.stamp(now)
     conn.execute("UPDATE approvals SET used_at = ?, used_by_run = ? WHERE id = ?", (at, run_id, current.number))
     used = _reload(conn, current.number)

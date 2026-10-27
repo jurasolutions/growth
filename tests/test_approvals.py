@@ -441,7 +441,7 @@ def test_not_approved_takes_only_the_reasons_its_docstring_lists():
     N = approvals.NotApproved
     assert N.REASONS == (
         N.MISSING, N.PENDING, N.SKIPPED, N.EXPIRED, N.SUPERSEDED, N.USED, N.UNKNOWN_KIND, N.PAUSED,
-        N.SWITCHED_OFF, N.GONE, N.CHANGED, N.MISMATCH, N.UNWRITTEN,
+        N.SWITCHED_OFF, N.NOT_SSH, N.GONE, N.CHANGED, N.MISMATCH, N.UNWRITTEN,
     )
     assert N.UNKNOWN_KIND == "unknown-kind" and N.SWITCHED_OFF == "switched-off"
     for reason in N.REASONS:
@@ -853,10 +853,83 @@ def test_a_database_at_mains_schema_migrates_through_0003_with_no_row_changed(tm
     conn.execute("INSERT INTO pause_flags (agent, paused, reason, set_at) VALUES ('social', 1, 'by hand', ?)", (aw.NOW,))
     tables = [r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
     before = {t: db.rows(conn, f"SELECT * FROM {t}") for t in tables}
-    # 0004 (ticket 04b) adds the approval_cards table and changes no row either.
-    assert db.migrate(conn) == ["core/0003_approvals.sql", "core/0004_approval_cards.sql"]
+    # 0004 (ticket 04b) adds the approval_cards table and changes no row either, nor 0005's triggers.
+    assert db.migrate(conn) == ["core/0003_approvals.sql", "core/0004_approval_cards.sql", "core/0005_ssh_decisions_only.sql"]
     assert {t: db.rows(conn, f"SELECT * FROM {t} WHERE rowid IN (SELECT rowid FROM {t})") for t in tables if t != "schema_migrations"} == {
         t: rows for t, rows in before.items() if t != "schema_migrations"
     }
     assert db.scalar(conn, "SELECT COUNT(*) FROM approvals") == 0
+    conn.close()
+
+
+# --- Sp4: only an SSH decision counts, in use() and in the schema ---------------------
+
+
+def plant_terminal_approval(conn, world, text="Hello") -> tuple[str, int]:
+    """An approved, unclaimed record decided in Terminal, as one written before Terminal
+    decisions were turned off would read. Its content still matches."""
+    subject = world.item(text)
+    digest = approvals.content_hash(world.kind.content(conn, subject))
+    cursor = conn.execute(
+        "INSERT INTO approvals (kind, subject, content_hash, status, reason, requested_at, decide_by, use_by, decided_at,"
+        " decided_by, decided_origin) VALUES (?, ?, ?, 'approved', 'a test asked', ?, ?, ?, ?, 'terminal:tingyu', 'terminal')",
+        (aw.KIND, subject, digest, aw.NOW, aw.later(aw.NOW, days=1), aw.later(aw.NOW, days=2), aw.NOW),
+    )
+    conn.commit()
+    return subject, int(cursor.lastrowid or 0)
+
+
+def test_use_refuses_a_record_decided_with_any_origin_but_ssh(conn, world):
+    subject, number = plant_terminal_approval(conn, world)
+    refusal = world.act(conn, subject)
+    assert refusal is not None and refusal.reason == approvals.NotApproved.NOT_SSH
+    assert "SSH" in refusal.text and approvals.format_id(number) in refusal.text
+    assert aw.record(conn, approvals.format_id(number))["used_at"] is None
+    assert world.sent == [] and aw.events(conn, "approval.used") == []
+
+
+def test_the_schema_refuses_a_new_decision_with_a_terminal_origin(conn, world):
+    _, pending = raise_one(conn, world)
+    with pytest.raises(Exception, match="only an SSH decision"):
+        conn.execute(
+            "UPDATE approvals SET status = 'approved', decided_at = ?, decided_by = 'terminal:tingyu', "
+            "decided_origin = 'terminal' WHERE id = ?", (aw.NOW, pending.number),
+        )
+    with pytest.raises(Exception, match="only an SSH decision"):
+        conn.execute(
+            "INSERT INTO approval_decisions (approval_id, decision, actor, origin, decided_at, content_hash, answer, text)"
+            " VALUES (?, 'approve', 'terminal:tingyu', 'terminal', ?, ?, 'recorded', 'x')",
+            (pending.number, aw.NOW, pending.content_hash),
+        )
+    conn.rollback()
+    assert aw.approve(conn, pending).answer == "recorded"
+    assert aw.record(conn, pending.id)["decided_origin"] == "ssh"
+
+
+def test_terminal_decisions_already_on_record_survive_the_migration_and_can_still_lapse(tmp_path, monkeypatch, world):
+    """0005 is forward-only: a database at 0004 keeps its Terminal decisions as they were, and
+    an approved one that was never claimed still lapses at its use-by."""
+    import shutil
+
+    old = tmp_path / "core-at-0004"
+    old.mkdir()
+    for name in ("0001_core.sql", "0002_sync_cursors.sql", "0003_approvals.sql", "0004_approval_cards.sql"):
+        shutil.copy(db.CORE_MIGRATIONS / name, old / name)
+    with monkeypatch.context() as patch:
+        patch.setattr(db, "CORE_MIGRATIONS", old)
+        conn = db.connect(tmp_path / "old.db")
+    aw.prepare(conn)
+    _, number = plant_terminal_approval(conn, world)
+    conn.execute(
+        "INSERT INTO approval_decisions (approval_id, decision, actor, origin, decided_at, content_hash, answer, text)"
+        " SELECT id, 'approve', decided_by, decided_origin, decided_at, content_hash, 'recorded', 'kept' FROM approvals WHERE id = ?",
+        (number,),
+    )
+    conn.commit()
+    before = (db.rows(conn, "SELECT * FROM approvals"), db.rows(conn, "SELECT * FROM approval_decisions"))
+    assert db.migrate(conn) == ["core/0005_ssh_decisions_only.sql"]
+    assert (db.rows(conn, "SELECT * FROM approvals"), db.rows(conn, "SELECT * FROM approval_decisions")) == before
+    aw.at(monkeypatch, aw.later(aw.NOW, days=3))
+    [lapsed] = approvals.expire_due(conn)
+    assert lapsed.number == number and lapsed.status == "expired" and lapsed.decided_origin == "terminal"
     conn.close()
