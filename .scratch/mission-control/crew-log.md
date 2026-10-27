@@ -962,3 +962,39 @@ artifacts: merge 8d6640e (45987b3 Sp1, 459bcaf Sp2, 6133d10 Sp3, 450822c St1, 6d
 decisions: verified by the conductor: orphaned claims settle unknown, pause and alert under the job lock, three test fixtures corrected to record their claims (not weakened); one untrusted_line escape for run updates and the one-pager; merged. Sp5 already resolved by the 2026-10-27 AC-P1.3 amendment. Next: quality gate and release prep, then the PR
 questions: -
 evidence:  3305 passed, 0 skipped after the merge
+
+## 2026-10-27T08:10+0800 release-manager (release prep)
+status:    needs-human
+persona:   release-manager
+ticket:    -
+artifacts: .scratch/mission-control/reviews/release.md, .scratch/mission-control/pr-body.md, .scratch/mission-control/release-notes.md
+decisions: no version bump or CHANGELOG (repo convention: none; release notes in the PR body)
+decisions: setup guides not copied to outputs/growth/setup/ (outside the repo); listed as an after-acceptance step
+decisions: nine ticket reviews ending changes-requested (conductor-verified fix rounds) listed as a waiver; final review approves
+decisions: gaps flagged: bp 01's browser-publishing setup guide never drafted; uat.md UAT authorized_keys line unwritten
+questions: G4: open the PR and merge with a merge commit after quality-gate GO? Recommended: yes
+evidence:  uv run pytest -rs (temp data/outputs) -> 3305 passed, 0 skipped, 146s; live growth.db mtime unchanged; tree clean
+evidence:  merge-base HEAD origin/main = origin/main 855e48c; blocked-path grep -> none; secret-shape scan -> fixtures only
+evidence:  db built by main, migrated by branch (16 ids), reopened by main: status, community groups, outreach status OK
+evidence:  jura-growth approve in Terminal -> refused exit 2; JURA_GROWTH_JOB=social approve -> refused exit 2
+
+## 2026-10-27T08:12+0800 qa-lead (quality gate, merge into main)
+status:    done
+persona:   qa-lead
+ticket:    -
+artifacts: .scratch/mission-control/reviews/quality-gate.md; .scratch/mission-control/reviews/qa-release.md (first row-to-node trace)
+decisions: NO-GO at 0354503 on strategy v3 §11.1: E1 (BP-01 clause), E2 (G34 no test, G38 narrow, manual parts), E5 (ran 07:48 SGT, outside window), E6 (setup copies stale, browser-publishing.md never drafted), E10 (8 reviews end changes-requested), E13 (no U/R step) not met
+decisions: met: E3, E4, E7, E8, E9 (0 crit, 0 major, 7 minor), E11, E12, E14; code is clean, the gaps are procedural or live-only
+decisions: live-only: E13, E2 manual (U16, U17, U4, U11, R6), E1 BP-01; recommend Ting Yu defers them at G4 to the go-live gates
+questions: Ting Yu at G4: defer the live steps, waive E10 and the E5 timing clause in your own words? rec yes; crew adds the G34/G38 tests and drafts browser-publishing.md first
+evidence:  uv run pytest -rs -p no:cacheprovider -o addopts="" (temp data/outputs) -> 3305 passed, 0 skipped, 137.6s; rerun with junit -> 3305/3305 passed, 140.1s
+evidence:  E5 snapshot (122 live paths, git status, pgrep) identical before/after; no growth launchd job loaded; main collects 987; pyright 70 vs 76 on main, 0 in new modules
+
+## 2026-10-27T08:01+0800 conductor (gate response)
+status:    done
+persona:   conductor
+ticket:    release
+artifacts: reviews/quality-gate.md, reviews/qa-release.md, reviews/release.md, pr-body.md, release-notes.md
+decisions: quality gate NO-GO at 0354503. Crew closes what it can rather than waive: developer adds G34 and G38 tests, drafts docs/setup browser-publishing guide, writes the UAT authorized_keys line in uat.md; reviewer re-verifies the eight changes-requested fix rounds (E10). E5 timing: no growth job is loaded in launchd, so a run inside a window would change nothing; recorded, not re-run. E6 copies to outputs/growth/setup/ happen after merge so the copies match main. Live steps (E1 BP-01 clause, E2 manual parts, E13) cannot happen before merge: deferred to the go-live gates, stated in the PR so the merge is the acceptance
+questions: -
+evidence:  3305 passed, 0 skipped
