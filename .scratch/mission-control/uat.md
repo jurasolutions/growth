@@ -52,38 +52,42 @@ Only you can do these steps. Each one touches your accounts or your Mac.
    local stub (ticket 18).
 3. **A second Discord account**, or a friend willing to tap one button, for B4.
 4. **The UAT route through Dispatch.** Dispatch must reach the UAT folder, never the live one. It
-   gets a second key, for UAT only, with its own `authorized_keys` entry that fixes the UAT folder
-   variables before it runs `bin/growth-remote`.
-   1. On Dispatch's machine, as the gateway's user, make the key the way `remote-control.md` step 4
-      makes the live one, under its own name:
-      `ssh-keygen -t ed25519 -f ~/.ssh/growth_mac_uat -C dispatch-growth-uat -N ""`, then
-      `chmod 600 ~/.ssh/growth_mac_uat`. The private key never leaves that machine.
-   2. On this Mac, add this as **one line** to `~/.ssh/authorized_keys`. Put the contents of
-      `~/.ssh/growth_mac_uat.pub` from Dispatch's machine where `<UAT public key>` stands, and
-      Dispatch's tailnet address (`remote-control.md` step 2) in `from=`:
+   gets a second key, for UAT only, with its own key line that fixes the UAT folder variables
+   before it runs `bin/growth-remote`. Dispatch runs on this Mac as the `dispatch` user and
+   connects to `127.0.0.1` (revised 2026-10-30; `remote-control.md` §2).
+   1. Make the key as `dispatch`, next to the live one, under its own name. The private key never
+      leaves `/Users/dispatch/.dispatch-keys/`:
+      `sudo -u dispatch -H ssh-keygen -q -t ed25519 -N "" -C dispatch-growth-uat -f /Users/dispatch/.dispatch-keys/growth_mac_uat`
+   2. Add this as **one line** to `/etc/ssh/authorized_keys.d/tingy`, the root-owned file sshd
+      reads your keys from (`~/.ssh/authorized_keys` is never read). Print the public key with
+      `sudo cat /Users/dispatch/.dispatch-keys/growth_mac_uat.pub` and put its first two fields
+      where `<UAT public key>` stands, then append the line with
+      `sudo tee -a /etc/ssh/authorized_keys.d/tingy`:
 
       ```
-      restrict,command="/usr/bin/env JURA_GROWTH_DATA_DIR=/tmp/jura-uat/data JURA_GROWTH_OUTPUTS_DIR=/tmp/jura-uat/outputs JURA_PRD_DIR=/tmp/jura-uat/prd JURA_GROWTH_CONFIG_DIR=/tmp/jura-uat/config JURA_GROWTH_PAUSE_FILE=/tmp/jura-uat/PAUSE JURA_GROWTH_ENV_FILE=/Users/tingy/jura-uat/uat.env JURA_INPUTS_DIR=/tmp/jura-uat/inputs JURA_GROWTH_RESEND_BASE_URL=http://127.0.0.1:8025 JURA_GROWTH_D1_BASE_URL=http://127.0.0.1:8025 /Users/tingy/OneDrive/Desktop/projects/jurasolutions/repos/growth/bin/growth-remote",from="<dispatch tailnet address>" ssh-ed25519 <UAT public key> dispatch-growth-uat
+      restrict,command="/usr/bin/env JURA_GROWTH_DATA_DIR=/tmp/jura-uat/data JURA_GROWTH_OUTPUTS_DIR=/tmp/jura-uat/outputs JURA_PRD_DIR=/tmp/jura-uat/prd JURA_GROWTH_CONFIG_DIR=/tmp/jura-uat/config JURA_GROWTH_PAUSE_FILE=/tmp/jura-uat/PAUSE JURA_GROWTH_ENV_FILE=/Users/tingy/jura-uat/uat.env JURA_INPUTS_DIR=/tmp/jura-uat/inputs JURA_GROWTH_RESEND_BASE_URL=http://127.0.0.1:8025 JURA_GROWTH_D1_BASE_URL=http://127.0.0.1:8025 /Users/tingy/OneDrive/Desktop/projects/jurasolutions/repos/growth/bin/growth-remote",from="127.0.0.1,::1" ssh-ed25519 <UAT public key> dispatch-growth-uat
       ```
 
-      - The restrictions are the live entry's (ADR 0004, `remote-control.md` step 5): `restrict`
-        turns off the terminal and all forwarding, `from=` accepts Dispatch's address only, and
+      - The restrictions are the live entry's (ADR 0004, `remote-control.md` §2): `restrict`
+        turns off the terminal and all forwarding, `from=` limits the key to this Mac, and
         `command=` runs the same `bin/growth-remote` whatever Dispatch asks for.
       - `/usr/bin/env` sets the variables and then becomes `bin/growth-remote`, which keeps them
-        when it starts `jura-growth remote`. Don't use the `environment=` option instead: it works
-        only with `PermitUserEnvironment yes` in sshd's settings, which would let any entry set
+        when it starts `jura-growth remote`. Don't use the `environment=` option instead: sshd
+        runs with `PermitUserEnvironment no`, and turning it on would let any entry set
         variables. The env file is a full path because `~` isn't expanded in the entry.
-      - If the live entry from mission-control#14 is already there, keep it. Both lines are
-        Dispatch's keys, each forced to `bin/growth-remote`. Never add a key of your own.
+      - Keep the live entry from mission-control#14. Both lines are Dispatch's keys, each forced
+        to `bin/growth-remote`, and the file stays owned by root, mode 644. Never add a key of
+        your own.
    3. In Dispatch, bind "Jura HQ UAT"'s `#approvals` and `#control` to this key, and only that
       server's channels. Jura HQ's channels stay on the live key.
    4. Check the route before Part A: after the seed below, send `/growth one-pager` from the UAT
       server's `#control`. It should post in the UAT server's `#mission-control` and list S2's runs
       (app-factory at 06:31, social at 07:00), which only the UAT folder holds. If it posts in Jura
       HQ, or lists the live engine's runs, stop and fix the binding before going on.
-   5. When you finish (see the last paragraph of this script), delete this line from
-      `authorized_keys` and the binding from Dispatch, and delete `~/.ssh/growth_mac_uat` and its
-      `.pub` on Dispatch's machine.
+   5. When you finish (see the last paragraph of this script), delete this line with
+      `sudo sed -i '' '/ dispatch-growth-uat$/d' /etc/ssh/authorized_keys.d/tingy` (then
+      `wc -l` on that file prints `1` again), remove the binding from Dispatch, and delete the
+      key with `sudo rm /Users/dispatch/.dispatch-keys/growth_mac_uat*`.
 5. **The harness.** `uv run python -m tests.uat.seed <folder> [--scenario <name>] [--today <date>]`
    seeds the data, and `uv run python -m tests.resend_stub` records what would have gone to Resend
    and answers D1 queries from an empty local copy of the site's tables (ticket 18), so nothing
@@ -326,10 +330,13 @@ Same UAT route and folder as Part A (reseed first if Part A is finished).
 - Expect: refused, or ignored. No growth command runs.
 - [ ] Pass  [ ] Fail
 
-**B5. The Mac is asleep (should, MC §4.7)**
-- Do: close the Mac's lid. Two minutes later, tap Approve on a pending card.
-- Expect: Dispatch replies "the growth Mac is unreachable", and the card stays pending. Open the lid
-  and confirm nothing was recorded late.
+**B5. The growth Mac is unreachable (should, MC §4.7)**
+- Revised 2026-10-30: Dispatch runs on this Mac, which never sleeps, so "unreachable" now means
+  Remote Login is off.
+- Do: turn Remote Login off (System Settings → General → Sharing). Tap Approve on a pending card.
+- Expect: Dispatch replies "The growth Mac is unreachable.", and the card stays pending. Turn
+  Remote Login back on, check that **Only these users** still lists only you, and confirm nothing
+  was recorded late.
 - [ ] Pass  [ ] Fail
 
 **B6. Requeue the shadow emails from Discord (should, AC-M8.13)**

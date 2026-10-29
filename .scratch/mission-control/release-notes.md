@@ -99,13 +99,17 @@ platform. Record checks in the ticket's QA file (`reviews/qa-NN.md`).
 
 ### 3. Open the Mac to Dispatch (ticket mc 14)
 
-1. Deploy Discord Dispatch on its always-on machine with D1 to D4, D8 and D9
-   (`~/projects/discord-automation/`).
-2. Follow `.scratch/mission-control/setup/remote-control.md`: turn on Remote Login for your user
-   only, keys only; join both machines to Tailscale; make Dispatch's key on its machine; add the one
-   `restrict,command=…,from=…` entry to `~/.ssh/authorized_keys`, and make it the only entry.
+*Revised 2026-10-30: Dispatch runs on this Mac as its own hidden `dispatch` user, over SSH to
+`127.0.0.1`. No Tailscale and no second machine (Dispatch growth-control PRD §8).*
+
+1. Deploy Discord Dispatch on this Mac with D1 to D4, D8 and D9, through the paste block in
+   `/Users/tingy/discord-dispatch/deploy/SETUP.md`, "macOS (this Mac)", at Dispatch's GC-08.
+2. Follow `.scratch/mission-control/setup/remote-control.md`. The paste block turns on Remote Login
+   for your user only, keys only, and writes the one `restrict,command=…,from="127.0.0.1,::1"`
+   entry to the root-owned `/etc/ssh/authorized_keys.d/tingy`, the only file sshd reads your keys
+   from.
 3. Bind `#approvals` and `#control` in Jura HQ to company `jura` only, accepting your user only.
-4. Run U16 and U7, and the asleep-Mac check.
+4. Run U16 and U7, and the check with Remote Login off.
 
 ### 4. UAT Parts A to C
 
@@ -236,7 +240,8 @@ server and a UAT-only SSH key. Remove that key and binding when you finish.
 3. `jura-growth publish queue`: settle any `claimed` or `unknown` item with
    `jura-growth publish resolve A-nnnn not-posted` (or `posted --url <the post's address>` for a
    post) after checking the account.
-4. To cut Dispatch off, remove the line from `~/.ssh/authorized_keys` or turn Remote Login off.
+4. To cut Dispatch off, turn Remote Login off or remove the key line with
+   `sudo rm /etc/ssh/authorized_keys.d/tingy` (revised 2026-10-30).
    Requests stay pending and lapse.
 
 ### Revert the merge
@@ -267,6 +272,7 @@ server and a UAT-only SSH key. Remove that key and binding when you finish.
   Delete the `*-publish.jsonl` files under `data/growth/transcripts/` by hand.
 - **Community drafts go back to your personal voice** (`post_as`), and Terminal decisions and
   `community set promo_days=…` come back.
-- **Outside the repo, nothing reverts:** the Chrome profile and its sign-ins, Tailscale, Remote
-  Login, Dispatch's bindings, the Cowork morning-brief line (its old block is in the guide's
-  history), and the landing page's D1 table, `dev` branch and Cloudflare Access.
+- **Outside the repo, nothing reverts:** the Chrome profile and its sign-ins, Remote Login and its
+  root-owned key file, Dispatch's `dispatch` and `claude-runner` users, Dispatch's bindings, the
+  Cowork morning-brief line (its old block is in the guide's history), and the landing page's D1
+  table, `dev` branch and Cloudflare Access.
