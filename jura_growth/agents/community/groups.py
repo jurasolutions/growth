@@ -106,6 +106,14 @@ def _unique_slug(conn: sqlite3.Connection, name: str) -> str:
     return slug
 
 
+def _linkedin_on() -> bool:
+    """Whether Jura works on LinkedIn: one switch, `platforms.linkedin.enabled` in
+    `config/social.yaml`. Groups already in the register stay as they are."""
+    from jura_growth.agents.social.settings import load
+
+    return load().platforms["linkedin"].enabled
+
+
 def validate(record: dict) -> tuple[dict, list[str]]:
     """A clean record and its problems (empty means it can be added)."""
     errors: list[str] = []
@@ -118,6 +126,9 @@ def validate(record: dict) -> tuple[dict, list[str]]:
     clean["channel"] = (clean.get("channel") or "facebook").lower()
     if clean["channel"] not in CHANNELS:
         errors.append(f"channel must be one of {', '.join(CHANNELS)}")
+    elif clean["channel"] == "linkedin" and not _linkedin_on():
+        errors.append("LinkedIn groups aren't recorded: Jura doesn't post on LinkedIn (switched off in "
+                      "config/social.yaml since 2026-10-29)")
     if not clean.get("name"):
         errors.append("name is required")
     url = clean.get("url") or ""
