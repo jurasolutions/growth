@@ -347,7 +347,8 @@ Same window, variables and UAT route as Part A.
 
 **C1. A request per item, and nothing without approval (must, AC-P1.1, AC-P2.1, AC-P2.2, AC-P5.1)**
 - Expect, from the seed: one `social-post` card for Facebook, "decide by <today>, 18:00 SGT", with
-  the text, the image and the Page link. No card for LinkedIn or Instagram (still `draft`).
+  the text, the image and the Page link. No card for Instagram (still `draft`). LinkedIn was
+  dropped on 2026-10-29 and is switched off, so there is no LinkedIn draft or card at all.
 - Do: `uv run jura-growth publish next --json`
 - Expect: "nothing due" (the card isn't approved).
 - Do: approve the card in `#approvals`. Then run
@@ -401,7 +402,8 @@ publish commands and the audit accept no other address, so the run can't reach F
 the profile is signed in. The engine refuses the fixture on a non-loopback address or with a data
 folder that isn't temporary: the run fails before Claude starts. Each run costs a little (about the
 spike's US$0.10 to US$0.40). Run R1, R4 and R6 before U12 for BP-03, R2 and R3 too (E13), R1, R2 and
-R6 again for each new platform in BP-04, and R5 after BP-06.
+R6 again for Instagram in BP-04, and R5 after BP-06. LinkedIn was dropped on 2026-10-29, so there
+is no LinkedIn rehearsal.
 
 You need BP-01 done (the engine's Chrome profile chosen in `/chrome`), the Mac awake between 09:00
 and 18:00 (the posting window), and the test Discord server from "Before you start". Part R starts
@@ -444,7 +446,7 @@ Then, for each step: `rehearse …` as the step says, check the argv once with
 `publish-fixture.localhost`), and start the run with `uv run jura-growth run publish --ignore-schedule`.
 Watch the run's tab in Chrome. Afterwards `uv run jura-growth publish queue` shows the item's state.
 
-**R1. An approved fixture post, end to end (must, BP-03; BP-04 per platform)**
+**R1. An approved fixture post, end to end (must, BP-03; BP-04 for Instagram)**
 - Do: `rehearse fixture-post page.html`, then the run.
 - Expect: one new tab; the composer shows "Posting as Jura Solutions"; the approved text typed once,
   whole; the image attached; Post clicked once; the permalink `post.html?id=…` opened and read back;
@@ -506,7 +508,7 @@ Write both results, with the two `permission_denials` lines, in the Comments of
 `.scratch/browser-publishing/issues/07-fixture-platform.md`. Nothing here posts anything.
 - [ ] Recorded
 
-**R2. Each stop page (must, BP-03; BP-04 per platform)**
+**R2. Each stop page (must, BP-03; BP-04 for Instagram)**
 - Do: one at a time, `rehearse fixture-post <page>` and the run, for `login.html`, `captcha.html`,
   `checkpoint.html`, `rate-limit.html`, `removed.html` and `admin-warning.html`.
 - Expect: `publish stopped` with the matching reason (`login`, `captcha`, `checkpoint`,
@@ -540,7 +542,7 @@ Write both results, with the two `permission_denials` lines, in the Comments of
   or post".
 - [ ] Pass  [ ] Fail
 
-**R6. A different identity (must, BP-03; BP-04 per platform)**
+**R6. A different identity (must, BP-03; BP-04 for Instagram)**
 - Do: `rehearse fixture-post other-identity.html`, then the run.
 - Expect: `publish stopped --reason wrong-identity` before anything is typed (no `"action": "type"`
   in the transcript), the tab closed, publish paused, one `#alerts` post.
@@ -557,8 +559,8 @@ transcripts become T fixtures.
 These post publicly on Jura's real accounts, as the PRD's own checks require. Use test text you're
 happy to leave up, or delete it by hand afterwards. You need:
 
-- BP-01 done: the engine's Chrome profile chosen in `/chrome`, signed in to the Jura Facebook Page,
-  Instagram and LinkedIn company page, and nothing else;
+- BP-01 done: the engine's Chrome profile chosen in `/chrome`, signed in to the Jura Facebook Page
+  and Instagram, and nothing else (LinkedIn was dropped on 2026-10-29: don't sign in to it);
 - Dispatch bound to the real Jura HQ `#approvals` (mission-control#14), because these are real
   decisions;
 - a **private Facebook test group** you set up, joined as the Jura Page, with written rules naming
@@ -587,10 +589,12 @@ happy to leave up, or delete it by hand afterwards. You need:
   `/growth resume publish`.
 - [ ] Pass  [ ] Fail
 
-**D4. The other platforms (must, BP-04; U13)**
-- Before: answer BP §6 again (weekend posts once three platforms are in `browser` mode).
-- Do: repeat D1 for Instagram, on a carousel day, and then for LinkedIn.
-- Expect: each goes live with its URL recorded. The carousel's slides are in order.
+**D4. Instagram (must, BP-04; U13)**
+- LinkedIn was dropped on 2026-10-29 and is switched off (`platforms.linkedin.enabled: false`), so
+  this step covers Instagram only.
+- Before: answer BP §6 again (weekend posts once both platforms are in `browser` mode).
+- Do: repeat D1 for Instagram, on a carousel day.
+- Expect: it goes live with its URL recorded. The carousel's slides are in order.
 - [ ] Pass  [ ] Fail
 
 **D5. Community post and join, as the Jura Page (must, BP-05, BP-06; U14, U15)**

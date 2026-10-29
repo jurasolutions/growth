@@ -13,10 +13,14 @@ Below, `<repo>` means the growth repo's full path on this Mac:
 `/Users/tingy/OneDrive/Desktop/projects/jurasolutions/repos/growth`. The rules behind this guide are
 in BP §4.7 and §4.9 and in ADR 0005 (`docs/adr/0005-browser-automation-runs-only-in-the-publish-job.md`).
 
-**The risk you accepted (BP §4.1).** Meta's and LinkedIn's terms forbid automated posting. Your
-approval controls what is said, not whether a platform treats the account as automated. The
-platforms can warn, restrict or disable the Page, the company page, or the personal profiles that
-administer them. The limits in this build slow the accounts down; they don't make the automation
+**LinkedIn is dropped (2026-10-29).** You decided Jura no longer works on LinkedIn. It is switched
+off in `config/social.yaml` (`platforms.linkedin.enabled: false`), so the run never opens LinkedIn,
+and this guide no longer asks you to sign in to it or set it up.
+
+**The risk you accepted (BP §4.1).** Meta's terms forbid automated posting. Your approval controls
+what is said, not whether a platform treats the account as automated. The platforms can warn,
+restrict or disable the Page, the Instagram account, or the personal profiles that administer
+them. The limits in this build slow the accounts down; they don't make the automation
 compliant.
 
 ## 1. Make the dedicated Chrome profile (TY4)
@@ -26,10 +30,11 @@ compliant.
    turn sync off if Chrome offers it: a synced profile pulls in bookmarks, passwords and sign-ins
    from elsewhere.
 2. Use this profile for nothing else. No everyday browsing, no other tabs left open in it.
-3. In this profile, sign in to these three accounts and nothing else:
+3. In this profile, sign in to these two accounts and nothing else:
    - the Facebook account that administers the **Jura Solutions** Page (`facebook.com/jurasolutionssg`);
-   - the Jura Instagram account, `@jura_solutions`;
-   - the LinkedIn account that administers the Jura company page.
+   - the Jura Instagram account, `@jura_solutions`.
+
+   Don't sign in to LinkedIn here: it was dropped on 2026-10-29.
 4. Never sign this profile in to Discord, Gmail, any TaskWise or ZenexFlow account, a bank, or
    anything else. A run that misbehaves can reach only what this profile is signed in to.
 5. Let Chrome remember these sign-ins (stay signed in). The run never types a password or a code:
@@ -53,17 +58,13 @@ already acting as the Jura Solutions Page, not as your personal profile:
 Groups work the same way (TY1): joins and posts go out as the Page, only in groups that allow
 Pages. A group that only allows personal profiles is skipped for good.
 
-### Instagram and LinkedIn
+### Instagram
 
-- **Instagram:** the profile must be signed in as `@jura_solutions` only. If Instagram offers to add
-  or switch to another account, decline. The run stops on a "Switch accounts" prompt rather than use
-  it.
-- **LinkedIn:** the run posts from the company page's admin view, never from your personal feed.
-  Open the company page's admin view once in this profile and check that you can start a post as the
-  company there. Note what the composer shows (the company's name and logo), with your R1 results.
+The profile must be signed in as `@jura_solutions` only. If Instagram offers to add or switch to
+another account, decline. The run stops on a "Switch accounts" prompt rather than use it.
 
-Instagram and LinkedIn come after Facebook (BP §5.1): set them up now, but switch them on later, one
-at a time (section 7).
+Instagram comes after Facebook (BP §5.1): set it up now, but switch it on later (section 7).
+LinkedIn was dropped on 2026-10-29, so there is no LinkedIn step.
 
 ## 2. The Claude in Chrome extension, in this profile only
 
@@ -97,13 +98,14 @@ You don't write these rules. The publish plug-in builds them for each run
 - **Tab tools by name:** `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp` and
   `list_connected_browsers`. They open and list tabs, never read a page.
 - **Page tools only through `ClaudeInChromeDomain(<host>)` allow rules**, one per host of each
-  platform in `browser` mode (`hosts.BROWSER_HOSTS`):
+  platform switched on and in `browser` mode (`hosts.BROWSER_HOSTS`):
 
   | Platform | Hosts |
   | --- | --- |
   | Facebook (the Page, and groups while `community.browser` is on) | `www.facebook.com`, `facebook.com`, `m.facebook.com`, `web.facebook.com`, `business.facebook.com` |
   | Instagram | `www.instagram.com`, `instagram.com` |
-  | LinkedIn | `www.linkedin.com`, `linkedin.com` |
+
+  LinkedIn's hosts are never on the list while it is switched off (since 2026-10-29).
 
   No page tool is allowed by name, because a tool-name allow covers every site. No Discord host is
   ever on the list. The list stays explicit until U18 (section 4) shows how the rule treats
@@ -151,8 +153,8 @@ The last line it prints is the run's result; its `permission_denials` lists ever
 denied.
 
 - **U10. Signed in to nothing else, and an unlisted domain is denied.**
-  1. In the dedicated profile, check you are signed in to the three Jura accounts only: not
-     Discord, Gmail, TaskWise or ZenexFlow.
+  1. In the dedicated profile, check you are signed in to the two Jura accounts only (Facebook and
+     Instagram): not LinkedIn, Discord, Gmail, TaskWise or ZenexFlow.
   2. Run:
 
      ```bash
@@ -229,13 +231,12 @@ Turn on one platform at a time, Facebook first, and only when its checks are rec
 | Before turning on | These must be recorded as passed |
 | --- | --- |
 | Facebook's `publish_mode: browser` | U9, U10, U11, U18, then R1 to R4 and R6 (with R1b), then U12 |
-| Instagram's or LinkedIn's `publish_mode: browser` | R1, R2 and R6 for that platform, BP §6 answered again, then U13 |
+| Instagram's `publish_mode: browser` | R1, R2 and R6 for Instagram, BP §6 answered again, then U13 |
 | `community.browser: true` | R5, then U14 and U15 |
 
 1. In `<repo>/config/social.yaml`, under the platform, set `page_url` to the page the run posts to
    (`https://www.facebook.com/jurasolutionssg` for Facebook, `https://www.instagram.com/jura_solutions/`
-   for Instagram, the company page's `https://www.linkedin.com/company/<page>/` for LinkedIn), then
-   change `publish_mode: draft` to `publish_mode: browser`. Without `page_url`, drafts keep going
+   for Instagram), then change `publish_mode: draft` to `publish_mode: browser`. Without `page_url`, drafts keep going
    to `#social-drafts` for you to post by hand.
 2. For groups, set `browser: true` in `<repo>/config/community.yaml`.
 3. If the `publish` job isn't installed yet: `uv run jura-growth schedule install publish`.
