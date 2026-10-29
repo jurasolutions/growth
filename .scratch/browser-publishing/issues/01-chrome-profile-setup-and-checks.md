@@ -32,3 +32,20 @@ The publish job drives whatever Chrome profile the extension last connected to, 
 ### 2026-10-27T05:59+0800 conductor
 
 After Ting Yu records the Facebook permalink shape at R1, add it to hosts.post_problem so Facebook done-URLs are checked by path shape too (crew recommendation adopted).
+
+### 2026-10-29: conductor, after Ting Yu set up the Jura Chrome profile (Facebook and Instagram; LinkedIn dropped 2026-10-29)
+
+- **U9: pass, partly verified.** One Chrome browser is connected to the account on this Mac (`list_connected_browsers`: one macOS browser, in use). Ting Yu installed the extension in the Jura profile. Its profile name can't be read from the tool, and that one browser is what every headless run uses.
+- **U10: pass on the domain rule; profile sign-ins as stated by Ting Yu.** A headless probe in the publish job's mode (`claude -p --permission-mode dontAsk --strict-mcp-config --chrome`, allowing only the tab tools, `get_page_text` and `ClaudeInChromeDomain(example.com)`, with no `navigate` allow): `example.com` was allowed, and `example.org` was denied (`permission_denials`: `navigate https://example.org`). Cost US$0.087. Evidence: `uat-evidence/u10-result.json`.
+- **U18: recorded.** The same probe with `ClaudeInChromeDomain(www.facebook.com)`, and again with `ClaudeInChromeDomain(facebook.com)`, gave the same result:
+
+  | URL | `www.facebook.com` rule | `facebook.com` rule |
+  |---|---|---|
+  | `https://www.facebook.com/jurasolutionssg` | allowed | allowed |
+  | `https://m.facebook.com/jurasolutionssg` | denied | denied |
+  | `https://facebook.com/jurasolutionssg` | allowed | allowed |
+  | `https://scontent.xx.fbcdn.net/` | denied | denied |
+  | `https://www.instagram.com/jura_solutions/` | denied | denied |
+
+  So the rule treats `www.` and the bare domain as one host, and every other subdomain as separate. `hosts.BROWSER_HOSTS` already gives each host its own rule (`m.facebook.com`, `web.facebook.com` and `business.facebook.com` included), so no change is needed. Image CDN hosts stay out: images load as page subresources, not navigations. Evidence: `uat-evidence/u18-www-result.json`, `uat-evidence/u18-apex-result.json`.
+- **U11: still open.** It needs the posting window, plus the locked-screen and Chrome-closed runs. It runs with the rehearsal.
