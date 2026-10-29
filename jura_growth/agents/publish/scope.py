@@ -84,10 +84,11 @@ def permissions():
 
 def next_has_image() -> bool:
     """Whether an approved, unclaimed item for today carries an image: the item `publish next`
-    could hand out (`claim.approved_ready`). Read-only, through the read model's opener, and
-    False (deny the upload) when growth.db can't be read."""
+    could hand out (`claim.approved_ready`), leaving out any item its kind's switch refuses.
+    Read-only, through the read model's opener, and False (deny the upload) when growth.db
+    can't be read."""
     from jura_growth import mission
-    from jura_growth.agents.publish import claim
+    from jura_growth.agents.publish import claim, kinds
 
     path = paths.db_path()
     if not path.exists():
@@ -97,8 +98,11 @@ def next_has_image() -> bool:
     except sqlite3.Error:
         return False
     try:
-        return any(item.content.get("images") for item in claim.approved_ready(conn, timeutil.today_str()))
-    except (sqlite3.Error, ValueError):
+        # An item its kind's switch refuses (a platform switched off or in draft mode) is never
+        # handed out, so it never lifts the upload deny (code review drop-linkedin, S1).
+        return any(item.content.get("images") and not kinds.switched_off(conn, item)
+                   for item in claim.approved_ready(conn, timeutil.today_str()))
+    except (sqlite3.Error, ValueError, LookupError):
         return False
     finally:
         conn.close()

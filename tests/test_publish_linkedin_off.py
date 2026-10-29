@@ -9,6 +9,8 @@ all of these, so the switch itself stays covered.
 
 from __future__ import annotations
 
+import pytest
+
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
 from jura_growth import approvals, db, paths
@@ -85,15 +87,74 @@ def test_submit_raises_a_card_only_for_the_enabled_platform_in_browser_mode(conn
 def test_an_item_approved_before_linkedin_was_turned_off_is_never_claimed(conn, monkeypatch):
     pw.at(monkeypatch, pw.TEN)
     linkedin_on(monkeypatch, browser=("linkedin",))
-    found, _ = pw.approved(conn, monkeypatch, "linkedin")
+    found, approval = pw.approved(conn, monkeypatch, "linkedin")
     linkedin_off(monkeypatch, browser=("linkedin",))
     requests = db.scalar(conn, "SELECT count(*) FROM approvals")
 
     assert "turned off" in (kinds.switched_off(conn, found) or "")
+    with pytest.raises(approvals.NotApproved, match="turned off"), db.transaction(conn):
+        approvals.use(conn, kinds.kind_of(found), found.subject, run_id=None)
     result = claim.next_item(conn)
     assert result.item is None
-    assert any("turned off" in why for why in result.why), result.why
     assert db.scalar(conn, "SELECT count(*) FROM approvals") == requests  # no new card
     after = items.get(conn, found.id)
     assert after is not None and after.state != "claimed"
     assert scope.enabled_platforms() == ()
+
+
+def test_a_waiting_card_is_superseded_at_the_next_sync_once_its_platform_is_switched_off(conn, monkeypatch):
+    """Review N1: the card doesn't stay live until 18:00. The existing "the item is gone" path
+    supersedes it, the item is withdrawn, and no new card is raised."""
+    pw.at(monkeypatch, pw.TEN)
+    linkedin_on(monkeypatch, browser=("linkedin",))
+    found, waiting = pw.item(conn, "linkedin")
+    linkedin_off(monkeypatch, browser=("linkedin",))
+
+    with db.transaction(conn):
+        assert items.sync(conn) == []
+    record = approvals.get(conn, waiting.id)
+    assert record is not None and record.status == approvals.SUPERSEDED
+    assert approvals.pending(conn) == []
+    after = items.get(conn, found.id)
+    assert after is not None and after.state == "withdrawn"
+    assert "switched off" in (kinds.note(conn, after) or "")
+
+
+def test_a_waiting_card_stays_live_while_its_platform_is_only_in_draft_mode(conn, monkeypatch):
+    """Draft mode keeps its own rule (A13): the card isn't superseded, `use()` refuses it."""
+    pw.at(monkeypatch, pw.TEN)
+    linkedin_on(monkeypatch, browser=("linkedin",))
+    _, waiting = pw.item(conn, "linkedin")
+    linkedin_on(monkeypatch, browser=())
+
+    with db.transaction(conn):
+        items.sync(conn)
+    record = approvals.get(conn, waiting.id)
+    assert record is not None and record.status == approvals.PENDING
+
+
+# --- the upload deny (review S1) -----------------------------------------------------------------
+
+
+def approved_linkedin_image_and_facebook_text(conn, monkeypatch):
+    """LinkedIn on: an approved LinkedIn item with an image and an approved text-only Facebook
+    item, committed so the read-only `next_has_image()` sees them."""
+    pw.at(monkeypatch, pw.MORNING)
+    linkedin_on(monkeypatch, browser=("facebook", "linkedin"))
+    pw.approved(conn, monkeypatch, "linkedin")
+    pw.approved(conn, monkeypatch, "facebook", images=[])
+    conn.commit()
+    pw.at(monkeypatch, pw.TEN)
+
+
+def test_an_approved_item_on_a_switched_off_platform_never_lifts_the_upload_deny(conn, monkeypatch):
+    approved_linkedin_image_and_facebook_text(conn, monkeypatch)
+    linkedin_off(monkeypatch, browser=("facebook", "linkedin"))
+    assert scope.next_has_image() is False
+    assert scope.FILE_UPLOAD in scope.permissions().disallowed_tools
+
+
+def test_an_approved_item_with_an_image_on_a_switched_on_platform_still_lifts_it(conn, monkeypatch):
+    approved_linkedin_image_and_facebook_text(conn, monkeypatch)
+    assert scope.next_has_image() is True
+    assert scope.FILE_UPLOAD not in scope.permissions().disallowed_tools

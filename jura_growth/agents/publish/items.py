@@ -151,10 +151,8 @@ def create_social(conn: sqlite3.Connection, post_id: int, *, run_id: int | None,
     if post is None:
         return Made(why=f"there is no social draft {post_id}")
     platform = load().platforms[post["platform"]]
-    if not platform.enabled:
-        return Made(why=f"{platform.name} is turned off in config/social.yaml")
-    if not platform.browser:
-        return Made(why=f"{platform.name} is in draft mode")
+    if platform.not_browser:
+        return Made(why=platform.not_browser)
     if not platform.page_url:
         return Made(why=f"{platform.name} is in browser mode but its page_url isn't set in config/social.yaml")
     wrong = hosts.page_problem(platform.name, platform.page_url)

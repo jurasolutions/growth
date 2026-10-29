@@ -9,7 +9,9 @@ linkedin anymore."). It is switched off with `platforms.linkedin.enabled: false`
 `config/social.yaml`, not removed. A switched-off platform gets no draft, no image, no
 `#social-drafts` message, no publish item, no approval card, no browser host and no setup cover,
 isn't counted in the digest, is left out of `social skip all`, and the community register takes no
-LinkedIn group. An item approved before the switch is never claimed. Its settings, brand channel,
+LinkedIn group (by channel or by a linkedin.com address). A card raised before the switch is
+superseded at the next sync and its item withdrawn, an item approved before the switch is never
+claimed, and neither lifts the publish run's `file_upload` deny. Its settings, brand channel,
 card sizes and publish steps stay, so switching it back on brings all of that back.
 
 PRD: `jurasolutions/prd/pending/prd-jura-social-content-2026-10-24.md`. Blocks 1 (drafts and
@@ -211,8 +213,10 @@ from Terminal and the tests; the scheduled `publish` job (BP-03, below) drives C
 Facebook Page (BP-03) and the Jura Instagram account (BP-04) can be put in `browser` mode, each on
 its own once its fixture rehearsal and first live post are done. BP-04 built the Jura LinkedIn
 company page too, but LinkedIn was switched off on 2026-10-29: a switched-off platform gets no
-item, card or browser host even with `publish_mode: browser`, and an item approved before the
-switch is refused at the claim ("turned off in config/social.yaml").
+item, card or browser host even with `publish_mode: browser`. Its post counts as gone, so the
+next `items.sync()` supersedes a waiting card ("LinkedIn page is switched off") and withdraws the
+item; until then `use()` refuses it ("turned off in config/social.yaml"). Draft mode is different:
+there a waiting card stays live until it lapses (A13).
 
 **Weekends stay on.** This was decided at sign-off (BP1, for the Facebook Page). BP-04 asked again
 (BP §6 Q1), and the crew's recorded decision keeps weekends on with every platform switched on in
