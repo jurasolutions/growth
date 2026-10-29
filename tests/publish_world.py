@@ -63,8 +63,12 @@ def at(monkeypatch, moment: str):
     return timeutil.parse(moment)
 
 
-def social_config(monkeypatch, *, browser=("facebook",), urls=None, **overrides) -> None:
-    """`config/social.yaml` with the given platforms in `browser` mode and every page URL set."""
+def social_config(monkeypatch, *, browser=("facebook",), urls=None, enabled=None, **overrides) -> None:
+    """`config/social.yaml` with the given platforms in `browser` mode and every page URL set.
+
+    `enabled` names exactly the platforms that are switched on. Left out, each platform keeps the
+    shipped switch, and a platform named in `browser` is switched on: a test that puts LinkedIn
+    in browser mode means LinkedIn on, although Jura turned it off on 2026-10-29."""
     real = config.agent_config
     urls = {"facebook": PAGE_URL, "linkedin": LINKEDIN_URL, "instagram": INSTAGRAM_URL, **(urls or {})}
 
@@ -75,6 +79,10 @@ def social_config(monkeypatch, *, browser=("facebook",), urls=None, **overrides)
             for name, spec in platforms.items():
                 spec["publish_mode"] = "browser" if name in browser else "draft"
                 spec["page_url"] = urls.get(name)
+                if enabled is not None:
+                    spec["enabled"] = name in enabled
+                elif name in browser:
+                    spec["enabled"] = True
             base["platforms"] = platforms
             base.update(overrides)
         return base

@@ -102,7 +102,9 @@ and `community audit-run` proves the run fetched none of them from its transcrip
 ```
 
 `channel` may be facebook, linkedin, telegram, whatsapp, sbf, asme, event, forum or other (PRD
-§5.4). A Facebook group's `url` must be its facebook.com/groups link: recorded for Ting Yu, never
+§5.4). A new `linkedin` group is refused while LinkedIn is switched off
+(`platforms.linkedin.enabled: false` in `config/social.yaml`, since 2026-10-29): Jura doesn't post
+on LinkedIn. LinkedIn groups already in the register stay as they are. A Facebook group's `url` must be its facebook.com/groups link: recorded for Ting Yu, never
 fetched. `source_urls` needs at least one non-Facebook page. `fit` is `good fit`, `possible` or
 `skip`, always with a reason. `promo_rules` is required; "not stated in public sources" is a
 valid value and reads as unknown.

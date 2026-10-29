@@ -1,7 +1,8 @@
-"""Reading a submission folder: the three platform variants, `sources.md` and
-the card spec `card.json`.
+"""Reading a submission folder: a variant for each platform still to draft,
+`sources.md` and the card spec `card.json`. A file for a platform that is
+switched off (`linkedin.md`, since 2026-10-29) is never read.
 
-    linkedin.md   facebook.md   instagram.md   plain text, exactly as posted
+    facebook.md   instagram.md   plain text, exactly as posted
     sources.md    one source per line: URL, then publisher, date and title
     card.json     the image card spec (render.CardSpec)
 

@@ -62,8 +62,19 @@ class Platform:
     identity: str = ""  # the posting identity the run must see before typing
 
     @property
+    def not_browser(self) -> str | None:
+        """Why this platform isn't posted through the browser, or None when it is. A platform
+        that is switched off (`enabled: false`) never is, whatever its `publish_mode` says."""
+        if not self.enabled:
+            return f"{self.name} is turned off in config/social.yaml"
+        if self.publish_mode != "browser":
+            return f"{self.name} is in draft mode"
+        return None
+
+    @property
     def browser(self) -> bool:
-        return self.publish_mode == "browser"
+        """Posted through the browser: switched on and in `browser` mode (`not_browser`)."""
+        return self.not_browser is None
 
     @property
     def size(self) -> str:

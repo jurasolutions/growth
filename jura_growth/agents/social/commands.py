@@ -27,7 +27,7 @@ def _day(value: str | None) -> date:
 
 @click.group("social")
 def social() -> None:
-    """Daily LinkedIn, Facebook and Instagram drafts (social PRD)."""
+    """Daily drafts for each platform switched on in config/social.yaml (social PRD)."""
 
 
 @social.command()
@@ -64,7 +64,7 @@ def submit(folder, theme_id, offline) -> str:
 @click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False, path_type=Path), help="Folder for the PNGs.")
 @click.option(
     "--size", "sizes", multiple=True,
-    help=f"A named size ({', '.join(render.SIZES)}) or WIDTHxHEIGHT; repeatable. Default: linkedin, facebook, instagram.",
+    help=f"A named size ({', '.join(render.SIZES)}) or WIDTHxHEIGHT; repeatable. Default: each platform switched on.",
 )
 @click.option("--carousel", type=int, default=1, show_default=True, help="Slides for portrait sizes (cover plus items).")
 @click.option("--source", "sources", multiple=True, help="A source URL the card's figures come from; repeatable.")
@@ -85,7 +85,7 @@ def render_cmd(spec_file, out_dir, sizes, carousel, sources, prefix, offline) ->
             click.echo(f"  - {reason}")
         sys.exit(1)
     plan = []
-    for size in sizes or ("linkedin", "facebook", "instagram"):
+    for size in sizes or tuple(p.name for p in load().enabled_platforms()):
         if size in render.SIZES:
             plan.append((size, *render.SIZES[size]))
         else:
@@ -112,9 +112,10 @@ def render_cmd(spec_file, out_dir, sizes, carousel, sources, prefix, offline) ->
 @click.argument("platform", type=click.Choice([*PLATFORMS, "all"]))
 @click.option("--reason", default="skipped by hand", show_default=True)
 def skip(day, platform, reason) -> None:
-    """Don't post PLATFORM's draft for DATE (YYYY-MM-DD, today or tomorrow)."""
+    """Don't post PLATFORM's draft for DATE (YYYY-MM-DD, today or tomorrow). `all` is every
+    platform switched on."""
     target = _day(day)
-    chosen = PLATFORMS if platform == "all" else (platform,)
+    chosen = tuple(p.name for p in load().enabled_platforms()) if platform == "all" else (platform,)
     with db.session() as conn:
         for name in chosen:
             try:
@@ -178,7 +179,7 @@ def history_cmd(days, as_json) -> None:
 @click.option("--out", "out_dir", type=click.Path(file_okay=False, path_type=Path), help="Default: outputs/growth/setup/social-images/")
 @click.option("--offline", is_flag=True)
 def setup_images(out_dir, offline) -> None:
-    """Render the profile picture and the LinkedIn and Facebook covers."""
+    """Render the profile picture and a cover for each platform switched on that has one."""
     out_dir = out_dir or paths.outputs_dir() / "setup" / "social-images"
     spec = render.CardSpec(layout="headline", **render.SETUP_COPY)
     result = brand_check.check(spec.body(), headings=spec.headings(), channel_name="social-card")

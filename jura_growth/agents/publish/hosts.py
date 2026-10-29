@@ -18,7 +18,9 @@ on `www.`, and the bare host only redirects there. Each is listed explicitly unt
 U18 shows how the domain rule treats subdomains. No image CDN (`*.fbcdn.net`, `*.cdninstagram.com`,
 `media.licdn.com`), link shim (`l.facebook.com`, `l.instagram.com`, `lnkd.in`) or help host is
 listed, because a run never opens one in its tab. `BROWSER_PLATFORMS` are the platforms this build
-drives: Facebook from BP-03, Instagram and LinkedIn from BP-04.
+drives: Facebook from BP-03, Instagram and LinkedIn from BP-04. A run reaches a platform's hosts
+only while that platform is switched on and in `browser` mode (`scope.enabled_platforms`), so
+LinkedIn's are unreachable while it is turned off (since 2026-10-29).
 """
 
 from __future__ import annotations

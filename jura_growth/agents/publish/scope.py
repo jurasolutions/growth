@@ -5,7 +5,8 @@
 - **Tab tools by name:** `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp` and
   `list_connected_browsers`. They read and open tabs, never a page.
 - **Page tools only by domain:** one `ClaudeInChromeDomain(<host>)` rule per host of each platform
-  this build drives (`hosts.BROWSER_PLATFORMS`) that is in `browser` mode in `config/social.yaml`,
+  this build drives (`hosts.BROWSER_PLATFORMS`) that is switched on and in `browser` mode in
+  `config/social.yaml` (a platform turned off, as LinkedIn has been since 2026-10-29, opens none),
   and Facebook's while `browser` is on in `config/community.yaml` (group joins and posts).
   No page tool is allowed by name: a tool-name allow covers every site. While the fixture
   platform is on (`fixture.py`, BP-07), the fixture host is the only one.
@@ -35,7 +36,8 @@ FILE_UPLOAD = CHROME + "file_upload"
 
 
 def enabled_platforms() -> tuple[str, ...]:
-    """The platforms a publish run may open: driven by this build and in `browser` mode. Facebook
+    """The platforms a publish run may open: driven by this build, switched on and in `browser`
+    mode (`Platform.browser`). Facebook
     is also open while `community.browser` is on, for group joins and posts (BP-06), even when
     the Page's own posts stay in `draft` mode."""
     from jura_growth.agents.publish import group_kinds, items
@@ -82,10 +84,11 @@ def permissions():
 
 def next_has_image() -> bool:
     """Whether an approved, unclaimed item for today carries an image: the item `publish next`
-    could hand out (`claim.approved_ready`). Read-only, through the read model's opener, and
-    False (deny the upload) when growth.db can't be read."""
+    could hand out (`claim.approved_ready`), leaving out any item its kind's switch refuses.
+    Read-only, through the read model's opener, and False (deny the upload) when growth.db
+    can't be read."""
     from jura_growth import mission
-    from jura_growth.agents.publish import claim
+    from jura_growth.agents.publish import claim, kinds
 
     path = paths.db_path()
     if not path.exists():
@@ -95,8 +98,11 @@ def next_has_image() -> bool:
     except sqlite3.Error:
         return False
     try:
-        return any(item.content.get("images") for item in claim.approved_ready(conn, timeutil.today_str()))
-    except (sqlite3.Error, ValueError):
+        # An item its kind's switch refuses (a platform switched off or in draft mode) is never
+        # handed out, so it never lifts the upload deny (code review drop-linkedin, S1).
+        return any(item.content.get("images") and not kinds.switched_off(conn, item)
+                   for item in claim.approved_ready(conn, timeutil.today_str()))
+    except (sqlite3.Error, ValueError, LookupError):
         return False
     finally:
         conn.close()

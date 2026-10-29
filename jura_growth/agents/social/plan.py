@@ -145,7 +145,10 @@ def render_text(plan: dict) -> str:
     out += [
         "",
         f"Write your drafts in {plan['work_dir']}/",
-        "  linkedin.md  facebook.md  instagram.md  sources.md  card.json",
+        # A file per platform still to draft today: a platform switched off (LinkedIn, since
+        # 2026-10-29) isn't in the plan at all.
+        "  " + "  ".join([*(f"{name}.md" for name, p in plan["platforms"].items() if p["to_draft"]),
+                          "sources.md", "card.json"]),
         f"Then run: {plan['submit']}",
     ]
     return "\n".join(out)

@@ -1,8 +1,9 @@
 """The social content agent (jurasolutions/prd/pending/prd-jura-social-content-2026-10-24.md).
 
 Every morning at 07:00 SGT a headless Claude run (`prompts/social.md`) writes
-one post for the day's theme, adapted for the LinkedIn page, the Facebook Page
-and Instagram, and hands it to `jura-growth social submit`. The submit command
+one post for the day's theme, adapted for each platform switched on in
+`config/social.yaml` (the Facebook Page and Instagram; LinkedIn was switched off
+on 2026-10-29), and hands it to `jura-growth social submit`. The submit command
 enforces the rules in code: the 14-day no-repeat rule, working source links,
 the brand checker with each platform's own rules, image cards rendered from
 the design system, the output folder, the `social_posts` log and delivery to
@@ -41,16 +42,25 @@ def channels() -> dict:
 def digest(conn: sqlite3.Connection, day: str) -> dict:
     from jura_growth import db
 
-    rows = db.rows(conn, "SELECT platform, status, published_at FROM social_posts WHERE date = ?", (day,))
+    from jura_growth.agents.social.settings import load
+
+    # Only the platforms switched on count: a draft left for one switched off since (LinkedIn,
+    # 2026-10-29) is never going out, so it isn't waiting.
+    on = {p.name for p in load().enabled_platforms()}
+    rows = [r for r in db.rows(conn, "SELECT platform, status, published_at FROM social_posts WHERE date = ?", (day,))
+            if r["platform"] in on]
     waiting = sorted(r["platform"] for r in rows if r["status"] == "draft")
     skipped_rows = {r["platform"] for r in rows if r["status"] == "skipped"}
     skips = {
         r["platform"] for r in db.rows(conn, "SELECT platform FROM social_skips WHERE date = ?", (day,))
-    }
+    } & on
     skipped = len(skipped_rows | skips)
-    published = db.scalar(
-        conn, "SELECT count(*) FROM social_posts WHERE status = 'published' AND substr(published_at, 1, 10) = ?", (day,)
-    ) or 0
+    published = sum(
+        1 for r in db.rows(
+            conn, "SELECT platform FROM social_posts WHERE status = 'published' AND substr(published_at, 1, 10) = ?",
+            (day,),
+        ) if r["platform"] in on
+    )
     no_draft = db.one(
         conn,
         "SELECT reason FROM social_submissions WHERE date = ? AND status IN ('no-draft', 'dropped') ORDER BY id DESC LIMIT 1",

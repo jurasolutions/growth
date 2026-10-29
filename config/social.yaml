@@ -77,10 +77,16 @@ themes:
 # draft is posted to #social-drafts for posting by hand. identity is the
 # posting identity the run checks before typing (defaults to the Jura Solutions
 # page or account). Facebook first, then Instagram, then LinkedIn (BP §5.1).
+#
+# enabled: false switches a platform off everywhere: no draft, no image, no
+# publish item or approval card, no browser host, no setup cover and no
+# LinkedIn group in the community register. Ting Yu dropped LinkedIn on
+# 2026-10-29 ("No need to work on linkedin anymore"); its settings stay so it
+# can be switched back on.
 platforms:
   linkedin:
     label: LinkedIn page
-    enabled: true
+    enabled: false
     words: [120, 220]
     hashtags_max: 3
     links: post

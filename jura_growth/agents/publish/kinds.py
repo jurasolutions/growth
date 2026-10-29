@@ -10,12 +10,14 @@ The subject is one publish item, `publish_item:<id>`: one platform's post for on
   to any one field supersedes the request and raises one over the new content (A3, AC-P1.3). The
   hash covers the exact bytes, with no Unicode normalisation (MC §4.6 A3 and ADR 0003, amended
   2026-10-27). The item is gone (`None`) once its draft is skipped or posted by hand, a skip is
-  recorded for its day and platform, its page URL is unset, or an image is missing.
+  recorded for its day and platform, its page URL is unset, its platform is switched off
+  (`enabled: false`), or an image is missing.
 - **Deadlines:** decide by and use by the end of the posting window on the day of the content
   being asked about (18:00 SGT, or earlier when `config/publish.yaml` narrows the window). A
   request raised because the day changed therefore lapses at the new day's end, not the old one's.
-- **Switch:** the platform's `publish_mode`. In `draft` mode a valid approval is refused and not
-  claimed (A13, AC-P5.3).
+- **Switch:** the platform's `enabled` and its `publish_mode`. While the platform is turned off
+  (LinkedIn since 2026-10-29) or in `draft` mode, a valid approval is refused and not claimed
+  (A13, AC-P5.3), and no card is raised.
 - **Skip** withdraws the item and records `social skip <date> <platform>`. Expiry and lapse
   withdraw it and leave the draft as it is.
 """
@@ -62,7 +64,9 @@ def read_social(conn: sqlite3.Connection, post_id: int) -> Read | None:
     if skipped:
         return None
     platform = load().platforms.get(post["platform"])
-    if platform is None or not platform.page_url:
+    # A switched-off platform's post is gone, so the next sync supersedes its waiting card and
+    # withdraws the item ("the item is gone"). Draft mode isn't gone: A13 keeps that card live.
+    if platform is None or not platform.enabled or not platform.page_url:
         return None
     images, blobs = [], []
     for name in json.loads(post["image_paths"] or "[]"):
@@ -200,10 +204,8 @@ class SocialPost:
     def switched_off(self, conn: sqlite3.Connection, subject: str) -> str | None:
         from jura_growth.agents.social.settings import load
 
-        item = _item(conn, subject)
-        if not load().platforms[item.platform].browser:
-            return f"{item.platform} is in draft mode, so nothing is posted through the browser"
-        return None
+        why = load().platforms[_item(conn, subject).platform].not_browser
+        return f"{why}, so nothing is posted through the browser" if why else None
 
     def on_skip(self, conn: sqlite3.Connection, subject: str) -> None:
         from jura_growth.agents.social import history
@@ -245,6 +247,12 @@ def note(conn: sqlite3.Connection, item: items.Item) -> str | None:
         return "skipped by hand"
     if social_content(conn, item.ref_id) is not None:
         return "the post changed"
+    if item.kind == items.SOCIAL_ITEM:
+        from jura_growth.agents.social.settings import load
+
+        platform = load().platforms.get(item.platform)
+        if platform is not None and not platform.enabled:
+            return f"{platform.label} is switched off"
     return None
 
 
