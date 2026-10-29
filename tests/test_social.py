@@ -195,7 +195,7 @@ def set_config(monkeypatch, **social_overrides):
 def linkedin_on(monkeypatch):
     """LinkedIn switched back on over the shipped config (off since 2026-10-29), for the tests that
     cover every platform at once, so a switched-on platform stays covered. What a switched-off
-    one gets is in test_linkedin_off.py."""
+    one gets is in test_social_linkedin_off.py and test_publish_linkedin_off.py."""
     real = config.agent_config
 
     def patched(agent):

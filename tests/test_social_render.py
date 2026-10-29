@@ -82,7 +82,7 @@ def test_instagram_carousel(site, tmp_path):
 
 def test_setup_images(tmp_path):
     """No LinkedIn cover: LinkedIn is switched off (2026-10-29). The cover for a switched-on
-    LinkedIn is in test_linkedin_off.py."""
+    LinkedIn is the next test."""
     made = render.render_setup(tmp_path / "setup", offline=True)
     sizes = {f.name: render.png_size(f) for f in made}
     assert sizes == {
