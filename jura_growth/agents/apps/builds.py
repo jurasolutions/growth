@@ -112,7 +112,10 @@ class AppBuild:
         return approvals.Preview(title=f"{found.app_id} {found.name}", text=text, reason="", files=(found.path,))
 
     def deadlines(self, conn: sqlite3.Connection, subject: str, now: datetime) -> approvals.Deadlines:
-        return day_deadlines(KIND, now)
+        # Applied on decide: `on_approve` claims at the decision, so like
+        # group-rules there is no use-by to wait for.
+        return approvals.Deadlines(decide_by=now + timedelta(days=approval_settings.deadline(KIND, "decide_by_days")),
+                                   use_by=None)
 
     def on_approve(self, conn: sqlite3.Connection, subject: str, args: dict[str, str]) -> str:
         build = hand_off(conn, subject, run_id=log.current_run_id())
@@ -179,9 +182,9 @@ def hand_off(conn: sqlite3.Connection, subject: str, *, run_id: int | None = Non
     except OSError:
         data = None
     if found is None or data is None:  # content() matched a moment ago, so this is a race with a file move
-        raise approvals.NotApproved("superseded", f"the PRD for {app_id} left prd/pending/apps/", approval)
+        raise approvals.NotApproved(approvals.NotApproved.SUPERSEDED, f"the PRD for {app_id} left prd/pending/apps/", approval)
     if approvals.content_hash(data) != approval.content_hash:
-        raise approvals.NotApproved("superseded", f"the PRD for {app_id} changed after it was claimed, so it isn't handed off",
+        raise approvals.NotApproved(approvals.NotApproved.SUPERSEDED, f"the PRD for {app_id} changed after it was claimed, so it isn't handed off",
                                     approval)
     now = timeutil.stamp()
     build = {
@@ -201,7 +204,7 @@ def hand_off(conn: sqlite3.Connection, subject: str, *, run_id: int | None = Non
     except sqlite3.Error as error:
         # The caller's transaction rolls the claim back with it (G22), and a decision answers
         # `refused` instead of failing.
-        raise approvals.NotApproved("unwritten", f"the build handoff couldn't be written ({error}), so nothing was claimed",
+        raise approvals.NotApproved(approvals.NotApproved.UNWRITTEN, f"the build handoff couldn't be written ({error}), so nothing was claimed",
                                     approval) from error
     log.event(conn, "apps.build.handed_off", {k: build[k] for k in ("app_id", "prd_path", "approval_id")}, agent=catalog.NAME)
     return build

@@ -21,7 +21,6 @@ DEADLINE_CAPS = {
     ("outreach-email", "decide_by_business_days"): caps.OUTREACH_DECIDE_BY_BUSINESS_DAYS,
     ("outreach-email", "use_by_business_days"): caps.OUTREACH_USE_BY_BUSINESS_DAYS,
     ("app-build", "decide_by_days"): caps.APP_BUILD_DECIDE_BY_DAYS,
-    ("app-build", "use_by_days"): caps.APP_BUILD_USE_BY_DAYS,
     ("app-release", "decide_by_days"): caps.APP_RELEASE_DECIDE_BY_DAYS,
     ("app-release", "use_by_days"): caps.APP_RELEASE_USE_BY_DAYS,
     ("group-rules", "decide_by_days"): caps.GROUP_RULES_DECIDE_BY_DAYS,

@@ -59,7 +59,6 @@ def test_a_missing_block_reads_every_switch_off_and_every_deadline_at_its_cap(mo
         ("outreach-email", "decide_by_business_days", caps.OUTREACH_DECIDE_BY_BUSINESS_DAYS),
         ("outreach-email", "use_by_business_days", caps.OUTREACH_USE_BY_BUSINESS_DAYS),
         ("app-build", "decide_by_days", caps.APP_BUILD_DECIDE_BY_DAYS),
-        ("app-build", "use_by_days", caps.APP_BUILD_USE_BY_DAYS),
         ("app-release", "decide_by_days", caps.APP_RELEASE_DECIDE_BY_DAYS),
         ("app-release", "use_by_days", caps.APP_RELEASE_USE_BY_DAYS),
         ("group-rules", "decide_by_days", caps.GROUP_RULES_DECIDE_BY_DAYS),
@@ -71,6 +70,16 @@ def test_the_shipped_deadlines_are_the_caps_and_may_shorten_but_never_lengthen(m
     assert approval_settings.deadline(kind, key) == hard
     _with_block(monkeypatch, {"deadlines": {kind: {key: 1}}})
     assert approval_settings.deadline(kind, key) == 1
+
+
+def test_the_shipped_block_names_only_deadlines_that_have_a_cap():
+    """A kind applied on decide (app-build, group-rules) claims at the decision, so it has no use-by
+    to configure (final code review St5)."""
+    text = (paths.config_dir() / "settings.yaml").read_text(encoding="utf-8")
+    shipped = yaml.safe_load(text)["approvals"]["deadlines"]
+    assert {(kind, key) for kind, keys in shipped.items() for key in keys} == set(approval_settings.DEADLINE_CAPS)
+    assert ("app-build", "use_by_days") not in approval_settings.DEADLINE_CAPS
+    assert not hasattr(caps, "APP_BUILD_USE_BY_DAYS")
 
 
 def test_a_deadline_is_never_shortened_below_one(monkeypatch):

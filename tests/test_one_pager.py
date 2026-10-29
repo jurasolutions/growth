@@ -17,7 +17,7 @@ from click.testing import CliRunner
 import mission_world as world
 import sweep
 from sweep import d2_secrets  # noqa: F401 - the D2 env file and Keychain double
-from jura_growth import cli, discord, health, mission, one_pager, paths, privacy, run_update, schedule, slots
+from jura_growth import cli, db, discord, health, mission, one_pager, paths, privacy, run_update, schedule, slots
 from jura_growth.timeutil import SGT
 
 NOW = datetime(2026, 11, 10, 8, 0, tzinfo=SGT)
@@ -35,11 +35,11 @@ def snap(**fields) -> mission.Snapshot:
     return mission.Snapshot(NOW, fields.pop("db_state", mission.OK), **fields)
 
 
-def request(number, kind="outreach-email", state=mission.WAITING, **fields) -> mission.Request:
+def request(number, kind="outreach-email", reading=mission.Reading.WAITING, **fields) -> mission.Request:
     values = dict(
         id=f"A-{number:04d}",
         kind=kind,
-        state=state,
+        reading=reading,
         requested_at=datetime(2026, 11, 9, 9, number % 60, tzinfo=SGT),
         decide_by=datetime(2026, 11, 10, 16, 30, tzinfo=SGT),
         use_by=None,
@@ -97,17 +97,17 @@ def test_nothing_in_the_health_strip_reads_nothing_needs_you():
 
 
 MISSED = slots.SlotStatus("scout-send", datetime(2026, 11, 6, 10, 0, tzinfo=SGT), "missed")
-LAPSED_EMAIL = request(412, state=mission.LAPSED_UNUSED, use_by=datetime(2026, 11, 10, 7, 59, tzinfo=SGT))
+LAPSED_EMAIL = request(412, reading=mission.Reading.LAPSED_UNUSED, use_by=datetime(2026, 11, 10, 7, 59, tzinfo=SGT))
 
 HEALTH_ITEMS = [
     ("PAUSE file", dict(pause_file="holiday"), "The PAUSE file is in place"),
     ("paused agent", dict(paused=(("outreach", "3 failed runs in a row"),)), "`outreach` is paused: 3 failed runs in a row"),
-    ("latest run failed", dict(failures=(mission.Failure("community", datetime(2026, 11, 9, 7, 30, tzinfo=SGT), "boom"),)), "`community` failed on Mon 9 Nov 07:30"),
-    ("missed slot", dict(slots={("scout-send", MISSED.at.date()): [MISSED]}), "`scout-send` missed 1 slot since Fri 6 Nov"),
+    ("latest run failed", dict(failures=(mission.Failure("community", datetime(2026, 11, 9, 7, 30, tzinfo=SGT), "boom"),)), "`community` failed on Mon 9 Nov, 07:30 SGT"),
+    ("missed slot", dict(slots={("scout-send", MISSED.at.date()): [MISSED]}), "`scout-send` missed 1 slot since Fri 6 Nov: Fri 6 Nov, 10:00 SGT."),
     ("undelivered post", dict(undelivered=2), "2 Discord messages since the last one-pager wait in the outbox"),
     ("outbox file", dict(outbox=1), "1 Discord message since the last one-pager waits in the outbox"),
     ("unposted request", dict(approvals=(request(412, posted=False),)), "Not posted to #approvals yet: A-0412"),
-    ("approved email lapsed unsent", dict(approvals=(LAPSED_EMAIL,)), "A-0412 (outreach-email) was approved but not used before its use-by, Tue 10 Nov 07:59"),
+    ("approved email lapsed unsent", dict(approvals=(LAPSED_EMAIL,)), "A-0412 (outreach-email) was approved but not used before its use-by, Tue 10 Nov, 07:59 SGT"),
     ("job not installed", dict(installs={"backup": health.NOT_INSTALLED, "social": health.INSTALLED}), "Jobs not installed: backup."),
     ("job out of date", dict(installs={"social": health.OUT_OF_DATE}), "Jobs installed but out of date: social."),
     ("setup gap", dict(gaps=(health.Gap("RESEND_API_KEY_OUTREACH"),)), "`RESEND_API_KEY_OUTREACH`: not set"),
@@ -129,6 +129,12 @@ def test_each_health_item_appears_when_its_cause_is_planted(cause, fields, line)
 def test_a_missed_slot_before_the_previous_business_day_is_not_listed():
     old = slots.SlotStatus("scout-send", datetime(2026, 11, 5, 16, 30, tzinfo=SGT), "missed")  # Thu; Fri 6 Nov is the previous business day
     assert health.strip(snap(slots={("scout-send", old.at.date()): [old]})) == []
+
+
+def test_missed_slot_times_are_set_apart_by_semicolons_since_each_time_holds_a_comma():
+    times = [slots.SlotStatus("scout-send", datetime(2026, 11, 6, 10, minute, tzinfo=SGT), "missed") for minute in (0, 10)]
+    [line] = health.strip(snap(slots={("scout-send", times[0].at.date()): times}))
+    assert line.endswith("missed 2 slots since Fri 6 Nov: Fri 6 Nov, 10:00 SGT; Fri 6 Nov, 10:10 SGT.")
 
 
 def test_the_health_items_follow_the_order_in_mc_5_4():
@@ -179,7 +185,8 @@ def five_waiting(conn):
 def test_approvals_waiting_counts_by_kind_names_the_oldest_and_what_lapses_first(five_waiting):
     lines = section(one_pager.text(mission.read(world.source())), "Approvals waiting")
     assert lines[0] == "outreach-email 4, social-post 1"
-    assert lines[1].startswith("Oldest: A-0101 (outreach-email)")
+    assert lines[1].startswith("Oldest: A-0101 (outreach-email), waiting since Mon 9 Nov, 09:11 SGT, decide by ")
+    assert lines[1].endswith(" SGT")
     lapsing = next(line for line in lines if line.startswith("Lapsing before the next one-pager:"))
     for number in (101, 102, 103, 104, 105):
         assert f"A-0{number}" in lapsing
@@ -199,11 +206,20 @@ def test_approvals_waiting_points_to_the_approvals_channel_with_the_count(five_w
     assert lines[-1] == "Decide in #approvals: 5 waiting for you."
 
 
-def test_decisions_are_discord_only_so_the_one_pager_never_mentions_terminal(conn):
-    world.approval(conn, 153, "outreach-email", status="approved", decided_at="2026-11-09T21:14:00+08:00",
+def test_decisions_are_discord_only_so_the_one_pager_never_mentions_terminal(tmp_path, monkeypatch):
+    """A Terminal decision can only be one written before core 0005, so it is planted at 0004."""
+    import dataclasses
+
+    import approval_world
+
+    legacy = approval_world.connect_before_0005(tmp_path / "legacy.db", monkeypatch)
+    world.approval(legacy, 153, "outreach-email", status="approved", decided_at="2026-11-09T21:14:00+08:00",
                    decided_origin="terminal", use_by="2026-11-12T16:30:00+08:00")
-    world.approval(conn, 154, "outreach-email")
-    text = one_pager.text(mission.read(world.source()))
+    world.approval(legacy, 154, "outreach-email")
+    legacy.commit()
+    db.migrate(legacy)
+    legacy.close()
+    text = one_pager.text(mission.read(dataclasses.replace(world.source(), db=tmp_path / "legacy.db")))
     assert "terminal" not in text.lower()
     assert "Decide in #approvals: 1 waiting for you." in section(text, "Approvals waiting")
 
@@ -211,6 +227,22 @@ def test_decisions_are_discord_only_so_the_one_pager_never_mentions_terminal(con
 def test_without_an_approvals_table_the_section_says_so():
     lines = section(one_pager.text(snap(approvals=None, missing_migrations=("core/0003_approvals.sql",))), "Approvals waiting")
     assert lines == ["Not available: growth.db isn't migrated yet"]
+
+
+@pytest.mark.parametrize("db_state", [s for s in mission.DB_STATES if s != mission.OK])
+def test_the_strip_and_the_sections_word_each_database_state_from_one_map(db_state):
+    """Code review 08 ST-3: one map beside the states in mission.py words each one, for the health
+    strip and for a section the database can't fill, so a new state can't reach only one of them."""
+    assert set(mission.DB_WORDING) == set(mission.DB_STATES) - {mission.OK}
+    wording = mission.DB_WORDING[db_state]
+    shown = snap(db_state=db_state, db_error="SQLITE_CORRUPT", approvals=None)
+    assert health.strip(shown)[0] == wording.strip.format(error="SQLITE_CORRUPT")
+    assert section(one_pager.text(shown), "Approvals waiting") == [wording.unavailable]
+
+
+def test_a_database_state_with_no_wording_fails_loudly_rather_than_reading_as_unmigrated():
+    with pytest.raises(KeyError):
+        mission.db_problem(snap(db_state="a state added later"))
 
 
 # --- Today and Yesterday ------------------------------------------------------------------
@@ -227,6 +259,20 @@ def test_today_has_one_line_per_job_with_scout_send_and_publish_as_counts(conn, 
     assert by_job["scout-send"] == "`scout-send` 2 missed, 7 ok, 1 skipped, 33 upcoming"
     assert by_job["publish"].startswith("`publish` 7 ok,")
     assert by_job["community"] == "`community` no slot today"
+
+
+def _day_of(job: str, *times: tuple[int, int, str]) -> dict:
+    return {(job, NOW.date()): [slots.SlotStatus(job, NOW.replace(hour=h, minute=m), status) for h, m, status in times]}
+
+
+def test_today_counts_scout_send_and_publish_by_job_and_lists_every_other_job_slot_by_slot():
+    """Code review 08 S-4, PRD §5.4.4: the rule is the job, not how many slots it has today."""
+    assert one_pager.COUNTED_JOBS == frozenset({"scout-send", "publish"})
+    short_publish = _day_of("publish", (9, 0, "ok"), (9, 20, "upcoming"))
+    busy_other = _day_of("backup", *[(h, 0, "ok") for h in range(1, 6)])
+    lines = section(one_pager.text(snap(slots={**short_publish, **busy_other}, approvals=())), "Today")
+    assert "`publish` 1 ok, 1 upcoming" in lines
+    assert "`backup` 01:00 ok, 02:00 ok, 03:00 ok, 04:00 ok, 05:00 ok" in lines
 
 
 def test_yesterday_is_the_digest_for_yesterday_and_both_spend_figures(conn):

@@ -30,7 +30,7 @@ approvals:
   # lengthen it: anything above the cap reads as the cap.
   deadlines:
     outreach-email: {decide_by_business_days: 1, use_by_business_days: 3}
-    app-build: {decide_by_days: 7, use_by_days: 1}
+    app-build: {decide_by_days: 7}  # no use-by: it is claimed when approved, like group-rules
     app-release: {decide_by_days: 7, use_by_days: 14}
     group-rules: {decide_by_days: 14}
 

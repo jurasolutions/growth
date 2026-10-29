@@ -182,9 +182,10 @@ def _table(conn, world):
         (["approvals"], 0, f"{approval.id} · fake"),
         (["approvals", "fake"], 0, f"{approval.id} · fake"),
         (["approve", approval.id, *ARGS], 0, f"{approval.id} approved."),
-        # MC-11b. Nothing is handed off here; the happy paths are in test_remote_apps.py.
+        # MC-11b. Nothing is handed off here; the happy paths are in test_remote_apps.py. The
+        # shipped pages_project is landing-page, so another project's preview is refused.
         (["apps", "built", "APP-999", "--task", "T-0031", "--branch", "claude/T-0031-x", "--sha", "a" * 40,
-          "--preview", "https://x.jura-site.pages.dev"], 1, "pages_project isn't set"),
+          "--preview", "https://x.jura-site.pages.dev"], 1, "bare preview link of the landing-page Pages project"),
         (["apps", "built", "APP-999", "--task", "T-0031"], 2, "refused:"),
         (["apps", "handoffs"], 0, "No build handoffs are waiting."),
         (["apps", "release-plan", "APP-999"], 1, "There is no merge to run."),

@@ -20,10 +20,12 @@ from datetime import timedelta
 from html import escape
 from pathlib import Path
 
-from jura_growth import discord, health, images, log, mission, paths, privacy, slots
+from jura_growth import discord, health, images, log, mission, paths, privacy, slots, timeutil
 
 ASK_ME = ("`/growth status`", "`/growth approvals`", "`/growth one-pager`", "`/growth pause <agent|all>`", "`/growth resume <agent|all>`")
-SLOTS_LISTED = 3  # a job with more slots in a day shows counts per status instead
+# Today shows these jobs as counts per status, whatever their slot count,
+# and lists every other job slot by slot (MC §5.4.4; code review 08 S-4).
+COUNTED_JOBS = frozenset({"scout-send", "publish"})
 
 
 def text(snapshot: mission.Snapshot) -> str:
@@ -58,19 +60,15 @@ def _needs_you(snapshot: mission.Snapshot) -> list[str]:
 
 
 def _unavailable(snapshot: mission.Snapshot) -> str:
-    if snapshot.db_state == mission.MISSING:
-        return "Nothing recorded yet: growth.db doesn't exist"
-    if snapshot.db_state == mission.UNFINISHED_WRITE:
-        return "Not available: growth.db has an unfinished write"
-    if snapshot.db_state == mission.UNREADABLE:
-        return "Not available: growth.db couldn't be read"
-    return "Not available: growth.db isn't migrated yet"
+    # A section is missing with nothing else wrong only when its table is.
+    problem = mission.db_problem(snapshot)
+    return (problem or mission.NOT_MIGRATED).unavailable
 
 
 def _approvals(snapshot: mission.Snapshot) -> list[str]:
     if snapshot.approvals is None:
         return [_unavailable(snapshot)]
-    waiting = [r for r in snapshot.approvals if r.state == mission.WAITING]
+    waiting = [r for r in snapshot.approvals if r.reading == mission.Reading.WAITING]
     if not waiting:
         return ["Nothing waiting"]
     following = snapshot.next_one_pager or snapshot.now + timedelta(days=1)
@@ -78,12 +76,12 @@ def _approvals(snapshot: mission.Snapshot) -> list[str]:
     lines = [", ".join(f"{kind} {counts[kind]}" for kind in sorted(counts))]
     oldest = min(waiting, key=lambda r: (r.requested_at, r.id))
     lines.append(
-        f"Oldest: {oldest.id} ({oldest.kind}), waiting since {health.when(oldest.requested_at)}, "
-        f"decide by {health.when(oldest.decide_by)}"
+        f"Oldest: {oldest.id} ({oldest.kind}), waiting since {timeutil.when(oldest.requested_at)}, "
+        f"decide by {timeutil.when(oldest.decide_by)}"
     )
     lapsing = sorted((r for r in waiting if r.decide_by < following), key=lambda r: (r.decide_by, r.id))
     if lapsing:
-        lines.append("Lapsing before the next one-pager: " + ", ".join(f"{r.id} ({health.when(r.decide_by)})" for r in lapsing))
+        lines.append("Lapsing before the next one-pager: " + ", ".join(f"{r.id} ({timeutil.when(r.decide_by)})" for r in lapsing))
     # Decisions are made in Discord only (Ting Yu, 2026-10-26): point there.
     lines.append(f"Decide in #approvals: {len(waiting)} waiting for you.")
     return lines
@@ -94,16 +92,16 @@ def _today(snapshot: mission.Snapshot) -> list[str]:
         return [_unavailable(snapshot)]
     today = snapshot.now.date()
     lines = []
-    for (job, day), states in snapshot.slots.items():
+    for (job, day), statuses in snapshot.slots.items():
         if day != today:
             continue
-        if not states:
+        if not statuses:
             lines.append(f"`{job}` no slot today")
-        elif len(states) > SLOTS_LISTED:
-            cell = slots.day_cell(states)
+        elif job in COUNTED_JOBS:
+            cell = slots.day_cell(statuses)
             lines.append(f"`{job}` " + ", ".join(f"{n} {status}" for status, n in cell.counts.items()))
         else:
-            lines.append(f"`{job}` " + ", ".join(_slot(slot) for slot in states))
+            lines.append(f"`{job}` " + ", ".join(_slot(slot) for slot in statuses))
     return lines
 
 
@@ -215,14 +213,14 @@ def grid_html(snapshot: mission.Snapshot) -> str:
     )
 
 
-def _grid_cell(job: str, day, states: list[slots.SlotStatus]) -> str:
-    cell = slots.day_cell(states)
+def _grid_cell(job: str, day, statuses: list[slots.SlotStatus]) -> str:
+    cell = slots.day_cell(statuses)
     if cell.status is None:
         css, status, inner = "none", "none", GRID_NO_SLOT
     else:
         css, status = cell.status.replace(" ", "-"), cell.status
         inner = escape(GRID_LABELS[status][0])
-        if len(states) > 1:
+        if len(statuses) > 1:
             inner += f'<span class="count">{cell.counts[status]}</span>'
     return f'<td class="cell s-{css}" data-job="{escape(job)}" data-day="{day.isoformat()}" data-status="{escape(status)}">{inner}</td>'
 

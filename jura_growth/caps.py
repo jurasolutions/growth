@@ -1,5 +1,5 @@
 """Hard limits. Config may only tighten any of these: lower a count, narrow the
-publish window, or lengthen a minimum gap (PUBLISH_MINUTES_BETWEEN_ACTIONS).
+posting window, or lengthen a minimum gap (PUBLISH_MINUTES_BETWEEN_ACTIONS).
 Loosening one is a code change.
 
 The outreach caps sit below the Spam Control Act's bulk thresholds (more than
@@ -63,8 +63,7 @@ APPROVAL_DEADLINE_MAX_DAYS = 14
 OUTREACH_DECIDE_BY_BUSINESS_DAYS = 1  # 16:30 on the next business day
 OUTREACH_USE_BY_BUSINESS_DAYS = 3     # 16:30 on the third business day after approval
 OUTREACH_DEADLINE_TIME = "16:30"
-APP_BUILD_DECIDE_BY_DAYS = 7
-APP_BUILD_USE_BY_DAYS = 1
+APP_BUILD_DECIDE_BY_DAYS = 7  # no use-by: an app build is claimed when it is approved
 APP_RELEASE_DECIDE_BY_DAYS = 7
 APP_RELEASE_USE_BY_DAYS = 14
 GROUP_RULES_DECIDE_BY_DAYS = 14

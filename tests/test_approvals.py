@@ -436,6 +436,32 @@ def test_use_refuses_with_its_reason_and_claims_nothing(conn, world, state):
     assert len(aw.events(conn, "approval.used")) == (1 if state == "used" else 0)
 
 
+def test_not_approved_takes_only_the_reasons_its_docstring_lists():
+    """Final code review St6: the reasons are constants, and the docstring names each one."""
+    N = approvals.NotApproved
+    assert N.REASONS == (
+        N.MISSING, N.PENDING, N.SKIPPED, N.EXPIRED, N.SUPERSEDED, N.USED, N.UNKNOWN_KIND, N.PAUSED,
+        N.SWITCHED_OFF, N.NOT_SSH, N.GONE, N.CHANGED, N.MISMATCH, N.UNWRITTEN,
+    )
+    assert N.UNKNOWN_KIND == "unknown-kind" and N.SWITCHED_OFF == "switched-off"
+    for reason in N.REASONS:
+        assert f"`{reason}`" in N.__doc__, reason
+    with pytest.raises(ValueError):
+        N("not-a-reason", "text")
+
+
+def test_every_not_approved_in_the_engine_names_its_reason_by_constant():
+    import re
+    from pathlib import Path
+
+    import jura_growth
+
+    root = Path(jura_growth.__file__).parent
+    literal = re.compile(r"NotApproved\(\s*[\"']")
+    found = [f"{path.relative_to(root)}" for path in root.rglob("*.py") if literal.search(path.read_text(encoding="utf-8"))]
+    assert found == []
+
+
 def test_a_claim_sets_used_at_and_used_by_run_and_logs_one_used_event(conn, world):
     subject, approval = approved_one(conn, world)
     run_id = aw.run(conn)
@@ -827,10 +853,122 @@ def test_a_database_at_mains_schema_migrates_through_0003_with_no_row_changed(tm
     conn.execute("INSERT INTO pause_flags (agent, paused, reason, set_at) VALUES ('social', 1, 'by hand', ?)", (aw.NOW,))
     tables = [r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
     before = {t: db.rows(conn, f"SELECT * FROM {t}") for t in tables}
-    # 0004 (ticket 04b) adds the approval_cards table and changes no row either.
-    assert db.migrate(conn) == ["core/0003_approvals.sql", "core/0004_approval_cards.sql"]
+    # 0004 (ticket 04b) adds the approval_cards table and changes no row either, nor 0005's triggers.
+    assert db.migrate(conn) == ["core/0003_approvals.sql", "core/0004_approval_cards.sql", "core/0005_ssh_decisions_only.sql"]
     assert {t: db.rows(conn, f"SELECT * FROM {t} WHERE rowid IN (SELECT rowid FROM {t})") for t in tables if t != "schema_migrations"} == {
         t: rows for t, rows in before.items() if t != "schema_migrations"
     }
     assert db.scalar(conn, "SELECT COUNT(*) FROM approvals") == 0
+    conn.close()
+
+
+
+# --- Sp4: only an SSH decision counts, in use() and in the schema ---------------------
+
+SSH_ONLY = "only an SSH decision"
+
+
+def at_0004(tmp_path, monkeypatch):
+    return aw.connect_before_0005(tmp_path / "old.db", monkeypatch)
+
+
+def plant_terminal_approval(conn, world, text="Hello") -> tuple[str, int]:
+    """An approved, unclaimed record decided in Terminal, written before 0005 (the database is
+    still at 0004), with its decision row. Its content still matches."""
+    assert db.scalar(conn, "SELECT count(*) FROM schema_migrations WHERE id = 'core/0005_ssh_decisions_only.sql'") == 0
+    subject = world.item(text)
+    digest = approvals.content_hash(world.kind.content(conn, subject))
+    cursor = conn.execute(
+        "INSERT INTO approvals (kind, subject, content_hash, status, reason, requested_at, decide_by, use_by, decided_at,"
+        " decided_by, decided_origin) VALUES (?, ?, ?, 'approved', 'a test asked', ?, ?, ?, ?, 'terminal:tingyu', 'terminal')",
+        (aw.KIND, subject, digest, aw.NOW, aw.later(aw.NOW, days=1), aw.later(aw.NOW, days=2), aw.NOW),
+    )
+    number = int(cursor.lastrowid or 0)
+    conn.execute(
+        "INSERT INTO approval_decisions (approval_id, decision, actor, origin, decided_at, content_hash, answer, text)"
+        " VALUES (?, 'approve', 'terminal:tingyu', 'terminal', ?, ?, 'recorded', 'kept')",
+        (number, aw.NOW, digest),
+    )
+    conn.commit()
+    return subject, number
+
+
+def test_use_refuses_a_record_decided_with_any_origin_but_ssh(tmp_path, monkeypatch, world):
+    conn = at_0004(tmp_path, monkeypatch)
+    subject, number = plant_terminal_approval(conn, world)
+    assert db.migrate(conn) == ["core/0005_ssh_decisions_only.sql"]
+    refusal = world.act(conn, subject)
+    assert refusal is not None and refusal.reason == approvals.NotApproved.NOT_SSH
+    assert "SSH" in refusal.text and approvals.format_id(number) in refusal.text
+    assert aw.record(conn, approvals.format_id(number))["used_at"] is None
+    assert world.sent == [] and aw.events(conn, "approval.used") == []
+    conn.close()
+
+
+REFUSED_WRITES = {
+    "a decision moving to approved with a terminal origin": (
+        "UPDATE approvals SET status = 'approved', decided_at = :now, decided_by = 'discord:111', "
+        "decided_origin = 'terminal' WHERE id = :id"),
+    "a decision moving to approved with a terminal: actor": (
+        "UPDATE approvals SET status = 'approved', decided_at = :now, decided_by = 'terminal:tingyu', "
+        "decided_origin = 'ssh' WHERE id = :id"),
+    "a skip with a terminal: actor": (
+        "UPDATE approvals SET status = 'skipped', decided_at = :now, decided_by = 'terminal:tingyu', "
+        "decided_origin = 'ssh' WHERE id = :id"),
+    "a record inserted already approved with a terminal origin": (
+        "INSERT INTO approvals (kind, subject, content_hash, status, reason, requested_at, decide_by, decided_at, "
+        "decided_by, decided_origin) VALUES ('fake', 'fake_item:forged', :hash, 'approved', 'forged', :now, :now, :now, "
+        "'discord:111', 'terminal')"),
+    "a record inserted already approved with a terminal: actor": (
+        "INSERT INTO approvals (kind, subject, content_hash, status, reason, requested_at, decide_by, decided_at, "
+        "decided_by, decided_origin) VALUES ('fake', 'fake_item:forged', :hash, 'approved', 'forged', :now, :now, :now, "
+        "'terminal:tingyu', 'ssh')"),
+    "a decision row with a terminal origin": (
+        "INSERT INTO approval_decisions (approval_id, decision, actor, origin, decided_at, content_hash, answer, text)"
+        " VALUES (:id, 'approve', 'discord:111', 'terminal', :now, :hash, 'recorded', 'x')"),
+    "a decision row with a terminal: actor": (
+        "INSERT INTO approval_decisions (approval_id, decision, actor, origin, decided_at, content_hash, answer, text)"
+        " VALUES (:id, 'approve', 'terminal:tingyu', 'ssh', :now, :hash, 'recorded', 'x')"),
+}
+
+
+@pytest.mark.parametrize("write", REFUSED_WRITES, ids=list(REFUSED_WRITES))
+def test_the_schema_refuses_every_new_terminal_decision(conn, world, write):
+    """Sp-S1 (follow-ups review): AC-M6.4, a terminal origin or a terminal: actor in no new row."""
+    _, pending = raise_one(conn, world)
+    with pytest.raises(Exception, match=SSH_ONLY):
+        conn.execute(REFUSED_WRITES[write], {"now": aw.NOW, "id": pending.number, "hash": pending.content_hash})
+    conn.rollback()
+    assert aw.record(conn, pending.id)["status"] == "pending"
+
+
+def test_an_ssh_decision_is_still_recorded_past_the_triggers(conn, world):
+    _, pending = raise_one(conn, world)
+    assert aw.approve(conn, pending).answer == "recorded"
+    record = aw.record(conn, pending.id)
+    assert record["decided_origin"] == "ssh" and record["decided_by"] == aw.CONTROL
+    _, other = raise_one(conn, world, "other")
+    assert aw.skip(conn, other).answer == "recorded"
+
+
+def test_terminal_decisions_already_on_record_survive_the_migration_and_can_still_lapse_or_be_superseded(
+        tmp_path, monkeypatch, world):
+    """0005 is forward-only: a database at 0004 keeps its Terminal decisions as they were. An
+    approved one never claimed still lapses at its use-by, and one whose item changed is superseded."""
+    conn = at_0004(tmp_path, monkeypatch)
+    _, lapsing = plant_terminal_approval(conn, world)
+    changing, superseded = plant_terminal_approval(conn, world, "Changes later")
+    before = (db.rows(conn, "SELECT * FROM approvals"), db.rows(conn, "SELECT * FROM approval_decisions"))
+    assert db.migrate(conn) == ["core/0005_ssh_decisions_only.sql"]
+    assert (db.rows(conn, "SELECT * FROM approvals"), db.rows(conn, "SELECT * FROM approval_decisions")) == before
+
+    world.items[changing] = "Changed after the decision"
+    refusal = world.act(conn, changing)
+    assert refusal is not None and refusal.reason == approvals.NotApproved.SUPERSEDED
+    gone = aw.record(conn, approvals.format_id(superseded))
+    assert gone["status"] == "superseded" and gone["decided_by"] == "terminal:tingyu"
+
+    aw.at(monkeypatch, aw.later(aw.NOW, days=3))
+    lapsed = [a for a in approvals.expire_due(conn) if a.number == lapsing]
+    assert [(a.status, a.decided_origin) for a in lapsed] == [("expired", "terminal")]
     conn.close()

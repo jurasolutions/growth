@@ -3,7 +3,8 @@
 - B1: the claim re-reads the email inside its transaction and checks its hash against the
   approval before Resend is called; an email read stale by the run is never sent.
 - Sp1: a claimed send that may have reached Resend is retried only inside Resend's 24-hour
-  idempotency window; after that the email is marked uncertain and Ting Yu is alerted.
+  idempotency window and before the approval's use-by, whichever comes first; after that
+  the email is marked uncertain and Ting Yu is alerted.
 - Sec2: the hash covers the exact bytes, so two drafts that only normalise alike don't match.
 """
 
@@ -178,3 +179,41 @@ def test_past_the_window_the_email_is_uncertain_alerted_and_never_retried(conn, 
     assert any("may already have gone out" in p["content"] for p in outbox("alerts"))
     assert approval.live_request(conn, seeded["message_id"]) is None
     assert approval.without_request(conn) == []
+
+
+# --- Sp1, the rest: the use-by bounds a retry too -----------------------------------------
+
+FRIDAY_USE_BY = "2026-11-13T16:30:00+08:00"  # approved Tue 10 Nov: 16:30 on the third business day
+
+
+def server_error(request):
+    return httpx.Response(500, json={"name": "internal_server_error"})
+
+
+def test_a_retry_past_the_use_by_is_uncertain_alerted_and_never_sent_even_inside_the_window(conn, monkeypatch):
+    """Whichever comes first bounds a retry: here the use-by, ten minutes after the claim."""
+    seeded, request = approved(conn, monkeypatch)
+    assert approvals.get(conn, request.id).use_by == FRIDAY_USE_BY
+    sent = fake_resend(monkeypatch, server_error)
+    at(monkeypatch, "2026-11-13T16:20:00+08:00")
+    assert "will retry" in send.send_due(conn).summary
+    assert len(sent) == 1 and status_of(conn, seeded["message_id"]) == "queued"
+
+    at(monkeypatch, FRIDAY_USE_BY)  # still inside the send window and the 23 hours
+    result = send.send_due(conn)
+    assert len(sent) == 1
+    row = db.one(conn, "SELECT status, error FROM outreach_messages WHERE id = ?", (seeded["message_id"],))
+    assert row["status"] == "uncertain" and "use-by" in row["error"] and "fresh approval" in row["error"]
+    assert "may already have gone out" in (result.summary or result.note)
+    assert any("may already have gone out" in p["content"] and "use-by" in p["content"] for p in outbox("alerts"))
+
+
+def test_a_retry_before_the_use_by_and_inside_the_window_still_goes_under_the_same_key(conn, monkeypatch):
+    seeded, request = approved(conn, monkeypatch)
+    answers = iter([server_error(None), httpx.Response(200, json={"id": "re-1"})])
+    sent = fake_resend(monkeypatch, lambda request: next(answers))
+    at(monkeypatch, "2026-11-13T16:10:00+08:00")
+    send.send_due(conn)
+    at(monkeypatch, "2026-11-13T16:29:00+08:00")
+    assert send.send_due(conn).summary.startswith("sent message")
+    assert [r.headers["idempotency-key"] for r in sent] == [f"jura-outreach-{seeded['message_id']}"] * 2

@@ -462,6 +462,17 @@ class _Claimed:
     attempts: int  # counted by the claim, before the call
 
 
+def _retry_closed(earlier: approvals.Approval, now: datetime) -> str | None:
+    """Why a claimed email may no longer be retried, or None. A retry is
+    bounded by whichever comes first: the retry window from the claim, or
+    the approval's use-by (code review 06, Sp1)."""
+    if now - timeutil.parse(earlier.used_at) >= timedelta(hours=caps.OUTREACH_RETRY_WINDOW_HOURS):
+        return f"more than {caps.OUTREACH_RETRY_WINDOW_HOURS} hours ago and the send was never confirmed"
+    if earlier.use_by and now >= timeutil.parse(earlier.use_by):
+        return "and the send was never confirmed before the approval's use-by"
+    return None
+
+
 def _claim(conn: sqlite3.Connection, message: dict, gated: compose.Email) -> _Claimed:
     """The claim (MC §4.6 A6, §5.8). In one `BEGIN IMMEDIATE` transaction it
     re-reads the email and its recipient, builds the email from those rows,
@@ -475,30 +486,30 @@ def _claim(conn: sqlite3.Connection, message: dict, gated: compose.Email) -> _Cl
     instance: it is retried under its `Idempotency-Key` without a second
     claim, if it still hashes to what was approved, and only inside
     `caps.OUTREACH_RETRY_WINDOW_HOURS` of the claim (Resend's key lasts 24
-    hours). Past that it may already have gone out, so it is marked
-    `uncertain` and needs a fresh approval."""
+    hours) and before the approval's use-by, whichever comes first. Past
+    either it may already have gone out, so it is marked `uncertain`,
+    Ting Yu is alerted, and sending again needs a fresh approval."""
     refusal, alert, claimed = None, None, None
     try:
         with db.transaction(conn):
             current = db.one(conn, "SELECT * FROM outreach_messages WHERE id = ? AND status = 'queued'", (message["id"],))
             if current is None:
-                raise approvals.NotApproved("gone", "it is no longer queued")
+                raise approvals.NotApproved(approvals.NotApproved.GONE, "it is no longer queued")
             lead, row = queue.recipient(conn, current["lead_id"])
             email = queue.build(conn, lead, row, subject=current["subject"], body=current["draft_body"])
             if (email.to, email.subject, email.draft) != (gated.to, gated.subject, gated.draft):
-                raise approvals.NotApproved("changed", "it changed during this run, so it isn't sent; the next slot reads it again")
+                raise approvals.NotApproved(approvals.NotApproved.CHANGED, "it changed during this run, so it isn't sent; the next slot reads it again")
             sending = approval.content_hash_of(row["email"], email.subject, email.draft)
             earlier = approval.claimed(conn, current["id"])
             if earlier is None:
                 used = approvals.use(conn, approval.KIND, approval.subject_of(current["id"]), run_id=log.current_run_id())
                 if used.content_hash != sending:
-                    raise approvals.NotApproved("mismatch", f"what would go out isn't what {used.id} approved, so it isn't sent")
+                    raise approvals.NotApproved(approvals.NotApproved.MISMATCH, f"what would go out isn't what {used.id} approved, so it isn't sent")
             elif sending != earlier.content_hash:
                 refusal = f"it changed after {earlier.id} was used, so it isn't sent again"
                 conn.execute("UPDATE outreach_messages SET status = 'failed', error = ? WHERE id = ?", (refusal, current["id"]))
-            elif timeutil.now_sgt() - timeutil.parse(earlier.used_at) >= timedelta(hours=caps.OUTREACH_RETRY_WINDOW_HOURS):
-                refusal = (f"it may already have gone out: Resend was called under {earlier.id} more than "
-                           f"{caps.OUTREACH_RETRY_WINDOW_HOURS} hours ago and the send was never confirmed")
+            elif (closed := _retry_closed(earlier, timeutil.now_sgt())) is not None:
+                refusal = f"it may already have gone out: Resend was called under {earlier.id} {closed}"
                 conn.execute(
                     "UPDATE outreach_messages SET status = 'uncertain', error = ? WHERE id = ?",
                     (refusal + ". Check Resend's log; it won't be retried, and sending again needs a fresh approval",

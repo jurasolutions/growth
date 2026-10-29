@@ -164,6 +164,20 @@ def test_the_card_shows_the_preview_as_plain_text_and_says_it_follows_the_branch
     assert any(f"the release is commit {sha[:7]}" in line and "latest push" in line for line in lines)
 
 
+def test_the_shipped_config_pins_the_landing_page_pages_project_and_keeps_dispatch_builds_off():
+    """The landing page's Cloudflare Pages project is `landing-page`; Dispatch still doesn't poll
+    build handoffs until Ting Yu turns it on."""
+    import yaml
+
+    from jura_growth import approval_settings, paths
+
+    shipped = yaml.safe_load((paths.config_dir() / "apps.yaml").read_text(encoding="utf-8"))
+    assert shipped["pages_project"] == "landing-page"
+    assert releases.PROJECT_RE.fullmatch(shipped["pages_project"])
+    assert releases.preview_pattern("landing-page").fullmatch("https://claude-t-0031-x.landing-page.pages.dev")
+    assert approval_settings.switch("dispatch_builds") is False
+
+
 def test_without_the_pages_project_set_no_preview_is_accepted(conn, monkeypatch):
     """S1: the project comes from config/apps.yaml; unset, `apps built` refuses and says what to set."""
     pages_project(monkeypatch, None)

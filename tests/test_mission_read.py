@@ -216,8 +216,8 @@ def test_a_request_past_its_decide_by_is_lapsed_by_the_clock_without_a_write(con
     world.approval(conn, 8, "social-post", decide_by="2026-11-10T18:00:00+08:00")
     no_writes()
     snapshot = read_unchanged()
-    assert requests(snapshot)["A-0007"].state == mission.LAPSED
-    assert requests(snapshot)["A-0008"].state == mission.WAITING
+    assert requests(snapshot)["A-0007"].reading == mission.Reading.LAPSED
+    assert requests(snapshot)["A-0008"].reading == mission.Reading.WAITING
     assert conn.execute("SELECT status FROM approvals WHERE id = 7").fetchone()[0] == "pending"
 
 
@@ -229,22 +229,42 @@ def test_each_stored_status_reads_as_what_it_means_now(conn):
                    use_by="2026-11-10T07:00:00+08:00", closed_at="2026-11-10T07:00:01+08:00", close_reason="approved but not used in time")
     world.approval(conn, 4, "fake", status="expired", closed_at="2026-11-10T07:30:00+08:00", close_reason="not approved in time")
     world.approval(conn, 5, "fake", **approved, use_by="2026-11-12T16:30:00+08:00", used_at="2026-11-10T07:40:00+08:00")
-    world.approval(conn, 6, "fake", status="skipped", decided_at="2026-11-10T07:41:00+08:00", decided_origin="terminal")
+    world.approval(conn, 6, "fake", status="skipped", decided_at="2026-11-10T07:41:00+08:00")
     found = requests(mission.read(world.source()))
-    assert {id_: r.state for id_, r in found.items()} == {
-        "A-0001": mission.APPROVED,
-        "A-0002": mission.LAPSED_UNUSED,
-        "A-0003": mission.LAPSED_UNUSED,
-        "A-0004": mission.LAPSED,
-        "A-0005": mission.USED,
-        "A-0006": mission.SKIPPED,
+    assert {id_: r.reading for id_, r in found.items()} == {
+        "A-0001": mission.Reading.APPROVED,
+        "A-0002": mission.Reading.LAPSED_UNUSED,
+        "A-0003": mission.Reading.LAPSED_UNUSED,
+        "A-0004": mission.Reading.LAPSED,
+        "A-0005": mission.Reading.USED,
+        "A-0006": mission.Reading.SKIPPED,
     }
+
+
+def test_a_request_reading_has_its_own_names_apart_from_the_stored_statuses():
+    """Code review 08 ST-2: `mission` no longer rebinds `approvals`' status names, and CONTEXT.md
+    defines the reading with each of its values. A slot list is never called `states`."""
+    import re
+
+    from jura_growth import approvals
+
+    for name in ("APPROVED", "SKIPPED", "SUPERSEDED", "WAITING", "LAPSED", "LAPSED_UNUSED", "USED"):
+        assert not hasattr(mission, name), name
+    assert hasattr(approvals, "APPROVED") and "reading" in {f for f in mission.Request.__dataclass_fields__}
+    assert "state" not in mission.Request.__dataclass_fields__
+    context = (paths.REPO_ROOT / "CONTEXT.md").read_text(encoding="utf-8")
+    entry = context.split("**Request reading**:", 1)[1].split("\n\n", 1)[0]
+    for value in mission.Reading.ALL:
+        assert f"**{value}**" in entry, value
+    for name in ("mission.py", "health.py", "one_pager.py"):
+        source = (paths.REPO_ROOT / "jura_growth" / name).read_text(encoding="utf-8")
+        assert not re.search(r"\bstates\b", source), name
 
 
 def test_only_live_requests_and_those_closed_since_the_last_one_pager_are_read(conn):
     world.approval(conn, 1, "fake", status="expired", closed_at="2026-11-09T07:59:00+08:00", close_reason="not approved in time")
-    world.approval(conn, 2, "fake", status="skipped", decided_at="2026-11-09T07:00:00+08:00", decided_origin="terminal")
-    world.approval(conn, 3, "fake", status="skipped", decided_at="2026-11-09T08:00:01+08:00", decided_origin="terminal")
+    world.approval(conn, 2, "fake", status="skipped", decided_at="2026-11-09T07:00:00+08:00")
+    world.approval(conn, 3, "fake", status="skipped", decided_at="2026-11-09T08:00:01+08:00")
     snapshot = mission.read(world.source())
     assert snapshot.last_one_pager.isoformat() == "2026-11-09T08:00:00+08:00"
     assert snapshot.next_one_pager.isoformat() == "2026-11-11T08:00:00+08:00"
@@ -273,7 +293,7 @@ def test_the_scheduled_one_pager_running_late_still_reports_since_the_one_before
     snapshot = mission.read(world.source(now))
     assert snapshot.last_one_pager.isoformat() == "2026-11-09T08:00:03+08:00"
     assert snapshot.next_one_pager.isoformat() == "2026-11-11T08:00:00+08:00"
-    assert requests(snapshot)["A-0160"].state == mission.LAPSED_UNUSED
+    assert requests(snapshot)["A-0160"].reading == mission.Reading.LAPSED_UNUSED
     assert (snapshot.undelivered, snapshot.outbox) == (1, 1)
 
 

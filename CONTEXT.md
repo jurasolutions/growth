@@ -102,6 +102,13 @@ a preview, a decide-by, a use-by and the content the kind computed. Its status i
 skipped, expired or superseded; an approved one is claimed at most once.
 _Avoid_: ticket, confirmation, sign-off (a PRD sign-off is a different thing), `P-nnnn` in commands
 
+**Request reading**:
+What an approval request means now, judged by growth's clock for the one-pager and the health strip,
+before anything writes the change: **waiting**, **lapsed** (unanswered past its decide-by),
+**approved**, **lapsed unused** (approved, never claimed, past its use-by), **used**, **skipped** or
+**superseded**. Kept apart from the stored status, which changes only when something writes it.
+_Avoid_: state, status (that is the stored one)
+
 **Approval kind**:
 The type of action an approval request covers, declared by the plug-in that owns it, with its own
 content, preview, deadlines and skip, expiry and lapse actions: `outreach-email`, `app-build`,
@@ -128,7 +135,9 @@ _Avoid_: "expiry" alone
 Using an approval at the point of no return: inside a `BEGIN IMMEDIATE` transaction, before the
 outward effect (a Resend call, a click in Chrome, a build handoff), re-checking that the record is
 approved, before its use-by, unused and matching, and marking it used. After a claim, a skip is too
-late and no deadline is checked again.
+late and no deadline is checked again, with one exception (amended 2026-10-27): an outreach retry
+under the same claim is also bounded by the approval's use-by and by 23 hours from the claim. Past
+either, the email is marked uncertain and Ting Yu is alerted; it is never resent.
 _Avoid_: use (in prose), consume
 
 **Human origin**:
