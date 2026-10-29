@@ -5,7 +5,8 @@
 - **Tab tools by name:** `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp` and
   `list_connected_browsers`. They read and open tabs, never a page.
 - **Page tools only by domain:** one `ClaudeInChromeDomain(<host>)` rule per host of each platform
-  this build drives (`hosts.BROWSER_PLATFORMS`) that is in `browser` mode in `config/social.yaml`,
+  this build drives (`hosts.BROWSER_PLATFORMS`) that is switched on and in `browser` mode in
+  `config/social.yaml` (a platform turned off, as LinkedIn has been since 2026-10-29, opens none),
   and Facebook's while `browser` is on in `config/community.yaml` (group joins and posts).
   No page tool is allowed by name: a tool-name allow covers every site. While the fixture
   platform is on (`fixture.py`, BP-07), the fixture host is the only one.
@@ -35,7 +36,8 @@ FILE_UPLOAD = CHROME + "file_upload"
 
 
 def enabled_platforms() -> tuple[str, ...]:
-    """The platforms a publish run may open: driven by this build and in `browser` mode. Facebook
+    """The platforms a publish run may open: driven by this build, switched on and in `browser`
+    mode (`Platform.browser`). Facebook
     is also open while `community.browser` is on, for group joins and posts (BP-06), even when
     the Page's own posts stay in `draft` mode."""
     from jura_growth.agents.publish import group_kinds, items

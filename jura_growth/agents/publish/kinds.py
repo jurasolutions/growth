@@ -14,8 +14,9 @@ The subject is one publish item, `publish_item:<id>`: one platform's post for on
 - **Deadlines:** decide by and use by the end of the posting window on the day of the content
   being asked about (18:00 SGT, or earlier when `config/publish.yaml` narrows the window). A
   request raised because the day changed therefore lapses at the new day's end, not the old one's.
-- **Switch:** the platform's `publish_mode`. In `draft` mode a valid approval is refused and not
-  claimed (A13, AC-P5.3).
+- **Switch:** the platform's `enabled` and its `publish_mode`. While the platform is turned off
+  (LinkedIn since 2026-10-29) or in `draft` mode, a valid approval is refused and not claimed
+  (A13, AC-P5.3), and no card is raised.
 - **Skip** withdraws the item and records `social skip <date> <platform>`. Expiry and lapse
   withdraw it and leave the draft as it is.
 """
@@ -201,7 +202,10 @@ class SocialPost:
         from jura_growth.agents.social.settings import load
 
         item = _item(conn, subject)
-        if not load().platforms[item.platform].browser:
+        platform = load().platforms[item.platform]
+        if not platform.enabled:
+            return f"{item.platform} is turned off in config/social.yaml, so nothing is posted there"
+        if not platform.browser:
             return f"{item.platform} is in draft mode, so nothing is posted through the browser"
         return None
 

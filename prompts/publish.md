@@ -144,6 +144,10 @@ end with `FAIL:` and the reason.
 
 ### Social post: LinkedIn company page
 
+LinkedIn is switched off (Ting Yu dropped it on 2026-10-29). While `platforms.linkedin.enabled`
+is false in `config/social.yaml`, `publish next` never hands out a LinkedIn item, so you won't
+meet one. These steps stay for when it is switched back on.
+
 - **Target:** the Jura Solutions LinkedIn company page (`target_url`, an address on
   `www.linkedin.com` under `/company/`).
 - **Identity:** you post as the company page from its admin view, never from the personal feed.

@@ -63,7 +63,9 @@ class Platform:
 
     @property
     def browser(self) -> bool:
-        return self.publish_mode == "browser"
+        """Posted through the browser: switched on and in `browser` mode. A platform that is
+        switched off (`enabled: false`) never is, whatever its `publish_mode` says."""
+        return self.enabled and self.publish_mode == "browser"
 
     @property
     def size(self) -> str:
