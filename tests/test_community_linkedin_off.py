@@ -8,6 +8,8 @@ Groups already in the register stay as they are.
 
 from __future__ import annotations
 
+import pytest
+
 import publish_world as pw
 from jura_growth.agents.community import groups
 
@@ -28,6 +30,22 @@ def test_a_linkedin_group_is_refused_while_linkedin_is_off(monkeypatch):
 def test_a_linkedin_group_is_accepted_when_linkedin_is_switched_on(monkeypatch):
     pw.social_config(monkeypatch, browser=(), enabled=("linkedin", "facebook", "instagram"))
     _, errors = groups.validate(dict(LINKEDIN_GROUP))
+    assert errors == []
+
+
+@pytest.mark.parametrize("channel", ["other", "forum", "event"])
+@pytest.mark.parametrize("url", ["https://www.linkedin.com/groups/123456/", "https://linkedin.com/groups/123456/",
+                                 "https://sg.linkedin.com/groups/123456/", "https://lnkd.in/abc123"])
+def test_a_linkedin_address_is_refused_under_any_channel_while_linkedin_is_off(monkeypatch, channel, url):
+    """Review S2: the channel alone isn't enough; the address's host counts too."""
+    pw.social_config(monkeypatch, browser=(), enabled=("facebook", "instagram"))
+    _, errors = groups.validate({**LINKEDIN_GROUP, "channel": channel, "url": url})
+    assert any("LinkedIn" in error for error in errors), errors
+
+
+def test_a_linkedin_address_under_another_channel_is_accepted_when_linkedin_is_switched_on(monkeypatch):
+    pw.social_config(monkeypatch, browser=(), enabled=("linkedin", "facebook", "instagram"))
+    _, errors = groups.validate({**LINKEDIN_GROUP, "channel": "other"})
     assert errors == []
 
 

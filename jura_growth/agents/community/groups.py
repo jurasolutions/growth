@@ -106,12 +106,24 @@ def _unique_slug(conn: sqlite3.Connection, name: str) -> str:
     return slug
 
 
-def _linkedin_on() -> bool:
-    """Whether Jura works on LinkedIn: one switch, `platforms.linkedin.enabled` in
-    `config/social.yaml`. Groups already in the register stay as they are."""
+LINKEDIN_DOMAINS = ("linkedin.com", "lnkd.in")
+
+
+def _linkedin_problem(channel: str, url: str) -> str | None:
+    """Why a group can't be recorded while Jura doesn't work on LinkedIn, or None. One switch,
+    `platforms.linkedin.enabled` in `config/social.yaml`; a group is LinkedIn's by its channel or
+    by its address's host, whatever channel it is filed under (code review drop-linkedin, S2).
+    Groups already in the register stay as they are."""
+    h = host(url)
+    on_linkedin = channel == "linkedin" or any(h == d or h.endswith("." + d) for d in LINKEDIN_DOMAINS)
+    if not on_linkedin:
+        return None
     from jura_growth.agents.social.settings import load
 
-    return load().platforms["linkedin"].enabled
+    if load().platforms["linkedin"].enabled:
+        return None
+    return ("LinkedIn groups aren't recorded: Jura doesn't post on LinkedIn (switched off in "
+            "config/social.yaml since 2026-10-29)")
 
 
 def validate(record: dict) -> tuple[dict, list[str]]:
@@ -126,12 +138,12 @@ def validate(record: dict) -> tuple[dict, list[str]]:
     clean["channel"] = (clean.get("channel") or "facebook").lower()
     if clean["channel"] not in CHANNELS:
         errors.append(f"channel must be one of {', '.join(CHANNELS)}")
-    elif clean["channel"] == "linkedin" and not _linkedin_on():
-        errors.append("LinkedIn groups aren't recorded: Jura doesn't post on LinkedIn (switched off in "
-                      "config/social.yaml since 2026-10-29)")
     if not clean.get("name"):
         errors.append("name is required")
     url = clean.get("url") or ""
+    linkedin = _linkedin_problem(clean["channel"], url if isinstance(url, str) else "")
+    if linkedin:
+        errors.append(linkedin)
     if not re.match(r"^https?://\S+$", url):
         errors.append("url must be the group's full http(s) link")
     elif clean["channel"] == "facebook":
