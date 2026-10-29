@@ -230,7 +230,7 @@ def s2_today(conn) -> None:
     run_row(conn, "app-factory", "app-factory", at(today(), "06:31"), minutes=6, cost=1.20,
             summary="OK: filed APP-014 PayNow QR for small shops")
     run_row(conn, "social", "social", at(today(), "07:00"), minutes=4.2, cost=0.41,
-            summary="OK: drafted LinkedIn, Facebook and Instagram for \"PayNow QR for small shops\"")
+            summary="OK: drafted Facebook and Instagram for \"PayNow QR for small shops\"")
 
 
 def _lead(conn, lead_id: int, company: str, domain: str, *, industry: str = "logistics", score: int = 70) -> None:

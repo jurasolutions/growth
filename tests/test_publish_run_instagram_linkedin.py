@@ -32,11 +32,14 @@ ALL = ("facebook", "instagram", "linkedin")
 
 
 def browser_mode(fake, *platforms: str) -> None:
+    """`platforms` switched on and in `browser` mode, with their page URLs set. LinkedIn has been
+    off since 2026-10-29; naming it here switches it back on, so its run stays covered."""
     def change(data):
         for name, spec in data["platforms"].items():
             spec["publish_mode"] = "browser" if name in platforms else "draft"
             if name in platforms:
                 spec["page_url"] = WHERE[name][0]
+                spec["enabled"] = True
 
     fake.social(change)
 

@@ -7,12 +7,14 @@ fallback fonts, which doesn't change their size.
 """
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from jura_growth.agents.social import render
+from jura_growth.agents.social.settings import load
 from jura_growth.cli import cli
 
 pytestmark = pytest.mark.skipif(render.chrome_path() is None, reason="Google Chrome is not installed")
@@ -79,14 +81,23 @@ def test_instagram_carousel(site, tmp_path):
 
 
 def test_setup_images(tmp_path):
+    """No LinkedIn cover: LinkedIn is switched off (2026-10-29). The cover for a switched-on
+    LinkedIn is in test_linkedin_off.py."""
     made = render.render_setup(tmp_path / "setup", offline=True)
     sizes = {f.name: render.png_size(f) for f in made}
     assert sizes == {
         "profile-1080x1080.png": (1080, 1080),
         "profile-green-1080x1080.png": (1080, 1080),
-        "linkedin-cover-1128x191.png": (1128, 191),
         "facebook-cover-1640x624.png": (1640, 624),
     }
+
+
+def test_setup_images_with_linkedin_switched_on(tmp_path):
+    settings = load()
+    platforms = {**settings.platforms, "linkedin": replace(settings.platforms["linkedin"], enabled=True)}
+    made = render.render_setup(tmp_path / "setup", settings=replace(settings, platforms=platforms), offline=True)
+    sizes = {f.name: render.png_size(f) for f in made}
+    assert sizes["linkedin-cover-1128x191.png"] == (1128, 191)
 
 
 def test_render_command_checks_the_words_first(site, tmp_path):

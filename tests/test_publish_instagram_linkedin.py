@@ -74,7 +74,7 @@ def image_paths(conn, post: int) -> list[str]:
 def test_submit_raises_exactly_one_social_post_request_for_the_platform_in_browser_mode(
         conn, env, monkeypatch, discord_double, platform):
     pw.at(monkeypatch, pw.MORNING)
-    pw.social_config(monkeypatch, browser=(platform,))
+    pw.social_config(monkeypatch, browser=(platform,), enabled=("facebook", *NEW))  # all three switched on
     monkeypatch.setenv("CONTROL_DISCORD_USER_ID", pw.CONTROL_ID)
     folder = write(paths.work_dir("social") / pw.DAY.isoformat(), TIP)
 

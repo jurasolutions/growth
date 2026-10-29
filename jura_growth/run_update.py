@@ -15,9 +15,9 @@ plug-in's `RUN_UPDATE_DISCORD_CHANNEL`, or the channel its optional
 `run_update_channel(conn, run)` names for that run:
 
     **social** · ok · 07:00 SGT · 4m 12s · US$0.41 · run 1287
-    > Drafted LinkedIn, Facebook and Instagram for "PayNow QR for small shops".
-    Produced: 3 drafts, 3 images
-    Waiting for you: A-0153, A-0154, A-0155 (social posts)
+    > Drafted Facebook and Instagram for "PayNow QR for small shops".
+    Produced: 2 drafts, 2 images
+    Waiting for you: A-0153, A-0154 (social posts)
 
 - A run that started gives its status, start, length, cost and id, the
   summary as a quote, the plug-in's "Produced:" line and the approval

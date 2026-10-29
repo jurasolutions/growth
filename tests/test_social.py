@@ -191,6 +191,24 @@ def set_config(monkeypatch, **social_overrides):
     monkeypatch.setattr(config, "agent_config", patched)
 
 
+@pytest.fixture
+def linkedin_on(monkeypatch):
+    """LinkedIn switched back on over the shipped config (off since 2026-10-29), for the tests that
+    cover every platform at once, so a switched-on platform stays covered. What a switched-off
+    one gets is in test_linkedin_off.py."""
+    real = config.agent_config
+
+    def patched(agent):
+        base = dict(real(agent))
+        if agent == "social":
+            platforms = {name: dict(spec or {}) for name, spec in (base.get("platforms") or {}).items()}
+            platforms.setdefault("linkedin", {})["enabled"] = True
+            base["platforms"] = platforms
+        return base
+
+    monkeypatch.setattr(config, "agent_config", patched)
+
+
 def outbox(day="2026-10-27") -> list[dict]:
     path = paths.data_dir() / "discord-outbox" / f"{day}.jsonl"
     if not path.exists():
@@ -487,7 +505,7 @@ def run_submit(conn, folder, **kwargs):
     return submit.submit(conn, folder, offline=True, **kwargs)
 
 
-def test_submit_delivers_everything(env, conn):
+def test_submit_delivers_everything(env, conn, linkedin_on):
     folder = write(paths.work_dir("social") / "2026-10-27", TIP)
     outcome = run_submit(conn, folder)
     assert outcome.status == "delivered", outcome.text()
@@ -511,7 +529,7 @@ def test_submit_delivers_everything(env, conn):
     assert not [m for m in outbox() if m["channel"] == "alerts"]
 
 
-def test_submit_monday_news_with_carousel(env, conn, monkeypatch):
+def test_submit_monday_news_with_carousel(env, conn, monkeypatch, linkedin_on):
     monkeypatch.setenv("JURA_GROWTH_NOW", MONDAY)
     folder = write(paths.work_dir("social") / "2026-10-26", NEWS)
     outcome = run_submit(conn, folder)
@@ -526,7 +544,7 @@ def test_submit_monday_news_with_carousel(env, conn, monkeypatch):
     assert json.loads(db.scalar(conn, "SELECT source_urls FROM social_posts WHERE platform = 'linkedin'")) == [IMDA, SHEETS]
 
 
-def test_brand_failure_allows_one_regeneration(env, conn):
+def test_brand_failure_allows_one_regeneration(env, conn, linkedin_on):
     folder = paths.work_dir("social") / "2026-10-27"
     write(folder, TIP, **{"facebook.md": FB.replace("for you.", "for you!")})
     first = run_submit(conn, folder)
@@ -541,7 +559,7 @@ def test_brand_failure_allows_one_regeneration(env, conn):
     assert db.scalar(conn, "SELECT count(*) FROM social_posts") == 3
 
 
-def test_second_failure_drops_only_that_variant(env, conn):
+def test_second_failure_drops_only_that_variant(env, conn, linkedin_on):
     folder = paths.work_dir("social") / "2026-10-27"
     bad = FB.replace("for you.", "for you!")
     write(folder, TIP, **{"facebook.md": bad})
@@ -618,7 +636,7 @@ def test_missing_files_are_refused(env, conn):
     assert "instagram.md is missing" in outcome.text() and "not valid JSON" in outcome.text()
 
 
-def test_tool_theme(env, conn, monkeypatch):
+def test_tool_theme(env, conn, monkeypatch, linkedin_on):
     monkeypatch.setenv("JURA_GROWTH_NOW", WEDNESDAY)
     url = "https://jurasolutions.sg/apps/quote-builder"
     folder = paths.work_dir("social") / "2026-10-28"
@@ -678,14 +696,14 @@ def invoke(*args):
     return CliRunner().invoke(cli, list(args), catch_exceptions=False)
 
 
-def test_skip_before_the_draft(env, conn):
+def test_skip_before_the_draft(env, conn, linkedin_on):
     assert "won't be drafted" in invoke("social", "skip", "2026-10-27", "instagram").output
     outcome = run_submit(conn, write(paths.work_dir("social") / "2026-10-27", TIP, **{"instagram.md": None}))
     assert outcome.status == "delivered", outcome.text()
     assert sorted(r["platform"] for r in db.rows(conn, "SELECT platform FROM social_posts")) == ["facebook", "linkedin"]
 
 
-def test_skip_after_the_draft_and_published(env, conn):
+def test_skip_after_the_draft_and_published(env, conn, linkedin_on):
     run_submit(conn, write(paths.work_dir("social") / "2026-10-27", TIP))
     assert "marked skipped" in invoke("social", "skip", "today", "facebook").output
     assert db.scalar(conn, "SELECT status FROM social_posts WHERE platform = 'facebook'") == "skipped"
@@ -707,7 +725,7 @@ def test_no_draft_command(env, conn):
 # --- digest and precheck ----------------------------------------------------------
 
 
-def test_digest_figures(env, conn):
+def test_digest_figures(env, conn, linkedin_on):
     assert social.digest(conn, "2026-10-27")["figures"]["social_drafts_waiting"] == 0
     run_submit(conn, write(paths.work_dir("social") / "2026-10-27", TIP))
     part = social.digest(conn, "2026-10-27")

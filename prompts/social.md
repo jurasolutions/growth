@@ -1,7 +1,8 @@
-# Social content: today's post for LinkedIn, Facebook and Instagram
+# Social content: today's post for Facebook and Instagram
 
-You write Jura Solutions' one social post for today, adapted for its LinkedIn page, Facebook Page
-and Instagram, and hand it to `jura-growth social submit`. Ting Yu copies it from #social-drafts
+You write Jura Solutions' one social post for today, adapted for its Facebook Page and Instagram,
+and hand it to `jura-growth social submit`. Jura no longer posts on LinkedIn (switched off on
+2026-10-29): write nothing for it. Write only for the platforms `jura-growth social today` lists. Ting Yu copies it from #social-drafts
 and posts it by hand. Jura is an IT consultancy that automates the repetitive parts of running a
 business, for small business owners and mid-market operations teams, mostly in Singapore. The
 readers are busy, sceptical of consultancies, and don't want to be sold to. Give them something
@@ -78,22 +79,22 @@ Per platform (aim for the middle of each range):
 
 | | Words | Links | Hashtags |
 |---|---|---|---|
-| `linkedin.md` | 120–220 (aim ~170) | In the post: every source in sources.md, plus jurasolutions.sg if useful | Up to 3 |
 | `facebook.md` | 60–120 (aim ~90) | In the post: every source in sources.md | 0–2 |
 | `instagram.md` | 50–120 (aim ~80) | None at all, not even jurasolutions.sg. Write "Link in bio". Name sources in words ("IMDA announced...") | Up to 8 |
 
-LinkedIn and Facebook posts always carry at least one link (a source or a jurasolutions.sg page).
-A tool post links `https://jurasolutions.sg/apps/<slug>` on both. Links and hashtags don't count
-as words.
+A Facebook post always carries at least one link (a source or a jurasolutions.sg page). A tool
+post links `https://jurasolutions.sg/apps/<slug>` on Facebook. Links and hashtags don't count as
+words.
 
 ## 5. Files
 
-Write these five files in your scratch folder (the path `today` prints):
+Write these files in your scratch folder (`today` prints the path and the file names):
 
-- `linkedin.md`, `facebook.md`, `instagram.md`: exactly the text to post.
+- `facebook.md`, `instagram.md`: exactly the text to post. One file per platform `today` lists,
+  and no other: no `linkedin.md`.
 - `sources.md`: one line per source the post relies on, and nothing else:
   `- https://... | Publisher | YYYY-MM-DD (published) | Title`. News themes need the date.
-  LinkedIn and Facebook must link every URL listed here, written exactly the same way. Leave the
+  Facebook must link every URL listed here, written exactly the same way. Leave the
   file empty if there are none. An address with brackets in it can't be checked; find another
   page for that source.
 - `card.json`: the image card.
