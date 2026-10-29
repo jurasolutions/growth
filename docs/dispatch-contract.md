@@ -5,54 +5,70 @@ back. This is the one interface another system calls, so it is versioned: every 
 carries `"contract": 1`. Fields are only ever added. A field never changes its meaning, and an
 answer never changes its exit code.
 
-Sources: `prd-jura-mission-control-2026-10-25.md` §4.6 to §4.8 and §5.10, ADR 0004, and the code
-in `jura_growth/remote.py` and `bin/growth-remote`. Tests in `tests/test_remote.py` check that the
-two tables below match the code.
+Sources: `prd-jura-mission-control-2026-10-25.md` §4.6 to §4.8 and §5.10, §8 of the Dispatch
+growth-control PRD (Dispatch on this Mac, 2026-10-29), ADR 0004, and the code in
+`jura_growth/remote.py` and `bin/growth-remote`. Tests in `tests/test_remote.py` check that the two
+tables below match the code.
 
 ## Transport
 
-- Dispatch reaches the Mac only over SSH, with a forced command, over Tailscale. Dispatch never
-  runs on the Mac.
-- The Mac has Remote Login on, limited to Ting Yu's user, with key authentication only. Its
-  `authorized_keys` holds one entry, for Dispatch's key:
+- Dispatch runs on the same Mac, as its own hidden macOS user, `dispatch` (Ting Yu, 2026-10-29;
+  §8 of the Dispatch growth-control PRD). It reaches growth only over SSH to `127.0.0.1`, with a
+  forced command. There is no Tailscale and no second machine. Only the hop changed, so the
+  contract version did not.
+- The Mac has Remote Login on, limited to Ting Yu's user (`AllowUsers tingy`), with key
+  authentication only. sshd reads his keys only from `/etc/ssh/authorized_keys.d/tingy`, owned by
+  root, never from `~/.ssh/authorized_keys`. That file holds one entry, for Dispatch's key:
 
   ```
-  restrict,command="<repo>/bin/growth-remote",from="<dispatch tailnet address>" ssh-ed25519 AAAA… dispatch-growth
+  restrict,command="<repo>/bin/growth-remote",from="127.0.0.1,::1" ssh-ed25519 AAAA… dispatch-growth
   ```
 
-- On Dispatch's machine, the private key is readable only by the gateway's user. The `run_as` user
-  that Dispatch's Claude tasks run as can never read it (D9).
+- The private key is `/Users/dispatch/.dispatch-keys/growth_mac`, readable only by `dispatch`. The
+  `run_as` user that Dispatch's Claude tasks and checks run as, `claude-runner`, can never read it
+  (D9), and neither can Ting Yu's own user, `tingy`, which the growth engine and his Claude
+  sessions run as. The host key is pinned from the Mac's own `/etc/ssh/ssh_host_ed25519_key.pub`.
 - Dispatch builds the command line with Python's `shlex.join`: the options, then `--`, then Ting
   Yu's text split on whitespace, each word quoted. `bin/growth-remote` undoes that with
   `shlex.split`, which only parses quotes and runs nothing. No shell sees the words, so a note with
-  `;`, `$(…)`, backticks or an apostrophe arrives exactly as typed.
+  `;`, `$(…)`, backticks or an apostrophe arrives exactly as typed. The exact `ssh` argv is AC-D3.1
+  of the Dispatch PRD, as amended 2026-10-30; it ends `-- tingy@127.0.0.1 <shlex.join(words)>`, so
+  ssh can never read Ting Yu's words as its own options.
 
   ```python
-  words = ["--actor", f"discord:{user_id}", "--ref", f"{message_id}:{delivery_id}", "--json", "--", *text.split()]
-  subprocess.run(["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "growth-mac", shlex.join(words)],
-                 capture_output=True, text=True, timeout=60)
+  words = ["--actor", f"discord:{user_id}", "--ref", f"{source_id}:{delivery_id}", "--json", "--", *text.split()]
+  argv = ["/usr/bin/ssh", "-T", "-F", "/dev/null", "-i", key, "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
+          "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "StrictHostKeyChecking=yes",
+          "-o", f"UserKnownHostsFile={pinned}", "-o", "GlobalKnownHostsFile=/dev/null",
+          "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes", "-p", "22",
+          "--", "tingy@127.0.0.1", shlex.join(words)]
+  subprocess.run(argv, capture_output=True, text=True, timeout=60, env=only_path_home_and_locale)
   ```
 
 - Dispatch passes Ting Yu's text verbatim. No model rewrites a control command (Dispatch hard rule
   6, "original words win").
-- If `ssh` can't connect (the Mac is asleep or off), Dispatch answers "the growth Mac is
-  unreachable" straight away. It never holds a decision for later. It may retry within its
-  60-second window with the same `--ref`, which makes the retry safe.
+- If `ssh` can't connect (Remote Login is off, or sshd is down), Dispatch answers "the growth Mac
+  is unreachable" straight away. It never holds a decision for later. It may retry within its
+  60-second window with the same `--ref`, which makes the retry safe. When the Mac itself is off,
+  Dispatch is off with it, and Discord shows its own "The application did not respond".
 
 ## Grammar
 
 ```
-jura-growth remote --actor discord:<id> [--ref <message id>:<delivery id>] [--json] -- <command…>
+jura-growth remote --actor discord:<id> [--ref <source id>:<delivery id>] [--json] -- <command…>
 ```
 
 - `--actor` is the Discord user who sent the command. It is attribution, recorded on every
   decision and every `remote.command` event. It must be `discord:<CONTROL_DISCORD_USER_ID>`, or the
   command is refused. That check is for consistency only: the guard is the SSH key, the forced
   command and Dispatch's own user allowlist (SEC-1).
-- `--ref` is Dispatch's delivery reference, the Discord message id and Dispatch's delivery id. Send
-  it on every `approve` and `skip`. The same ref twice records the decision once, and the second
-  call answers exactly what the first did, with exit 0. It is recorded on every other command's
-  event too.
+- `--ref` is Dispatch's delivery reference, `<source id>:<delivery id>`. The source is the Discord
+  message id for a plain message in `#control`, the interaction id for a `/growth` slash command,
+  and the card's message id for a button click. The delivery id is Dispatch's own row id for that
+  delivery, unchanged across its retries. Polls send `poll:<delivery id>`, and `apps built` sends
+  `built:<task id>:<delivery id>`. Growth reads it as opaque text. Send it on every `approve` and
+  `skip`. The same ref twice records the decision once, and the second call answers exactly what
+  the first did, with exit 0. It is recorded on every other command's event too.
 - `--json` asks for the JSON answer below instead of plain text. The exit code is the same either
   way.
 - Everything after `--` is the command, as Ting Yu typed it. Options after the first command word
@@ -92,7 +108,8 @@ adds `publish queue` and `publish resolve`, as rows of their own in this order.
 
 ## Answers and exit codes
 
-Every answer is one of seven. For `approve` and `skip`, each answer has exactly one exit code.
+Every answer is one of seven. For `approve` and `skip`, each answer has exactly one exit code, with
+one exception: `refused` with exit 1, below.
 
 | Answer | Exit code | Meaning |
 | --- | --- | --- |
@@ -110,6 +127,16 @@ didn't take the post; see its row). Exit 1 means the command ran and reported a 
 own (for example `outreach requeue-shadow` before live sending is ready, `community removed`
 for a group that doesn't exist, or `apps release-plan` with no approved release). Its answer is
 `refused` and `ok` is false. Read `exit_code` to tell the two refusals apart.
+
+An `approve` or `skip` can also answer `refused` with exit 1. It means growth failed while running
+the decision, for example an unexpected error inside the command, whose text starts `failed:` and
+names it. That is a valid answer, not a malformed one. Dispatch posts growth's `text`, masked and
+defused like any other, and doesn't retry it. The decision may have been recorded before the
+failure, so check `/growth approvals` before sending it again. A resend carries a new `--ref`, so
+if the first attempt did record the decision, the resend answers `already-decided`. For `approve`
+and `skip`, any other answer with exit 1 is malformed. This is how growth has always behaved
+(`jura_growth/remote.py`, `handle`); it is written down here after Dispatch's code review GC-03,
+and the contract version is unchanged.
 
 ## The JSON answer
 
@@ -161,7 +188,10 @@ leaving 12 KB for this answer's other fields, so what it hands out always fits h
 When `approvals.post_buttons` is on, each card in `#approvals` carries two buttons, sent through a
 webhook the Dispatch application owns (`DISCORD_WEBHOOK_APPROVALS`). Their `custom_id`s are
 `growth:approve:A-nnnn` and `growth:skip:A-nnnn`. Dispatch turns a click into `approve A-nnnn` or
-`skip A-nnnn`, with the clicking user as `--actor` and the interaction as `--ref`. Cards for kinds
+`skip A-nnnn`, with the clicking user as `--actor` and `<card message id>:<delivery id>` as `--ref`:
+the source is the card's message id, not the interaction's (Dispatch AC-D4.2 and AC-D5.2). Each
+click is its own delivery, so a second click on the same card carries a new ref and answers
+`already-decided`. Cards for kinds
 that need typed arguments, such as `group-rules`, never carry buttons; Ting Yu types
 `/growth approve A-nnnn promo_days=… post_days=…`. A card loses its buttons when it is decided,
 lapses, is superseded or is claimed.
@@ -172,20 +202,20 @@ lapses, is superseded or is claimed.
 | --- | --- |
 | D1 | `#approvals` and a `#control` channel in Jura HQ, bound to company `jura` only, accepting Ting Yu's user only (SEC-1). Growth commands are never reachable from other companies' channels. Growth never posts in `#control` |
 | D2 | A deterministic command path: `/growth <command…>` (or a plain message in `#control`) runs `jura-growth remote` with the text verbatim. No triage, no `claude -p`, no Ollama |
-| D3 | The SSH transport above, answering within 60 seconds, and "the growth Mac is unreachable" when it can't connect |
-| D4 | The acting Discord user id as `--actor discord:<id>`, and `--ref <message id>:<delivery id>` on every decision |
+| D3 | The SSH transport above, to `127.0.0.1`, answering within 60 seconds, and "the growth Mac is unreachable" when it can't connect |
+| D4 | The acting Discord user id as `--actor discord:<id>`, and `--ref <source id>:<delivery id>` on every call, as under Grammar |
 | D5 | Approve and Skip buttons on each card in `#approvals`, mapped as above, through a webhook the Dispatch application owns. Until then, typed `/growth approve A-nnnn` works |
 | D6 | Build handoffs from `apps handoffs` with `--json` (ticket 12), each a Dispatch task based on `main` with the approved PRD text as its brief, verbatim. `prd_text` is for the brief only, never posted to Discord. `apps built …` when it ships |
 | D7 | (Later, a Dispatch PRD amendment.) Promotion of exactly the SHA `apps release-plan --json` hands out, refusing if the branch head moved |
-| D8 | Deployment: the always-on machine, the bot, Tailscale, and `landing-page` onboarded with Cloudflare Pages branch previews |
-| D9 | The SSH private key readable only by the gateway's user, never by the `run_as` user its Claude tasks run as (a SEC-3 extension) |
+| D8 | Deployment on this Mac as the `dispatch` user (two LaunchDaemons), the bot, the loopback SSH transport, and `landing-page` onboarded with Cloudflare Pages branch previews (Dispatch PRD §8, amended 2026-10-29) |
+| D9 | The SSH private key readable only by the gateway's user (`dispatch`), never by the `run_as` user its Claude tasks run as (`claude-runner`), nor by Ting Yu's own user (`tingy`) (a SEC-3 extension) |
 
 ## Examples
 
 ```
-$ ssh growth-mac -- --actor discord:111 --ref 1234567890:dlv-77 --json -- approve A-0412
+$ ssh <Dispatch's options> -- tingy@127.0.0.1 '--actor discord:111 --ref 1234567890:dlv-77 --json -- approve A-0412'
 {"contract": 1, "ok": true, "answer": "recorded", "exit_code": 0, "text": "A-0412 approved."}
 
-$ ssh growth-mac -- --actor discord:111 --json -- run social
+$ ssh <Dispatch's options> -- tingy@127.0.0.1 '--actor discord:111 --json -- run social'
 {"contract": 1, "ok": false, "answer": "refused", "exit_code": 2, "text": "refused: `run social` isn't a control command. Send one of: …"}
 ```
