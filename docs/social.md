@@ -177,7 +177,8 @@ post says the images use fallback fonts. `--offline` blocks the network (the tes
 | Key | Default | |
 |---|---|---|
 | `weekends` | `true` | `false` makes the 07:00 job skip Saturday and Sunday (PRD open question 2) |
-| `rhythm` | PRD §5.2 | Weekday to theme. Fallbacks are the following days' themes, in order |
+| `rhythm` | PRD §5.2 (amended 2026-10-30) | Weekday to theme. Fallbacks are the following days' themes, in order |
+| `theme_gap_days` | 2 | A theme posted in the last this many days (not counting today) is unavailable in `today` and refused by `submit`, without using the regeneration, so the same kind of post never runs two days in a row. `0` switches it off |
 | `themes.<id>` | | `label`, `brief`, `layout`, `news`, `min_sources`, `max_sources`, `max_source_age_days`, `needs_tool` |
 | `platforms.<name>` | PRD §5.3 | `label`, `enabled` (`false` switches the platform off everywhere, whatever its `publish_mode`; LinkedIn since 2026-10-29), `words`, `hashtags_max`, `links` (`post` or `bio`), `image`, `carousel`, `publish_mode` (`draft` or `browser`), `page_url` (the page a browser run posts to; `https://` on the platform's own host; for LinkedIn the company page, `/company/<page>/`, and for Instagram the account's profile, `/<account>/`), `identity` (the posting identity the run must see; defaults to the Jura Solutions page or account) |
 | `eligibility_line` | "Check the official page for current eligibility." | |
@@ -187,8 +188,24 @@ post says the images use fallback fonts. `--offline` blocks the network (the tes
 | `render.chrome` | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` | `JURA_GROWTH_CHROME` overrides |
 | `render.virtual_time_budget_ms` | 8000 | Time for the web fonts to load |
 
-Monday's theme is "AI this week". The 48 hours before 07:00 on a Monday are a weekend, so it
-accepts stories from the last 7 days (`max_source_age_days: 7`), newest first.
+### The weekly rhythm
+
+Every post is about AI or automation, and each day has its own kind of post (Ting Yu, 2026-10-30:
+new toolbox tools, AI fun facts, findings and good reads, and AI news, varied). It replaced the
+industry pattern, the explainer and the weekend question.
+
+| Day | Theme | Card | Sources |
+|---|---|---|---|
+| Mon | `ai-this-week`: 2–3 developments that matter to a small business | list (Instagram carousel) | 2–3, news, last 7 days |
+| Tue | `ai-finding`: one result from a published AI study or survey | headline | 1–2, dated, last 30 days |
+| Wed | `from-the-toolbox`: a toolbox tool, newest first | tool | none |
+| Thu | `ai-fun-facts`: 3–4 short, true, surprising facts about AI | list (Instagram carousel) | 1–4 |
+| Fri | `ai-news`: one AI story from the last few days | headline | 1–2, news, last 3 days |
+| Sat | `ai-good-read`: a newsletter, report, podcast or long read about AI | headline | exactly 1 |
+| Sun | `automation-tip`: one small thing to automate, with AI or without | headline | optional, up to 2 |
+
+The 48 hours before 07:00 on a Monday are a weekend, so "AI this week" accepts stories from the
+last 7 days (`max_source_age_days: 7`), newest first.
 
 ## Data
 

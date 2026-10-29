@@ -8,6 +8,11 @@ business, for small business owners and mid-market operations teams, mostly in S
 readers are busy, sceptical of consultancies, and don't want to be sold to. Give them something
 useful.
 
+Every post is about AI or automation. Each day of the week has its own kind of post (`today`
+names it): AI news, a finding from a study, a few fun facts, a good read, a tool from Jura's
+toolbox, or an automation tip. Keep the feed varied: look at the last 14 days in `today` and pick
+a subject, a company and an angle the recent posts haven't covered.
+
 Keep the run lean: at most 8 web searches and 8 page fetches. Read files with the Read tool;
 Bash only runs `jura-growth` commands here.
 
@@ -23,18 +28,26 @@ rendered for you from the card spec you write.
 
 ## 2. Gather
 
-- **News themes** (`ai-this-week`): AI and automation developments that matter to a small
-  business, preferably from the last 48 hours; "AI this week" accepts the last 7 days, newest
-  first. Look for Singapore business news too.
+What each theme looks for:
+
+| Theme | Look for |
+|---|---|
+| `ai-this-week` | 2 to 3 AI and automation developments from the last 7 days that matter to a small business, newest first. Look for Singapore business news too |
+| `ai-finding` | One result from a published study or survey about AI (a university, a research lab, IMDA, a large survey by an established firm), from the last 30 days. Link the study or its publisher's write-up, say who ran it and what they asked, and keep any figure inside the sentence about that study |
+| `from-the-toolbox` | The tool `today` lists (newest first); its description is in the registry |
+| `ai-fun-facts` | 3 to 4 short facts about AI that are true and surprising: where an idea came from, how a model works, how people use it. Each fact needs a source you opened (an encyclopaedia, the original paper, the company's own page); name it in the item's `source` |
+| `ai-news` | One AI story from the last 3 days: what happened and what it changes for a small business. One or two sources |
+| `ai-good-read` | One newsletter, report, podcast episode or long read about AI that a business owner would find useful, free to read. Say what it covers and what they get from it. On Instagram, name it so it can be searched |
+| `automation-tip` | One small task a team can automate this week, with AI or without |
+
 - **Favour original sources:** the company's own announcement, IMDA, Enterprise Singapore, MOM,
   IRAS, gov.sg, and established publications (The Straits Times, The Business Times, CNA,
   Reuters, the Financial Times, TechCrunch, The Verge). Not aggregators, not search-result links,
   not social media posts.
 - **Open every page you cite** with WebFetch to confirm it says what you will say and to get its
   published date. Use the article's own address.
-- **Other themes** need research only for what they state. A tip or an industry pattern can come
-  from plain practice; a product feature, a rule, a scheme or a figure needs a source you opened.
-  For `from-the-toolbox`, use the tool `today` lists; its description is in the registry.
+- **Facts need a source.** A tip can come from plain practice; a product feature, a rule, a
+  scheme, a fact about AI or a figure needs a source you opened.
 - Skip any story or tool in the 14-day history.
 - **Off limits:** politics and elections, tragedies and disasters, named private individuals,
   criticism of competitors or any other company, and speculation presented as fact. Report a
@@ -45,8 +58,10 @@ rendered for you from the card spec you write.
 
 ## 3. Choose the theme
 
-Use today's theme. If nothing good fits (no worthwhile story, no tool free to feature), take the
-next theme in the order `today` lists, and pass `--theme <id>` to submit.
+Use today's theme. If nothing good fits (no worthwhile story, no tool free to feature), or `today`
+marks it UNAVAILABLE, take the next theme in the order `today` lists that isn't marked unavailable,
+and pass `--theme <id>` to submit. A theme posted in the last two days is unavailable, so the same
+kind of post never runs two days in a row.
 
 ## 4. Write one core post, then adapt it
 
@@ -108,7 +123,7 @@ Write these files in your scratch folder (`today` prints the path and the file n
 ```
 
 - `layout`: `headline` (one idea), `list` (2 to 5 items; use it for `ai-this-week` and
-  `industry-pattern`) or `tool` (with `"tool": "<slug>"`; the name and description come from the
+  `ai-fun-facts`) or `tool` (with `"tool": "<slug>"`; the name and description come from the
   registry).
 - `headline` at most 90 characters, a statement (never a question), sentence case. `subtitle` at
   most 150 characters. No links or hashtags on the card. The overline defaults to the theme label.
@@ -125,8 +140,8 @@ Run `jura-growth social submit <scratch folder>` (add `--theme <id>` if you took
 runs the brand checker on every variant and the card (the same checks as `jura-growth check
 --channel social-<platform>`, so don't run those separately), then renders, saves, logs and posts.
 
-- **"Refused"**: a structural problem, a repeated story or tool, or a source link that doesn't
-  work. Fix it and submit again. This doesn't use up your regeneration.
+- **"Refused"**: a structural problem, a repeated story, tool or theme, or a source link that
+  doesn't work. Fix it and submit again. This doesn't use up your regeneration.
 - **"Brand check: attempt 1 of 2"**: fix every reason listed, in every file, in one pass, then
   submit again. The second submission is final: anything that fails then is dropped. Don't try a
   third time.

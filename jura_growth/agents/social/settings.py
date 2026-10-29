@@ -90,6 +90,7 @@ class Settings:
     site: str
     rhythm: dict[str, str]
     themes: dict[str, Theme]
+    theme_gap_days: int
     platforms: dict[str, Platform]
     eligibility_line: str
     max_quote_words: int
@@ -110,33 +111,50 @@ class Settings:
         return [p for p in self.platforms.values() if p.enabled]
 
 
+# Every theme is about AI or automation, and no two days of the week share one (Ting Yu,
+# 2026-10-30: toolbox tools, AI facts, findings and good reads, and AI news, varied).
 DEFAULT_THEMES = {
     "ai-this-week": dict(
         label="AI this week",
         brief="2–3 developments that matter to a small business, with links.",
         layout="list", news=True, min_sources=2, max_sources=3, max_source_age_days=7,
     ),
-    "automation-tip": dict(label="Automation tip", brief="One small thing a team can automate this week.", max_sources=2),
+    "ai-finding": dict(
+        label="AI finding",
+        brief="One finding from a published AI study or survey: what it found, and what it means for a small business.",
+        news=True, min_sources=1, max_sources=2, max_source_age_days=30,
+    ),
     "from-the-toolbox": dict(
-        label="From the toolbox", brief="The newest or most-used tool, with a link to try it.",
+        label="From the toolbox",
+        brief="A tool from Jura's free toolbox, the newest first, with a link to try it.",
         layout="tool", needs_tool=True, max_sources=0,
     ),
-    "industry-pattern": dict(
-        label="Industry pattern",
-        brief="How a business in one industry handles a task by hand, and what automating it looks like.",
-        layout="list", max_sources=2,
+    "ai-fun-facts": dict(
+        label="AI fun facts",
+        brief="3–4 short, true and surprising facts about AI: its history, how it works or how people use it.",
+        layout="list", min_sources=1, max_sources=4,
     ),
-    "explainer": dict(
-        label="Explainer",
-        brief="One term in plain English, or a Singapore scheme explained with the official link.",
-        max_sources=2,
+    "ai-news": dict(
+        label="AI news",
+        brief="One AI story from the last few days: what happened, and what it means for a small business.",
+        news=True, min_sources=1, max_sources=2, max_source_age_days=3,
     ),
-    "light": dict(label="Weekend", brief="A question to the audience, or a pointer to a good free resource.", max_sources=1),
+    "ai-good-read": dict(
+        label="Worth reading",
+        brief="One newsletter, report, podcast or long read about AI worth a weekend's attention, and what you get from it.",
+        min_sources=1, max_sources=1,
+    ),
+    "automation-tip": dict(
+        label="Automation tip", brief="One small thing a team can automate this week, with AI or without.", max_sources=2,
+    ),
 }
 DEFAULT_RHYTHM = {
-    "mon": "ai-this-week", "tue": "automation-tip", "wed": "from-the-toolbox",
-    "thu": "industry-pattern", "fri": "explainer", "sat": "light", "sun": "light",
+    "mon": "ai-this-week", "tue": "ai-finding", "wed": "from-the-toolbox",
+    "thu": "ai-fun-facts", "fri": "ai-news", "sat": "ai-good-read", "sun": "automation-tip",
 }
+# A theme posted in the last this many days is unavailable today, so a fallback never puts
+# the same kind of post on two days running.
+DEFAULT_THEME_GAP_DAYS = 2
 DEFAULT_PLATFORMS = {
     "linkedin": dict(label="LinkedIn page", words=[120, 220], hashtags_max=3, links="post", image={"width": 1200, "height": 627}),
     "facebook": dict(label="Facebook Page", words=[60, 120], hashtags_max=2, links="post", image={"width": 1200, "height": 630}),
@@ -211,6 +229,7 @@ def load() -> Settings:
         site=str(raw.get("site", "https://jurasolutions.sg")).rstrip("/"),
         rhythm=rhythm,
         themes=themes,
+        theme_gap_days=max(0, int(raw.get("theme_gap_days", DEFAULT_THEME_GAP_DAYS))),
         platforms=platforms,
         eligibility_line=str(raw.get("eligibility_line", "Check the official page for current eligibility.")),
         max_quote_words=int(raw.get("max_quote_words", 12)),

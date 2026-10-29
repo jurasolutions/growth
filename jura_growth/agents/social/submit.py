@@ -115,6 +115,12 @@ def submit(
         theme = settings.theme(theme_id) if theme_id else today_theme
     except ValueError as error:
         return Outcome("invalid", [f"Refused: {error}"])
+    same_kind = history.theme_repeat(conn, day, theme.id, settings.theme_gap_days)
+    if same_kind:
+        return Outcome("repeat", [
+            "Refused (take the next theme `today` lists; this didn't use your regeneration):",
+            f"  - {theme.label} was {same_kind}",
+        ])
 
     sub = drafts.load(folder, active, theme=theme)
     problems = sub.problems + (drafts.theme_problems(sub, theme, day) if not sub.problems else [])

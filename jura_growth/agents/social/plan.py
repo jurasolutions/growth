@@ -31,6 +31,9 @@ def build(conn: sqlite3.Connection, day: date, settings: Settings | None = None)
         }
         if t.needs_tool and not tools["eligible"]:
             info["unavailable"] = tools["note"] or f"every live tool was featured in the last {caps.NO_REPEAT_DAYS} days"
+        repeat = history.theme_repeat(conn, day, t.id, settings.theme_gap_days)
+        if repeat:
+            info["unavailable"] = repeat
         return info
 
     work = paths.work_dir("social") / day.isoformat()
@@ -70,6 +73,7 @@ def build(conn: sqlite3.Connection, day: date, settings: Settings | None = None)
         "eligibility_line": settings.eligibility_line,
         "max_quote_words": settings.max_quote_words,
         "no_repeat_days": caps.NO_REPEAT_DAYS,
+        "theme_gap_days": settings.theme_gap_days,
         "history": list(by_day.values()),
         "used_story_urls": sorted({url for _, url in history.used_stories(conn, day).values()}),
         "used_tools": used_tools,
@@ -94,6 +98,8 @@ def render_text(plan: dict) -> str:
             f"  News: {src['min']}–{src['max']} sources, each with its published date; stories from the last "
             f"{src['max_age_days'] or 2} days"
         )
+    elif src["min"]:
+        out.append(f"  Sources: {src['min']}–{src['max']}; link every one you list")
     elif src["max"]:
         out.append(f"  Sources: optional, at most {src['max']}; link every one you list")
     else:
@@ -116,7 +122,8 @@ def render_text(plan: dict) -> str:
     for note in plan["notes"]:
         out.append(f"  note: {note}")
 
-    out += ["", f"Last {plan['no_repeat_days']} days (no story URL or tool may repeat):"]
+    out += ["", f"Last {plan['no_repeat_days']} days (no story URL or tool may repeat; no theme within "
+            f"{plan['theme_gap_days']} days; vary the subject and angle from these):"]
     if plan["history"]:
         for entry in plan["history"]:
             tool = f" tool {entry['tool']}" if entry["tool"] else ""
