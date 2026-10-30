@@ -59,10 +59,17 @@ def test_the_shipped_scout_config_goes_live_from_levi_at_jurasolutions():
 def test_the_shipped_legal_review_flag_says_it_was_waived_not_done():
     """The flag reads true only because Ting Yu waived the review; the file must say so beside it."""
     text = SHIPPED_SCOUT.read_text(encoding="utf-8")
-    before_flag = text.split("legal_review_done:", 1)[0].splitlines()[-3:]
-    comment = " ".join(before_flag)
-    assert "WAIVED, not done" in comment and "Ting Yu" in comment and "2026-10-31" in comment
+    above = text.split("\nlegal_review_done:", 1)[0].splitlines()
+    block = []
+    for line in reversed(above):  # the comment block directly above the flag
+        if not line.startswith("#"):
+            break
+        block.insert(0, line.lstrip("# "))
+    comment = " ".join(block)
+    # The PRD's wording (§6 Q1): "Answered 2026-10-31: waived, not done".
+    assert "Answered 2026-10-31: waived, not done" in comment and "Ting Yu" in comment
     assert "no legal view exists" in comment
+    assert "only once Ting Yu has it" not in comment  # the old rule no longer sits above a waived flag
 
 
 def test_the_shipped_config_leaves_only_what_the_machine_can_answer(monkeypatch):

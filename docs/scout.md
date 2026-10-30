@@ -284,10 +284,14 @@ a failed suppression sync. `jura-growth resume outreach` restarts it.
 
 ### Go-live checklist (block 4)
 
-- [ ] A Singapore lawyer's view on the Spam Control Act's address-harvesting provision (PRD
-      open question 1). Then `legal_review_done: true`.
-- [ ] Sending domain decided (open question 2), verified in Resend (SPF, DKIM, DMARC), and set
-      as `sending_domain`.
+- [x] PRD open question 1, a Singapore lawyer's view on the Spam Control Act's
+      address-harvesting provision. Answered 2026-10-31: waived, not done. Ting Yu has no
+      lawyer, chose to skip the review and accepts the legal risk. `legal_review_done: true`
+      records the waiver, with a comment beside it saying so; no legal view exists.
+- [x] Sending domain decided (open question 2, 2026-10-31): `sending_domain: jurasolutions.sg`,
+      from `levi@jurasolutions.sg` (`from_local_part: levi`).
+- [ ] That domain verified in Resend (SPF, DKIM, DMARC). The `resend._domainkey` DKIM record
+      is published; confirm the domain shows as verified in Resend's dashboard.
 - [ ] `RESEND_API_KEY_OUTREACH`: a sending-only key for that domain.
 - [ ] `UNSUBSCRIBE_SECRET` set to exactly the website's value. Check one link:
       `jura-growth outreach unsubscribe-link you@yourdomain` and open it; the next
@@ -297,7 +301,8 @@ a failed suppression sync. `jura-growth resume outreach` restarts it.
       and the privacy notice are live.
 - [ ] `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `D1_DATABASE_ID` set;
       `jura-growth outreach sync` reports suppressions without an error.
-- [ ] `inputs/do-not-contact.csv` exists.
+- [x] `inputs/do-not-contact.csv` exists (empty as of 2026-10-31; add companies as
+      Ting Yu decides, open question 4).
 - [ ] Open question 5: decide whether the footer shows a registered business name and UEN
       (not built in; the footer would need a code change).
 - [ ] Optional: `OUTREACH_IMAP_*` for reply detection and follow-ups (open question 3).
