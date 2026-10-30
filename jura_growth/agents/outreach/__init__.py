@@ -106,13 +106,14 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
 
 
 def privacy_terms(conn) -> dict:
-    """For `privacy`: Ting Yu's sender address, kept only in previews of Jura's own
-    email, and his name, which signs them and is never read as a prospect's."""
+    """For `privacy`: the sender and Reply-To addresses, kept only in previews of
+    Jura's own email, and the names that sign them (Levi Ting since 2026-10-31,
+    Ting Yu before), never read as a prospect's."""
     from jura_growth.agents.scout import settings
 
     local = str(settings.get().get("from_local_part") or "tingyu").strip().lower()
     domains = {"jurasolutions.sg", str(settings.get().get("sending_domain") or "").strip().lower()}
     return {
-        "owner_addresses": sorted(f"{local}@{d}" for d in domains if d),
-        "kept_names": [settings.SIGNATURE_NAME],
+        "owner_addresses": sorted({f"{local}@{d}" for d in domains if d} | {settings.REPLY_TO}),
+        "kept_names": [settings.SIGNATURE_NAME, "Ting Yu"],
     }

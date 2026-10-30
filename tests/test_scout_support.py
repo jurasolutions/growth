@@ -161,8 +161,8 @@ def body_for(company: str, tool: str = "delivery-order-maker") -> str:
         f"from a few details and keeps it as a clean PDF: jurasolutions.sg/apps/{tool}\n\n"
         "It sits with our other small tools at jurasolutions.sg/apps. There's nothing to install, and what "
         "you enter stays in your browser.\n\n"
-        "If your team spends evenings retyping orders, reply and tell me how it works today. That's the kind "
-        "of work we help Singapore teams automate."
+        "We're Jura Solutions, a small automation consultancy (jurasolutions.sg). If your team spends "
+        "evenings retyping orders, I'd be glad to hear how it works today on a 30-minute call."
     )
 
 
@@ -298,7 +298,7 @@ def fake_resend(monkeypatch, responder=None) -> list:
 def reply_message(sender: str, *, when: str, body: str, subject: str = "Re: A free tool", auto: str | None = None, message_id: str | None = None) -> bytes:
     message = EmailMessage()
     message["From"] = f"Someone <{sender}>"
-    message["To"] = "info@jurasolutions.sg"
+    message["To"] = "levi@jurasolutions.sg"
     message["Subject"] = subject
     message["Date"] = format_datetime(timeutil.parse(when))
     message["Message-ID"] = message_id or f"<{abs(hash((sender, when, body)))}@example.test>"
@@ -346,7 +346,7 @@ class FakeIMAP:
 
 def imap_env(monkeypatch, messages: list[bytes]) -> FakeIMAP:
     monkeypatch.setenv("OUTREACH_IMAP_HOST", "imap.example.test")
-    monkeypatch.setenv("OUTREACH_IMAP_USER", "info@jurasolutions.sg")
+    monkeypatch.setenv("OUTREACH_IMAP_USER", "levi@jurasolutions.sg")
     monkeypatch.setenv("OUTREACH_IMAP_PASSWORD", "app-password")
     fake = FakeIMAP(messages)
     monkeypatch.setattr(replies, "imap_factory", lambda host, port: fake)

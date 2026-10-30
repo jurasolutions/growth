@@ -16,7 +16,13 @@ message under the same idempotency key) aren't a second use, and publishing neve
 *Amended 2026-10-27 (code review 06 Sp1):* an outreach retry under the same claim is bounded by
 whichever comes first, the approval's use-by or 23 hours from the claim (inside Resend's 24-hour
 idempotency key). Past either, the email may already have gone out, so it is marked uncertain and
-Ting Yu is alerted; it is never sent again under that approval. A pending
+Ting Yu is alerted; it is never sent again under that approval.
+*Amended 2026-10-31 (code review S13-4 of the designed outreach email):* for an outreach email the
+bytes handed out include what the code adds around the draft: the call button, the signature, the
+footer, the HTML template, the sender and Reply-To. The content carries `compose.frame_fingerprint()`,
+a hash of that frame rendered for a stand-in recipient, so a template change between approval and
+claim supersedes the request instead of sending a frame Ting Yu never saw. The card names the
+template version and the frame's first eight hex digits. A pending
 request lapses at its decide-by and an approved, unclaimed one at its use-by, two separate clocks, so
 a yes is never lost behind the send caps. Approval state lives only in the `approvals` table: plug-in
 tables hold their item's lifecycle and never a copy of the decision. Don't loosen this to "approved

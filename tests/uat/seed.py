@@ -277,8 +277,8 @@ def draft(company: str) -> str:
         f"builder that turns a job into a clean PDF quote: jurasolutions.sg/apps/{TOOL}\n\n"
         "It sits with our other small tools at jurasolutions.sg/apps. There's nothing to install, and what you "
         "enter stays in your browser.\n\n"
-        "If quotes eat into your evenings, reply and tell me how they work today. That's the kind of work we "
-        "help Singapore teams automate."
+        "We're Jura Solutions, a small automation consultancy (jurasolutions.sg). If quotes eat into your "
+        "evenings, I'd be glad to hear how they work today on a 30-minute call."
     )
 
 
