@@ -260,8 +260,8 @@ def parse(data) -> Record:
     email = contact.normalise_email(str(raw_contact.get("email") or ""))
 
     try:
-        evidence, evidence_notes = scoring.hiring_evidence(data.get("hiring_evidence"), domain)
-        comparison, comparison_notes = scoring.comparison(data.get("comparison"))
+        evidence, evidence_notes = scoring.hiring_evidence(data.get("hiring_evidence"), domain, company)
+        comparison, comparison_notes = scoring.comparison(data.get("comparison"), company)
         evidence_notes += comparison_notes
         breakdown = scoring.breakdown(data.get("score_breakdown"), score, evidence=evidence, has_email=bool(email))
     except scoring.ScoringError as error:

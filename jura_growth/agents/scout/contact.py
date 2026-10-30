@@ -20,7 +20,9 @@
 from __future__ import annotations
 
 import html
+import posixpath
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import unquote, urlsplit
 
@@ -102,13 +104,40 @@ NOT_OWN_SITE += JOB_BOARDS
 # these stems, "job"/"jobs" (but not "job sheets" and the like), "join us",
 # "join our team" and "work with us".
 JOB_AD_STEMS = ("career", "vacanc", "recruit", "hiring", "viewjob", "joinus", "jobopening", "joblisting",
-                "jobvacanc", "jobpost", "jobboard")
+                "jobvacanc", "jobpost", "jobboard", "opportunit", "openings", "internship", "karriere", "kerjaya")
+# Chinese jobs-page words, matched in the decoded text: recruitment, position, join us.
+JOB_AD_CJK = ("招聘", "职位", "職位", "招募", "加入我们", "加入我們")
 JOB_WORDS = frozenset({"job", "jobs"})
-# "job" followed by one of these is paperwork, not hiring: job sheets, job cards.
+# "job" next to one of these is field-service paperwork or booking, not hiring:
+# job sheets, job cards, a job request, book a job, our jobs (re-review R2).
 JOB_PAPERWORK = frozenset({"sheet", "sheets", "card", "cards", "order", "orders", "ticket", "tickets", "costing",
-                           "costs", "site", "sites", "report", "reports"})
-JOB_AD_PHRASES = (("join", "us"), ("join", "our"), ("join", "the", "team"), ("work", "with", "us"))
-JOB_AD_SUBDOMAINS = ("careers", "career", "jobs", "job", "apply", "hiring", "recruit", "recruitment", "talent")
+                           "costs", "site", "sites", "report", "reports", "request", "requests", "quote", "quotes",
+                           "booking", "bookings", "status", "tracking", "gallery"})
+JOB_BEFORE_PAPERWORK = frozenset({"book", "our", "completed", "past", "recent", "submit"})
+# Hire means rental in Singapore English: equipment hiring, car hiring.
+RENTAL_WORDS = frozenset({"equipment", "car", "cars", "van", "vans", "lorry", "lorries", "truck", "trucks", "tool",
+                          "tools", "crane", "cranes", "bus", "buses", "coach", "boat", "boats", "event", "party", "tent",
+                          "tents", "machine", "machinery", "plant", "scaffold", "scaffolding", "generator", "venue"})
+# "Vacancies" is read as employment unless a property word sits next to it
+# (office vacancies, vacancies/units). The safer reading: a bare /vacancies is
+# far more often a jobs page than a unit listing (re-review R2).
+PROPERTY_WORDS = frozenset({"office", "offices", "unit", "units", "shop", "shops", "retail", "property", "properties",
+                            "space", "spaces", "room", "rooms", "rental", "rentals", "lease", "industrial", "warehouse",
+                            "tenancy", "tenant", "tenants", "commercial", "residential", "apartment", "apartments",
+                            "condo", "condos", "flat", "flats"})
+# Business, not employment: franchise opportunities, store openings.
+NOT_HIRING_BEFORE = {"opportunit": frozenset({"business", "franchise", "partnership", "partner", "investment",
+                                              "sponsorship"}),
+                     "openings": frozenset({"store", "shop", "outlet", "branch", "grand"})}
+JOB_AD_PHRASES = (("join", "us"), ("join", "our"), ("join", "the", "team"), ("work", "with", "us"), ("work", "for", "us"),
+                  ("jawatan", "kosong"))
+# "Join us for dinner" is an invitation, not a careers page.
+NOT_AFTER_JOIN_US = frozenset({"for", "at", "on", "in", "to"})
+# A host label is a careers label if any of its words is one of these, or starts
+# with "career" or "recruit" (careers-sg., career-portal., jobs2.). `apply.` alone
+# is not: application portals take admissions and loan enquiries too.
+JOB_AD_LABEL_WORDS = frozenset({"careers", "career", "jobs", "job", "hiring", "recruit", "recruitment", "talent",
+                                "karriere", "kerjaya", "vacancies"})
 EVIDENCE_ONLY = "job boards, recruiters and job ads are evidence only, never a contact source"
 
 
@@ -173,36 +202,80 @@ def is_third_party_host(domain: str) -> bool:
 
 
 def _decoded(value: str) -> str:
-    """Percent-decoded until it stops changing (so %2563 is "c" too), case-folded."""
+    """Percent-decoded until it stops changing (so %2563 is "c" too), NFKC-normalised
+    (full-width letters become plain ones) and case-folded."""
     for _ in range(5):
         decoded = unquote(value)
         if decoded == value:
             break
         value = decoded
-    return value.casefold()
+    return unicodedata.normalize("NFKC", value).casefold()
 
 
-def _words(url: str) -> list[str]:
+def _page_text(url: str) -> str:
+    """The decoded path (dot segments resolved), query and fragment."""
     parts = _split(url)
-    text = " ".join(_decoded(p) for p in (parts.path, parts.query, parts.fragment))
-    return [w for w in re.split(r"[^0-9a-z]+", text) if w]
+    path = _decoded(parts.path)
+    if path:
+        path = posixpath.normpath(path)
+    return " ".join([path, _decoded(parts.query), _decoded(parts.fragment)])
 
 
-def is_job_ad_page(url: str) -> bool:
-    """A careers or job-ad page by its host or its words, however it is spelled:
-    /%63areers/, /careers.html, /careers-2/, /jobs.php, /join-our-team, ?page=careers ..."""
+def _label_is_careers(label: str) -> bool:
+    words = [re.sub(r"\d+$", "", w) for w in re.split(r"[^0-9a-z]+", _decoded(label)) if w]
+    return any(w in JOB_AD_LABEL_WORDS or w.startswith(("career", "recruit")) for w in words)
+
+
+def _company_labels(host: str, domain: str | None) -> list[str]:
+    """The host's labels left of the company's domain (or of the last two labels)."""
+    if domain and on_domain(f"https://{host}", domain):
+        rest = host[: -len(domain.lower().removeprefix("www."))].rstrip(".")
+        return rest.split(".") if rest else []
+    return host.split(".")[:-2]
+
+
+def _job_word_is_hiring(words: list[str], i: int) -> bool:
+    before = words[i - 1] if i else ""
+    two_before = words[i - 2] if i > 1 else ""
+    after = words[i + 1] if i + 1 < len(words) else ""
+    if after in JOB_PAPERWORK or before in JOB_BEFORE_PAPERWORK:
+        return False
+    return not (before == "a" and two_before in {"book", "request", "submit"})
+
+
+def _stem_is_hiring(words: list[str], i: int, stem: str) -> bool:
+    before = words[i - 1] if i else ""
+    after = words[i + 1] if i + 1 < len(words) else ""
+    if stem == "hiring" and before in RENTAL_WORDS:
+        return False
+    if stem == "vacanc" and (before in PROPERTY_WORDS or after in PROPERTY_WORDS):
+        return False
+    return before not in NOT_HIRING_BEFORE.get(stem, ())
+
+
+def is_job_ad_page(url: str, domain: str | None = None) -> bool:
+    """A careers or job-ad page by any host label or its words, however it is spelled:
+    careers-sg.acme.sg, /%63areers/, /careers.html, /jobs.php, /join-our-team,
+    ?page=careers, /招聘, /jawatan-kosong ... Field-service and rental pages such as
+    /book-a-job, /job-request and /equipment-hiring are not."""
     host = host_of(url)
-    if host and host.split(".")[0] in JOB_AD_SUBDOMAINS:
+    if host and any(_label_is_careers(label) for label in _company_labels(host, domain)):
         return True
-    words = _words(url)
+    text = _page_text(url)
+    if any(word in text for word in JOB_AD_CJK):
+        return True
+    words = [w for w in re.split(r"[^0-9a-z]+", text) if w]
     for i, word in enumerate(words):
-        if word.startswith(JOB_AD_STEMS):
+        stem = next((s for s in JOB_AD_STEMS if word.startswith(s)), None)
+        if stem and _stem_is_hiring(words, i, stem):
             return True
-        if word in JOB_WORDS and (i + 1 == len(words) or words[i + 1] not in JOB_PAPERWORK):
+        if word in JOB_WORDS and _job_word_is_hiring(words, i):
             return True
         for phrase in JOB_AD_PHRASES:
             if tuple(words[i : i + len(phrase)]) == phrase:
-                return True
+                follows = words[i + len(phrase)] if i + len(phrase) < len(words) else ""
+                if phrase != ("join", "us") or follows not in NOT_AFTER_JOIN_US:
+                    return True
     return False
 
 
@@ -225,7 +298,7 @@ def job_ad_problem(url: str, domain: str | None = None) -> str | None:
         return f"{url} is on a job board: {EVIDENCE_ONLY}"
     if is_recruiter(host) and not (domain and on_domain(url, domain)):
         return f"{url} is on a recruiter's site: {EVIDENCE_ONLY}"
-    if is_job_ad_page(url):
+    if is_job_ad_page(url, domain):
         return f"{url} is a careers or job-ad page: {EVIDENCE_ONLY}"
     return None
 

@@ -242,6 +242,111 @@ def test_recruitment_inboxes_are_not_enquiry_addresses(local):
     from jura_growth.role_addresses import not_for_enquiries
 
     assert not_for_enquiries(f"{local}@alderlogistics.sg")
+    assert not_for_enquiries(f"{local}2@alderlogistics.sg") and not_for_enquiries(f"{local}.sg@alderlogistics.sg")
+
+
+@pytest.mark.parametrize("address", ["cvlogistics@gmail.com", "talentdance@gmail.com", "jobmaster.sg@gmail.com",
+                                     "applyfix@gmail.com", "hrithik.tan@acme.sg"])
+def test_a_business_name_that_starts_with_a_recruitment_word_is_still_an_address(address):
+    """Re-review R9: the words are matched whole (or before a separator or number), not as prefixes."""
+    from jura_growth.role_addresses import not_for_enquiries
+
+    assert not not_for_enquiries(address)
+
+
+# --- re-review R1 and R2: careers pages by any host label, and field-service pages kept ----
+
+
+@pytest.mark.parametrize("url", [
+    "https://www.careers.alderlogistics.sg/", "https://sg.careers.alderlogistics.sg/", "https://careers-sg.alderlogistics.sg/",
+    "https://career-portal.alderlogistics.sg/", "https://jobs2.alderlogistics.sg/",
+    "https://www.alderlogistics.sg/opportunities", "https://www.alderlogistics.sg/people/opportunities",
+    "https://www.alderlogistics.sg/work-for-us", "https://www.alderlogistics.sg/openings",
+    "https://www.alderlogistics.sg/internship", "https://www.alderlogistics.sg/karriere",
+    "https://www.alderlogistics.sg/zh/招聘", "https://www.alderlogistics.sg/zh/%E6%8B%9B%E8%81%98",
+    "https://www.alderlogistics.sg/zh/职位", "https://www.alderlogistics.sg/ms/kerjaya",
+    "https://www.alderlogistics.sg/jawatan-kosong", "https://www.alderlogistics.sg/ｃａｒｅｅｒｓ",
+    "https://www.alderlogistics.sg/vacancies", "https://www.alderlogistics.sg/staff-vacancies",
+    "https://www.alderlogistics.sg/we-are-hiring", "https://www.alderlogistics.sg/jobs",
+])
+def test_more_careers_pages_are_refused(url):
+    assert contact.job_ad_problem(url, "alderlogistics.sg") is not None, url
+
+
+@pytest.mark.parametrize("url", [
+    "https://www.alderlogistics.sg/book-a-job", "https://www.alderlogistics.sg/job-request",
+    "https://www.alderlogistics.sg/request-a-job-quote", "https://www.alderlogistics.sg/our-jobs",
+    "https://www.alderlogistics.sg/equipment-hiring", "https://www.alderlogistics.sg/car-hiring-rates",
+    "https://www.alderlogistics.sg/office-vacancies", "https://www.alderlogistics.sg/vacancies/units",
+    "https://www.alderlogistics.sg/join-us-for-dinner", "https://www.alderlogistics.sg/careers/../contact",
+    "https://apply.alderlogistics.sg/", "https://www.careerworks.sg/contact",
+])
+def test_field_service_and_property_pages_are_still_contact_sources(url):
+    domain = "careerworks.sg" if "careerworks" in url else "alderlogistics.sg"
+    assert contact.job_ad_problem(url, domain) is None, url
+
+
+# --- re-review R6: hiring evidence is current ---------------------------------
+
+
+def test_a_posting_seen_more_than_twelve_months_ago_is_refused(conn, monkeypatch):
+    at(monkeypatch, MONDAY_9AM)
+    bad(conn, [candidate(1, 80, hiring_evidence=[posting(seen="2025-10-25")])], "within the last 12 months")
+    assert len(submit(conn, [candidate(1, 80, hiring_evidence=[posting(seen="2025-10-27")])]).kept) == 1
+
+
+# --- re-review R3: product names and the company's own name are not people -----
+
+
+@pytest.mark.parametrize("text", [
+    "Proficient in MS Excel and MS Word", "Update the MS Teams channel", "Use Ms Excel daily",
+    "Prepare DR forms and DO slips", "Key in orders in Google Sheets, Xero and QuickBooks",
+])
+def test_product_names_survive_the_name_filter(text):
+    from jura_growth import privacy
+
+    assert privacy.strip_personal(text) == (text, False)
+
+
+def test_the_company_own_name_survives_the_name_filter(conn, monkeypatch):
+    at(monkeypatch, MONDAY_9AM)
+    evidence = [posting(title="Admin assistant at Dr Aircon", duties=("prepare Dr Aircon service reports",))]
+    result = submit(conn, [candidate(1, 80, company="Dr Aircon Services Pte Ltd", hiring_evidence=evidence,
+                                     comparison="Dr Aircon is hiring for service reports")])
+    assert len(result.kept) == 1
+    row = db.one(conn, "SELECT hiring_evidence_json, comparison FROM leads")
+    assert "Dr Aircon" in json.loads(row["hiring_evidence_json"])[0]["title"] and "Dr Aircon" in row["comparison"]
+
+
+def test_a_person_is_still_stripped_beside_a_product(conn):
+    from jura_growth import privacy
+
+    assert privacy.strip_personal("Ms Tan uses MS Excel") == ("[name removed] uses MS Excel", True)
+
+
+# --- re-review R8: a lead added by hand meanwhile never takes the day past the shortlist ---
+
+
+def test_a_lead_added_by_hand_during_a_batch_still_holds_the_shortlist(conn, monkeypatch):
+    from jura_growth.agents.scout import leads
+
+    configure(monkeypatch, research={"shortlist": 2})
+    at(monkeypatch, MONDAY_9AM)
+    real = leads.assess
+    added, started = [], []
+
+    def hand_add_meanwhile(*args, **kwargs):
+        if not started:
+            started.append(True)
+            added.append(add(conn, lead_data(9)))  # Ting Yu, in Terminal, mid-batch
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(leads, "assess", hand_add_meanwhile)
+    result = submit(conn, [candidate(1, 90), candidate(2, 80)])
+    assert added[0].status == "added"
+    assert leads.added_today(conn) == 2 and len(result.kept) == 1
+    passed = next(c for c in result.candidates if c["score"] == 80)
+    assert passed["status"] == "not_kept" and "shortlist of 2 was full" in passed["reasons"][0]
 
 
 def test_a_contact_form_on_a_job_ad_is_refused(conn):
@@ -405,7 +510,7 @@ def test_a_candidate_researched_before_is_not_researched_again_for_twelve_months
     assert again["status"] == "skipped" and "researched on 2026-10-26, score 80" in again["reasons"][0]
     assert [c["domain"] for c in result.kept] == ["cedarlogistics.sg"]
     at(monkeypatch, "2027-10-28T09:00:00+08:00")
-    later = submit(conn, [candidate(2, 80)])
+    later = submit(conn, [candidate(2, 80, hiring_evidence=[posting(seen="2027-10-27")])])
     assert [c["domain"] for c in later.kept] == ["birchlogistics.sg"]
     check = CliRunner().invoke(cli, ["scout", "check", "birchlogistics.sg", "--json"])
     assert check.exit_code == 1  # now a lead

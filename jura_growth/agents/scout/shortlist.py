@@ -123,16 +123,11 @@ def submit(conn: sqlite3.Connection, data, *, client: httpx.Client | None = None
     # contact page and MX record) happens here, outside any transaction.
     ranked = sorted((pair for pair in entries if pair[1]["status"] is None), key=lambda pair: -pair[0].score)
     total, kept, addresses = len(ranked), leads.added_today(conn), {}
-    decisions: list[tuple[leads.Record, dict, leads.Outcome | None, str | None]] = []
+    decisions: list[tuple[leads.Record, dict, leads.Outcome]] = []
     for rank, (record, entry) in enumerate(ranked, start=1):
         entry["rank"] = rank
         if record.score >= batch.threshold and kept >= batch.shortlist:
-            reason = (
-                f"researched, not kept: ranked {rank} of {total} on {timeutil.today_str()}; "
-                f"today's shortlist of {batch.shortlist} was full"
-            )
-            entry["status"], entry["reasons"] = "not_kept", [reason]
-            decisions.append((record, entry, None, reason))
+            decisions.append((record, entry, _passed_over(rank, total, batch.shortlist)))
             continue
         outcome = leads.assess(conn, record, client=client, kept_today=kept)
         address = (outcome.contact or {}).get("email") if outcome.status == "ok" else None
@@ -144,15 +139,20 @@ def submit(conn: sqlite3.Connection, data, *, client: httpx.Client | None = None
         if outcome.status == "ok":
             kept += 1
         entry["notes"] = outcome.notes
-        decisions.append((record, entry, outcome, None))
+        decisions.append((record, entry, outcome))
 
     # Phase 2: write it all at once.
     with db.transaction(conn):
         _refuse_if_ranked(conn)  # another run may have ranked the day meanwhile
-        for record, entry, outcome, passed_over in decisions:
-            if passed_over:
-                leads.remember_rejection(conn, domain=record.domain, company=record.company, reason=passed_over,
-                                         score=record.score)
+        for record, entry, outcome in decisions:
+            # A lead added by hand meanwhile counts too, so the day never passes the
+            # shortlist (re-review R8).
+            if outcome.status == "ok" and leads.added_today(conn) >= batch.shortlist:
+                outcome = _passed_over(entry["rank"], total, batch.shortlist)
+            if outcome.status == PASSED_OVER:
+                leads.remember_rejection(conn, domain=record.domain, company=record.company,
+                                         reason=outcome.reasons[0], score=record.score)
+                entry["status"], entry["reasons"] = "not_kept", outcome.reasons
                 continue
             leads.apply(conn, record, outcome)
             if outcome.status == "added":
@@ -173,6 +173,17 @@ def submit(conn: sqlite3.Connection, data, *, client: httpx.Client | None = None
     for entry in batch.kept:  # posts go out only once the batch is committed
         leads.post_lead(conn, entry["lead_id"])
     return batch
+
+
+PASSED_OVER = "passed_over"
+
+
+def _passed_over(rank: int, total: int, shortlist: int) -> leads.Outcome:
+    reason = (
+        f"researched, not kept: ranked {rank} of {total} on {timeutil.today_str()}; "
+        f"today's shortlist of {shortlist} was full"
+    )
+    return leads.Outcome(PASSED_OVER, reasons=[reason])
 
 
 def _refuse_if_ranked(conn: sqlite3.Connection) -> None:

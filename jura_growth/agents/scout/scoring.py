@@ -49,8 +49,8 @@ def _one_line(value) -> str:
 REMOVED_NOTE = "removed a person's name, phone number or email address from {where}; postings are evidence about roles, never people"
 
 
-def _clean(text: str) -> tuple[str, bool]:
-    return privacy.strip_personal(text)
+def _clean(text: str, company: str | None = None) -> tuple[str, bool]:
+    return privacy.strip_personal(text, keep=[company] if company else [])
 
 
 def breakdown(value, score: int, *, evidence: list, has_email: bool) -> dict[str, int] | None:
@@ -83,7 +83,7 @@ def breakdown(value, score: int, *, evidence: list, has_email: bool) -> dict[str
     return parts
 
 
-def hiring_evidence(value, domain: str | None = None) -> tuple[list[dict], list[str]]:
+def hiring_evidence(value, domain: str | None = None, company: str | None = None) -> tuple[list[dict], list[str]]:
     """The validated postings and any notes. Each needs an http(s) URL on a known
     job board or the company's own site (`domain`), a title, the date seen (a real
     YYYY-MM-DD date, not in the future) and the duties it names."""
@@ -96,6 +96,10 @@ def hiring_evidence(value, domain: str | None = None) -> tuple[list[dict], list[
         notes.append(f"kept the first {EVIDENCE_MAX} hiring postings")
         value = value[:EVIDENCE_MAX]
     today = date.fromisoformat(timeutil.today_str())
+    try:
+        oldest = today.replace(year=today.year - 1)
+    except ValueError:  # 29 February
+        oldest = today.replace(year=today.year - 1, day=28)
     found = []
     for n, item in enumerate(value, start=1):
         where = f"`hiring_evidence` item {n}"
@@ -122,6 +126,9 @@ def hiring_evidence(value, domain: str | None = None) -> tuple[list[dict], list[
             raise ScoringError(f"{where}: `seen` is the date you read it, as YYYY-MM-DD") from None
         if day > today:
             raise ScoringError(f"{where}: `seen` {seen} is in the future")
+        if day < oldest:
+            raise ScoringError(f"{where}: `seen` {seen} must be within the last 12 months (from {oldest}); "
+                               "hiring evidence is about current hiring")
         duties = item.get("duties")
         if duties is None:
             duties = []
@@ -132,8 +139,8 @@ def hiring_evidence(value, domain: str | None = None) -> tuple[list[dict], list[
         duties = [_one_line(d) for d in duties if _one_line(d)][:DUTIES_MAX]
         if any(len(d) > DUTY_CHARS for d in duties):
             raise ScoringError(f"{where}: keep each duty under {DUTY_CHARS} characters")
-        title, removed = _clean(title)
-        cleaned = [_clean(d) for d in duties]
+        title, removed = _clean(title, company)
+        cleaned = [_clean(d, company) for d in duties]
         duties = [d for d, _ in cleaned]
         if removed or any(r for _, r in cleaned):
             notes.append(REMOVED_NOTE.format(where=where))
@@ -141,14 +148,14 @@ def hiring_evidence(value, domain: str | None = None) -> tuple[list[dict], list[
     return found, notes
 
 
-def comparison(value) -> tuple[str | None, list[str]]:
+def comparison(value, company: str | None = None) -> tuple[str | None, list[str]]:
     """The comparison line, with any person's details removed, and any notes."""
     text = _one_line(value)
     if not text:
         return None, []
     if len(text) > COMPARISON_CHARS or "\n" in str(value).strip():
         raise ScoringError(f"`comparison` is one line of at most {COMPARISON_CHARS} characters")
-    text, removed = _clean(text)
+    text, removed = _clean(text, company)
     return text, [REMOVED_NOTE.format(where="`comparison`")] if removed else []
 
 
