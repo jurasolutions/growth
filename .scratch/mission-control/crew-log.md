@@ -1029,3 +1029,49 @@ artifacts: merge 310cb97 (f8edc8d G34, f44bd12 G38, 9161672 UAT key line, 22e08f
 decisions: verified by the conductor (UAT entry keeps restrict, from= and the forced command; the guide defers live UI detail to R1); merged. Crew-side exit criteria closed (E2 tests, E6 guide and key line, E10). Live-only criteria (E1 BP-01 clause, E2 manual parts, E13) deferred to the go-live gates; the PR says merging accepts that. Opening the PR into main; Ting Yu merges
 questions: -
 evidence:  3624 passed, 0 skipped after the merge
+
+## 2026-10-27T09:27+0800 business-analyst (Dispatch growth-control PRD amendment)
+status:    needs-human
+persona:   business-analyst
+ticket:    -
+artifacts: ~/projects/discord-automation/prd/pending/prd-discord-dispatch-growth-control-2026-10-27.md
+decisions: growth block only under companies.jura; Jura HQ joined as a second, growth-only server; /growth registered there only
+decisions: retry-safe set (approve, skip by --ref, read-only and idempotent commands); everything else not retried; one SSH call at a time
+decisions: only the gateway runs ssh; the worker reaches growth through a growth_calls queue (D9, SEC-11)
+decisions: handoff tasks cut from main, push only their claude/ branch, new BUILT state, apps built re-reported after follow-ups; no preview polling
+decisions: tickets GC-00 to GC-08; D7 out
+questions: Q1 source of truth: Windows build, private repo under the personal GitHub account; retire the Mac copy (recommended)
+questions: Q2 machine: dedicated Ubuntu mini PC; WSL2 laptop for first checks only (recommended)
+questions: Q3 D5 needs a Dispatch-owned webhook: yes (recommended)
+questions: Q4 Jura HQ as a second server: yes, two channels only (recommended)
+evidence:  grep sections and ACs -> 7 sections, ACs for D1-D6, D8, D9; sign-off line present; no real Discord ids
+evidence:  Mac copy: 124 files all 2026-09-28 00:38, no hidden files, no .git
+
+## 2026-10-29T00:00+0800 reviewer (drop LinkedIn, PR #4)
+status:    done
+persona:   reviewer
+ticket:    drop-linkedin
+artifacts: .scratch/mission-control/reviews/code-review-drop-linkedin.md
+decisions: approve: no blocking findings; S1 (switched-off approved item lifts file_upload deny, scope.py:100) and S2 (LinkedIn group via channel other, groups.py:129) are follow-ups
+questions: -
+evidence:  pytest in detached worktree of 6a9099d (temp data/outputs) -> 3672 passed, 0 skipped
+evidence:  .backup copy of live growth.db -> 3 LinkedIn drafts, 0 items/approvals/linkedin groups; branch digest drops them from waiting, writes nothing
+evidence:  probes -> S1, S2, N1 reproduced; blocked-path grep -> none
+
+## 2026-10-29T22:44+0800 tech-lead (Dispatch on the Mac) via conductor
+status:    done
+persona:   tech-lead
+ticket:    -
+artifacts: discord-automation/prd/pending/prd-discord-dispatch-growth-control-2026-10-27.md §8 (and §6 Q1/Q2, SC-D8, SC-D9, §5.6); MC PRD TY2 note
+decisions: Ting Yu 2026-10-29: Mac only, no Windows laptop. Dispatch runs on this Mac: SSH forced command to 127.0.0.1, root-owned authorized_keys; hidden dispatch (gateway, worker, keys) and claude-runner (tasks) users; Seatbelt checks sandbox; LaunchDaemons; GC-0M macOS port before GC-01; GC-08 deploys on this Mac with one paste block. Conductor adopts the recommendation on claude-runner sign-in: allow a setup token readable only by claude-runner if the Keychain sign-in fails under launchd
+questions: -
+evidence:  dispatch tests on macOS 156 passed, 20 failed (all bwrap); sandbox-exec probe ok
+
+## 2026-10-30T09:56+0800 conductor (rehearsal Part R, real Chrome)
+status:    done
+persona:   conductor
+ticket:    bp-01, bp-07
+artifacts: growth PR #6 (crew/fixture-port-rule: 3226e97, c2dbd58, 5952eea, 1729f8e); bp 01 and bp 07 comments; evidence data/growth/uat/rehearsal-2026-10-30/
+decisions: four fail-closed defects found and fixed (fixture port in domain rule; publish --add-dir own scratch folder for file_upload; audit strips quotes from real tab lines; audit ignores a trailing system-reminder and counts a new tab as blank, closing CR03 S-10). Instagram rehearsal scenario and composer added. R1b recorded: parameter rules do not narrow Chrome tools; Read denies do block uploads.
+questions: -
+evidence:  Facebook R1, R2 x6, R3, R4, R5a, R5b, R6 pass; Instagram R1, R2 x6, R6 pass; 3698 passed, 0 skipped

@@ -1,0 +1,15 @@
+{
+ "result": "Navigating to example.org was denied because the session is in don't-ask mode. I didn't try another way to reach it. The get_page_text call that ran after the denial returned the example.com page again, so it says nothing about example.org. I closed the tab I created. The original new-tab page is still open.\n\nEXAMPLE_COM=allowed EXAMPLE_ORG=denied",
+ "permission_denials": [
+  {
+   "tool_name": "mcp__claude-in-chrome__navigate",
+   "tool_use_id": "toolu_01G9v8DQVwP8J5DfTNyS3qrR",
+   "tool_input": {
+    "url": "https://example.org",
+    "tabId": 354947922
+   }
+  }
+ ],
+ "total_cost_usd": 0.0871695,
+ "is_error": false
+}

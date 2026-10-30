@@ -40,3 +40,17 @@ The rehearsal steps are in `uat.md` Part R. The UAT seed gains `fixture-post --p
 - **ST-n4.** A refused fixture in `publish done` and `publish resolve` now reads `refused: …`.
 
 **AC3 stays open, and the ticket can't close until it is recorded.** Ting Yu runs R1b during R1. The two probe results, with their `permission_denials` lines, go in these Comments after R1 and before the ticket closes.
+
+### 2026-10-30: conductor, rehearsal Part R in real Chrome (scheduled run, 09:07 to 09:46 SGT)
+
+The real `publish` job ran with `--chrome` against the fixture site on 127.0.0.1:8765, from a detached worktree of main (0410a37), with a temp UAT folder (`/tmp/jura-uat`) and the extension in Ting Yu's Jura profile. No run touched a non-fixture host. Evidence: `jurasolutions/data/growth/uat/rehearsal-2026-10-30/`.
+
+**R1b, recorded (the open question of this ticket).**
+- **Probe 1** allowed only the parameter rules `navigate(url:<fixture>/page.html)` and `file_upload(paths:<work>/*)`, with no domain rule. Even the navigation was denied, so a parameter allow rule isn't honoured for the Chrome tools, and the probe can't speak to `file_upload`. `permission_denials`: `[{"tool_name": "mcp__claude-in-chrome__navigate", "tool_input": {"url": "http://publish-fixture.localhost:8765/page.html", "tabId": 354948134}}, {"tool_name": "mcp__claude-in-chrome__find", "tool_input": {"query": "image file input", "tabId": 354948134}}]`
+- **Probe 2** added `ClaudeInChromeDomain(publish-fixture.localhost:8765)`. Both uploads were allowed, the claimed copy and `outside.png` alike. `permission_denials`: `[]`
+- **So:** a parameter rule can't narrow `file_upload`. Under the domain rule, the upload limit is what the session may read.
+- **Probes 3 and 4 (added):** a `Read` deny rule on a file makes `file_upload` refuse it ("Cannot upload … only files this session is allowed to read"). Probe 3, on a file named `.env`, was also refused by Claude Code's own server-side safety check. The publish argv already denies Read on `.env*`, `.dev.vars*` and the env file under `JURA_ROOT`, so secrets can't be uploaded. Other readable files could be uploaded, and the audit catches any upload that isn't one of the claimed copies.
+
+**The fixture platform itself:** its domain rule had to name the port, `ClaudeInChromeDomain(publish-fixture.localhost:8765)`; the bare host denied `navigate`. Fixed in growth PR #6, with three more defects the run found (uploads, and the audit's reading of real tab context). Each one failed closed.
+
+This ticket can close once PR #6 merges: AC3 has its answer, recorded above.
