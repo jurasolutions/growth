@@ -125,7 +125,8 @@ def test_a_clean_post_claims_before_any_page_tool_posts_and_reports_once(conn, f
 def test_the_run_has_no_add_dir_and_its_images_were_copied_to_scratch(conn, fake, approved):
     fake.scenario([*claim(), *post_steps()], "OK: posted")
     run()
-    assert "--add-dir" not in fake.argv
+    assert fake.argv.count("--add-dir") == 1
+    assert fake.argv[fake.argv.index("--add-dir") + 1] == str(paths.work_dir("publish"))
     handed = json.loads(fake.cli[0]["output"])
     assert handed["images"] and all(paths.is_within(p, paths.work_dir("publish")) for p in handed["images"])
 

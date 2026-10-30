@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 import publish_world as pw
-from jura_growth import caps, config, runner, schedule
+from jura_growth import caps, config, paths, runner, schedule
 from runner_support import settings_with
 
 CHROME = "mcp__claude-in-chrome__"
@@ -67,7 +67,10 @@ def test_publish_argv_keeps_the_runner_flags_and_has_no_add_dir(monkeypatch):
         assert flag in built
     assert built[built.index("--permission-mode") + 1] == "dontAsk"
     assert built[built.index("--setting-sources") + 1] == "project"
-    assert "--add-dir" not in built  # X8: images are copied into scratch instead
+    # X8: images are copied into scratch; the only added folder is that scratch folder, so the
+    # Chrome upload tool may read them (rehearsal R1, 2026-10-30). Never JURA_ROOT.
+    assert built.count("--add-dir") == 1
+    assert built[built.index("--add-dir") + 1] == str(paths.work_dir("publish"))
 
 
 def test_publish_allows_only_the_tab_tools_by_name_and_one_domain_rule_per_facebook_host(monkeypatch):

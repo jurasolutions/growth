@@ -18,3 +18,7 @@ domain rule per host in `hosts.BROWSER_HOSTS` for each platform this build drive
 `browser` mode; the audit is `agents/publish/audit.py`, run by the plug-in's `after_run` before the
 run row is finished, so a failed audit fails the run and pauses `publish`. The host list stays
 explicit until BP-01's check U18 shows how the domain rule treats subdomains.
+
+## Amendment 2026-10-30 (rehearsal R1)
+
+The publish run now gets `--add-dir` for its own scratch folder (`data/growth/work/publish/`) and nothing else. The real Claude in Chrome upload tool refuses a file the session may not read (\"only files this session is allowed to read can be uploaded\"), and the approved image copies live there. The folder holds only the claimed item's copies; `JURA_ROOT` is still never added. In the same rehearsal, the transcript audit learned the real tab-context format: addresses in quotes, a new tab as `("")`, and a trailing `<system-reminder>` block, which closes code review 03 S-10.

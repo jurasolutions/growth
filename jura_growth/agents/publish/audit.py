@@ -70,7 +70,7 @@ from jura_growth.agents.publish.scope import CHROME, DENIED_TOOLS
 from jura_growth.agents.publish.text import normal
 
 NO_BROWSER = re.compile(r"no browsers are connected|browser extension is not connected", re.I)
-BLANK_TABS = ("chrome://newtab/", "chrome://newtab", "about:blank")
+BLANK_TABS = ("chrome://newtab/", "chrome://newtab", "about:blank", "")  # "": a just-created tab (rehearsal R1)
 DISCORD = ("discord.com", "discordapp.com", "discord.gg", "discord.new", "discordapp.net", "discord.media")
 # Tools that don't act on a page, so they name no tab and report no page.
 TABLESS = {"tabs_context_mcp", "tabs_create_mcp", "list_connected_browsers"}
@@ -88,7 +88,13 @@ URL_KEYS = ("url", "uri", "href", "link")
 TAIL_CHARS = 20_000  # how far from a result's end its tab context may start
 MAX_DEPTH = 16  # the deepest JSON tab context read; anything deeper is unreadable
 TAIL_CANDIDATES = 50  # lines starting with { or [ tried, from the end
-_TAB_LINE = re.compile(r"tabId\D{0,3}(\d+)\b[^\n]*?\((\S+)\)\s*$")
+# The extension writes `tabId <n>: "<title>" ("<url>")`, the address in quotes, and `("")` for a new tab
+# (rehearsal R1, 2026-10-30). An address with a quote, space or parenthesis doesn't match, so it reads as
+# unreadable and fails closed.
+_TAB_LINE = re.compile(r'tabId\D{0,3}(\d+)\b[^\n]*?\("?([^"\s()]*)"?\)\s*$')
+# A `<system-reminder>` block the extension appends after the tab context (rehearsal R1). Only blocks at
+# the very end are dropped; page text always comes before the tab context.
+_REMINDER_TAIL = re.compile(r"(?:\s*<system-reminder>(?:(?!</?system-reminder>).)*</system-reminder>)+\s*$", re.S)
 _CREATED = re.compile(r"tab\s*id\D{0,3}(\d+)", re.I)
 _NAVIGATED = re.compile(r"\s*Navigated to (\S+)")
 _HANDED_OUT = re.compile(r'"due"\s*:\s*true|^A-[0-9]+ · ', re.M)
@@ -329,7 +335,7 @@ def _trailing_tabs(text: str) -> list[tuple[str, str]]:
     of its own and running to the end, or trailing `tabId <n>: "<title>" (<url>)` lines. Nothing
     earlier in the result counts. Never raises: anything it can't read gives no pairs."""
     try:
-        tail = text[-TAIL_CHARS:].rstrip()
+        tail = _REMINDER_TAIL.sub("", text[-TAIL_CHARS:]).rstrip()
         return _tail_json(tail) or _tail_lines(tail)
     except Exception:  # noqa: BLE001 - page content is never allowed to break the audit
         return []
