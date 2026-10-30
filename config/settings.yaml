@@ -24,7 +24,7 @@ discord:
 # jura_growth/approval_settings.py; the kinds and `remote` only read this block.
 approvals:
   discord_buttons: false   # buttons checked by Ting Yu (U17); unlocks live outreach (06)
-  post_buttons: false      # send Approve/Skip components on cards (11); needs Dispatch's own webhook
+  post_buttons: true       # send Approve/Skip components on cards (11); Dispatch owns the #approvals webhook since 2026-10-31
   dispatch_builds: false   # Dispatch D6 polls handoffs (10)
   # In the units of jura_growth/caps.py. A value may shorten a deadline, never
   # lengthen it: anything above the cap reads as the cap.
