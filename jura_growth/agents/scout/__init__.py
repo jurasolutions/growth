@@ -34,8 +34,7 @@ def permissions(job: str):
     from jura_growth.headless import Permissions
 
     return Permissions(commands=(
-        "scout today", "scout tools", "scout check", "scout check-contact", "scout shortlist", "scout add-lead",
-        "scout leads",
+        "scout today", "scout tools", "scout check", "scout check-contact", "scout shortlist", "scout leads",
         "outreach status", "outreach follow-ups-due", "outreach queue",
     ))
 

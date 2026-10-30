@@ -54,6 +54,24 @@ The full record of a headless Claude run, kept for 30 days (7 days for publish r
 third-party page text).
 _Avoid_: log
 
+## Scout research
+
+**Candidate**:
+A company the research run looked at today and scored, whether or not it is kept. A run
+compares about 20 of them and submits them as one ranked batch.
+_Avoid_: prospect
+
+**Shortlist**:
+The day's kept leads: every candidate at or above the score threshold, best first, up to
+`research.shortlist`. The code ranks the day once. Candidates not kept are remembered as
+researched for 12 months.
+_Avoid_: daily target
+
+**Hiring evidence**:
+A job posting that shows a candidate hiring for manual work: its URL, title, date seen and the
+duties it names. Evidence only, never a contact source.
+_Avoid_: job lead
+
 ## Mission control
 
 **Mission control**:

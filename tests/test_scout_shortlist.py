@@ -406,6 +406,37 @@ def test_the_research_run_submits_ranked_batches_only():
 
     commands = headless.permissions("scout-research").commands
     assert "scout shortlist" in commands and "scout check-contact" in commands
+    assert "scout add-lead" not in commands  # one lead at a time can't be ranked against the day
+
+
+def research_rules():
+    from jura_growth import config, runner
+
+    argv, _ = runner.claude_command("scout-research", config.settings()["jobs"]["scout-research"])
+    start, middle = argv.index("--allowedTools"), argv.index("--disallowedTools")
+    end = next((i for i in range(middle + 1, len(argv)) if argv[i].startswith("--")), len(argv))
+    return argv[start + 1:middle], argv[middle + 1:end]
+
+
+def test_the_research_run_can_reach_job_boards():
+    """§5.2a point 7: WebSearch and WebFetch are allowed with no domain scope, and
+    nothing denies a job board."""
+    allowed, denied = research_rules()
+    assert "WebSearch" in allowed and "WebFetch" in allowed
+    assert not [rule for rule in denied if rule.startswith(("WebFetch", "WebSearch"))]
+    assert "Bash(jura-growth scout add-lead:*)" in denied
+
+
+def test_the_prompt_sends_the_research_to_job_boards():
+    from jura_growth import paths
+
+    prompt = (paths.prompts_dir() / "scout.md").read_text(encoding="utf-8")
+    for board in ("MyCareersFuture", "JobStreet", "Indeed", "LinkedIn Jobs", "Glassdoor"):
+        assert board in prompt
+    for field in ("hiring_evidence", "score_breakdown", "comparison", "scout shortlist", "scout check-contact"):
+        assert field in prompt
+    for key, weight in WEIGHTS.items():
+        assert f"`{key}` | {weight} |" in prompt
 
 
 # --- checking a contact before the batch, with no side effects --------------------
