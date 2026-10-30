@@ -441,7 +441,8 @@ FOLLOW_UP = {
     "kind": "follow_up",
     "subject": "A short follow-up on free tools",
     "body": "Hi again,\n\nFollowing up on my note last week about delivery orders. The free tools are all at "
-    "jurasolutions.sg/apps, and a reply is all it takes to tell me how orders work for your team.",
+    "jurasolutions.sg/apps, and there's more about us at jurasolutions.sg. If it helps, I'd be glad to hear "
+    "how orders work for your team on a 30-minute call.",
 }
 
 

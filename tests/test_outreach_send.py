@@ -208,14 +208,15 @@ def test_live_send_calls_resend_with_the_right_email(conn, monkeypatch):
     assert request.headers["authorization"] == "Bearer re_test_key_not_real_123456"
     assert request.headers["idempotency-key"] == f"jura-outreach-{seeded['message_id']}"
     payload = json.loads(request.content)
-    assert payload["from"] == '"Ting Yu, Jura Solutions" <tingyu@hello.jurasolutions.sg>'
-    assert payload["to"] == ["info@alderlogistics.sg"] and payload["reply_to"] == "info@jurasolutions.sg"
+    assert payload["from"] == '"Levi Ting, Jura Solutions" <tingyu@hello.jurasolutions.sg>'  # local part from config
+    assert payload["to"] == ["info@alderlogistics.sg"] and payload["reply_to"] == "levi@jurasolutions.sg"
     url = compose.unsubscribe_url("info@alderlogistics.sg", "test-secret")
     assert payload["headers"] == {
         "List-Unsubscribe": f"<{url}>, <mailto:info@jurasolutions.sg?subject=unsubscribe>",
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
     }
-    assert url in payload["text"] and "<img" not in payload["html"] and "utm_source=outreach" in payload["html"]
+    assert url in payload["text"] and "utm_source=outreach" in payload["html"] and "attachments" not in payload
+    assert payload["html"].count("<img") == 1 and 'src="https://jurasolutions.sg/email/jura-mark-96.png"' in payload["html"]
     row = db.one(conn, "SELECT * FROM outreach_messages WHERE id = ?", (seeded["message_id"],))
     assert row["status"] == "sent" and row["mode"] == "live" and row["resend_id"] == "re-msg-1"
     assert row["body_text"] == payload["text"]

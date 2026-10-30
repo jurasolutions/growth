@@ -7,7 +7,7 @@ from click.testing import CliRunner
 
 from jura_growth import brand_check, db, pause
 from jura_growth.agents.outreach import compose, queue as queue_mod
-from jura_growth.agents.scout import registry
+from jura_growth.agents.scout import registry, settings
 from jura_growth.cli import cli
 
 from test_scout_support import add, lead_data, scout_env, seed  # noqa: F401
@@ -55,14 +55,14 @@ REFERENCE = (
     "clean PDF quote in a few minutes: jurasolutions.sg/apps/quote-builder\n\n"
     "It's one of a growing set of small tools at jurasolutions.sg/apps. No sign-up, and what you "
     "type stays in your browser.\n\n"
-    "If part of your week feels like copying the same details between systems, reply and tell me "
-    "about it. That's the work we help Singapore teams automate."
+    "We're Jura Solutions, a small automation consultancy (jurasolutions.sg). If part of your week feels "
+    "like copying the same details between systems, I'd be glad to hear about it on a 30-minute call."
 )
 
 
 def test_code_adds_signature_and_footer():
-    email = make(REFERENCE + "\n\nTing Yu\nJura Solutions · jurasolutions.sg")
-    assert email.text.count("Ting Yu\nJura Solutions · jurasolutions.sg") == 1
+    email = make(REFERENCE + "\n\nLevi Ting\nJura Solutions")
+    assert email.text.count(compose.SIGNATURE) == 1 and email.text.count("Levi Ting") == 1
     assert "You're receiving this because Acme Aircon lists this address for business enquiries on acmeaircon.sg." in email.text
     assert f'Unsubscribe here: {compose.unsubscribe_url("info@acmeaircon.sg", VECTOR_SECRET)}, or reply "unsubscribe".' in email.text
     assert "acmeaircon.sg" not in email.check_text  # the gate sees "its website"
@@ -70,7 +70,7 @@ def test_code_adds_signature_and_footer():
 
 def test_html_has_utm_on_jura_links_only_and_no_pixel():
     email = make(REFERENCE)
-    assert "<img" not in email.html.lower()
+    assert email.html.lower().count("<img") == 1 and f'src="{settings.MARK_URL}"' in email.html
     assert 'href="https://jurasolutions.sg/apps/quote-builder?utm_source=outreach&amp;utm_medium=email&amp;utm_campaign=scout"' in email.html
     assert 'href="https://jurasolutions.sg/apps?utm_source=outreach' in email.html
     unsubscribe = compose.unsubscribe_url("info@acmeaircon.sg", VECTOR_SECRET)
@@ -100,8 +100,8 @@ PASSING = [
         "back to the office at the end of each day. We've made a free delivery order maker that fills in the order "
         "from a few details and keeps it as a PDF: jurasolutions.sg/apps/delivery-order-maker\n\nYou'll find it with "
         "our other small tools at jurasolutions.sg/apps. There's nothing to install, and what you enter stays in your "
-        "browser.\n\nIf your team spends evenings retyping orders, reply and tell me how it works today. That's the "
-        "kind of work we help automate.",
+        "browser.\n\nIf your team spends evenings retyping orders, that's the kind of work we help automate "
+        "(jurasolutions.sg). I'd be glad to hear how it works today on a 30-minute call.",
     ),
     (
         "Bright Smile Dental",
@@ -111,8 +111,9 @@ PASSING = [
         "Hello,\n\nBright Smile Dental's appointments page asks patients to call during opening hours to book or change "
         "a visit. We've built a free booking sheet that keeps the day's appointments in one tidy table you can print or "
         "share: jurasolutions.sg/apps/booking-sheet\n\nIt sits alongside our other free tools at jurasolutions.sg/apps, "
-        "and nothing you type leaves your browser.\n\nIf the front desk spends much of the day between the phone and "
-        "the paper diary, reply and tell me about it. We help clinics in Singapore automate the admin side.",
+        "and nothing you type leaves your browser.\n\nWe help clinics in Singapore automate the admin side "
+        "(jurasolutions.sg). If the front desk spends much of the day between the phone and the paper diary, I'd be "
+        "glad to hear about it on a 30-minute call.",
     ),
     (
         "Tan & Co",
@@ -123,7 +124,7 @@ PASSING = [
         "bookkeeping. Our free invoice checker reads an invoice and flags missing details before it goes into the "
         "books: jurasolutions.sg/apps/invoice-checker\n\nThere are a few more small tools at jurasolutions.sg/apps. "
         "No sign-up is needed.\n\nIf your team still keys in client documents by hand, I'd be glad to hear how "
-        "month-end works for you. Reply any time.",
+        "month-end works for you on a 30-minute call. There's more about us at jurasolutions.sg.",
     ),
     (
         "Blue Harbour Events",
@@ -133,8 +134,9 @@ PASSING = [
         "Hi there,\n\nI saw on Blue Harbour Events' careers page that event crew log their hours on paper timesheets "
         "that someone types up after each show. Our free timesheet tool turns those hours into a clean summary for "
         "payroll: jurasolutions.sg/apps/timesheet-tidy\n\nYou can try it and the rest of our small tools at "
-        "jurasolutions.sg/apps without signing up.\n\nIf payroll week means chasing crew for their hours, reply and "
-        "tell me how it runs. That's the kind of process we automate for teams in Singapore.",
+        "jurasolutions.sg/apps without signing up.\n\nThat's the kind of process we automate for teams in "
+        "Singapore (jurasolutions.sg). If payroll week means chasing crew for their hours, a 30-minute call is a good "
+        "place to start.",
     ),
     (
         "Sunrise Renovation",
@@ -144,8 +146,9 @@ PASSING = [
         "Hi,\n\nSunrise Renovation's site invites homeowners to send floor plans by WhatsApp for a quotation. We've "
         "made a free quote builder that turns your rates and a job's details into a tidy PDF quote: "
         "jurasolutions.sg/apps/quote-builder\n\nIt's part of a small set of free tools at jurasolutions.sg/apps, and "
-        "your rates stay in your browser.\n\nIf preparing quotations eats into your evenings, reply and tell me about "
-        "it. We help Singapore firms automate that kind of repeat work.",
+        "your rates stay in your browser.\n\nWe help Singapore firms automate that kind of repeat work, and there's "
+        "more at jurasolutions.sg. If preparing quotations eats into your evenings, book a 30-minute call and tell me "
+        "about it.",
     ),
     (
         "Golden Wok Group",
@@ -155,8 +158,9 @@ PASSING = [
         "Hi there,\n\nGolden Wok's catering page asks corporate customers to email their orders, which your team then "
         "confirms by hand. We've built a free order tool that turns an order into a clear PDF confirmation: "
         "jurasolutions.sg/apps/delivery-order-maker\n\nIt's one of the free tools at jurasolutions.sg/apps. No sign-up, "
-        "and nothing leaves your browser.\n\nIf orders arrive by email and WhatsApp and get copied into a spreadsheet, "
-        "reply and tell me how it works today. We help F&B teams in Singapore automate that.",
+        "and nothing leaves your browser.\n\nWe help F&B teams in Singapore automate the rest (jurasolutions.sg). If "
+        "orders arrive by email and WhatsApp and get copied into a spreadsheet, I'd be glad to hear how on a 30-minute "
+        "call.",
     ),
     (
         "Peak Property",
@@ -166,8 +170,9 @@ PASSING = [
         "Hello,\n\nPeak Property's listings ask buyers to call an agent to arrange a viewing. Our free booking sheet "
         "keeps the week's viewings in one place, ready to print or share with the team: "
         "jurasolutions.sg/apps/booking-sheet\n\nYou'll find more small tools at jurasolutions.sg/apps. Everything you "
-        "type stays in your browser.\n\nIf arranging viewings means a lot of back and forth on the phone, reply and "
-        "tell me about it. We help agencies automate the admin around their listings.",
+        "type stays in your browser.\n\nWe help agencies automate the admin around their listings, and you can read "
+        "how at jurasolutions.sg. If arranging viewings means a lot of back and forth, I'd be glad to talk it through "
+        "on a 30-minute call.",
     ),
     (
         "Bright Minds Learning Centre",
@@ -177,8 +182,9 @@ PASSING = [
         "Hi there,\n\nBright Minds Learning Centre's website lists part-time tutors who are paid by the lesson, with "
         "hours sent in on a form each month. Our free timesheet tool adds those hours up into a summary you can hand "
         "to payroll: jurasolutions.sg/apps/timesheet-tidy\n\nIt's one of a growing set of free tools at "
-        "jurasolutions.sg/apps. There's no sign-up.\n\nIf month-end means adding up tutor hours by hand, reply and "
-        "tell me how it works now. That's the sort of task we help education centres automate.",
+        "jurasolutions.sg/apps. There's no sign-up.\n\nThat's the sort of task we help education centres automate "
+        "(jurasolutions.sg). If month-end means adding up tutor hours by hand, I'd be glad to hear how it works now on "
+        "a 30-minute call.",
     ),
     (
         "Kim Seng Hardware",
@@ -188,8 +194,8 @@ PASSING = [
         "Hi there,\n\nKim Seng Hardware's ordering page asks trade customers to fax or email a purchase order before "
         "each delivery. We've made a free delivery order maker that turns an order into a clean PDF your drivers can "
         "carry: jurasolutions.sg/apps/delivery-order-maker\n\nThe rest of our small tools are at jurasolutions.sg/apps. "
-        "No sign-up, and your data stays in your browser.\n\nIf orders get retyped into your accounting system, reply "
-        "and tell me about it. We help wholesalers in Singapore automate that step.",
+        "No sign-up, and your data stays in your browser.\n\nWe help wholesalers in Singapore automate the step after "
+        "that (jurasolutions.sg). If orders get retyped into your accounting system, a 30-minute call is a good start.",
     ),
 ]
 
@@ -209,7 +215,7 @@ def check(body, *, subject, company, tool, observations=(), kind="first", tools=
 def test_generated_emails_pass(company, subject, tool, observations, body):
     result = check(body, subject=subject, company=company, tool=tool, observations=observations)
     assert result.passed, result.reasons()
-    assert compose.word_count(compose.tidy_draft(body)) < 120
+    assert compose.word_count(compose.tidy_draft(body)) < 150
 
 
 def test_there_are_ten_passing_samples():
@@ -229,8 +235,8 @@ def has(reasons, fragment):
 
 
 def test_too_long_fails():
-    long_body = REFERENCE + "\n\n" + " ".join(["We map the process first and keep the documentation with you."] * 6)
-    assert has(issues(long_body), "keep it under 120")
+    long_body = REFERENCE + "\n\n" + " ".join(["We map the process first and keep the documentation with you."] * 7)
+    assert has(issues(long_body), "keep it under 150")
 
 
 def test_missing_apps_link_fails():
@@ -260,7 +266,7 @@ def test_third_party_link_fails():
 
 def test_other_jura_links_fail():
     body = REFERENCE + " Book a call at jurasolutions.sg/contact"
-    assert has(issues(body), "Only the tool link")
+    assert has(issues(body), "Only jurasolutions.sg, the tool link")
 
 
 @pytest.mark.parametrize("subject", ["Re: your quote form", "Fwd: quote builder", "FW: tools"])
@@ -294,7 +300,8 @@ def test_first_line_must_be_about_the_company():
 def test_follow_up_may_refer_back_and_skip_the_tool():
     body = (
         "Hi again,\n\nFollowing up on my note last week about quotes. If it helps, the free tools are all at "
-        "jurasolutions.sg/apps, and a reply is all it takes to tell me about your week."
+        "jurasolutions.sg/apps, and there's more about us at jurasolutions.sg. I'd be glad to hear about your week "
+        "on a 30-minute call."
     )
     assert issues(body, subject="A short follow-up on free tools", tool=None, kind="follow_up") == []
 
@@ -305,7 +312,7 @@ def test_body_must_not_carry_its_own_footer():
 
 
 def test_core_rules_still_apply():
-    assert has(issues(REFERENCE.replace("reply and tell me", "reply now and tell me!")), "[exclamation]")
+    assert has(issues(REFERENCE.replace("on a 30-minute call.", "on a 30-minute call!")), "[exclamation]")
     assert has(issues(REFERENCE.replace("small tools", "seamless tools")), "[buzzword]")
     assert has(issues(REFERENCE + " We've helped 40 companies do this."), "[numbers]")
 
@@ -352,7 +359,7 @@ def test_queue_pass_after_one_fix(conn):
     from jura_growth import timeutil
 
     assert message["status"] == "queued" and message["send_after"] == timeutil.today_str()
-    assert message["draft_body"].startswith("Hi there,") and "Ting Yu\nJura Solutions" in message["body_text"]
+    assert message["draft_body"].startswith("Hi there,") and compose.SIGNATURE in message["body_text"]
     assert json.loads(message["qa_json"])["queue"]["status"] == "pass"
     assert db.scalar(conn, "SELECT status FROM leads WHERE id = ?", (lead.lead_id,)) == "queued"
 
@@ -395,7 +402,7 @@ def test_queue_and_preview_commands(isolated, monkeypatch, conn):
     assert result.exit_code == 0 and "queued message 1" in result.output
     preview = CliRunner().invoke(cli, ["outreach", "preview", "1"])
     assert preview.exit_code == 0
-    assert "To:        info@alderlogistics.sg" in preview.output and "Reply-To:  info@jurasolutions.sg" in preview.output
+    assert "To:        info@alderlogistics.sg" in preview.output and "Reply-To:  levi@jurasolutions.sg" in preview.output
     assert "List-Unsubscribe-Post: List-Unsubscribe=One-Click" in preview.output
     assert "You're receiving this because Alder Logistics lists this address" in preview.output
     listing = CliRunner().invoke(cli, ["outreach", "queue-list"])

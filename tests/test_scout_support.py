@@ -148,8 +148,8 @@ def body_for(company: str, tool: str = "delivery-order-maker") -> str:
         f"from a few details and keeps it as a clean PDF: jurasolutions.sg/apps/{tool}\n\n"
         "It sits with our other small tools at jurasolutions.sg/apps. There's nothing to install, and what "
         "you enter stays in your browser.\n\n"
-        "If your team spends evenings retyping orders, reply and tell me how it works today. That's the kind "
-        "of work we help Singapore teams automate."
+        "We're Jura Solutions, a small automation consultancy (jurasolutions.sg). If your team spends "
+        "evenings retyping orders, I'd be glad to hear how it works today on a 30-minute call."
     )
 
 

@@ -80,24 +80,40 @@ never carry a full address (`…@domain`); addresses live only in `contacts`.
 
 ## Block 2: the email
 
-The model writes `subject` and `body`. The code appends:
+The model writes `subject` and `body`. The code appends the call button, Levi's signature and
+the footer (PRD §5.6a, amended 2026-10-31). In the plain-text part:
 
 ```
-Ting Yu
-Jura Solutions · jurasolutions.sg
+Book a 30-minute call: https://jurasolutions.sg/?from=outreach#contact
+
+Levi Ting
+Principal Consultant
+Jura Solutions
+AUTOMATION CONSULTANCY
+levi@jurasolutions.sg
+jurasolutions.sg
+
+We automate the repetitive parts of running a business. Book a discovery session → https://jurasolutions.sg/?from=outreach#contact
 
 You're receiving this because <Company> lists this address for business enquiries on <their
-site>. Not interested? Unsubscribe here: <link>, or reply "unsubscribe".
+site>. Not interested? Unsubscribe here: <link>, or reply "unsubscribe". How we handle your
+details: https://jurasolutions.sg/privacy
 ```
+
+There is no phone number anywhere in the email (Ting Yu, 2026-10-31). The call page is the
+enquiry form on the home page; `from=outreach` labels where the visitor came from.
 
 `<their site>` is the host of the verified source page. The `email` brand channel (links to
 jurasolutions.sg only) adds these checks to the core rules:
 
-- under 120 words in the body (excluding signature and footer);
+- under 150 words in the body (excluding the button, signature and footer);
+- the website, `jurasolutions.sg`, mentioned on its own in the body;
 - exactly one link to a live `/apps/<slug>` tool from the site registry (the chosen one), and
-  exactly one to `/apps`; no other links (follow-ups: the `/apps` link and at most one tool);
-- the signature, the why-you're-receiving line with this company's name, the unsubscribe link
-  and `or reply "unsubscribe"`;
+  exactly one to `/apps`; no other links besides `jurasolutions.sg` (follow-ups: the `/apps`
+  link and at most one tool);
+- an ask for a 30-minute call in the body ("a 30-minute call", or a half-hour one);
+- the call button, the signature, the why-you're-receiving line with this company's name, the
+  unsubscribe link and `or reply "unsubscribe"`;
 - a subject that isn't empty and has no `Re:`/`Fwd:` (questions and sentence case are core
   rules 5 and 8);
 - a first line that names the company (its name or first distinctive word) or uses a keyword
@@ -123,10 +139,23 @@ Test vector (`tests/test_outreach_email.py`): email `info@acme-aircon.sg`, secre
 `3e7f8903444b297047849d51c51d0872460db95817c314d72ea201f381258ba8.EP0Tuk-Ys4HLJC8W75A3xVyxnI3_pNqXpJlcQGS38ns`.
 
 Headers on every live send: `List-Unsubscribe: <url>, <mailto:info@jurasolutions.sg?subject=unsubscribe>`
-and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. HTML is built from the text:
-paragraphs, jurasolutions.sg links with `utm_source=outreach&utm_medium=email&utm_campaign=scout`
-(never on the unsubscribe link, never on another site), no images, no tracking pixel. The plain
-text keeps clean links.
+and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`.
+
+**The HTML part** (`agents/outreach/design.py`) carries the same words as the text. It is one
+white column at most 600 px wide, on table markup with every style inline, built from the
+design-system tokens: the body's paragraphs, a green "Book a 30-minute call" button, the
+signature (the mark, the name block with a text wordmark, a deep-green vertical rule, the email
+address and the site, a hairline, the tagline) and the footer in small grey text. A short
+`<style>` block stacks the signature on a phone and sets dark-mode colours for Apple Mail and
+Outlook. The one image is the mark, a PNG on a white tile served from
+`https://jurasolutions.sg/email/jura-mark-96.png` (email clients block SVG), shown at 48 px with
+alt text, so the email reads in full with images blocked. jurasolutions.sg links carry
+`utm_source=outreach&utm_medium=email&utm_campaign=scout` (never the unsubscribe or privacy
+link, never another site). No tracking pixel, no attachments. The plain text keeps clean links.
+
+`jura-growth outreach sample [--out DIR] [--screenshots] [--mark FILE]` renders an email for a
+made-up company to `sample.html` and `sample.txt`, and with `--screenshots` draws desktop,
+phone, dark-mode and images-blocked PNGs with headless Chrome. Nothing is queued or sent.
 
 In shadow mode without `UNSUBSCRIBE_SECRET`, the link carries a visible placeholder
 signature. Live mode refuses to start without the secret, and every email is recomposed from
@@ -163,8 +192,8 @@ its draft at send time, so the real token is always the one sent.
    keeps one active first email per company), the brand gate again.
 8. Shadow: status `shadow`, posted to `#outreach-sent` as **SHADOW** with the subject and body;
    Resend is never called, and nothing goes into `contacted_domains` (no one was contacted). Live: `POST https://api.resend.com/emails` with the outreach key,
-   from `"Ting Yu, Jura Solutions" <tingyu@<sending_domain>>`, Reply-To
-   info@jurasolutions.sg, text and HTML, the unsubscribe headers and an `Idempotency-Key`; the
+   from `"Levi Ting, Jura Solutions" <<from_local_part>@<sending_domain>>`, Reply-To
+   levi@jurasolutions.sg, text and HTML, the unsubscribe headers and an `Idempotency-Key`; the
    domain goes into `contacted_domains`; `#outreach-sent` gets the domain, subject and first
    line.
 
