@@ -462,10 +462,24 @@ def _post_lead(conn: sqlite3.Connection, lead_id: int) -> None:
     text = (
         f"**New lead {lead_id}: {lead['company']}** ({lead['domain']})\n"
         f"{lead['industry']} · score {lead['score']} · top reason: {reasons[0] if reasons else '-'}\n"
-        f"Contact: {reach}\n"
-        f"Tool: {lead['tool_slug'] or 'none picked yet'}"
     )
+    text += "".join(f"{line}\n" for line in why_kept(lead))
+    text += f"Contact: {reach}\nTool: {lead['tool_slug'] or 'none picked yet'}"
     discord.post(conn, "scout-leads", text, username=USERNAME)
+
+
+def why_kept(lead) -> list[str]:
+    """`Why kept: <comparison>` and `Hiring: <the strongest posting>` (§5.2a point 5),
+    for #scout-leads; nothing for a lead recorded without them."""
+    lines = []
+    if lead["comparison"]:
+        lines.append(f"Why kept: {lead['comparison']}")
+    evidence = json.loads(lead["hiring_evidence_json"] or "[]")
+    best = scoring.strongest(evidence)
+    if best:
+        more = len(evidence) - 1
+        lines.append(f"Hiring: {scoring.describe(best)}" + (f", and {more} more posting{'s' if more != 1 else ''}" if more else ""))
+    return lines
 
 
 # --- reading ---------------------------------------------------------------

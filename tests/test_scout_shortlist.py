@@ -438,3 +438,52 @@ def test_check_contact_refuses_a_job_board_source(isolated, monkeypatch):
     result = check_contact(monkeypatch, contact_page("info@alderlogistics.sg"),
                            "--email", "info@alderlogistics.sg", "--source", "https://sg.jobstreet.com/job/1")
     assert result.exit_code == 1 and "evidence only, never a contact source" in result.output
+
+
+# --- §5.2a point 5: #scout-leads and the digest show why a lead was kept ----------
+
+OLDER = posting("https://www.mycareersfuture.gov.sg/job/admin-1", seen="2026-09-14", title="Admin executive",
+                duties=("key in orders", "prepare invoices", "file delivery orders"))
+NEWER = posting("https://sg.jobstreet.com/job/2002", seen="2026-10-24", title="Data entry clerk",
+                duties=("key in delivery orders",))
+
+
+def test_the_lead_post_shows_the_comparison_and_the_strongest_hiring_evidence(conn, monkeypatch):
+    at(monkeypatch, MONDAY_9AM)
+    submit(conn, [candidate(1, 84, hiring_evidence=[OLDER, NEWER], comparison="Hiring for order entry twice since September")])
+    post = outbox("scout-leads")[-1]["content"]
+    assert "Why kept: Hiring for order entry twice since September" in post
+    assert ("Hiring: Data entry clerk, seen 2026-10-24: key in delivery orders "
+            "(https://sg.jobstreet.com/job/2002), and 1 more posting") in post
+    assert "Admin executive" not in post
+
+
+def test_strongest_is_the_latest_posting_then_the_one_naming_most_duties():
+    from jura_growth.agents.scout import scoring
+
+    assert scoring.strongest([OLDER, NEWER]) == NEWER
+    same_day = posting(seen="2026-10-24", title="Admin", duties=("a", "b", "c"))
+    assert scoring.strongest([NEWER, same_day]) == same_day
+    assert scoring.strongest([]) is None
+
+
+def test_a_lead_added_without_evidence_posts_as_before(conn):
+    add(conn, lead_data(1))
+    post = outbox("scout-leads")[-1]["content"]
+    assert "Hiring:" not in post and "Why kept:" not in post
+
+
+def test_the_digest_shows_the_ranking_and_each_kept_lead(conn, monkeypatch):
+    from jura_growth import timeutil
+
+    at(monkeypatch, MONDAY_9AM)
+    candidates = [candidate(n, s) for n, s in enumerate(SCORES, start=1)]
+    candidates[10]["hiring_evidence"] = [OLDER, NEWER]  # the 95
+    submit(conn, candidates)
+    part = scout.digest(conn, timeutil.today_str())
+    assert "Scout ranked 20 candidates and kept 10 (shortlist 10)" in part["lines"]
+    first = next(line for line in part["lines"] if line.startswith("Kept: "))
+    assert first.startswith("Kept: Kestrel Logistics Pte Ltd (score 95): Candidate 11: current admin hiring")
+    assert "hiring: Data entry clerk, seen 2026-10-24" in first and "https://sg.jobstreet.com/job/2002" in first
+    assert sum(1 for line in part["lines"] if line.startswith("Kept: ")) == 10
+    assert part["figures"]["leads_added"] == 10
