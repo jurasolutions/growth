@@ -1066,3 +1066,12 @@ artifacts: discord-automation/prd/pending/prd-discord-dispatch-growth-control-20
 decisions: Ting Yu 2026-10-29: Mac only, no Windows laptop. Dispatch runs on this Mac: SSH forced command to 127.0.0.1, root-owned authorized_keys; hidden dispatch (gateway, worker, keys) and claude-runner (tasks) users; Seatbelt checks sandbox; LaunchDaemons; GC-0M macOS port before GC-01; GC-08 deploys on this Mac with one paste block. Conductor adopts the recommendation on claude-runner sign-in: allow a setup token readable only by claude-runner if the Keychain sign-in fails under launchd
 questions: -
 evidence:  dispatch tests on macOS 156 passed, 20 failed (all bwrap); sandbox-exec probe ok
+
+## 2026-10-30T09:56+0800 conductor (rehearsal Part R, real Chrome)
+status:    done
+persona:   conductor
+ticket:    bp-01, bp-07
+artifacts: growth PR #6 (crew/fixture-port-rule: 3226e97, c2dbd58, 5952eea, 1729f8e); bp 01 and bp 07 comments; evidence data/growth/uat/rehearsal-2026-10-30/
+decisions: four fail-closed defects found and fixed (fixture port in domain rule; publish --add-dir own scratch folder for file_upload; audit strips quotes from real tab lines; audit ignores a trailing system-reminder and counts a new tab as blank, closing CR03 S-10). Instagram rehearsal scenario and composer added. R1b recorded: parameter rules do not narrow Chrome tools; Read denies do block uploads.
+questions: -
+evidence:  Facebook R1, R2 x6, R3, R4, R5a, R5b, R6 pass; Instagram R1, R2 x6, R6 pass; 3698 passed, 0 skipped
