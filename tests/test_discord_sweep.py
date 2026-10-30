@@ -148,7 +148,7 @@ def test_a_new_lead_shows_a_named_address_masked_with_its_source_page(conn, disc
 
     lead = contact_lead(conn, industry=f"logistics {MARKER}")
 
-    leads._post_lead(conn, lead)
+    leads.post_lead(conn, lead)
 
     [content] = discord_double.contents("scout-leads")
     assert f"{MASKED_ADDRESS} (named address), listed on {SOURCE_PAGE}" in content
@@ -176,7 +176,7 @@ def test_a_lead_whose_reason_names_its_contact_is_clean(conn, discord_double):
         ('["Jane Tan, the director, still keys in every invoice"]', lead),
     )
 
-    leads._post_lead(conn, lead)
+    leads.post_lead(conn, lead)
 
     [content] = discord_double.contents("scout-leads")
     assert "top reason: [name removed], the director, still keys in every invoice" in content

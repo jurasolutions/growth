@@ -7,6 +7,7 @@ one at or above the threshold is kept, best first, up to `research.shortlist`
 
 import json
 
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -162,6 +163,87 @@ def test_a_careers_subdomain_is_not_a_contact_source():
     assert contact.job_ad_problem("https://www.alderlogistics.sg/services/job-sheets") is None
 
 
+# Code review P1: every way round the careers-page rule the review found, and a few more.
+CAREERS_BYPASSES = [
+    "/%63areers/", "/%2563areers/", "/CAREERS", "/Careers/", "/careers.html", "/careers-2/", "/careers_2",
+    "/jobs.php", "/job-openings", "/jobopenings", "/vacancies.aspx", "/vacancy", "/join-our-team.html",
+    "/joinus", "/join-us/", "/career-opportunities", "/en/we-are-hiring", "/work-with-us", "/recruitment",
+    "/index.php?page=careers", "/?p=jobs", "/about#careers", "/about-us/careers/admin",
+]
+
+
+@pytest.mark.parametrize("path", CAREERS_BYPASSES)
+def test_no_spelling_of_a_careers_page_passes(path):
+    assert contact.job_ad_problem(f"https://www.alderlogistics.sg{path}") is not None, path
+
+
+@pytest.mark.parametrize("path", ["/contact", "/contact-us", "/about", "/services/job-sheets", "/job-sheet-printing",
+                                  "/enquiry", "/?lang=en", "/our-team", "/locations#east", "/projects/joinery"])
+def test_ordinary_pages_are_still_contact_sources(path):
+    assert contact.job_ad_problem(f"https://www.alderlogistics.sg{path}") is None, path
+
+
+@pytest.mark.parametrize("path", ["/%63areers/", "/careers.html", "/index.php?page=careers"])
+def test_a_bypass_spelling_is_refused_when_adding_a_lead(conn, path):
+    source = f"https://www.alderlogistics.sg{path}"
+    outcome = add(conn, lead_data(1, contact={"email": "info@alderlogistics.sg", "source_url": source}))
+    assert outcome.status == "rejected" and "evidence only, never a contact source" in outcome.reasons[0]
+
+
+def redirecting(mapping, redirects):
+    def handler(request):
+        key = str(request.url)
+        if key in redirects:
+            return httpx.Response(302, headers={"location": redirects[key]})
+        if key in mapping:
+            return httpx.Response(200, text=mapping[key], headers={"content-type": "text/html"})
+        return httpx.Response(404, text="not found")
+
+    return httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+
+
+@pytest.mark.parametrize("target", ["https://careers.alderlogistics.sg/apply", "https://www.alderlogistics.sg/%63areers/"])
+def test_a_contact_page_that_redirects_to_a_careers_page_is_refused(conn, monkeypatch, target):
+    """Code review P1: the rule is applied to the page the code actually read."""
+    at(monkeypatch, MONDAY_9AM)
+    c = candidate(1, 80)
+    client = redirecting({target: contact_page(c["contact"]["email"])}, {c["contact"]["source_url"]: target})
+    result = submit(conn, [c], client=client)
+    assert result.kept == [] and "evidence only, never a contact source" in result.candidates[0]["reasons"][0]
+    assert db.scalar(conn, "SELECT count(*) FROM contacts") == 0
+
+
+def test_check_contact_refuses_a_redirect_to_a_careers_page(isolated, monkeypatch):
+    from jura_growth.agents.scout import contact as contact_mod
+
+    monkeypatch.setattr(contact_mod, "http_client", lambda: redirecting(
+        {"https://www.alderlogistics.sg/careers.html": contact_page("info@alderlogistics.sg")},
+        {"https://www.alderlogistics.sg/contact": "https://www.alderlogistics.sg/careers.html"}))
+    result = CliRunner().invoke(cli, ["scout", "check-contact", "--website", "https://www.alderlogistics.sg",
+                                      "--email", "info@alderlogistics.sg", "--source", "https://www.alderlogistics.sg/contact"])
+    assert result.exit_code == 1 and "evidence only, never a contact source" in result.output
+
+
+@pytest.mark.parametrize("url", [
+    "https://glints.com/sg/opportunities/jobs/1", "https://www.stjobs.sg/job/1", "https://jobs.ashbyhq.com/acme/1",
+    "https://acme.jobs.personio.com/job/1", "https://www.adzuna.sg/details/1", "https://www.kalibrr.com/c/acme/jobs/1",
+    "https://jobs.jobvite.com/acme/job/1", "https://acme.teamtailor.com/jobs/1", "https://www.manatal.com/x",
+    "https://acme.applytojob.com/apply/1",
+])
+def test_more_job_boards_and_applicant_tracking_hosts_are_known(url):
+    """Code review P5."""
+    assert contact.job_ad_problem(url) is not None
+    assert contact.is_job_board(contact.host_of(url))
+
+
+@pytest.mark.parametrize("local", ["career", "job", "recruitment", "recruit", "talent", "hiring", "apply", "resume", "cv"])
+def test_recruitment_inboxes_are_not_enquiry_addresses(local):
+    """Code review P7."""
+    from jura_growth.role_addresses import not_for_enquiries
+
+    assert not_for_enquiries(f"{local}@alderlogistics.sg")
+
+
 def test_a_contact_form_on_a_job_ad_is_refused(conn):
     data = lead_data(1, contact={"form_url": "https://www.alderlogistics.sg/careers/apply"})
     outcome = add(conn, data)
@@ -179,13 +261,28 @@ def test_hiring_evidence_on_a_job_board_is_allowed(conn):
     assert db.scalar(conn, "SELECT source_url FROM contacts") == "https://www.alderlogistics.sg/contact"
 
 
-@pytest.mark.parametrize("website", ["https://sg.jobstreet.com", "https://www.recruitexpress.com.sg", "https://www.glassdoor.sg", "https://www.indeed.com.sg"])
-def test_a_job_board_or_recruiter_is_never_a_lead_website(conn, website):
+@pytest.mark.parametrize("website", ["https://sg.jobstreet.com", "https://www.glassdoor.sg", "https://www.indeed.com.sg",
+                                     "https://glints.com"])
+def test_a_job_board_is_never_a_lead_website(conn, website):
     domain = contact.site_domain(website)
     data = lead_data(1, website=website, source_urls=[f"{website}/about"],
                      contact={"email": f"info@{domain}", "source_url": f"{website}/contact"})
     outcome = add(conn, data)
     assert outcome.status == "rejected" and "not the company's own website" in outcome.reasons[0]
+
+
+@pytest.mark.parametrize("website", ["https://www.recruitexpress.com.sg", "https://www.sgtalentrecruitment.com"])
+def test_a_recruitment_agency_may_be_a_lead_in_its_own_right(conn, website):
+    """Conductor's decision on review P6: a recruiter is refused only as the contact source
+    for another company. Its own enquiry address on its own contact page is fine."""
+    domain = contact.site_domain(website)
+    data = lead_data(1, website=website, source_urls=[f"{website}/about"],
+                     contact={"email": f"info@{domain}", "source_url": f"{website}/contact"})
+    outcome = add(conn, data)
+    assert outcome.status == "added", outcome.reasons
+    assert contact.job_ad_problem(f"{website}/contact", domain) is None
+    assert contact.job_ad_problem(f"{website}/contact") is not None  # for anyone else, it's a recruiter's site
+    assert contact.job_ad_problem(f"{website}/jobs/123", domain) is not None  # its own job ads stay evidence only
 
 
 # --- §5.2a point 3: the weights ---------------------------------------------
@@ -350,13 +447,135 @@ def bad(conn, candidates, fragment):
         ({"hiring_evidence": [posting(seen="last week")]}, "YYYY-MM-DD"),
         ({"hiring_evidence": [posting(url="mycareersfuture job 12")]}, "http"),
         ({"hiring_evidence": [posting(title="")]}, "title"),
-        ({"hiring_evidence": [posting(duties=("send your CV to jane.tan@alderlogistics.sg",))]}, "email address"),
+        ({"hiring_evidence": [posting(seen="2026-02-30")]}, "YYYY-MM-DD"),
+        # Code review P4: hiring points need evidence from a job board or the company's own site.
+        ({"hiring_evidence": [posting(url="https://example.com/anything")]}, "a known job board or the company's own site"),
+        ({"hiring_evidence": [posting(url="https://www.recruitexpress.com.sg/jobs/1")]}, "a known job board or the company's own site"),
+        ({"hiring_evidence": [posting(url="https://sg.jobstreet.com/job/1\n**fake line**")]}, "http"),
     ],
     ids=lambda v: v if isinstance(v, str) else None,
 )
 def test_a_malformed_candidate_refuses_the_whole_batch(conn, monkeypatch, change, fragment):
     at(monkeypatch, MONDAY_9AM)
     bad(conn, [candidate(2, 70), candidate(1, 80, **change)], fragment)
+
+
+def test_every_bad_candidate_is_listed_at_once(conn, monkeypatch):
+    """Code review N2: the prompt says fix every reason, so the refusal lists them all."""
+    from jura_growth.agents.scout import leads, shortlist
+
+    at(monkeypatch, MONDAY_9AM)
+    batch = [candidate(1, 80, score_breakdown=None), candidate(2, 70), candidate(3, 75, comparison=None)]
+    with pytest.raises(leads.LeadError) as refused:
+        shortlist.submit(conn, {"candidates": batch}, client=client_for(batch))
+    assert "candidate 1 (Alder Logistics Pte Ltd)" in str(refused.value)
+    assert "candidate 3 (Cedar Logistics Pte Ltd)" in str(refused.value)
+    assert "candidate 2" not in str(refused.value)
+
+
+def test_a_posting_on_the_company_own_careers_page_is_good_evidence(conn, monkeypatch):
+    at(monkeypatch, MONDAY_9AM)
+    own = posting("https://www.alderlogistics.sg/careers/admin-assistant")
+    assert len(submit(conn, [candidate(1, 80, hiring_evidence=[own])]).kept) == 1
+
+
+# --- code review P2: no person's name or phone number from a posting is kept ----
+
+
+def test_names_and_phone_numbers_are_stripped_from_postings_and_comparisons(conn, monkeypatch):
+    at(monkeypatch, MONDAY_9AM)
+    evidence = [{
+        "url": "https://sg.jobstreet.com/job/1", "title": "Admin assistant (replacing Ms Tan Mei Ling)",
+        "seen": "2026-10-20",
+        "duties": ["contact Mr Lim Wei Jie at 9123 4567 to apply", "send your CV to jane.tan@alderlogistics.sg"],
+    }]
+    result = submit(conn, [candidate(1, 80, hiring_evidence=evidence,
+                                     comparison="Ms Tan Mei Ling resigned; Mdm Siti at +65 9123 4567 is hiring")])
+    assert len(result.kept) == 1
+    assert any("removed" in note for note in result.kept[0]["notes"])
+    row = db.one(conn, "SELECT hiring_evidence_json, comparison FROM leads")
+    stored = row["hiring_evidence_json"] + row["comparison"]
+    posted = json.dumps(outbox("scout-leads"))
+    for personal in ("Tan Mei Ling", "Lim Wei Jie", "Siti", "9123", "jane.tan"):
+        assert personal not in stored and personal not in posted, personal
+    assert json.loads(row["hiring_evidence_json"])[0]["title"] == "Admin assistant (replacing [name removed])"
+    assert json.loads(row["hiring_evidence_json"])[0]["duties"][0] == "contact [name removed] at [phone removed] to apply"
+
+
+# --- code review S2: a batch cut off part-way changes nothing -------------------
+
+
+class Killed(BaseException):
+    """What a kill looks like from inside: not an httpx error, so nothing catches it."""
+
+
+def dies_after(candidates, pages_served: int):
+    mapping = {c["contact"]["source_url"]: contact_page(c["contact"]["email"]) for c in candidates}
+    served = []
+
+    def handler(request):
+        if len(served) >= pages_served:
+            raise Killed()
+        served.append(str(request.url))
+        return httpx.Response(200, text=mapping[str(request.url)], headers={"content-type": "text/html"})
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_a_batch_killed_part_way_records_nothing_and_leaves_the_day_open(conn, monkeypatch):
+    at(monkeypatch, MONDAY_9AM)
+    candidates = [candidate(n, s) for n, s in enumerate(SCORES, start=1)]
+    with pytest.raises(Killed):
+        submit(conn, candidates, client=dies_after(candidates, 3))
+    for table in ("leads", "contacts", "scout_rejections", "scout_rankings"):
+        assert db.scalar(conn, f"SELECT count(*) FROM {table}") == 0, table
+    assert outbox("scout-leads") == []
+    assert scout.precheck("scout-research", conn) is None
+    assert len(submit(conn, candidates).kept) == 10  # the re-run ranks the day in full
+
+
+def test_a_failure_while_writing_rolls_the_whole_batch_back(conn, monkeypatch):
+    from jura_growth.agents.scout import leads
+
+    at(monkeypatch, MONDAY_9AM)
+    real = leads.remember_rejection
+    calls = []
+
+    def fail_on_third(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 3:
+            raise Killed()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(leads, "remember_rejection", fail_on_third)
+    with pytest.raises(Killed):
+        submit(conn, [candidate(n, s) for n, s in enumerate(SCORES, start=1)])
+    for table in ("leads", "contacts", "scout_rejections", "scout_rankings"):
+        assert db.scalar(conn, f"SELECT count(*) FROM {table}") == 0, table
+    assert outbox("scout-leads") == []
+
+
+# --- code review N1 and N3 -------------------------------------------------------
+
+
+def test_check_reports_a_rejection_only_within_twelve_months(conn, monkeypatch):
+    from jura_growth.agents.scout import leads
+
+    at(monkeypatch, "2025-01-06T09:00:00+08:00")
+    leads.remember_rejection(conn, domain="oldco.sg", company="Old Co", reason="x", score=50)
+    at(monkeypatch, MONDAY_9AM)
+    assert leads.check(conn, "oldco.sg")["looked_at_before"] is None
+    leads.remember_rejection(conn, domain="newco.sg", company="New Co", reason="y", score=55)
+    assert leads.check(conn, "newco.sg")["looked_at_before"]["score"] == 55
+
+
+def test_leads_json_carries_the_evidence_comparison_and_breakdown(isolated, monkeypatch, conn):
+    at(monkeypatch, MONDAY_9AM)
+    submit(conn, [candidate(1, 82)])
+    rows = json.loads(CliRunner().invoke(cli, ["scout", "leads", "--json"]).output)
+    assert rows[0]["comparison"] == "Candidate 1: current admin hiring and paper delivery orders"
+    assert rows[0]["hiring_evidence"] == [posting("https://sg.jobstreet.com/job/8001")]
+    assert rows[0]["score_breakdown"] == breakdown(82)
 
 
 def test_a_below_threshold_candidate_needs_no_comparison(conn, monkeypatch):

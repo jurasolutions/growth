@@ -55,6 +55,8 @@ class Outcome:
     channel: str | None = None
     contact: dict | None = None
     notes: list[str] = field(default_factory=list)
+    # What `apply` writes: a rejection to remember, or the lead to insert.
+    pending: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         return {
@@ -135,7 +137,10 @@ def check(conn: sqlite3.Connection, value: str) -> dict:
         reasons.append("government domain (ICP exclusion)")
     if domain and contact.is_third_party_host(domain):
         reasons.append(f"{domain} is a social, directory or marketplace site, not a company website")
-    rejected = db.one(conn, "SELECT reason, score, rejected_at FROM scout_rejections WHERE domain = ?", (domain or "",))
+    rejected = db.one(
+        conn, "SELECT reason, score, rejected_at FROM scout_rejections WHERE domain = ? AND rejected_at >= ?",
+        (domain or "", rejection_cutoff()),
+    )
     return {
         "value": value,
         "domain": domain,
@@ -172,12 +177,19 @@ def remember_rejection(conn, *, domain: str, company: str, reason: str, score: i
 
 def _reject(conn, outcome: Outcome, reason: str, *, domain: str | None, company: str, remember: bool = True,
             score: int | None = None) -> Outcome:
+    """Mark the outcome rejected. Nothing is written until `apply`."""
     outcome.status = "rejected"
     outcome.reasons.append(reason)
-    if remember and domain:
-        remember_rejection(conn, domain=domain, company=company, reason=reason, score=score)
-    log.event(conn, "scout.rejected", {"domain": domain, "reason": _mask(reason)}, agent="scout")
+    outcome.pending = {
+        "domain": domain,
+        "remember": {"domain": domain, "company": company, "reason": reason, "score": score} if remember and domain else None,
+    }
     return outcome
+
+
+def rejection_cutoff() -> str:
+    """The oldest rejection still remembered: `retention.rejection_months` ago."""
+    return timeutil.stamp(timeutil.now_sgt() - timedelta(days=round(settings.rejection_months() * 30.44)))
 
 
 def added_today(conn: sqlite3.Connection, day: str | None = None) -> int:
@@ -248,8 +260,9 @@ def parse(data) -> Record:
     email = contact.normalise_email(str(raw_contact.get("email") or ""))
 
     try:
-        evidence, evidence_notes = scoring.hiring_evidence(data.get("hiring_evidence"))
-        comparison = scoring.comparison(data.get("comparison"))
+        evidence, evidence_notes = scoring.hiring_evidence(data.get("hiring_evidence"), domain)
+        comparison, comparison_notes = scoring.comparison(data.get("comparison"))
+        evidence_notes += comparison_notes
         breakdown = scoring.breakdown(data.get("score_breakdown"), score, evidence=evidence, has_email=bool(email))
     except scoring.ScoringError as error:
         raise LeadError(str(error)) from None
@@ -263,13 +276,26 @@ def add_lead(conn: sqlite3.Connection, data: dict, *, client: httpx.Client | Non
 
 def keep(conn: sqlite3.Connection, record: Record, *, client: httpx.Client | None = None) -> Outcome:
     """Apply the rules to a parsed record and add it as a lead, or say why not."""
+    outcome = assess(conn, record, client=client)
+    with db.transaction(conn):
+        apply(conn, record, outcome)
+    if outcome.status == "added":
+        post_lead(conn, outcome.lead_id)
+    return outcome
+
+
+def assess(conn: sqlite3.Connection, record: Record, *, client: httpx.Client | None = None,
+           kept_today: int | None = None) -> Outcome:
+    """Every add-lead rule, with nothing written: the fetches and lookups happen
+    here, so `apply` is quick. `status` is "ok" (ready to add) or "rejected".
+    `kept_today` lets a batch count the leads it is about to keep."""
     outcome = Outcome("rejected", notes=list(record.notes))
     data, company, domain, website, score = record.data, record.company, record.domain, record.website, record.score
     observations, sources, reasons = record.observations, record.sources, record.reasons
     raw_contact, email, industry = record.raw_contact, record.email, record.industry
 
     if contact.is_third_party_host(domain):
-        return _reject(conn, outcome, f"{domain} is a social, directory, marketplace, job board or recruiter site, not the company's own website", domain=domain, company=company, score=score)
+        return _reject(conn, outcome, f"{domain} is a social, directory, marketplace or job board site, not the company's own website", domain=domain, company=company, score=score)
     if is_government(domain):
         return _reject(conn, outcome, f"{domain} is a government domain (ICP exclusion)", domain=domain, company=company, score=score)
     if not contact.is_site_root(website):
@@ -294,7 +320,7 @@ def keep(conn: sqlite3.Connection, record: Record, *, client: httpx.Client | Non
         return _reject(conn, outcome, f"score {score} is below {threshold}", domain=domain, company=company, score=score)
 
     shortlist = settings.shortlist()
-    if added_today(conn) >= shortlist:
+    if (added_today(conn) if kept_today is None else kept_today) >= shortlist:
         return _reject(conn, outcome, f"today's shortlist of {shortlist} leads is already kept", domain=None, company=company)
 
     tool_slug = str(data.get("tool") or "").strip() or None
@@ -311,60 +337,76 @@ def keep(conn: sqlite3.Connection, record: Record, *, client: httpx.Client | Non
         channel, status = "email", "new"
     elif raw_contact.get("form_url"):
         form_url = str(raw_contact["form_url"]).strip()
-        ad = contact.job_ad_problem(form_url)
+        ad = contact.job_ad_problem(form_url, domain)
         if ad:
             return _reject(conn, outcome, ad, domain=domain, company=company, remember=False)
         if not contact.on_domain(form_url, domain):
             return _reject(conn, outcome, f"the contact form must be on the company's own website ({domain})", domain=domain, company=company, remember=False)
         channel, status = "form", "form_only"
 
-    now = timeutil.stamp()
-    with db.transaction(conn):
-        cursor = conn.execute(
-            "INSERT INTO leads (company, display_name, domain, website, industry, size_signal, summary, "
-            "observations_json, source_urls_json, score, score_reasons, channel, form_url, tool_slug, status, "
-            "hiring_evidence_json, comparison, score_breakdown_json, run_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                company,
-                str(data.get("display_name") or "").strip() or display_name(company),
-                domain,
-                website,
-                industry,
-                str(data.get("size_signal") or "").strip() or None,
-                str(data.get("what_they_do") or data.get("summary") or "").strip() or None,
-                json.dumps(observations, ensure_ascii=False),
-                json.dumps(sources, ensure_ascii=False),
-                score,
-                json.dumps(reasons, ensure_ascii=False),
-                channel,
-                form_url,
-                tool_slug,
-                status,
-                json.dumps(record.hiring_evidence, ensure_ascii=False),
-                record.comparison,
-                json.dumps(record.breakdown) if record.breakdown is not None else None,
-                log.current_run_id(),
-                now,
-                now,
-            ),
-        )
-        lead_id = cursor.lastrowid
-        if contact_row:
-            conn.execute(
-                "INSERT INTO contacts (lead_id, email, email_hash, source_url, kind, mx_ok, verified_at, created_at) "
-                "VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
-                (lead_id, contact_row["email"], suppression.email_hash(contact_row["email"]),
-                 contact_row["source_url"], contact_row["kind"], now, now),
-            )
-        conn.execute("DELETE FROM scout_rejections WHERE domain = ?", (domain,))
-
-    outcome.status = "added"
-    outcome.lead_id = lead_id
+    outcome.status = "ok"
     outcome.channel = channel
     outcome.contact = contact_row or ({"form_url": form_url} if form_url else None)
+    outcome.pending = {"insert": {"channel": channel, "status": status, "form_url": form_url,
+                                  "contact_row": contact_row, "tool_slug": tool_slug}}
+    return outcome
+
+
+def apply(conn: sqlite3.Connection, record: Record, outcome: Outcome) -> Outcome:
+    """Write what `assess` decided. The caller holds the transaction."""
+    if outcome.status == "rejected":
+        remembered = outcome.pending.get("remember")
+        if remembered:
+            remember_rejection(conn, **remembered)
+        log.event(conn, "scout.rejected", {"domain": outcome.pending.get("domain"), "reason": _mask("; ".join(outcome.reasons))},
+                  agent="scout")
+        return outcome
+    plan = outcome.pending["insert"]
+    data, domain, score = record.data, record.domain, record.score
+    channel, status, form_url, contact_row, tool_slug = (
+        plan["channel"], plan["status"], plan["form_url"], plan["contact_row"], plan["tool_slug"])
+    now = timeutil.stamp()
+    cursor = conn.execute(
+        "INSERT INTO leads (company, display_name, domain, website, industry, size_signal, summary, "
+        "observations_json, source_urls_json, score, score_reasons, channel, form_url, tool_slug, status, "
+        "hiring_evidence_json, comparison, score_breakdown_json, run_id, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            record.company,
+            str(data.get("display_name") or "").strip() or display_name(record.company),
+            domain,
+            record.website,
+            record.industry,
+            str(data.get("size_signal") or "").strip() or None,
+            str(data.get("what_they_do") or data.get("summary") or "").strip() or None,
+            json.dumps(record.observations, ensure_ascii=False),
+            json.dumps(record.sources, ensure_ascii=False),
+            score,
+            json.dumps(record.reasons, ensure_ascii=False),
+            channel,
+            form_url,
+            tool_slug,
+            status,
+            json.dumps(record.hiring_evidence, ensure_ascii=False),
+            record.comparison,
+            json.dumps(record.breakdown) if record.breakdown is not None else None,
+            log.current_run_id(),
+            now,
+            now,
+        ),
+    )
+    lead_id = cursor.lastrowid
+    if contact_row:
+        conn.execute(
+            "INSERT INTO contacts (lead_id, email, email_hash, source_url, kind, mx_ok, verified_at, created_at) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+            (lead_id, contact_row["email"], suppression.email_hash(contact_row["email"]),
+             contact_row["source_url"], contact_row["kind"], now, now),
+        )
+    conn.execute("DELETE FROM scout_rejections WHERE domain = ?", (domain,))
+    outcome.status = "added"
+    outcome.lead_id = lead_id
     log.event(conn, "scout.lead", {"lead": lead_id, "domain": domain, "channel": channel, "score": score}, agent="scout")
-    _post_lead(conn, lead_id)
     return outcome
 
 
@@ -378,7 +420,7 @@ def check_contact(conn: sqlite3.Connection, *, website: str, email: str, source:
     if not domain or "." not in domain:
         verdict = "`--website` must be the company's own website URL"
     elif contact.is_third_party_host(domain):
-        verdict = f"{domain} is a social, directory, marketplace, job board or recruiter site, not the company's own website"
+        verdict = f"{domain} is a social, directory, marketplace or job board site, not the company's own website"
     else:
         verdict = _verify_email(conn, outcome, email, raw, domain, client)
     if isinstance(verdict, str):
@@ -399,7 +441,7 @@ def _verify_email(conn, outcome: Outcome, email: str, raw: dict, domain: str, cl
     source = str(raw.get("source_url") or "").strip()
     if not source:
         return "an email contact needs `source_url`: the page on the company's own site that lists it"
-    ad = contact.job_ad_problem(source)
+    ad = contact.job_ad_problem(source, domain)
     if ad:
         return ad
     if not contact.on_domain(source, domain):
@@ -408,6 +450,10 @@ def _verify_email(conn, outcome: Outcome, email: str, raw: dict, domain: str, cl
     page = contact.verify_on_page(email, source, domain, client=client)
     if page.error:
         return f"could not verify {email}: {page.error}"
+    # The page the code read, after any redirect, is held to the same rule.
+    ad = contact.job_ad_problem(page.final_url or source, domain)
+    if ad:
+        return f"{source} led to {page.final_url}, and {ad}"
     if not page.found:
         listed = sorted(a for a in page.addresses if not contact.not_for_enquiries(a))
         hint = f" Addresses that page does publish: {', '.join(listed)}." if listed else ""
@@ -447,7 +493,7 @@ def _verify_email(conn, outcome: Outcome, email: str, raw: dict, domain: str, cl
     return {"email": email, "source_url": str(page.final_url or source), "kind": kind}
 
 
-def _post_lead(conn: sqlite3.Connection, lead_id: int) -> None:
+def post_lead(conn: sqlite3.Connection, lead_id: int) -> None:
     lead = db.one(conn, "SELECT * FROM leads WHERE id = ?", (lead_id,))
     reasons = json.loads(lead["score_reasons"])
     row = db.one(conn, "SELECT email, kind, source_url FROM contacts WHERE lead_id = ?", (lead_id,))
@@ -508,7 +554,8 @@ def recent(conn: sqlite3.Connection, *, days: int = 14, status: str | None = Non
     since = timeutil.stamp(timeutil.now_sgt() - timedelta(days=days))
     sql = (
         "SELECT l.id, l.company, l.display_name, l.domain, l.industry, l.score, l.channel, l.status, l.tool_slug, "
-        "l.observations_json, l.form_url, l.created_at, c.email, c.kind, c.source_url FROM leads l "
+        "l.observations_json, l.form_url, l.created_at, l.hiring_evidence_json, l.comparison, l.score_breakdown_json, "
+        "c.email, c.kind, c.source_url FROM leads l "
         "LEFT JOIN contacts c ON c.lead_id = l.id WHERE l.created_at >= ?"
     )
     params: list = [since]
@@ -519,4 +566,7 @@ def recent(conn: sqlite3.Connection, *, days: int = 14, status: str | None = Non
     found = db.rows(conn, sql, tuple(params))
     for row in found:
         row["observations"] = json.loads(row.pop("observations_json") or "[]")
+        row["hiring_evidence"] = json.loads(row.pop("hiring_evidence_json") or "[]")
+        breakdown = row.pop("score_breakdown_json")
+        row["score_breakdown"] = json.loads(breakdown) if breakdown else None
     return found

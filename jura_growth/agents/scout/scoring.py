@@ -2,10 +2,13 @@
 
 - `WEIGHTS` is the §5.2a table. A score breakdown gives points per factor,
   each from 0 to its weight, adding up to the candidate's score.
-- Hiring evidence is a list of postings, `{url, title, seen, duties}`, from a
-  job board or a careers page. It is evidence only: no address is ever taken
-  from it (contact.job_ad_problem), and it may not hold one.
+- Hiring evidence is a list of postings, `{url, title, seen, duties}`, on a
+  known job board or the company's own site (code review P4). It is evidence
+  only: no address is ever taken from it (contact.job_ad_problem).
 - A comparison is one line on why a kept lead beat the day's other candidates.
+- A person's name (with a title), phone number or email address in a posting's
+  title or duties, or in a comparison, is removed on intake (`privacy.strip_personal`),
+  so it is never stored or posted (code review P2).
 
 Every check raises `LeadError` (from leads.py), so a bad record is a usage
 error and changes nothing.
@@ -16,7 +19,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from jura_growth import timeutil
+from jura_growth import privacy, timeutil
 from jura_growth.agents.scout import contact
 
 WEIGHTS: dict[str, int] = {
@@ -43,9 +46,11 @@ def _one_line(value) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
-def _no_address(text: str, where: str) -> None:
-    if contact.EMAIL_RE.search(text):
-        raise ScoringError(f"{where} holds an email address; hiring evidence and comparisons never carry one")
+REMOVED_NOTE = "removed a person's name, phone number or email address from {where}; postings are evidence about roles, never people"
+
+
+def _clean(text: str) -> tuple[str, bool]:
+    return privacy.strip_personal(text)
 
 
 def breakdown(value, score: int, *, evidence: list, has_email: bool) -> dict[str, int] | None:
@@ -78,9 +83,10 @@ def breakdown(value, score: int, *, evidence: list, has_email: bool) -> dict[str
     return parts
 
 
-def hiring_evidence(value) -> tuple[list[dict], list[str]]:
-    """The validated postings and any notes. Each needs an http(s) URL, a title,
-    the date seen (YYYY-MM-DD, not in the future) and the duties it names."""
+def hiring_evidence(value, domain: str | None = None) -> tuple[list[dict], list[str]]:
+    """The validated postings and any notes. Each needs an http(s) URL on a known
+    job board or the company's own site (`domain`), a title, the date seen (a real
+    YYYY-MM-DD date, not in the future) and the duties it names."""
     if value is None:
         return [], []
     if not isinstance(value, list):
@@ -96,8 +102,14 @@ def hiring_evidence(value) -> tuple[list[dict], list[str]]:
         if not isinstance(item, dict):
             raise ScoringError(f"{where} must be an object: {{url, title, seen, duties}}")
         url = str(item.get("url") or "").strip()
-        if not re.match(r"^https?://[^\s/]+\.[^\s/]+", url, re.I):
-            raise ScoringError(f"{where}: `url` must be the posting's http(s) address")
+        if not re.fullmatch(r"https?://[^\s/]+\.[^\s/]+\S*", url, re.I):
+            raise ScoringError(f"{where}: `url` must be the posting's http(s) address, with no spaces")
+        host = contact.host_of(url)
+        if not (contact.is_job_board(host) or (domain and contact.on_domain(url, domain))):
+            raise ScoringError(
+                f"{where}: {url} must be on a known job board or the company's own site ({domain or 'its website'}); "
+                "a posting elsewhere can't be checked"
+            )
         title = _one_line(item.get("title"))
         if not title:
             raise ScoringError(f"{where}: `title` is the job title the posting gives")
@@ -120,19 +132,24 @@ def hiring_evidence(value) -> tuple[list[dict], list[str]]:
         duties = [_one_line(d) for d in duties if _one_line(d)][:DUTIES_MAX]
         if any(len(d) > DUTY_CHARS for d in duties):
             raise ScoringError(f"{where}: keep each duty under {DUTY_CHARS} characters")
-        _no_address(" ".join([url, title, *duties]), where)
+        title, removed = _clean(title)
+        cleaned = [_clean(d) for d in duties]
+        duties = [d for d, _ in cleaned]
+        if removed or any(r for _, r in cleaned):
+            notes.append(REMOVED_NOTE.format(where=where))
         found.append({"url": url, "title": title, "seen": seen, "duties": duties})
     return found, notes
 
 
-def comparison(value) -> str | None:
+def comparison(value) -> tuple[str | None, list[str]]:
+    """The comparison line, with any person's details removed, and any notes."""
     text = _one_line(value)
     if not text:
-        return None
+        return None, []
     if len(text) > COMPARISON_CHARS or "\n" in str(value).strip():
         raise ScoringError(f"`comparison` is one line of at most {COMPARISON_CHARS} characters")
-    _no_address(text, "`comparison`")
-    return text
+    text, removed = _clean(text)
+    return text, [REMOVED_NOTE.format(where="`comparison`")] if removed else []
 
 
 def strongest(evidence: list[dict]) -> dict | None:

@@ -96,8 +96,9 @@ time; a smaller batch is fine.
    `looked_at_before` is set: it was researched within 12 months and not kept.
 3. **Record the hiring evidence.** For every relevant posting, note its URL, the job title, the
    date you saw it (`seen`, today's date) and the duties it names, in the posting's own words
-   where you can ("key in orders", "prepare invoices", "chase timesheets"). Never copy names,
-   phone numbers or email addresses from a posting.
+   where you can ("key in orders", "prepare invoices", "chase timesheets"). The URL must be
+   the posting on a job board or on the company's own site; the code refuses any other. Never
+   copy names, phone numbers or email addresses from a posting (the code removes any it finds).
 4. **Visit its own website** with web fetch: home, about, services, and the contact page.
    Note what they do, size signals (team page, branches, fleet), and 1–3 specific observations
    relevant to automation, for example:
@@ -113,8 +114,9 @@ time; a smaller batch is fine.
    up. If it is refused for another reason, record the candidate without `contact`, or with
    `{"form_url": ...}` for a contact form on its own site.
 6. **Exclude:** government bodies (the code also refuses .gov.sg), group HQs of listed
-   companies, IT consultancies and automation agencies (competitors), recruitment agencies,
-   and anyone not in Singapore.
+   companies, IT consultancies and automation agencies (competitors), and anyone not in
+   Singapore. A recruitment agency may be a candidate in its own right, with its own enquiry
+   address; it is never the source of another company's address.
 7. **Score every candidate 0–100** with the weights from `scout today` (PRD §5.2a), with
    written reasons, and give the points per factor in `score_breakdown`. They must add up to
    `score`, and the code checks each against its weight:
@@ -166,9 +168,12 @@ time; a smaller batch is fine.
     ```
 
     Use the industry name exactly as `scout today` gave it.
-11. **Submit it once:** `jura-growth scout shortlist --file <path> --json`. If it refuses the
-    whole batch (a usage error), fix every reason it lists and submit again; nothing was
-    recorded. Once it has ranked the batch, the day is done: a second batch is refused.
+11. **Submit it once:** `jura-growth scout shortlist --file <path> --json`, with a Bash timeout
+    of 10 minutes (600000 ms): it fetches each kept candidate's contact page and checks its MX
+    record. If it refuses the whole batch (a usage error), it lists every reason at once: fix
+    them all and submit again; nothing was recorded. If the command is cut off, nothing was
+    recorded either: submit the same file again. Once it has ranked the batch, the day is done:
+    a second batch is refused.
     The result lists each candidate as `kept` (with its `lead_id`), `not_kept`, `rejected`
     (a contact rule or already known) or `skipped` (researched before).
 12. For each `kept` lead whose contact is an email address, if there is queue room, outreach

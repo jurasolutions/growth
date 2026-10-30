@@ -80,9 +80,14 @@ JOB_BOARDS = (
     "jobscentral.com.sg", "hiredly.com", "efinancialcareers.sg", "gumtree.sg", "nodeflair.com",
     "lever.co", "greenhouse.io", "workable.com", "myworkdayjobs.com", "smartrecruiters.com",
     "recruitee.com", "breezy.hr", "bamboohr.com", "zohorecruit.com", "careers-page.com",
+    "glints.com", "stjobs.sg", "adzuna.sg", "kalibrr.com", "ashbyhq.com", "jobvite.com",
+    "teamtailor.com", "personio.com", "personio.de", "manatal.com", "applytojob.com", "jazzhr.com",
 )
 # Recruitment agencies: an ad they place names their own inbox, never the
-# hiring company's. Any host with "recruit" in its name counts too.
+# hiring company's, so a recruiter's site is never the contact source for
+# another company. A recruiter may still be a lead in its own right (its own
+# enquiry address, on its own contact page). Any host with "recruit" in its
+# name counts as a recruiter too.
 RECRUITERS = (
     "recruitexpress.com.sg", "kellyservices.com.sg", "persolkelly.com.sg", "persolsingapore.com",
     "adecco.com.sg", "adecco.com", "randstad.com.sg", "manpower.com.sg", "manpowergroup.sg",
@@ -90,14 +95,20 @@ RECRUITERS = (
     "roberthalf.com.sg", "gmprecruit.com", "trustrecruit.com.sg", "theoneglobal.com.sg",
     "achieversresources.com", "staffinggroup.sg",
 )
-NOT_OWN_SITE += JOB_BOARDS + RECRUITERS
+NOT_OWN_SITE += JOB_BOARDS
 
-# A page on any site whose path or host says it is a job ad or careers page.
-JOB_AD_SEGMENTS = frozenset({
-    "career", "careers", "job", "jobs", "vacancy", "vacancies", "join-us", "joinus", "join-our-team",
-    "hiring", "recruitment", "work-with-us", "opportunities", "job-listing", "viewjob",
-})
-JOB_AD_SUBDOMAINS = ("careers", "career", "jobs", "job", "apply", "hiring", "recruit", "recruitment")
+# A careers or job-ad page, read from the words of its decoded, case-folded
+# path, query and fragment (code review P1): any word starting with one of
+# these stems, "job"/"jobs" (but not "job sheets" and the like), "join us",
+# "join our team" and "work with us".
+JOB_AD_STEMS = ("career", "vacanc", "recruit", "hiring", "viewjob", "joinus", "jobopening", "joblisting",
+                "jobvacanc", "jobpost", "jobboard")
+JOB_WORDS = frozenset({"job", "jobs"})
+# "job" followed by one of these is paperwork, not hiring: job sheets, job cards.
+JOB_PAPERWORK = frozenset({"sheet", "sheets", "card", "cards", "order", "orders", "ticket", "tickets", "costing",
+                           "costs", "site", "sites", "report", "reports"})
+JOB_AD_PHRASES = (("join", "us"), ("join", "our"), ("join", "the", "team"), ("work", "with", "us"))
+JOB_AD_SUBDOMAINS = ("careers", "career", "jobs", "job", "apply", "hiring", "recruit", "recruitment", "talent")
 EVIDENCE_ONLY = "job boards, recruiters and job ads are evidence only, never a contact source"
 
 
@@ -158,22 +169,63 @@ def is_job_board(domain: str) -> bool:
 
 
 def is_third_party_host(domain: str) -> bool:
-    return _under(domain, NOT_OWN_SITE) or is_recruiter(domain)
+    return _under(domain, NOT_OWN_SITE)
 
 
-def job_ad_problem(url: str) -> str | None:
-    """Why `url` may not be a contact source, or None. A job board, an
-    applicant tracking system, a recruiter, or a careers or job-ad page on
-    any site, the company's own included (§5.2a point 6)."""
+def _decoded(value: str) -> str:
+    """Percent-decoded until it stops changing (so %2563 is "c" too), case-folded."""
+    for _ in range(5):
+        decoded = unquote(value)
+        if decoded == value:
+            break
+        value = decoded
+    return value.casefold()
+
+
+def _words(url: str) -> list[str]:
+    parts = _split(url)
+    text = " ".join(_decoded(p) for p in (parts.path, parts.query, parts.fragment))
+    return [w for w in re.split(r"[^0-9a-z]+", text) if w]
+
+
+def is_job_ad_page(url: str) -> bool:
+    """A careers or job-ad page by its host or its words, however it is spelled:
+    /%63areers/, /careers.html, /careers-2/, /jobs.php, /join-our-team, ?page=careers ..."""
+    host = host_of(url)
+    if host and host.split(".")[0] in JOB_AD_SUBDOMAINS:
+        return True
+    words = _words(url)
+    for i, word in enumerate(words):
+        if word.startswith(JOB_AD_STEMS):
+            return True
+        if word in JOB_WORDS and (i + 1 == len(words) or words[i + 1] not in JOB_PAPERWORK):
+            return True
+        for phrase in JOB_AD_PHRASES:
+            if tuple(words[i : i + len(phrase)]) == phrase:
+                return True
+    return False
+
+
+def job_ad_problem(url: str, domain: str | None = None) -> str | None:
+    """Why `url` may not be the page a contact address or form comes from, or
+    None (§5.2a point 6). The one rule for add-lead, `scout shortlist` and
+    `scout check-contact`, applied to the submitted page and again to the page
+    the code actually read after redirects:
+
+    - a job board or an applicant tracking system;
+    - a recruiter's site, unless the recruiter is the lead itself (`domain`);
+    - a careers or job-ad page on any site, the company's own included.
+
+    It refuses only the contact source: a lead whose site has a careers section
+    is fine, as long as the address comes from another page."""
     host = host_of(url)
     if not host:
         return None
-    if is_job_board(host) or is_recruiter(host):
-        return f"{url} is on a job board or a recruiter's site: {EVIDENCE_ONLY}"
-    if host.split(".")[0] in JOB_AD_SUBDOMAINS:
-        return f"{url} is a careers or job-ad page: {EVIDENCE_ONLY}"
-    segments = {s.lower() for s in _split(url).path.split("/") if s}
-    if segments & JOB_AD_SEGMENTS:
+    if is_job_board(host):
+        return f"{url} is on a job board: {EVIDENCE_ONLY}"
+    if is_recruiter(host) and not (domain and on_domain(url, domain)):
+        return f"{url} is on a recruiter's site: {EVIDENCE_ONLY}"
+    if is_job_ad_page(url):
         return f"{url} is a careers or job-ad page: {EVIDENCE_ONLY}"
     return None
 

@@ -88,6 +88,12 @@ MIN_NAME_PART = 2
 
 NAME = "[name removed]"
 PHONE = "[phone removed]"
+ADDRESS = "[address removed]"
+# A person named with a title: "Ms Tan Mei Ling", "Mr Lim's", "Dr. Wong", "Mdm Siti".
+HONORIFIC_NAME_RE = re.compile(
+    r"\b(?:Mr|Mrs|Ms|Mdm|Miss|Madam|Mister|Dr|Prof|MR|MRS|MS|MDM|DR)\b\.?\s+"
+    r"(?P<name>[A-Z][\w'’-]*(?:\s+[A-Z][\w'’-]*){0,3})"
+)
 REMOVED = "[removed]"
 FINANCE = "[removed: personal finance]"
 
@@ -113,6 +119,16 @@ def for_discord(text: str, *, own_copy: Iterable[str] = ()) -> str:
                 groups.add(frozenset(parts))
     names = _NameMatcher(groups, _companies | _kept_names)
     return "".join(_mask(part, is_own, names) for part, is_own in _split(text, own))
+
+
+def strip_personal(text: str) -> tuple[str, bool]:
+    """`text` with any titled person's name, phone number and email address
+    replaced by a placeholder, and whether anything was removed. For text taken
+    from a job posting (scout PRD §5.2a point 5), which is stored and posted."""
+    out = EMAIL_RE.sub(ADDRESS, text)
+    out = HONORIFIC_NAME_RE.sub(NAME, out)
+    out = _mask_phones(out)
+    return out, out != text
 
 
 def masked_address(email: str) -> str:

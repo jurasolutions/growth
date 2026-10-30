@@ -19,7 +19,8 @@ OTHER_ROLES = (
     "frontdesk", "front.desk", "admissions", "enrol", "enroll", "hr", "careers", "jobs",
 )
 # Shared inboxes that are not for enquiries: system senders and policy desks.
-NOT_FOR_ENQUIRIES = ("careers", "jobs", "hr", "privacy", "dpo", "abuse", "noreply", "no-reply", "donotreply", "postmaster", "webmaster")
+NOT_FOR_ENQUIRIES = ("careers", "career", "jobs", "job", "hr", "recruit", "talent", "hiring", "apply", "resume",
+                     "cv", "privacy", "dpo", "abuse", "noreply", "no-reply", "donotreply", "postmaster", "webmaster")
 
 
 def local_part(email: str) -> str:
