@@ -355,31 +355,52 @@ def name_parts(address: str | None) -> list[str]:
 
 # Guesses about the company's people, which a job posting tempts (scout PRD
 # §5.2a point 5: mention a public posting only in neutral, factual terms).
-# Staffing words are guesses wherever they appear; workload words only when
-# they are about "you" or "your" people, so "Many teams struggle with paper
-# delivery orders" is still a fair thing to say.
+# Staffing words are guesses wherever they appear. Workload words count only
+# when they are about "you" or "your" people, so "Many teams struggle with paper
+# delivery orders" is a fair thing to say, and "busy" only with a staffing
+# subject ("your team looks busy", never "the busy season"). A conditional
+# ("If you're busy, ...", "If your team is stretched at month-end, ...") is
+# courtesy, not a guess (re-review R4).
 PEOPLE_GUESS_RE = re.compile(
     r"\b(?:stretched(?:\s+too)?\s+thin|short[- ]?(?:staffed|handed)|short\s+of\s+(?:hands|staff|people)"
     r"|under[- ]?staffed|over[- ]?worked|burn(?:ed|t)?[- ]?out|high\s+(?:staff\s+)?turnover"
-    r"|(?:last|previous|old|former)\s+(?:\w+\s+){0,3}(?:left|quit|resigned|moved\s+on)"
-    r"|you(?:r|'re|\u2019re)?\b(?:\W+\w+){0,4}?\W+(?:stretched|struggl\w*|overwhelm\w*|swamped|overloaded"
-    r"|drowning|busy|stressed|exhausted))\b",
+    r"|(?:last|previous|old|former)\s+(?:\w+\s+){0,3}(?:left|quit|resigned|moved\s+on))\b",
     re.I,
 )
+WORKLOAD_GUESS_RE = re.compile(
+    r"\byou(?:r|'re|\u2019re)?\b(?:\W+\w+){0,4}?\W+(?:stretched|struggl\w*|overwhelm\w*|swamped|overloaded"
+    r"|drowning|stressed|exhausted)\b"
+    r"|\byour\s+(?:\w+\s+)?(?:team|staff|admin|office|people|crew|colleagues|employees|workers)\s+"
+    r"(?:is|are|looks?|seems?|must\s+be|appears?|gets?)\s+(?:so\s+|very\s+|really\s+|quite\s+)?busy\b",
+    re.I,
+)
+CONDITIONAL_RE = re.compile(r"\b(?:if|when|whenever|in\s+case|should)\b", re.I)
+
+
+def people_guess(draft: str) -> str | None:
+    """The first guess about the company's people in `draft`, or None."""
+    found = PEOPLE_GUESS_RE.search(draft)
+    if found:
+        return found.group(0)
+    for match in WORKLOAD_GUESS_RE.finditer(draft):
+        sentence_start = max(draft.rfind(mark, 0, match.start()) for mark in ".!?\n") + 1
+        if not CONDITIONAL_RE.search(draft[sentence_start : match.start()]):
+            return match.group(0)
+    return None
 
 
 def _person_issues(draft: str, company: str | None, recipient: str | None) -> list[brand_check.Issue]:
     Issue = brand_check.Issue
     found = []
-    guess = PEOPLE_GUESS_RE.search(draft)
+    guess = people_guess(draft)
     if guess:
         found.append(Issue("channel", "No guesses about the company's people or workload; mention a job posting only as a "
-                                      "plain fact", guess.group(0)))
-    for named in privacy.HONORIFIC_NAME_RE.finditer(draft):
-        if named.group("name").strip().lower() != settings.SIGNATURE_NAME.lower():  # the sender may name himself
-            found.append(Issue("channel", "The email names a person; write about the company and its posting, never "
-                                          "the people in it", named.group(0)))
-            break
+                                      "plain fact", guess))
+    # The sender may name himself, and a company may carry a title in its name ("Dr Aircon").
+    named = privacy.titled_names(draft, keep=[settings.SIGNATURE_NAME, company or ""])
+    if named:
+        found.append(Issue("channel", "The email names a person; write about the company and its posting, never "
+                                      "the people in it", named[0].group(0)))
     greeting = greets_a_person(draft, company)
     if greeting:
         found.append(Issue("channel", "Greet the company, not a person: write “Hi there,” or “Hello <Company> team,”", greeting))

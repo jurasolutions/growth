@@ -362,6 +362,28 @@ def test_a_person_named_in_the_email_fails(sentence):
     assert has(issues(with_posting(sentence)), "names a person")
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # Re-review R3 and R4: none of these is about a person, and a false failure can pause outreach.
+        "Your posting asks for MS Excel skills to key in orders.",
+        "The role keeps records in Google Sheets, Xero and QuickBooks.",
+        "If you're busy, a reply next week is fine.",
+        "It frees your team for the busy season.",
+        "If your team is stretched at month-end, the tool helps.",
+        "When you're swamped with orders, it still takes a minute.",
+    ],
+)
+def test_products_and_polite_phrasing_pass(sentence):
+    assert issues(with_posting(sentence)) == []
+
+
+def test_the_company_own_name_is_not_a_person():
+    body = REFERENCE.replace("Acme Aircon", "Dr Aircon")
+    result = check(body, subject="A free quote builder for Dr Aircon", company="Dr Aircon", tool="quote-builder")
+    assert result.passed, result.reasons()
+
+
 def test_the_sender_may_name_himself():
     assert not has(issues(with_posting("I'm Mr Ting Yu at Jura Solutions.")), "names a person")
 

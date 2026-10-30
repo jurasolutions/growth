@@ -69,14 +69,25 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
    applicant tracking system, on a recruiter's site (`RECRUITERS`, or "recruit" in the host)
    unless the recruiter is the lead itself, or a careers or job-ad page on any site, the
    company's own included (`contact.job_ad_problem`, one rule for add-lead, `scout shortlist`
-   and `scout check-contact`). It is read from the percent-decoded, case-folded path, query
-   and fragment, word by word, so `/%63areers/`, `/careers.html`, `/careers-2/`, `/jobs.php`,
-   `/join-our-team`, `/we-are-hiring` and `?page=careers` are all careers pages, while
-   `/services/job-sheets` is not. The rule is applied to the submitted page and again to the
-   page the code read after any redirect. It refuses only the contact source: a lead whose
-   site has a careers section is fine, as long as the address comes from another page. It
-   must be an enquiry address (not careers@, jobs@, hr@, recruit@, talent@, hiring@, apply@,
-   noreply@ ...), it must belong
+   and `scout check-contact`). It reads every host label left of the company's domain
+   (`careers.`, `www.careers.`, `careers-sg.`, `career-portal.`, `jobs2.`) and the
+   percent-decoded, NFKC-normalised, case-folded path (dot segments resolved), query and
+   fragment, word by word. So `/%63areers/`, `/careers.html`, `/careers-2/`, `/jobs.php`,
+   `/join-our-team`, `/work-for-us`, `/we-are-hiring`, `/opportunities`, `/openings`,
+   `/internship`, `/招聘`, `/职位`, `/kerjaya`, `/jawatan-kosong` and `?page=careers` are all
+   careers pages. Field-service, rental and invitation pages are not: `/services/job-sheets`,
+   `/book-a-job`, `/job-request`, `/request-a-job-quote`, `/our-jobs`, `/equipment-hiring`,
+   `/join-us-for-dinner`, nor franchise opportunities or store openings. Two judgement calls,
+   both taking the safer reading: a bare `/vacancies` is a jobs page (far more SME sites use it
+   for jobs than for units), and is read as property only with a property word next to it
+   (`/office-vacancies`, `/vacancies/units`); an `apply.` host alone is not a careers page,
+   because admissions and loan portals use it too (a job word in its path still is). The rule
+   is applied to the submitted page and again to the page the code read after any redirect. It
+   refuses only the contact source: a lead whose site has a careers section is fine, as long as
+   the address comes from another page. It must be an enquiry address (not careers@, jobs@,
+   hr@, recruit@, talent@, hiring@, apply@, cv@, noreply@ ..., each matched as the whole local
+   part or before a separator or number, so `cvlogistics@gmail.com` is still an address), it
+   must belong
    to the business (on the website's domain or a subdomain of it, or at one of the free-mail
    providers in `free_mail_contacts`: gmail.com, outlook.com, hotmail.com, yahoo.com,
    icloud.com, singnet.com.sg; config may shorten that list, never add to it), its source
@@ -119,8 +130,8 @@ up to the score. Hiring points need hiring evidence; address points need a conta
 | How specific and checkable the observations are | `specific_observations` | 5 |
 | A published enquiry address | `enquiry_address` | 10 |
 
-**Hiring evidence** is a list of postings, `{url, title, seen (a real YYYY-MM-DD date, not in
-the future), duties: [...]}`, at most 10 a lead. Each URL must be http(s), with no spaces, on a
+**Hiring evidence** is a list of postings, `{url, title, seen (a real YYYY-MM-DD date within the
+last 12 months, not in the future), duties: [...]}`, at most 10 a lead. Each URL must be http(s), with no spaces, on a
 known job board or applicant tracking system (`contact.JOB_BOARDS`) or on the company's own
 site, so the hiring points can be checked. The URLs are evidence only: the contact rule above
 still refuses a job board as a contact source. **The comparison** is one line, at most 280
@@ -128,7 +139,11 @@ characters, on why the lead ranks where it does; every candidate at or above the
 needs one. A titled person's name ("Ms Tan Mei Ling"), a phone number or an email address in
 a posting's title or duties, or in a comparison, is replaced on intake with "[name removed]",
 "[phone removed]" or "[address removed]" (`privacy.strip_personal`), so it is never stored or
-posted, and the result notes it.
+posted, and the result notes it. Upper-case "MS" and "DR" are not titles (MS Excel, DR
+forms), software after a title ("Ms Excel") is not a person, and the company's own name stays
+("Dr Aircon"). A name with no title ("Tan Mei Ling resigned", "Encik Ahmad") can't be told from
+ordinary words by a pattern, so it is not caught: the prompt forbids copying names, and Ting
+Yu approves every email.
 
 **`scout shortlist`**, in order:
 
@@ -150,7 +165,8 @@ posted, and the result notes it.
    happen here), then every lead, contact, rejection and the `scout_rankings` row are written
    in one short transaction, and the `#scout-leads` posts go out after it commits. A batch cut
    off part-way records nothing and leaves the day open, so the next submission ranks it in
-   full. Two candidates with the same address can't both be kept.
+   full. Two candidates with the same address can't both be kept, and the shortlist is counted
+   again inside the transaction, so a lead added by hand meanwhile never takes the day past it.
 
 `scout check-contact` runs the same contact rules with no side effects, so the session can
 confirm an address before the batch rather than lose a candidate to it.
@@ -191,10 +207,14 @@ jurasolutions.sg only) adds these checks to the core rules:
   from its observations (follow-ups may instead refer back to the first email);
 - no unsubscribe text in the body itself;
 - no guesses about the company's people or workload: staffing words anywhere
-  ("short-staffed", "overworked", "high turnover", "your last admin left") and workload words
-  about "you" or "your" people ("your team is stretched", "you must be swamped"). A general
-  sentence ("Many teams struggle with paper delivery orders") is fine;
-- no person named with a title ("Ms Tan", "Mr Lim's", "Dr. Wong"), other than the sender. A
+  ("short-staffed", "overworked", "high turnover", "your last admin left"), workload words
+  about "you" or "your" people ("your team is stretched", "you must be swamped"), and "busy"
+  with a staffing subject ("your team looks busy"). Courtesy is not a guess: a general sentence
+  ("Many teams struggle with paper delivery orders"), a conditional ("If you're busy, a reply
+  next week is fine", "If your team is stretched at month-end, ...") and "the busy season" all
+  pass;
+- no person named with a title ("Ms Tan", "Mr Lim's", "Dr. Wong"), other than the sender and
+  the company's own name ("Dr Aircon"). Software is not a person ("MS Excel", "Ms Excel"). A
   public job posting may be mentioned as a plain fact, never linked (PRD §5.2a point 5).
 
 The gate sees the footer with the recipient's site masked as "its website", because the email
