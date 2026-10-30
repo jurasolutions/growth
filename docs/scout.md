@@ -13,7 +13,7 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
 
 ## How a day runs (SGT, business days)
 
-1. **09:00 `scout-research`** (headless Claude, US$5 ceiling). Refuses to start when
+1. **09:00 `scout-research`** (headless Claude, no spending ceiling). Refuses to start when
    `inputs/icp.md` is missing, today's candidates are already ranked, today's shortlist is
    already kept, or `max_queue` emails are already waiting. The session asks
    `jura-growth scout today` for its industries, researches about 20 candidates with web search

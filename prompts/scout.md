@@ -78,7 +78,7 @@ day's candidates first and submit them together, once. A day with few good candi
 few; never pad the batch with weak ones to fill it.
 
 Gather about `candidates` companies across today's industries. Stop early if you run short on
-budget; a smaller batch is fine.
+time; a smaller batch is fine.
 
 1. **Find candidates** with web search and web fetch:
    - **Job boards** (a key source): MyCareersFuture, JobStreet, Indeed, LinkedIn Jobs and

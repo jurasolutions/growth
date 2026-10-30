@@ -154,7 +154,8 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
   their pixels need; anything else is held back with a note in the message.
 - `--strict-mcp-config` and `--setting-sources project`: no MCP servers (no Notion, no Zapier)
   and none of the user-level settings, plug-ins or hooks.
-- `--max-budget-usd` per run (US$3 by default, US$5 for scout research).
+- No `--max-budget-usd`: the runs use Ting Yu's Claude subscription, not API billing. The
+  30-minute timeout and each job's own caps still apply.
 - The full transcript is kept in `data/growth/transcripts/`, and permission denials are logged.
 
 ## Kill switches
@@ -216,7 +217,7 @@ skip, a quiet run or the lock skip.
 
 A job's keys in `config/settings.yaml`: `agent`, `kind` (`command` or `claude`), `command` or
 `prompt`, `schedule` (the shapes in `jura_growth/schedule.py`, including `daily_every` for a
-repeating daily slot), and optionally `tools`, `disallowed_tools`, `max_budget_usd`, `model`,
+repeating daily slot), and optionally `tools`, `disallowed_tools`, `model`,
 `quiet`, `run_update` (`true` or `claimed-only`) and `browser` (`true` only for a job in
 `caps.BROWSER_JOBS`; any other job that sets it fails).
 

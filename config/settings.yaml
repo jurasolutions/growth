@@ -38,8 +38,8 @@ approvals:
 claude:
   binary: claude
   timeout_minutes: 30
-  # Per-run spending ceiling passed as --max-budget-usd. A job may set its own.
-  max_budget_usd: 3.00
+  # No spending ceiling: runs use Ting Yu's Claude subscription, not API
+  # billing, so --max-budget-usd is never passed (a max_budget_usd key is ignored).
   model: null # null keeps Claude Code's default
 
 # An agent pauses itself after this many failed runs in a row.
@@ -84,7 +84,6 @@ jobs:
     kind: claude
     prompt: scout.md
     tools: [WebSearch, WebFetch]
-    max_budget_usd: 5.00
     schedule: {business_days: "09:00"}
     run_update: true # one message per run in #scout-leads
 
