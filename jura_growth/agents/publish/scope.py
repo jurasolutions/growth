@@ -71,8 +71,7 @@ def domain_rules() -> list[str]:
     `http://publish-fixture.localhost:8765/…`. The real platforms use the default port."""
     site = fixture.active()
     if site is not None:
-        host = f"[{site.host}]" if ":" in site.host else site.host  # an IPv6 literal takes brackets
-        return [f"ClaudeInChromeDomain({host}" + (f":{site.port}" if site.port is not None else "") + ")"]
+        return [f"ClaudeInChromeDomain({site.base.split('://', 1)[1]})"]  # host[:port], an IPv6 literal bracketed
     return [f"ClaudeInChromeDomain({host})" for host in browser_hosts()]
 
 

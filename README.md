@@ -127,9 +127,10 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
   exits with status 2 and a `refused:` line (`jura_growth/headless.py`). A command job may run
   only its own command. Commands you run in Terminal are unaffected.
 - **The browser job is narrower (ADR 0005).** A job in `caps.BROWSER_JOBS` (only `publish`) with
-  `browser: true` gets `--chrome` and no `--add-dir`, so it reads nothing under `jurasolutions/`
-  beyond what its commands print; `publish next` copies the item's images into its scratch
-  folder, read-only. It has no web search or fetch. Its Chrome tools come from the plug-in's
+  `browser: true` gets `--chrome` and `--add-dir` for its own scratch folder only
+  (`data/growth/work/publish/`), so it reads nothing else under `jurasolutions/` beyond what its
+  commands print; `publish next` copies the item's images into that folder, read-only, for the
+  Chrome upload tool, which uploads only files the session may read (rehearsal 2026-10-30). It has no web search or fetch. Its Chrome tools come from the plug-in's
   `Permissions.allowed_tools`: the tab tools by name and one `ClaudeInChromeDomain(<host>)` rule
   per host of each platform switched on and in `browser` mode, never a page tool by name. Any other job that
   sets `browser: true` fails. After the run, its transcript is audited for hosts, tabs, typed
