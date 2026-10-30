@@ -41,6 +41,11 @@ FONT_DISPLAY = "'Outfit','Helvetica Neue',Helvetica,Arial,sans-serif"
 FONT_BODY = "'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif"
 FONT_MONO = "'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
 
+# The template's name on the approval card. Bump it with any change to the frame;
+# the approval hash covers the rendered frame itself either way
+# (`compose.frame_fingerprint`), so a change supersedes pending approvals.
+TEMPLATE_VERSION = "designed email v1 (Levi's signature, 2026-10-31)"
+
 CALL_LABEL = "Book a 30-minute call"
 TAGLINE = "We automate the repetitive parts of running a business."
 SESSION_LABEL = "Book a discovery session →"
@@ -54,6 +59,7 @@ STYLE = f"""
   .jm-stack {{ display: block !important; width: 100% !important; }}
   .jm-rule {{ display: none !important; }}
   .jm-contact {{ padding: 14px 0 0 !important; }}
+  .jm-tap {{ display: block !important; min-height: 44px !important; line-height: 44px !important; }}
 }}
 @media (prefers-color-scheme: dark) {{
   .jm-bg {{ background: {NEUTRAL_900} !important; }}
@@ -73,10 +79,12 @@ STYLE = f"""
 
 
 def _a(href: str, text: str, style: str, cls: str = "jm-link") -> str:
+    """A link; `cls` holds the classes the style block switches."""
     return f'<a href="{html.escape(href, quote=True)}" class="{cls}" style="{style}">{text}</a>'
 
 
 LINK = f"color:{GREEN_600};text-decoration:underline;"
+WRAP = "overflow-wrap:anywhere;word-break:break-word;"
 
 
 def button(href: str) -> str:
@@ -119,9 +127,9 @@ def signature(*, home_href: str, session_href: str, mark_url: str) -> str:
     contact_link = f"color:{GREEN_600};text-decoration:none;font-family:{FONT_BODY};font-size:14px;line-height:22px;"
     contact = (
         f'<p translate="no" style="margin:0;font-family:{FONT_BODY};font-size:14px;line-height:22px;">'
-        + _a(f"mailto:{settings.SIGNATURE_EMAIL}", html.escape(settings.SIGNATURE_EMAIL), contact_link)
+        + _a(f"mailto:{settings.SIGNATURE_EMAIL}", html.escape(settings.SIGNATURE_EMAIL), contact_link, "jm-link jm-tap")
         + f'</p><p translate="no" style="margin:0;font-family:{FONT_BODY};font-size:14px;line-height:22px;">'
-        + _a(home_href, settings.SITE, contact_link)
+        + _a(home_href, settings.SITE, contact_link, "jm-link jm-tap")
         + "</p>"
     )
     return (
@@ -144,7 +152,8 @@ def signature(*, home_href: str, session_href: str, mark_url: str) -> str:
         f'<tr><td colspan="3" style="padding:0;">'
         f'<p class="jm-text" style="margin:0;font-family:{FONT_BODY};font-size:14px;line-height:22px;color:{NEUTRAL_700};">'
         f"{html.escape(TAGLINE)} "
-        + _a(session_href, html.escape(SESSION_LABEL), f"color:{GREEN_600};text-decoration:none;font-weight:700;white-space:nowrap;")
+        + _a(session_href, html.escape(SESSION_LABEL), f"color:{GREEN_600};text-decoration:none;font-weight:700;white-space:nowrap;",
+             "jm-link jm-tap")
         + "</p></td></tr></table>"
     )
 
@@ -163,6 +172,8 @@ def page(*, subject: str, body_html: str, call_href: str, home_href: str, mark_u
         f'<body class="jm-bg" style="margin:0;padding:0;background:{WHITE};">\n'
         f'<table role="presentation" class="jm-bg" width="100%" cellpadding="0" cellspacing="0" border="0" '
         f'style="background:{WHITE};border-collapse:collapse;"><tr><td align="center" style="padding:0;">\n'
+        '<!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" '
+        'border="0"><tr><td><![endif]-->\n'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;max-width:600px;border-collapse:collapse;">\n'
         f'<tr><td class="jm-pad jm-text" style="padding:40px 32px 32px;text-align:left;{text_style}">\n'
@@ -171,10 +182,13 @@ def page(*, subject: str, body_html: str, call_href: str, home_href: str, mark_u
         "</td></tr>\n"
         '<tr><td class="jm-pad" style="padding:0 32px 40px;">'
         f'<p id="footer" class="jm-muted jm-line" style="margin:0;padding:20px 0 0;border-top:1px solid {NEUTRAL_200};'
-        f'font-family:{FONT_BODY};font-size:13px;line-height:20px;color:{NEUTRAL_500};">{footer_html}</p>'
-        "</td></tr>\n</table>\n</td></tr></table>\n</body></html>\n"
+        f'font-family:{FONT_BODY};font-size:13px;line-height:20px;color:{NEUTRAL_500};{WRAP}">{footer_html}</p>'
+        "</td></tr>\n</table>\n<!--[if mso]></td></tr></table><![endif]-->\n</td></tr></table>\n</body></html>\n"
     )
 
 
 def paragraph(inner: str) -> str:
-    return f'<p class="jm-text" style="margin:0 0 18px;font-family:{FONT_BODY};font-size:16px;line-height:26px;color:{NEUTRAL_700};">{inner}</p>'
+    return (
+        f'<p class="jm-text" style="margin:0 0 18px;font-family:{FONT_BODY};font-size:16px;line-height:26px;'
+        f'color:{NEUTRAL_700};{WRAP}">{inner}</p>'
+    )

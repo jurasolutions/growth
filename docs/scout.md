@@ -138,7 +138,7 @@ Test vector (`tests/test_outreach_email.py`): email `info@acme-aircon.sg`, secre
 `jura-test-secret-2026` gives
 `3e7f8903444b297047849d51c51d0872460db95817c314d72ea201f381258ba8.EP0Tuk-Ys4HLJC8W75A3xVyxnI3_pNqXpJlcQGS38ns`.
 
-Headers on every live send: `List-Unsubscribe: <url>, <mailto:info@jurasolutions.sg?subject=unsubscribe>`
+Headers on every live send: `List-Unsubscribe: <url>, <mailto:levi@jurasolutions.sg?subject=unsubscribe>`
 and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`.
 
 **The HTML part** (`agents/outreach/design.py`) carries the same words as the text. It is one
@@ -152,6 +152,18 @@ Outlook. The one image is the mark, a PNG on a white tile served from
 alt text, so the email reads in full with images blocked. jurasolutions.sg links carry
 `utm_source=outreach&utm_medium=email&utm_campaign=scout` (never the unsubscribe or privacy
 link, never another site). No tracking pixel, no attachments. The plain text keeps clean links.
+
+Opt-outs by mail (the `List-Unsubscribe` mailto and "or reply 'unsubscribe'") and replies all
+reach levi@jurasolutions.sg, so reply detection (`OUTREACH_IMAP_*`) reads that one mailbox.
+Outlook for Windows ignores `max-width`, so it gets a fixed 600 px table through an MSO
+conditional comment. Long links wrap (`overflow-wrap:anywhere`), and the signature's links are
+44 px tall on a phone.
+
+**The approval covers the frame.** An `outreach-email` request hashes the recipient, the
+subject, the draft and `compose.frame_fingerprint()`: everything the code adds around the draft,
+rendered for a stand-in recipient. A template or sender change after approval supersedes the
+request. The card shows the subject, the whole draft, the call link and a template line naming
+`design.TEMPLATE_VERSION` and the frame's first eight hex digits.
 
 `jura-growth outreach sample [--out DIR] [--screenshots] [--mark FILE]` renders an email for a
 made-up company to `sample.html` and `sample.txt`, and with `--screenshots` draws desktop,

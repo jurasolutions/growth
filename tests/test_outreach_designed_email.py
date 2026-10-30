@@ -358,3 +358,58 @@ def test_privacy_keeps_the_sender_name_and_reply_to(conn):
     terms = outreach.privacy_terms(conn)
     assert "Levi Ting" in terms["kept_names"] and "Ting Yu" in terms["kept_names"]
     assert "levi@jurasolutions.sg" in terms["owner_addresses"]
+
+
+# --- 7. code review fixes (designed email and go-live) ---------------------------
+
+
+def test_opt_outs_by_mail_go_to_levi():
+    """S13-2: the List-Unsubscribe mailto and "or reply 'unsubscribe'" reach one mailbox."""
+    assert settings.UNSUBSCRIBE_MAILTO == "mailto:levi@jurasolutions.sg?subject=unsubscribe"
+    headers = compose.list_unsubscribe_headers("https://jurasolutions.sg/unsubscribe?t=x")
+    assert headers["List-Unsubscribe"] == "<https://jurasolutions.sg/unsubscribe?t=x>, <mailto:levi@jurasolutions.sg?subject=unsubscribe>"
+
+
+def test_no_info_mailbox_is_left_in_outreach():
+    from pathlib import Path
+
+    import jura_growth
+
+    root = Path(jura_growth.__file__).parent
+    files = [*(root / "agents" / "outreach").rglob("*.py"), *(root / "agents" / "scout").rglob("*.py")]
+    assert [f.name for f in files if "info@jurasolutions.sg" in f.read_text(encoding="utf-8")] == []
+
+
+def test_outlook_gets_a_fixed_600px_column():
+    """S13-3: Outlook's Word engine ignores max-width, so it gets a fixed table."""
+    html_text = make().html
+    assert re.search(r'<!--\[if mso\]><table role="presentation" width="600" align="center" cellpadding="0" '
+                     r'cellspacing="0" border="0"><tr><td><!\[endif\]-->', html_text)
+    assert "<!--[if mso]></td></tr></table><![endif]-->" in html_text
+    assert html_text.index("<!--[if mso]><table") < html_text.index("max-width:600px") < html_text.index("<!--[if mso]></td>")
+
+
+def test_long_links_wrap_on_a_phone():
+    tree = Tree(make().html)
+    footer = next(n for n in tree.root.walk() if n.attrs.get("id") == "footer")
+    body = [p for p in tree.find("p") if "I was looking at" in p.all_text() or "jurasolutions.sg/apps" in p.all_text()]
+    for node in [footer, *body]:
+        assert "overflow-wrap:anywhere" in node.attrs["style"] and "word-break:break-word" in node.attrs["style"]
+
+
+def test_signature_links_are_44px_tall_on_a_phone():
+    """DS SKILL.md non-negotiable 5: 44px minimum tap targets."""
+    html_text = make().html
+    tree = Tree(html_text)
+    signature = next(n for n in tree.root.walk() if n.attrs.get("id") == "signature")
+    for text in ("levi@jurasolutions.sg", "jurasolutions.sg", "Book a discovery session →"):
+        assert "jm-tap" in link(tree, text, signature).attrs["class"].split()
+    phone = re.search(r"@media only screen and \(max-width: 600px\) \{(.*?)\n\}", html_text, re.S).group(1)
+    assert re.search(r"\.jm-tap \{[^}]*min-height: 44px[^}]*line-height: 44px", phone)
+
+
+def test_reply_post_points_at_levis_mailbox():
+    """S13-1: replies reach Levi; the post names his mailbox, not the address (MC §4.4)."""
+    from jura_growth.agents.outreach import replies
+
+    assert "levi@jurasolutions.sg" in replies.__doc__  # the post itself: test_outreach_sync
