@@ -487,3 +487,55 @@ def test_the_digest_shows_the_ranking_and_each_kept_lead(conn, monkeypatch):
     assert "hiring: Data entry clerk, seen 2026-10-24" in first and "https://sg.jobstreet.com/job/2002" in first
     assert sum(1 for line in part["lines"] if line.startswith("Kept: ")) == 10
     assert part["figures"]["leads_added"] == 10
+
+
+# --- §5.2a point 4: keeping more leads never means sending more ----------------
+
+
+def keep_ten_and_queue(conn, monkeypatch, day="2026-10-26"):
+    from jura_growth.agents.outreach import queue as queue_mod
+    from jura_growth.agents.scout import leads
+
+    from test_scout_support import body_for
+
+    at(monkeypatch, f"{day}T08:00:00+08:00")
+    result = submit(conn, [candidate(n, s) for n, s in enumerate(SCORES, start=1)])
+    assert len(result.kept) == 10
+    for entry in result.kept:
+        name = leads.display_name(entry["company"])
+        queued = queue_mod.queue(conn, entry["lead_id"], {
+            "subject": f"A free delivery order maker for {name}", "body": body_for(name), "tool": "delivery-order-maker",
+        })
+        assert queued.status == "queued", queued.reasons
+    return result
+
+
+def test_ten_kept_leads_still_send_no_more_than_the_first_live_day_warm_up_cap(conn, monkeypatch):
+    from test_outreach_send import run_slots
+    from test_scout_support import approve_due, fake_resend, live_ready
+
+    from jura_growth.agents.outreach import send
+
+    live_ready(monkeypatch)
+    keep_ten_and_queue(conn, monkeypatch)
+    sent = fake_resend(monkeypatch)
+    approve_due(conn, monkeypatch)  # requests only up to today's quota
+    assert send.daily_cap(conn, "live")[0] == 5
+    sends = run_slots(conn, monkeypatch)
+    assert len(sends) == 5 and len(sent) == 5
+    assert db.scalar(conn, "SELECT count(*) FROM outreach_messages WHERE status = 'queued'") == 5
+    assert send.quota(conn, "live")[0] == 0
+
+
+def test_ten_kept_leads_in_shadow_mode_stay_within_the_warm_up_too(conn, monkeypatch):
+    from test_outreach_send import run_slots
+
+    keep_ten_and_queue(conn, monkeypatch)
+    assert len(run_slots(conn, monkeypatch)) == 5
+
+
+def test_a_full_queue_still_holds_research_whatever_the_shortlist(conn, monkeypatch):
+    configure(monkeypatch, research={"max_queue": 10})
+    keep_ten_and_queue(conn, monkeypatch)
+    at(monkeypatch, "2026-10-27T09:00:00+08:00")
+    assert "10 emails are already queued (max_queue 10)" in scout.precheck("scout-research", conn)
