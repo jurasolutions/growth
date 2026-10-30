@@ -40,6 +40,7 @@ import base64
 import hashlib
 import hmac
 import html
+import json
 import re
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -160,6 +161,34 @@ def compose(*, subject: str, body: str, company: str, site: str, email: str, sec
     check_text = f"{draft}\n\n{CALL_LINE}\n\n{SIGNATURE}\n\n{footer(company, SITE_PLACEHOLDER, link)}\n"
     html_part = to_html(draft, company, site, link, subject=subject)
     return Email(subject, draft, text, html_part, check_text, link, site, (email or "").strip().lower())
+
+
+# The frame's fixed stand-ins: what fills the slots the draft and the lead fill.
+_FRAME_SLOTS = {"subject": "", "body": "", "company": "<company>", "site": "<site>",
+                "email": "recipient@example.invalid", "secret": "frame"}
+
+
+def frame_fingerprint() -> str:
+    """SHA-256 of everything the code puts around a draft: the email rendered
+    with empty body slots (text and HTML), the sender name and From address,
+    Reply-To, the unsubscribe headers and the template version. An `outreach-email` approval
+    covers it, so a template or sender change after approval supersedes the
+    request instead of riding on an old yes (code review S13-4, ADR 0003).
+    Computed fresh on every call, from the code that would send now."""
+    slots = dict(_FRAME_SLOTS)
+    frame = compose(subject=slots["subject"], body=slots["body"], company=slots["company"], site=slots["site"],
+                    email=slots["email"], secret=slots["secret"])
+    parts = {
+        "template": design.TEMPLATE_VERSION,
+        "sender": settings.SENDER_NAME,
+        "from": f"{settings.get().get('from_local_part') or ''}@{settings.get().get('sending_domain') or ''}",
+        "reply_to": settings.REPLY_TO,
+        "headers": list_unsubscribe_headers(frame.unsubscribe_url),
+        "text": frame.text,
+        "html": frame.html,
+    }
+    canonical = json.dumps(parts, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def with_utm(url: str) -> str:
