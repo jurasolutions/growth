@@ -94,8 +94,9 @@ def test_an_approved_email_is_claimed_then_sent_from_levi(conn, monkeypatch):
     assert len(sent) == 1
     assert approval.claimed(conn, message) is not None
     payload = json.loads(sent[0].content)
-    assert payload["from"] == '"Ting Yu, Jura Solutions" <levi@jurasolutions.sg>'
-    assert payload["reply_to"] == "info@jurasolutions.sg"
+    assert payload["from"] == '"Levi Ting, Jura Solutions" <levi@jurasolutions.sg>'
+    assert payload["reply_to"] == "levi@jurasolutions.sg"
+    assert "mailto:levi@jurasolutions.sg?subject=unsubscribe" in payload["headers"]["List-Unsubscribe"]
 
 
 def test_warm_up_day_one_sends_five_even_when_more_are_approved(conn, monkeypatch):

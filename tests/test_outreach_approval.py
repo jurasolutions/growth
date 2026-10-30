@@ -12,6 +12,7 @@ from click.testing import CliRunner
 
 from jura_growth import config, db, paths
 from jura_growth.agents.outreach import requeue, send
+from jura_growth.agents.scout import settings
 from jura_growth.cli import cli
 
 import pytest
@@ -85,9 +86,12 @@ def test_the_shipped_config_leaves_only_what_the_machine_can_answer(monkeypatch)
     assert not any(p.startswith(BUTTONS) or OLD_LINE in p for p in problems)
 
 
-def test_the_shipped_config_sends_from_levi_with_the_fixed_sender_name(monkeypatch):
+def test_the_shipped_config_sends_as_levi_ting_from_levi(monkeypatch):
+    """PRD §5.6a: `Levi Ting, Jura Solutions <levi@jurasolutions.sg>`, replies and opt-outs to levi@."""
     use_the_shipped_scout_config(monkeypatch)
-    assert send.from_address() == "\"Ting Yu, Jura Solutions\" <levi@jurasolutions.sg>"
+    assert send.from_address() == "\"Levi Ting, Jura Solutions\" <levi@jurasolutions.sg>"
+    assert settings.REPLY_TO == "levi@jurasolutions.sg"
+    assert settings.UNSUBSCRIBE_MAILTO == "mailto:levi@jurasolutions.sg?subject=unsubscribe"
 
 
 def test_the_line_clears_only_when_the_switch_is_true(monkeypatch):
