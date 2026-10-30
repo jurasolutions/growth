@@ -12,7 +12,8 @@ In order, and the first failure rejects the lead:
     `inputs/do-not-contact.csv` (by company name or domain).
  4. Score at or above the threshold (60, config may raise it).
  5. Today's shortlist not yet full (`research.shortlist`, §5.2a).
- 6. The contact: an address that belongs to the business (on its website
+ 6. The contact: never from a job board, a recruiter or a job ad (§5.2a
+    point 6: they are evidence only). An address that belongs to the business (on its website
     domain or a subdomain of it, or at an allowed free-mail provider), which
     the code finds on a source page of the company's own site (see
     contact.py), with an MX record. A role address on the same page is
@@ -261,6 +262,9 @@ def add_lead(conn: sqlite3.Connection, data: dict, *, client: httpx.Client | Non
         channel, status = "email", "new"
     elif raw_contact.get("form_url"):
         form_url = str(raw_contact["form_url"]).strip()
+        ad = contact.job_ad_problem(form_url)
+        if ad:
+            return _reject(conn, outcome, ad, domain=domain, company=company, remember=False)
         if not contact.on_domain(form_url, domain):
             return _reject(conn, outcome, f"the contact form must be on the company's own website ({domain})", domain=domain, company=company, remember=False)
         channel, status = "form", "form_only"
@@ -323,6 +327,9 @@ def _verify_email(conn, outcome: Outcome, email: str, raw: dict, domain: str, cl
     source = str(raw.get("source_url") or "").strip()
     if not source:
         return "an email contact needs `source_url`: the page on the company's own site that lists it"
+    ad = contact.job_ad_problem(source)
+    if ad:
+        return ad
     if not contact.on_domain(source, domain):
         return f"the source page {source} is not on the company's own website ({domain})"
 

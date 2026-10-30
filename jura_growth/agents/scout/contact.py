@@ -9,6 +9,9 @@
   usual obfuscation: HTML entities, `mailto:` links (percent-encoded too),
   "info [at] acme [dot] sg" and its variants, and Cloudflare's email
   protection (`data-cfemail` and `/cdn-cgi/l/email-protection#<hex>`).
+- Job boards, recruiters and job ads (a careers page on the company's own
+  site included) are hiring evidence only (PRD §5.2a point 6): never a lead's
+  website, never the page a contact address or form comes from.
 - Addresses are classified as role (info@, sales@, ...) or named.
 - The mail domain must have an MX record. Nothing else is probed: no SMTP
   checks, no guessing.
@@ -64,8 +67,38 @@ NOT_OWN_SITE = (
     "carousell.sg", "carousell.com", "shopee.sg", "lazada.sg", "wa.me", "whatsapp.com",
     "hipages.com.sg", "renopedia.sg", "qanvast.com", "streetdirectory.com", "timable.com",
     "companies.sg", "sgcompany.sg", "dnb.com", "zoominfo.com", "apollo.io", "rocketreach.co",
-    "crunchbase.com", "glassdoor.com", "jobstreet.com", "indeed.com", "mycareersfuture.gov.sg",
+    "crunchbase.com",
 )
+
+# Job boards and the hosted job-ad pages of applicant tracking systems (scout
+# PRD §5.2a). Their pages are hiring evidence only: never a lead's website and
+# never the source of a contact address.
+JOB_BOARDS = (
+    "mycareersfuture.gov.sg", "mycareersfuture.sg", "jobstreet.com", "jobstreet.com.sg", "indeed.com",
+    "indeed.com.sg", "linkedin.com", "glassdoor.com", "glassdoor.sg", "jobsdb.com", "fastjobs.sg",
+    "foundit.sg", "monster.com.sg", "careerjet.sg", "jora.com", "jooble.org", "grabjobs.co",
+    "jobscentral.com.sg", "hiredly.com", "efinancialcareers.sg", "gumtree.sg", "nodeflair.com",
+    "lever.co", "greenhouse.io", "workable.com", "myworkdayjobs.com", "smartrecruiters.com",
+    "recruitee.com", "breezy.hr", "bamboohr.com", "zohorecruit.com", "careers-page.com",
+)
+# Recruitment agencies: an ad they place names their own inbox, never the
+# hiring company's. Any host with "recruit" in its name counts too.
+RECRUITERS = (
+    "recruitexpress.com.sg", "kellyservices.com.sg", "persolkelly.com.sg", "persolsingapore.com",
+    "adecco.com.sg", "adecco.com", "randstad.com.sg", "manpower.com.sg", "manpowergroup.sg",
+    "hays.com.sg", "michaelpage.com.sg", "pagepersonnel.com.sg", "robertwalters.com.sg",
+    "roberthalf.com.sg", "gmprecruit.com", "trustrecruit.com.sg", "theoneglobal.com.sg",
+    "achieversresources.com", "staffinggroup.sg",
+)
+NOT_OWN_SITE += JOB_BOARDS + RECRUITERS
+
+# A page on any site whose path or host says it is a job ad or careers page.
+JOB_AD_SEGMENTS = frozenset({
+    "career", "careers", "job", "jobs", "vacancy", "vacancies", "join-us", "joinus", "join-our-team",
+    "hiring", "recruitment", "work-with-us", "opportunities", "job-listing", "viewjob",
+})
+JOB_AD_SUBDOMAINS = ("careers", "career", "jobs", "job", "apply", "hiring", "recruit", "recruitment")
+EVIDENCE_ONLY = "job boards, recruiters and job ads are evidence only, never a contact source"
 
 
 class ContactError(ValueError):
@@ -110,9 +143,39 @@ def on_domain(url: str, domain: str) -> bool:
     return bool(host and domain) and (host == domain or host.endswith("." + domain))
 
 
-def is_third_party_host(domain: str) -> bool:
+def _under(domain: str, hosts) -> bool:
+    domain = domain.lower().strip(".")
+    return any(domain == h or domain.endswith("." + h) for h in hosts)
+
+
+def is_recruiter(domain: str) -> bool:
     domain = domain.lower()
-    return any(domain == h or domain.endswith("." + h) for h in NOT_OWN_SITE)
+    return _under(domain, RECRUITERS) or "recruit" in domain.removesuffix(".sg").removesuffix(".com")
+
+
+def is_job_board(domain: str) -> bool:
+    return _under(domain, JOB_BOARDS)
+
+
+def is_third_party_host(domain: str) -> bool:
+    return _under(domain, NOT_OWN_SITE) or is_recruiter(domain)
+
+
+def job_ad_problem(url: str) -> str | None:
+    """Why `url` may not be a contact source, or None. A job board, an
+    applicant tracking system, a recruiter, or a careers or job-ad page on
+    any site, the company's own included (§5.2a point 6)."""
+    host = host_of(url)
+    if not host:
+        return None
+    if is_job_board(host) or is_recruiter(host):
+        return f"{url} is on a job board or a recruiter's site: {EVIDENCE_ONLY}"
+    if host.split(".")[0] in JOB_AD_SUBDOMAINS:
+        return f"{url} is a careers or job-ad page: {EVIDENCE_ONLY}"
+    segments = {s.lower() for s in _split(url).path.split("/") if s}
+    if segments & JOB_AD_SEGMENTS:
+        return f"{url} is a careers or job-ad page: {EVIDENCE_ONLY}"
+    return None
 
 
 def mail_domain(email: str) -> str:
