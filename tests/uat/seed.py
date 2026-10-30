@@ -466,48 +466,55 @@ SOCIAL_DRAFT = (
 )
 
 
-def _browser_facebook(page_url: str = UAT_PAGE_URL) -> None:
+INSTAGRAM_DRAFT = (
+    "Chasing late invoices by hand? Your accounting software can send the first reminder for you.\n\n"
+    "Link in bio.\n\n#SmallBusiness #Automation\n"
+)
+
+
+def _browser_facebook(page_url: str = UAT_PAGE_URL, platform: str = "facebook") -> None:
     folder = os.environ.get("JURA_GROWTH_CONFIG_DIR")
     if not folder:
         raise Refused("JURA_GROWTH_CONFIG_DIR isn't set: the publish scenarios write browser mode into $UAT/config, never config/")
 
     def browser(social: dict) -> None:
-        social["platforms"]["facebook"].update(publish_mode="browser", page_url=page_url)
+        social["platforms"][platform].update(publish_mode="browser", page_url=page_url)
 
     _rewrite_yaml(Path(folder) / "social.yaml", browser)
     config.reset_caches()
 
 
-def _png() -> bytes:
+def _png(width: int = 1200, height: int = 630) -> bytes:
     import struct
     import zlib
 
     def chunk(kind: bytes, body: bytes) -> bytes:
         return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
 
-    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1200, 630, 8, 2, 0, 0, 0)) + chunk(b"IEND", b"")
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + chunk(b"IEND", b"")
 
 
-def _facebook_item(conn, page_url: str = UAT_PAGE_URL):
-    """The seeded day's Facebook draft, past the brand gate, with its item, request and card."""
+def _facebook_item(conn, page_url: str = UAT_PAGE_URL, platform: str = "facebook"):
+    """The seeded day's Facebook (or `platform`'s) draft, past the brand gate, with its item, request and card."""
     from jura_growth import cards
     from jura_growth.agents.publish import items
 
-    _browser_facebook(page_url)
+    _browser_facebook(page_url, platform)
     day = today()
-    image = paths.outputs_dir() / "social" / day.isoformat() / "facebook-1200x630.png"
+    width, height = (1080, 1350) if platform == "instagram" else (1200, 630)
+    image = paths.outputs_dir() / "social" / day.isoformat() / f"{platform}-{width}x{height}.png"
     image.parent.mkdir(parents=True, exist_ok=True)
-    image.write_bytes(_png())
+    image.write_bytes(_png(width, height))
     with db.transaction(conn):
         cursor = conn.execute(
             "INSERT INTO social_posts (date, theme, platform, text, image_paths, qa_json, status, created_at)"
-            " VALUES (?, 'automation-tip', 'facebook', ?, ?, ?, 'draft', ?)",
-            (day.isoformat(), SOCIAL_DRAFT, json.dumps([str(image)]), json.dumps({"passed": True, "attempt": 1}),
+            " VALUES (?, 'automation-tip', ?, ?, ?, ?, 'draft', ?)",
+            (day.isoformat(), platform, INSTAGRAM_DRAFT if platform == "instagram" else SOCIAL_DRAFT, json.dumps([str(image)]), json.dumps({"passed": True, "attempt": 1}),
              timeutil.stamp()),
         )
         made = items.create_social(conn, int(cursor.lastrowid or 0), run_id=None)
     if made.approval is None:
-        raise Refused(f"no Facebook card could be raised: {made.why}")
+        raise Refused(f"no {platform} card could be raised: {made.why}")
     cards.sweep_safely(conn)
     return made
 
@@ -630,6 +637,11 @@ def fixture_post(conn) -> None:
     _approve(conn, _facebook_item(conn, _fixture_page("page.html")).approval)
 
 
+def fixture_post_instagram(conn) -> None:
+    """R1, R2 and R6 for Instagram (BP-04): the same as `fixture-post`, for an Instagram item."""
+    _approve(conn, _facebook_item(conn, _fixture_page("instagram.html"), "instagram").approval)
+
+
 def fixture_join(conn) -> None:
     """R5: an approved join for G9, a good-fit group not yet joined, whose address is the fixture
     group the join page `--page` names is served at (default `join.html`, the membership
@@ -661,7 +673,8 @@ def fixture_join(conn) -> None:
     _approve(conn, made.approval)
 
 
-for _scenario in (social_post, social_approved, claimed_not_closed, community_plan, fixture_post, fixture_join):
+for _scenario in (social_post, social_approved, claimed_not_closed, community_plan, fixture_post, fixture_post_instagram,
+                  fixture_join):
     _scenario.own_transactions = True  # type: ignore[attr-defined]
 
 
@@ -676,6 +689,7 @@ SCENARIOS: dict[str, Callable] = {
     "claimed-not-closed": claimed_not_closed,
     "community-plan": community_plan,
     "fixture-post": fixture_post,
+    "fixture-post-instagram": fixture_post_instagram,
     "fixture-join": fixture_join,
 }
 

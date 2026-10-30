@@ -31,3 +31,6 @@ loopback address literal (`127.0.0.1`, `[::1]`), and refuses it with the live da
 `uv run python -m tests.uat.seed "$UAT" --scenario fixture-post --page <page>` (or `fixture-join`
 for the join pages) seeds an approved item on one page. The steps are in
 `.scratch/mission-control/uat.md`, Part R.
+
+`instagram.html` is the same composer as `page.html`, showing the Jura Solutions Instagram account
+(`@jura_solutions`), for Instagram's R1, R2 and R6 (`--scenario fixture-post-instagram`; rehearsal 2026-10-30).
