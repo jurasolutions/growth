@@ -178,7 +178,8 @@ def posted(conn, world, double, text="Quotes that write themselves"):
 
 def edited_to(double, card) -> str:
     (patch,) = patches(double)
-    assert patch.url.endswith(f"/messages/{card.message_id}")
+    # With post_buttons on, an edit also sends `?with_components=true` to clear or keep the buttons.
+    assert patch.url.split("?", 1)[0].endswith(f"/messages/{card.message_id}")
     assert double.posts() == [], "an edit posts no new message"
     return patch.content or ""
 
