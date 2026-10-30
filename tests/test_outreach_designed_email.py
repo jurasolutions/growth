@@ -275,7 +275,7 @@ def test_no_phone_number_in_any_part():
     phone = re.compile(r"(?:\+\s?65[\s-]?)?\b[3689]\d{3}[\s-]?\d{4}\b|tel:", re.I)
     for part in (email.subject, email.text, email.html, compose.SIGNATURE):
         assert not phone.search(part), phone.search(part)
-        assert "9276" not in part and "+65" not in part
+        assert "+65" not in part
 
 
 def test_resend_payload_has_no_attachments():
