@@ -622,11 +622,12 @@ def test_failed_sync_pauses_in_shadow_too_when_d1_is_configured(conn, monkeypatc
     assert "suppression sync" in pause.is_paused(conn, "outreach")
 
 
-def test_status_command_lists_live_refusals(isolated):
+def test_status_command_lists_live_refusals(isolated, monkeypatch):
     from click.testing import CliRunner
 
     from jura_growth.cli import cli
 
+    configure(monkeypatch, mode="shadow", legal_review_done=False, sending_domain=None)
     result = CliRunner().invoke(cli, ["outreach", "status"])
     assert result.exit_code == 0
     assert "mode            shadow" in result.output and "legal_review_done" in result.output

@@ -14,17 +14,19 @@
 # live: real email through Resend. Refused unless legal_review_done is true,
 #   sending_domain is set, RESEND_API_KEY_OUTREACH and UNSUBSCRIBE_SECRET are
 #   set, inputs/do-not-contact.csv exists and D1 is configured.
-mode: shadow
+mode: live  # 2026-10-31, Ting Yu: go live. Every email still waits for Approve in #approvals.
 
 # PRD open question 1: a Singapore lawyer's view on the Spam Control Act's
 # address-harvesting provision. Set to true only once Ting Yu has it.
-legal_review_done: false
+# 2026-10-31: WAIVED, not done. Ting Yu has no lawyer and chose to skip the review and accept
+# the risk. The flag is the live gate's input, so it reads true; no legal view exists.
+legal_review_done: true
 
 # PRD open question 2: jurasolutions.sg (Resend free plan, shared with the
 # enquiry form) or a subdomain such as hello.jurasolutions.sg (Resend Pro).
 # Must be verified in Resend. Mail goes out from <from_local_part>@<sending_domain>.
-sending_domain: null
-from_local_part: tingyu
+sending_domain: jurasolutions.sg  # 2026-10-31, Ting Yu
+from_local_part: levi             # levi@jurasolutions.sg, Ting Yu's own mailbox
 
 research:
   # New leads a day. The add-lead command refuses more (code ceiling: 30).

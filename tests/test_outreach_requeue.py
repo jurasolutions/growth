@@ -11,11 +11,13 @@ from jura_growth.agents.outreach import compose, requeue, send, store
 from jura_growth.agents.scout import registry
 from jura_growth.cli import cli
 
-from test_scout_support import approve_due, at, fake_resend, live_ready, scout_env, seed  # noqa: F401
+from test_scout_support import approve_due, at, configure, fake_resend, live_ready, scout_env, seed  # noqa: F401
 
 
 def shadow_trial(conn, monkeypatch, count=3):
-    """A shadow trial on Monday 26 October: `count` leads, each shadow-sent."""
+    """A shadow trial on Monday 26 October: `count` leads, each shadow-sent, before any live
+    pre-condition is met (shadow mode, no legal review, no sending domain)."""
+    configure(monkeypatch, mode="shadow", legal_review_done=False, sending_domain=None)
     at(monkeypatch, "2026-10-26T08:00:00+08:00")
     seeded = [seed(conn, n) for n in range(1, count + 1)]
     for index in range(count):
