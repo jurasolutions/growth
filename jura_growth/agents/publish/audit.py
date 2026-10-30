@@ -370,15 +370,17 @@ def _tail_json(tail: str) -> list[tuple[str, str]]:
 
 
 def _tail_lines(tail: str) -> list[tuple[str, str]]:
+    """The tab lines that run unbroken from the extension's `- Available tabs:` header to the end, or
+    none: a title holding a newline can't add a line (code review rehearsal-fixes, RR-N1)."""
     found = []
     for line in reversed(tail.split("\n")):  # never splitlines(): a title may hold U+2028 and friends (SEC-B2)
         if not line.strip():
             continue
         match = _TAB_LINE.search(line)
         if not match:
-            break
+            return list(reversed(found)) if line.strip() == "- Available tabs:" else []
         found.append((match.group(1), match.group(2)))
-    return list(reversed(found))
+    return []
 
 
 def _depth(block: str) -> int:
