@@ -331,11 +331,42 @@ def test_a_link_to_the_job_posting_fails():
         "Your team seems understaffed at the moment.",
         "Your staff must be drowning in paperwork.",
         "It looks like your last admin left.",
+        # Code review P3: guesses the first check missed.
+        "Your team must be overwhelmed.",
+        "Your admin team is stretched.",
+        "Your team looks busy.",
+        "You seem short of hands.",
+        "I see your previous admin assistant has moved on.",
     ],
 )
 def test_a_guess_about_the_company_people_fails(guess):
     body = with_posting("You're hiring an admin assistant. " + guess)
     assert has(issues(body), "about the company's people")
+
+
+def test_a_general_sentence_about_other_teams_is_not_a_guess():
+    body = with_posting("Many teams struggle with paper delivery orders.")
+    assert issues(body) == []
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Your posting, which Ms Tan Mei Ling manages, lists preparing quotes among the duties.",
+        "Mr Lim's posting lists preparing quotes among the duties.",
+        "I read that Mdm Siti Rahmah handles the quotes.",
+        "Dr. Wong mentioned quotes on the posting.",
+    ],
+)
+def test_a_person_named_in_the_email_fails(sentence):
+    assert has(issues(with_posting(sentence)), "names a person")
+
+
+def test_the_sender_may_name_himself():
+    assert not has(issues(with_posting("I'm Mr Ting Yu at Jura Solutions.")), "names a person")
+
+
+def test_body_must_not_carry_its_own_footer():
     body = REFERENCE + "\n\nTo unsubscribe, reply stop."
     assert has(issues(body), "Leave the unsubscribe")
 

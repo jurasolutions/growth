@@ -32,7 +32,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from jura_growth import brand_check, caps, config, suppression
+from jura_growth import brand_check, caps, config, privacy, suppression
 from jura_growth.agents.scout import registry, settings
 
 SIGNATURE = f"{settings.SIGNATURE_NAME}\nJura Solutions · {settings.SITE}"
@@ -355,10 +355,15 @@ def name_parts(address: str | None) -> list[str]:
 
 # Guesses about the company's people, which a job posting tempts (scout PRD
 # §5.2a point 5: mention a public posting only in neutral, factual terms).
+# Staffing words are guesses wherever they appear; workload words only when
+# they are about "you" or "your" people, so "Many teams struggle with paper
+# delivery orders" is still a fair thing to say.
 PEOPLE_GUESS_RE = re.compile(
-    r"\b(?:stretched(?:\s+too)?\s+thin|short[- ]?(?:staffed|handed)|under[- ]?staffed|over[- ]?worked|overloaded"
-    r"|struggl\w*|drowning|burn(?:ed|t)?[- ]?out|swamped|high\s+turnover"
-    r"|(?:last|previous|old)\s+(?:\w+\s+){0,2}(?:left|quit|resigned))\b",
+    r"\b(?:stretched(?:\s+too)?\s+thin|short[- ]?(?:staffed|handed)|short\s+of\s+(?:hands|staff|people)"
+    r"|under[- ]?staffed|over[- ]?worked|burn(?:ed|t)?[- ]?out|high\s+(?:staff\s+)?turnover"
+    r"|(?:last|previous|old|former)\s+(?:\w+\s+){0,3}(?:left|quit|resigned|moved\s+on)"
+    r"|you(?:r|'re|\u2019re)?\b(?:\W+\w+){0,4}?\W+(?:stretched|struggl\w*|overwhelm\w*|swamped|overloaded"
+    r"|drowning|busy|stressed|exhausted))\b",
     re.I,
 )
 
@@ -370,6 +375,11 @@ def _person_issues(draft: str, company: str | None, recipient: str | None) -> li
     if guess:
         found.append(Issue("channel", "No guesses about the company's people or workload; mention a job posting only as a "
                                       "plain fact", guess.group(0)))
+    for named in privacy.HONORIFIC_NAME_RE.finditer(draft):
+        if named.group("name").strip().lower() != settings.SIGNATURE_NAME.lower():  # the sender may name himself
+            found.append(Issue("channel", "The email names a person; write about the company and its posting, never "
+                                          "the people in it", named.group(0)))
+            break
     greeting = greets_a_person(draft, company)
     if greeting:
         found.append(Issue("channel", "Greet the company, not a person: write “Hi there,” or “Hello <Company> team,”", greeting))

@@ -56,19 +56,27 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
 
 1. Incomplete records: company, website, industry, 1–3 observations, source URLs (one on the
    company's own site), a 0–100 score with written reasons.
-2. Websites that are social profiles, directories, marketplaces, job boards or recruiters
-   (`contact.NOT_OWN_SITE`, `JOB_BOARDS`, `RECRUITERS`, and any host with "recruit" in its
-   name), government domains (`.gov.sg`, `.mil.sg`), and a website with a path or query:
-   `https://directory.sg/acme` is a listing, not the company's home page.
+2. Websites that are social profiles, directories, marketplaces or job boards
+   (`contact.NOT_OWN_SITE`, which includes `JOB_BOARDS`), government domains (`.gov.sg`,
+   `.mil.sg`), and a website with a path or query: `https://directory.sg/acme` is a listing,
+   not the company's home page. A recruitment agency may be a lead in its own right.
 3. Anything already known: a lead with the domain (or the address's domain), a domain in
    `contacted_domains`, a suppressed address or domain, or a row in
    `inputs/do-not-contact.csv` (company name as whole words, or domain and its subdomains).
 4. Scores below 60 (config may raise the threshold, never lower it).
 5. More than the day's shortlist (`research.shortlist`, 10; code ceiling 10 in `caps.py`).
-6. The address: its source page (and a contact form) may never be on a job board, a
-   recruiter's site or a careers or job-ad page, the company's own included
-   (`contact.job_ad_problem`): job boards are evidence only. It must be an enquiry address
-   (not careers@, noreply@ ...), it must belong
+6. The address: its source page (and a contact form) may never be on a job board or an
+   applicant tracking system, on a recruiter's site (`RECRUITERS`, or "recruit" in the host)
+   unless the recruiter is the lead itself, or a careers or job-ad page on any site, the
+   company's own included (`contact.job_ad_problem`, one rule for add-lead, `scout shortlist`
+   and `scout check-contact`). It is read from the percent-decoded, case-folded path, query
+   and fragment, word by word, so `/%63areers/`, `/careers.html`, `/careers-2/`, `/jobs.php`,
+   `/join-our-team`, `/we-are-hiring` and `?page=careers` are all careers pages, while
+   `/services/job-sheets` is not. The rule is applied to the submitted page and again to the
+   page the code read after any redirect. It refuses only the contact source: a lead whose
+   site has a careers section is fine, as long as the address comes from another page. It
+   must be an enquiry address (not careers@, jobs@, hr@, recruit@, talent@, hiring@, apply@,
+   noreply@ ...), it must belong
    to the business (on the website's domain or a subdomain of it, or at one of the free-mail
    providers in `free_mail_contacts`: gmail.com, outlook.com, hotmail.com, yahoo.com,
    icloud.com, singnet.com.sg; config may shorten that list, never add to it), its source
@@ -85,7 +93,9 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
 Rejections for exclusions, low scores, suppression, contacted domains and the do-not-contact
 list, and candidates passed over for rank, are remembered in `scout_rejections` (domain,
 company name, score and reason) for 12 months, so `scout check` can say "looked at before" and
-`scout shortlist` skips them. Duplicates and address failures are not.
+`scout shortlist` skips them. Duplicates and address failures are not, so a fixable address
+can be tried again on a later day. Event logs never carry a full address (`…@domain`);
+addresses live only in `contacts`.
 
 ## Shortlist research, with job boards (PRD §5.2a)
 
@@ -109,17 +119,23 @@ up to the score. Hiring points need hiring evidence; address points need a conta
 | How specific and checkable the observations are | `specific_observations` | 5 |
 | A published enquiry address | `enquiry_address` | 10 |
 
-**Hiring evidence** is a list of postings, `{url, title, seen (YYYY-MM-DD, not in the future),
-duties: [...]}`, at most 10 a lead, with no email address anywhere in it. Its URLs may be on
-job boards: they are evidence only, and the contact rule above still refuses a job board as a
-contact source. **The comparison** is one line, at most 280 characters, on why the lead ranks
-where it does; every candidate at or above the threshold needs one.
+**Hiring evidence** is a list of postings, `{url, title, seen (a real YYYY-MM-DD date, not in
+the future), duties: [...]}`, at most 10 a lead. Each URL must be http(s), with no spaces, on a
+known job board or applicant tracking system (`contact.JOB_BOARDS`) or on the company's own
+site, so the hiring points can be checked. The URLs are evidence only: the contact rule above
+still refuses a job board as a contact source. **The comparison** is one line, at most 280
+characters, on why the lead ranks where it does; every candidate at or above the threshold
+needs one. A titled person's name ("Ms Tan Mei Ling"), a phone number or an email address in
+a posting's title or duties, or in a comparison, is replaced on intake with "[name removed]",
+"[phone removed]" or "[address removed]" (`privacy.strip_personal`), so it is never stored or
+posted, and the result notes it.
 
 **`scout shortlist`**, in order:
 
 1. The whole batch is checked first: every candidate's record (as add-lead checks it), a
    breakdown on each, a comparison at or above the threshold, no company twice, at most
-   `research.candidates`. One bad candidate refuses the batch and nothing is recorded.
+   `research.candidates`. Any bad candidate refuses the batch, the refusal lists every reason
+   at once, and nothing is recorded.
 2. A day is ranked once (`scout_rankings`). A kept lead can't be taken back, so a second batch
    could only keep the best of itself, never the best of the day; it is refused. The research
    precheck also skips a day already ranked.
@@ -130,6 +146,11 @@ where it does; every candidate at or above the threshold needs one.
    each remaining candidate at or above the threshold is recorded as "researched, not kept:
    ranked N of M; today's shortlist of 10 was full", with its score. A weak day keeps fewer; it
    never pads.
+6. All or nothing: steps 3 to 5 decide with nothing written (the page fetches and MX lookups
+   happen here), then every lead, contact, rejection and the `scout_rankings` row are written
+   in one short transaction, and the `#scout-leads` posts go out after it commits. A batch cut
+   off part-way records nothing and leaves the day open, so the next submission ranks it in
+   full. Two candidates with the same address can't both be kept.
 
 `scout check-contact` runs the same contact rules with no side effects, so the session can
 confirm an address before the batch rather than lose a candidate to it.
@@ -142,8 +163,7 @@ line per kept lead with the same two facts.
 **Keeping more never sends more.** The send caps (warm-up, daily ceiling, rolling caps), the
 window, random spacing, the bounce and complaint auto-pause, Ting Yu's approval of each live
 email and the `max_queue` research skip are unchanged. `tests/test_scout_shortlist.py` keeps
-and queues ten leads and shows the first live day still sends five. Event logs
-never carry a full address (`…@domain`); addresses live only in `contacts`.
+and queues ten leads and shows the first live day still sends five.
 
 ## Block 2: the email
 
@@ -170,9 +190,12 @@ jurasolutions.sg only) adds these checks to the core rules:
 - a first line that names the company (its name or first distinctive word) or uses a keyword
   from its observations (follow-ups may instead refer back to the first email);
 - no unsubscribe text in the body itself;
-- no guesses about the company's people or workload ("stretched thin", "short-staffed",
-  "overworked", "struggling", "your last admin left"). A public job posting may be mentioned
-  as a plain fact, never linked (PRD §5.2a point 5).
+- no guesses about the company's people or workload: staffing words anywhere
+  ("short-staffed", "overworked", "high turnover", "your last admin left") and workload words
+  about "you" or "your" people ("your team is stretched", "you must be swamped"). A general
+  sentence ("Many teams struggle with paper delivery orders") is fine;
+- no person named with a title ("Ms Tan", "Mr Lim's", "Dr. Wong"), other than the sender. A
+  public job posting may be mentioned as a plain fact, never linked (PRD §5.2a point 5).
 
 The gate sees the footer with the recipient's site masked as "its website", because the email
 channel allows jurasolutions.sg links only and the site name is code-generated from the
