@@ -172,9 +172,9 @@ def test_the_shipped_config_pins_the_landing_page_pages_project_and_keeps_dispat
     from jura_growth import approval_settings, paths
 
     shipped = yaml.safe_load((paths.config_dir() / "apps.yaml").read_text(encoding="utf-8"))
-    assert shipped["pages_project"] == "landing-page"
+    assert shipped["pages_project"] == "landing-page-eq7"  # the pages.dev name, not the project name
     assert releases.PROJECT_RE.fullmatch(shipped["pages_project"])
-    assert releases.preview_pattern("landing-page").fullmatch("https://claude-t-0031-x.landing-page.pages.dev")
+    assert releases.preview_pattern("landing-page-eq7").fullmatch("https://claude-t-0031-x.landing-page-eq7.pages.dev")
     assert approval_settings.switch("dispatch_builds") is False
 
 
