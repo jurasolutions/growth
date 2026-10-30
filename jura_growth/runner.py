@@ -259,9 +259,9 @@ def _run_command(spec: dict, agent: str, run_id: int | None, job_name: str) -> O
 def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
     """The argv and the stdin prompt for a claude job (also used by --dry-run).
 
-    A job in `caps.BROWSER_JOBS` that sets `browser: true` gets `--chrome` and no `--add-dir`
-    (ADR 0005): its plug-in's rules scope the Chrome tools by domain, and the files it needs are
-    copied into its scratch folder. Any other job that sets `browser` raises."""
+    A job in `caps.BROWSER_JOBS` that sets `browser: true` gets `--chrome`, and `--add-dir` for its own
+    scratch folder only (ADR 0005, amended 2026-10-30): its plug-in's rules scope the Chrome tools by
+    domain, and the files it needs are copied into that folder, which the upload tool must be able to read. Any other job that sets `browser` raises."""
     settings = config.settings()["claude"]
     browser = name in caps.BROWSER_JOBS
     if spec.get("browser") and not browser:
@@ -293,7 +293,9 @@ def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
         "--strict-mcp-config",
         "--setting-sources", "project",
         "--no-session-persistence",
-        *([] if browser else ["--add-dir", str(paths.JURA_ROOT)]),
+        # A browser job adds only its own scratch folder, where its image copies are, so the Chrome upload
+        # tool may read them (rehearsal R1, 2026-10-30); every other job adds JURA_ROOT.
+        "--add-dir", str(work) if browser else str(paths.JURA_ROOT),
         "--max-budget-usd", str(budget),
         "--allowedTools", *allowed,
         "--disallowedTools", *disallowed,

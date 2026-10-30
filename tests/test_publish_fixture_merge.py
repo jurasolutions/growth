@@ -36,7 +36,7 @@ def test_every_platform_drives_its_real_hosts_without_the_fixture(monkeypatch):
 def test_no_real_platform_domain_rule_while_the_fixture_is_on(every_platform_on_the_fixture):
     built, _ = runner.claude_command("publish", config.settings()["jobs"]["publish"])
     rules = [arg for arg in built if "ClaudeInChromeDomain" in arg]
-    assert rules == ["ClaudeInChromeDomain(publish-fixture.localhost)"]
+    assert rules == ["ClaudeInChromeDomain(publish-fixture.localhost:8765)"]
     assert not [arg for arg in built if any(host in arg for host in REAL)]
 
 

@@ -88,7 +88,12 @@ URL_KEYS = ("url", "uri", "href", "link")
 TAIL_CHARS = 20_000  # how far from a result's end its tab context may start
 MAX_DEPTH = 16  # the deepest JSON tab context read; anything deeper is unreadable
 TAIL_CANDIDATES = 50  # lines starting with { or [ tried, from the end
-_TAB_LINE = re.compile(r"tabId\D{0,3}(\d+)\b[^\n]*?\((\S+)\)\s*$")
+# The extension's own tab line: `  • tabId <n>: "<title>" ("<url>")` (rehearsal R1, 2026-10-30). The title
+# is page-controlled; the address is the last `("…")` on the line and never holds a quote or a space, so a
+# `(` in the address can't move the capture, and a line without both quotes is unreadable and fails
+# closed (code review rehearsal-fixes, SEC-B1).
+_TAB_LINE = re.compile(r'^\s*\u2022\s*tabId (\d+): ".*" \("([^"\s]*)"\)\s*$')
+_REMINDER_OPEN, _REMINDER_CLOSE = "<system-reminder>", "</system-reminder>"
 _CREATED = re.compile(r"tab\s*id\D{0,3}(\d+)", re.I)
 _NAVIGATED = re.compile(r"\s*Navigated to (\S+)")
 _HANDED_OUT = re.compile(r'"due"\s*:\s*true|^A-[0-9]+ · ', re.M)
@@ -329,10 +334,23 @@ def _trailing_tabs(text: str) -> list[tuple[str, str]]:
     of its own and running to the end, or trailing `tabId <n>: "<title>" (<url>)` lines. Nothing
     earlier in the result counts. Never raises: anything it can't read gives no pairs."""
     try:
-        tail = text[-TAIL_CHARS:].rstrip()
+        tail = _without_trailing_reminders(text[-TAIL_CHARS:])
         return _tail_json(tail) or _tail_lines(tail)
     except Exception:  # noqa: BLE001 - page content is never allowed to break the audit
         return []
+
+
+def _without_trailing_reminders(tail: str) -> str:
+    """Drop the `<system-reminder>` blocks the extension appends after the tab context, from the end
+    only, in linear time (SEC-N1). Page text always comes before the tab context, and every tab line
+    ends with its address, so a page can't put a reminder at the very end."""
+    tail = tail.rstrip()
+    while tail.endswith(_REMINDER_CLOSE):
+        start = tail.rfind(_REMINDER_OPEN)
+        if start < 0:
+            break
+        tail = tail[:start].rstrip()
+    return tail
 
 
 def _tail_json(tail: str) -> list[tuple[str, str]]:
@@ -352,15 +370,17 @@ def _tail_json(tail: str) -> list[tuple[str, str]]:
 
 
 def _tail_lines(tail: str) -> list[tuple[str, str]]:
+    """The tab lines that run unbroken from the extension's `- Available tabs:` header to the end, or
+    none: a title holding a newline can't add a line (code review rehearsal-fixes, RR-N1)."""
     found = []
-    for line in reversed(tail.splitlines()):
+    for line in reversed(tail.split("\n")):  # never splitlines(): a title may hold U+2028 and friends (SEC-B2)
         if not line.strip():
             continue
         match = _TAB_LINE.search(line)
         if not match:
-            break
+            return list(reversed(found)) if line.strip() == "- Available tabs:" else []
         found.append((match.group(1), match.group(2)))
-    return list(reversed(found))
+    return []
 
 
 def _depth(block: str) -> int:

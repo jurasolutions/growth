@@ -423,6 +423,10 @@ cd /Users/tingy/OneDrive/Desktop/projects/jurasolutions/repos/growth
 uv run python -m http.server 8765 --bind 127.0.0.1 --directory tests/fixtures/publish-site
 ```
 
+Only `publish-fixture.localhost:<port>` has been tried in real Chrome (2026-10-30). The domain rule
+names the port; the `127.0.0.1` and `[::1]` forms are accepted by the code but untried, and a rule
+Chrome can't parse denies, which fails closed.
+
 In a second window, set the rehearsal up. `rehearse <scenario> <page>` keeps the last step's
 transcripts in `~/jura-uat/rehearsal/`, empties the UAT folder, and seeds one approved item whose
 target is that fixture page:

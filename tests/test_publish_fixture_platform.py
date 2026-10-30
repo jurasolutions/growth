@@ -41,11 +41,11 @@ def test_without_the_fixture_the_publish_argv_keeps_the_platform_hosts(monkeypat
     pw.social_config(monkeypatch)
     rules = domain_rules(publish_argv())
     assert "ClaudeInChromeDomain(www.facebook.com)" in rules
-    assert "ClaudeInChromeDomain(publish-fixture.localhost)" not in rules
+    assert not [rule for rule in rules if "publish-fixture" in rule]
 
 
 def test_with_the_fixture_the_only_domain_rule_is_the_fixture_host(fixture_on):
-    assert domain_rules(publish_argv()) == ["ClaudeInChromeDomain(publish-fixture.localhost)"]
+    assert domain_rules(publish_argv()) == ["ClaudeInChromeDomain(publish-fixture.localhost:8765)"]
 
 
 # --- the guard: never the live data folder, never a non-loopback host ----------------------------
@@ -116,16 +116,17 @@ def test_an_unset_data_folder_refuses_the_fixture(fixture_on, monkeypatch):
         scope.permissions()
 
 
-@pytest.mark.parametrize("url, host", [
+@pytest.mark.parametrize("url, rule_host", [
     ("http://publish-fixture.localhost", "publish-fixture.localhost"),
-    ("http://publish-fixture.localhost:8765/", "publish-fixture.localhost"),
-    ("HTTP://PUBLISH-FIXTURE.LOCALHOST:8765", "publish-fixture.localhost"),
-    ("http://127.0.0.1:8765", "127.0.0.1"),
-    ("http://[::1]:8765", "::1"),
+    ("http://publish-fixture.localhost:8765/", "publish-fixture.localhost:8765"),
+    ("HTTP://PUBLISH-FIXTURE.LOCALHOST:8765", "publish-fixture.localhost:8765"),
+    ("http://127.0.0.1:8765", "127.0.0.1:8765"),
+    ("http://[::1]:8765", "[::1]:8765"),
 ])
-def test_the_fixture_name_and_loopback_literals_are_accepted(fixture_on, monkeypatch, url, host):
+def test_the_fixture_name_and_loopback_literals_are_accepted(fixture_on, monkeypatch, url, rule_host):
+    """The rule names the port when there is one, as Chrome matches it (rehearsal R1, 2026-10-30)."""
     monkeypatch.setenv(FIXTURE_ENV, url)
-    assert domain_rules(publish_argv()) == [f"ClaudeInChromeDomain({host})"]
+    assert domain_rules(publish_argv()) == [f"ClaudeInChromeDomain({rule_host})"]
 
 
 def test_the_prompt_takes_the_permalink_on_the_target_urls_host():
@@ -246,3 +247,13 @@ def test_publish_done_says_refused_when_the_fixture_is_refused(conn, world, monk
     result = pw.invoke("publish", "done", request.id, "--url", url, "--live-text-file", live_file(pw.TEXT))
     assert result.exit_code == 1 and "refused:" in result.output and FIXTURE_ENV in result.output
     assert pw.item_row(conn, found.id)["state"] == "claimed"
+
+
+def test_the_fixture_domain_rule_names_the_port_as_chrome_matches_it(fixture_on):
+    """Rehearsal R1, 2026-10-30: with the site on a port, `ClaudeInChromeDomain(publish-fixture.localhost)`
+    denied `navigate` to `http://publish-fixture.localhost:8765/page.html` in real Chrome, and
+    `ClaudeInChromeDomain(publish-fixture.localhost:8765)` allowed it. The audit still compares hosts."""
+    from jura_growth.agents.publish import scope
+
+    assert scope.domain_rules() == ["ClaudeInChromeDomain(publish-fixture.localhost:8765)"]
+    assert scope.browser_hosts() == ("publish-fixture.localhost",)

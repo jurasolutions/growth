@@ -9,7 +9,7 @@ from jura_growth import paths
 
 SITE = paths.REPO_ROOT / "tests" / "fixtures" / "publish-site"
 PAGES = {
-    "page.html", "post.html", "login.html", "captcha.html", "checkpoint.html", "rate-limit.html", "removed.html",
+    "page.html", "instagram.html", "post.html", "login.html", "captcha.html", "checkpoint.html", "rate-limit.html", "removed.html",
     "admin-warning.html", "link-out.html", "injection.html", "join.html", "profile-only-join.html",
     "other-identity.html", "rules.html", "index.html",
 }

@@ -81,7 +81,7 @@ def test_r1_a_clean_fixture_post_passes_the_audit_and_records_its_permalink(conn
 
     assert outcome.status == "ok", outcome
     domain_rules = [rule for rule in fake.argv if rule.startswith("ClaudeInChromeDomain(")]
-    assert domain_rules == ["ClaudeInChromeDomain(publish-fixture.localhost)"]
+    assert domain_rules == ["ClaudeInChromeDomain(publish-fixture.localhost:8765)"]
     row = pw.item_row(conn, found.id)
     assert row["state"] == "done" and row["post_url"] == POST
     assert not pause.is_paused(conn, "publish")
@@ -112,3 +112,15 @@ def test_a_refused_fixture_fails_the_run_before_claude_starts(conn, fake, approv
     assert not fake.started
     assert pw.item_row(conn, found.id)["state"] == "ready"
     assert db.scalar(conn, "SELECT used_at FROM approvals WHERE id = ?", (approval.id,)) is None
+
+
+def test_a_new_tab_reported_with_an_empty_address_is_not_a_page(conn, fake, approved):
+    """Rehearsal R1, 2026-10-30: real Chrome reports a just-created tab as ("") before it navigates.
+    That isn't an address outside the fixture, so the audit passes."""
+    steps = post_steps()
+    steps[0] = chrome(t.created(url=""))
+    fake.scenario([*claim(), *steps], "OK: posted {A} " + POST)
+
+    outcome = run()
+
+    assert outcome.status == "ok", outcome

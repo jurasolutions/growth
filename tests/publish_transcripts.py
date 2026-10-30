@@ -37,8 +37,8 @@ def tab_context(*tabs: tuple[int, str]) -> str:
     return json.dumps({"availableTabs": [{"tabId": tab, "title": "Page", "url": url} for tab, url in tabs]})
 
 
-def created(tab: int = TAB) -> dict:
-    return chrome("tabs_create_mcp", {}, f"Created new tab. Tab ID: {tab}\n" + tab_context((tab, "chrome://newtab/")))
+def created(tab: int = TAB, url: str = "chrome://newtab/") -> dict:
+    return chrome("tabs_create_mcp", {}, f"Created new tab. Tab ID: {tab}\n" + tab_context((tab, url)))
 
 
 def opened(url: str = PAGE, tab: int = TAB) -> dict:

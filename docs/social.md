@@ -287,8 +287,8 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
   tools; `jura-growth status` lists the variable as a setup gap. Otherwise the precheck runs the
   queue's `items.sync()` and posts any fresh card, then asks whether anything can be claimed. If
   not, the slot is a quiet run ("nothing due") and no Claude starts.
-- **What the run may do.** `--chrome`, only because `publish` is in `caps.BROWSER_JOBS`; no
-  `--add-dir`. The tab tools by name, and the page tools only through one
+- **What the run may do.** `--chrome`, only because `publish` is in `caps.BROWSER_JOBS`;
+  `--add-dir` for its own scratch folder only, so the upload tool may read the image copies. The tab tools by name, and the page tools only through one
   `ClaudeInChromeDomain(<host>)` rule per host of each platform switched on and in `browser` mode
   (none of LinkedIn's while it is switched off). The lists are
   `hosts.BROWSER_HOSTS`, one per platform, exact (`www.` and the bare host, plus
