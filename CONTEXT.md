@@ -90,7 +90,7 @@ _Avoid_: missing config, error
 
 **Channel**:
 Always qualified. A **Discord channel** is where a message posts (`#approvals`, `#alerts`). A
-**brand channel** is the `gate.py` rule set a piece of text is checked against (`email`, `linkedin`).
+**brand channel** is the `gate.py` rule set a piece of text is checked against (`email`, `social-facebook`).
 _Avoid_: bare "channel"
 
 ## Approvals and control
@@ -181,8 +181,8 @@ or withdrawn; its approval state lives only in the approval request.
 _Avoid_: "item" alone (community plan items and checklist items are different things)
 
 **Posting identity**:
-The account a publish item acts as: the Jura Facebook Page, the Jura Instagram account or the Jura
-LinkedIn company page. In groups it is always the Jura Page; a group that only lets personal profiles
+The account a publish item acts as: the Jura Facebook Page or the Jura Instagram account (the Jura
+LinkedIn company page too while LinkedIn was on; it was switched off on 2026-10-29). In groups it is always the Jura Page; a group that only lets personal profiles
 join or post is skipped.
 _Avoid_: account, login
 

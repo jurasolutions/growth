@@ -6,6 +6,7 @@ and links only to jurasolutions.sg or declared sources. These channels add the
 platform rules from social PRD §5.3 and the news rules from §4:
 
     social-linkedin   120–220 words, up to 3 hashtags at the end, links in the post
+                      (unused while LinkedIn is switched off, since 2026-10-29)
     social-facebook   60–120 words, 0–2 hashtags at the end, links in the post
     social-instagram  50–120 words, up to 8 hashtags at the end, "Link in bio", no URL
     social-card       the words on an image card: short, no links, no hashtags

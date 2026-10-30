@@ -100,8 +100,8 @@ def test_the_social_drafts_message_for_facebook_points_at_the_card(conn, social)
     assert FB.strip() not in facebook[0]
     [message] = [p for p in social.posts("social-drafts") if (p.content or "").startswith("**Facebook Page**")]
     assert message.files == []
-    linkedin = [p for p in social.posts("social-drafts") if (p.content or "").startswith("**LinkedIn page**")]
-    assert len(linkedin) == 1 and linkedin[0].files and "post it by hand" in linkedin[0].content
+    instagram = [p for p in social.posts("social-drafts") if (p.content or "").startswith("**Instagram**")]
+    assert len(instagram) == 1 and instagram[0].files and "post it by hand" in instagram[0].content
 
 
 def test_linkedin_and_instagram_in_draft_mode_raise_nothing(conn, social):

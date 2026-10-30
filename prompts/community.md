@@ -38,12 +38,13 @@ planned this week, recent post texts, and the live toolbox tools.
    agents, education centres. Try queries like `Singapore SME owners Facebook group`,
    `Singapore F&B owners Facebook group`, `best Facebook groups for Singapore entrepreneurs`,
    `Singapore home based business Facebook group rules`. Articles that list groups are good
-   sources. LinkedIn groups, Telegram groups and SBF or ASME event listings you meet along the
-   way may be recorded too, tagged by channel.
+   sources. Telegram groups and SBF or ASME event listings you meet along the way may be
+   recorded too, tagged by channel. Leave LinkedIn groups out: Jura doesn't work on LinkedIn
+   (dropped on 2026-10-29), and `add-group` refuses them.
 2. Skip anything already in `groups` (same URL or name).
 3. On the first run, aim for at least 12 groups. On later runs, add the 3–6 best new ones.
 4. For each group record what you found:
-   - `channel`: `facebook`, `linkedin`, `telegram`, `sbf`, `asme`, `event`, `forum` or `other`
+   - `channel`: `facebook`, `telegram`, `sbf`, `asme`, `event`, `forum` or `other`
    - `name` and `url` (for Facebook, the facebook.com/groups/… link as shown in the search result
      or article)
    - `audience`, `size_hint` (for example "about 40,000 members, per the search result snippet",

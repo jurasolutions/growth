@@ -85,7 +85,7 @@ All times SGT, from `config/settings.yaml`:
 | Job | When | Kind |
 |---|---|---|
 | `app-factory` | 06:30 daily | headless Claude |
-| `social` | 07:00 daily | headless Claude |
+| `social` | 07:00 daily: drafts for the Facebook Page and Instagram (LinkedIn switched off since 2026-10-29) | headless Claude |
 | `one-pager` | 08:00 daily | command |
 | `scout-research` | 09:00 business days | headless Claude |
 | `scout-send` | 09:30–16:30 business days, every 10 minutes | command |
@@ -131,7 +131,7 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
   beyond what its commands print; `publish next` copies the item's images into its scratch
   folder, read-only. It has no web search or fetch. Its Chrome tools come from the plug-in's
   `Permissions.allowed_tools`: the tab tools by name and one `ClaudeInChromeDomain(<host>)` rule
-  per host of each platform in `browser` mode, never a page tool by name. Any other job that
+  per host of each platform switched on and in `browser` mode, never a page tool by name. Any other job that
   sets `browser: true` fails. After the run, its transcript is audited for hosts, tabs, typed
   text, uploads and actions after a stop, and its summary and error are rewritten from the
   item's record, so no model or page text reaches the run row, `#alerts` or a run update.
@@ -241,7 +241,7 @@ A kind is an object with:
 | `decision_args` | Optional. The `key=value` arguments an approve must carry, such as `("promo_days", "post_days")` |
 | `args_help` | Optional. The refusal text when one of them is missing |
 | `on_approve(conn, subject, args)` | Optional. Applies the change inside the decision's transaction, after `approved` is written. Raise `approvals.BadArgs(text)` to refuse with that text; a `NotApproved` from a claim inside it also refuses. A returned string is appended to the answer |
-| `switched_off(conn, subject)` | Optional. The kind's own switch (outreach in shadow mode, a platform in draft): a reason makes `use()` refuse without claiming |
+| `switched_off(conn, subject)` | Optional. The kind's own switch (outreach in shadow mode, a platform in draft or switched off): a reason makes `use()` refuse without claiming |
 | `on_skip`, `on_expire`, `on_lapse` | Optional, `(conn, subject)`. What a skip, an unanswered decide-by and an unclaimed use-by do to the item |
 | `superseded_note(conn, subject)` | Optional. Why the item changed or went away, in Ting Yu's words ("lead unsubscribed"), for the card's edited first line; `None` keeps the core's reason |
 | `used_word` | Optional. How the answer to a decision on a used request names the use ("already sent at 10:40"); "used" by default |

@@ -36,6 +36,7 @@ def test_social_post_seeds_one_pending_facebook_card(uat):
     social = yaml.safe_load((uat / "config" / "social.yaml").read_text())
     assert social["platforms"]["facebook"]["publish_mode"] == "browser"
     assert social["platforms"]["linkedin"]["publish_mode"] == "draft"
+    assert social["platforms"]["linkedin"]["enabled"] is False  # dropped on 2026-10-29: no LinkedIn card
     with db.session() as conn:
         [request] = facebook_requests(conn)
         assert request.status == "pending" and request.decide_by == "2026-11-10T18:00:00+08:00"

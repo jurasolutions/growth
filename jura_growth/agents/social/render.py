@@ -354,15 +354,16 @@ SETUP_COPY = {
 
 
 def render_setup(out_dir: Path, *, settings: Settings | None = None, offline: bool = False) -> list[Path]:
-    """Profile and cover images for the setup checklist (PRD §5.5)."""
+    """Profile and cover images for the setup checklist (PRD §5.5): a cover for each platform
+    that is switched on and has one (LinkedIn's only while it is on)."""
     settings = settings or load()
     spec = CardSpec(layout="headline", **SETUP_COPY)
     made = []
     plan = [
         ("profile", "profile", "mode-mark"),
         ("profile-green", "profile", "mode-mark mode-dark"),
-        ("linkedin-cover", "linkedin-cover", "mode-cover"),
-        ("facebook-cover", "facebook-cover", "mode-cover"),
+        *((f"{p.name}-cover", f"{p.name}-cover", "mode-cover") for p in settings.enabled_platforms()
+          if f"{p.name}-cover" in SIZES),
     ]
     for filename, size, mode in plan:
         width, height = SIZES[size]

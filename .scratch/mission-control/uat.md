@@ -52,38 +52,42 @@ Only you can do these steps. Each one touches your accounts or your Mac.
    local stub (ticket 18).
 3. **A second Discord account**, or a friend willing to tap one button, for B4.
 4. **The UAT route through Dispatch.** Dispatch must reach the UAT folder, never the live one. It
-   gets a second key, for UAT only, with its own `authorized_keys` entry that fixes the UAT folder
-   variables before it runs `bin/growth-remote`.
-   1. On Dispatch's machine, as the gateway's user, make the key the way `remote-control.md` step 4
-      makes the live one, under its own name:
-      `ssh-keygen -t ed25519 -f ~/.ssh/growth_mac_uat -C dispatch-growth-uat -N ""`, then
-      `chmod 600 ~/.ssh/growth_mac_uat`. The private key never leaves that machine.
-   2. On this Mac, add this as **one line** to `~/.ssh/authorized_keys`. Put the contents of
-      `~/.ssh/growth_mac_uat.pub` from Dispatch's machine where `<UAT public key>` stands, and
-      Dispatch's tailnet address (`remote-control.md` step 2) in `from=`:
+   gets a second key, for UAT only, with its own key line that fixes the UAT folder variables
+   before it runs `bin/growth-remote`. Dispatch runs on this Mac as the `dispatch` user and
+   connects to `127.0.0.1` (revised 2026-10-30; `remote-control.md` §2).
+   1. Make the key as `dispatch`, next to the live one, under its own name. The private key never
+      leaves `/Users/dispatch/.dispatch-keys/`:
+      `sudo -u dispatch -H ssh-keygen -q -t ed25519 -N "" -C dispatch-growth-uat -f /Users/dispatch/.dispatch-keys/growth_mac_uat`
+   2. Add this as **one line** to `/etc/ssh/authorized_keys.d/tingy`, the root-owned file sshd
+      reads your keys from (`~/.ssh/authorized_keys` is never read). Print the public key with
+      `sudo cat /Users/dispatch/.dispatch-keys/growth_mac_uat.pub` and put its first two fields
+      where `<UAT public key>` stands, then append the line with
+      `sudo tee -a /etc/ssh/authorized_keys.d/tingy`:
 
       ```
-      restrict,command="/usr/bin/env JURA_GROWTH_DATA_DIR=/tmp/jura-uat/data JURA_GROWTH_OUTPUTS_DIR=/tmp/jura-uat/outputs JURA_PRD_DIR=/tmp/jura-uat/prd JURA_GROWTH_CONFIG_DIR=/tmp/jura-uat/config JURA_GROWTH_PAUSE_FILE=/tmp/jura-uat/PAUSE JURA_GROWTH_ENV_FILE=/Users/tingy/jura-uat/uat.env JURA_INPUTS_DIR=/tmp/jura-uat/inputs JURA_GROWTH_RESEND_BASE_URL=http://127.0.0.1:8025 JURA_GROWTH_D1_BASE_URL=http://127.0.0.1:8025 /Users/tingy/OneDrive/Desktop/projects/jurasolutions/repos/growth/bin/growth-remote",from="<dispatch tailnet address>" ssh-ed25519 <UAT public key> dispatch-growth-uat
+      restrict,command="/usr/bin/env JURA_GROWTH_DATA_DIR=/tmp/jura-uat/data JURA_GROWTH_OUTPUTS_DIR=/tmp/jura-uat/outputs JURA_PRD_DIR=/tmp/jura-uat/prd JURA_GROWTH_CONFIG_DIR=/tmp/jura-uat/config JURA_GROWTH_PAUSE_FILE=/tmp/jura-uat/PAUSE JURA_GROWTH_ENV_FILE=/Users/tingy/jura-uat/uat.env JURA_INPUTS_DIR=/tmp/jura-uat/inputs JURA_GROWTH_RESEND_BASE_URL=http://127.0.0.1:8025 JURA_GROWTH_D1_BASE_URL=http://127.0.0.1:8025 /Users/tingy/OneDrive/Desktop/projects/jurasolutions/repos/growth/bin/growth-remote",from="127.0.0.1,::1" ssh-ed25519 <UAT public key> dispatch-growth-uat
       ```
 
-      - The restrictions are the live entry's (ADR 0004, `remote-control.md` step 5): `restrict`
-        turns off the terminal and all forwarding, `from=` accepts Dispatch's address only, and
+      - The restrictions are the live entry's (ADR 0004, `remote-control.md` §2): `restrict`
+        turns off the terminal and all forwarding, `from=` limits the key to this Mac, and
         `command=` runs the same `bin/growth-remote` whatever Dispatch asks for.
       - `/usr/bin/env` sets the variables and then becomes `bin/growth-remote`, which keeps them
-        when it starts `jura-growth remote`. Don't use the `environment=` option instead: it works
-        only with `PermitUserEnvironment yes` in sshd's settings, which would let any entry set
+        when it starts `jura-growth remote`. Don't use the `environment=` option instead: sshd
+        runs with `PermitUserEnvironment no`, and turning it on would let any entry set
         variables. The env file is a full path because `~` isn't expanded in the entry.
-      - If the live entry from mission-control#14 is already there, keep it. Both lines are
-        Dispatch's keys, each forced to `bin/growth-remote`. Never add a key of your own.
+      - Keep the live entry from mission-control#14. Both lines are Dispatch's keys, each forced
+        to `bin/growth-remote`, and the file stays owned by root, mode 644. Never add a key of
+        your own.
    3. In Dispatch, bind "Jura HQ UAT"'s `#approvals` and `#control` to this key, and only that
       server's channels. Jura HQ's channels stay on the live key.
    4. Check the route before Part A: after the seed below, send `/growth one-pager` from the UAT
       server's `#control`. It should post in the UAT server's `#mission-control` and list S2's runs
       (app-factory at 06:31, social at 07:00), which only the UAT folder holds. If it posts in Jura
       HQ, or lists the live engine's runs, stop and fix the binding before going on.
-   5. When you finish (see the last paragraph of this script), delete this line from
-      `authorized_keys` and the binding from Dispatch, and delete `~/.ssh/growth_mac_uat` and its
-      `.pub` on Dispatch's machine.
+   5. When you finish (see the last paragraph of this script), delete this line with
+      `sudo sed -i '' '/ dispatch-growth-uat$/d' /etc/ssh/authorized_keys.d/tingy` (then
+      `wc -l` on that file prints `1` again), remove the binding from Dispatch, and delete the
+      key with `sudo rm /Users/dispatch/.dispatch-keys/growth_mac_uat*`.
 5. **The harness.** `uv run python -m tests.uat.seed <folder> [--scenario <name>] [--today <date>]`
    seeds the data, and `uv run python -m tests.resend_stub` records what would have gone to Resend
    and answers D1 queries from an empty local copy of the site's tables (ticket 18), so nothing
@@ -326,10 +330,13 @@ Same UAT route and folder as Part A (reseed first if Part A is finished).
 - Expect: refused, or ignored. No growth command runs.
 - [ ] Pass  [ ] Fail
 
-**B5. The Mac is asleep (should, MC §4.7)**
-- Do: close the Mac's lid. Two minutes later, tap Approve on a pending card.
-- Expect: Dispatch replies "the growth Mac is unreachable", and the card stays pending. Open the lid
-  and confirm nothing was recorded late.
+**B5. The growth Mac is unreachable (should, MC §4.7)**
+- Revised 2026-10-30: Dispatch runs on this Mac, which never sleeps, so "unreachable" now means
+  Remote Login is off.
+- Do: turn Remote Login off (System Settings → General → Sharing). Tap Approve on a pending card.
+- Expect: Dispatch replies "The growth Mac is unreachable.", and the card stays pending. Turn
+  Remote Login back on, check that **Only these users** still lists only you, and confirm nothing
+  was recorded late.
 - [ ] Pass  [ ] Fail
 
 **B6. Requeue the shadow emails from Discord (should, AC-M8.13)**
@@ -347,7 +354,8 @@ Same window, variables and UAT route as Part A.
 
 **C1. A request per item, and nothing without approval (must, AC-P1.1, AC-P2.1, AC-P2.2, AC-P5.1)**
 - Expect, from the seed: one `social-post` card for Facebook, "decide by <today>, 18:00 SGT", with
-  the text, the image and the Page link. No card for LinkedIn or Instagram (still `draft`).
+  the text, the image and the Page link. No card for Instagram (still `draft`). LinkedIn was
+  dropped on 2026-10-29 and is switched off, so there is no LinkedIn draft or card at all.
 - Do: `uv run jura-growth publish next --json`
 - Expect: "nothing due" (the card isn't approved).
 - Do: approve the card in `#approvals`. Then run
@@ -401,7 +409,8 @@ publish commands and the audit accept no other address, so the run can't reach F
 the profile is signed in. The engine refuses the fixture on a non-loopback address or with a data
 folder that isn't temporary: the run fails before Claude starts. Each run costs a little (about the
 spike's US$0.10 to US$0.40). Run R1, R4 and R6 before U12 for BP-03, R2 and R3 too (E13), R1, R2 and
-R6 again for each new platform in BP-04, and R5 after BP-06.
+R6 again for Instagram in BP-04, and R5 after BP-06. LinkedIn was dropped on 2026-10-29, so there
+is no LinkedIn rehearsal.
 
 You need BP-01 done (the engine's Chrome profile chosen in `/chrome`), the Mac awake between 09:00
 and 18:00 (the posting window), and the test Discord server from "Before you start". Part R starts
@@ -444,7 +453,7 @@ Then, for each step: `rehearse …` as the step says, check the argv once with
 `publish-fixture.localhost`), and start the run with `uv run jura-growth run publish --ignore-schedule`.
 Watch the run's tab in Chrome. Afterwards `uv run jura-growth publish queue` shows the item's state.
 
-**R1. An approved fixture post, end to end (must, BP-03; BP-04 per platform)**
+**R1. An approved fixture post, end to end (must, BP-03; BP-04 for Instagram)**
 - Do: `rehearse fixture-post page.html`, then the run.
 - Expect: one new tab; the composer shows "Posting as Jura Solutions"; the approved text typed once,
   whole; the image attached; Post clicked once; the permalink `post.html?id=…` opened and read back;
@@ -506,7 +515,7 @@ Write both results, with the two `permission_denials` lines, in the Comments of
 `.scratch/browser-publishing/issues/07-fixture-platform.md`. Nothing here posts anything.
 - [ ] Recorded
 
-**R2. Each stop page (must, BP-03; BP-04 per platform)**
+**R2. Each stop page (must, BP-03; BP-04 for Instagram)**
 - Do: one at a time, `rehearse fixture-post <page>` and the run, for `login.html`, `captcha.html`,
   `checkpoint.html`, `rate-limit.html`, `removed.html` and `admin-warning.html`.
 - Expect: `publish stopped` with the matching reason (`login`, `captcha`, `checkpoint`,
@@ -540,7 +549,7 @@ Write both results, with the two `permission_denials` lines, in the Comments of
   or post".
 - [ ] Pass  [ ] Fail
 
-**R6. A different identity (must, BP-03; BP-04 per platform)**
+**R6. A different identity (must, BP-03; BP-04 for Instagram)**
 - Do: `rehearse fixture-post other-identity.html`, then the run.
 - Expect: `publish stopped --reason wrong-identity` before anything is typed (no `"action": "type"`
   in the transcript), the tab closed, publish paused, one `#alerts` post.
@@ -557,8 +566,8 @@ transcripts become T fixtures.
 These post publicly on Jura's real accounts, as the PRD's own checks require. Use test text you're
 happy to leave up, or delete it by hand afterwards. You need:
 
-- BP-01 done: the engine's Chrome profile chosen in `/chrome`, signed in to the Jura Facebook Page,
-  Instagram and LinkedIn company page, and nothing else;
+- BP-01 done: the engine's Chrome profile chosen in `/chrome`, signed in to the Jura Facebook Page
+  and Instagram, and nothing else (LinkedIn was dropped on 2026-10-29: don't sign in to it);
 - Dispatch bound to the real Jura HQ `#approvals` (mission-control#14), because these are real
   decisions;
 - a **private Facebook test group** you set up, joined as the Jura Page, with written rules naming
@@ -587,10 +596,12 @@ happy to leave up, or delete it by hand afterwards. You need:
   `/growth resume publish`.
 - [ ] Pass  [ ] Fail
 
-**D4. The other platforms (must, BP-04; U13)**
-- Before: answer BP §6 again (weekend posts once three platforms are in `browser` mode).
-- Do: repeat D1 for Instagram, on a carousel day, and then for LinkedIn.
-- Expect: each goes live with its URL recorded. The carousel's slides are in order.
+**D4. Instagram (must, BP-04; U13)**
+- LinkedIn was dropped on 2026-10-29 and is switched off (`platforms.linkedin.enabled: false`), so
+  this step covers Instagram only.
+- Before: answer BP §6 again (weekend posts once both platforms are in `browser` mode).
+- Do: repeat D1 for Instagram, on a carousel day.
+- Expect: it goes live with its URL recorded. The carousel's slides are in order.
 - [ ] Pass  [ ] Fail
 
 **D5. Community post and join, as the Jura Page (must, BP-05, BP-06; U14, U15)**

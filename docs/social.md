@@ -1,8 +1,18 @@
 # Social content agent
 
-Daily drafts for Jura's LinkedIn page, Facebook Page and Instagram, with branded image cards,
-delivered to `#social-drafts`. A platform in `draft` mode is posted by Ting Yu by hand; a platform
-in `browser` mode is posted through Chrome once he approves that day's post in `#approvals`.
+Daily drafts for Jura's Facebook Page and Instagram, with branded image cards, delivered to
+`#social-drafts`. A platform in `draft` mode is posted by Ting Yu by hand; a platform in `browser`
+mode is posted through Chrome once he approves that day's post in `#approvals`.
+
+**LinkedIn was dropped on 2026-10-29** (Ting Yu: "drop the linkedin updates. No need to work on
+linkedin anymore."). It is switched off with `platforms.linkedin.enabled: false` in
+`config/social.yaml`, not removed. A switched-off platform gets no draft, no image, no
+`#social-drafts` message, no publish item, no approval card, no browser host and no setup cover,
+isn't counted in the digest, is left out of `social skip all`, and the community register takes no
+LinkedIn group (by channel or by a linkedin.com address). A card raised before the switch is
+superseded at the next sync and its item withdrawn, an item approved before the switch is never
+claimed, and neither lifts the publish run's `file_upload` deny. Its settings, brand channel,
+card sizes and publish steps stay, so switching it back on brings all of that back.
 
 PRD: `jurasolutions/prd/pending/prd-jura-social-content-2026-10-24.md`. Blocks 1 (drafts and
 images) and 2 (schedule and history) are built. Block 3 is replaced by browser publishing
@@ -17,8 +27,9 @@ the Posts API, `publish_mode: auto` and the two-hour skip window are dropped. `p
    today's drafts are already in, every platform is skipped, "No draft today" was already posted,
    or it's a weekend and `weekends: false`.
 2. Headless Claude follows `prompts/social.md`: `jura-growth social today`, research (web search
-   and fetch only), one core post adapted per platform, five files in
-   `data/growth/work/social/YYYY-MM-DD/`, then `jura-growth social submit`.
+   and fetch only), one core post adapted per platform, a file per platform switched on plus
+   `sources.md` and `card.json` in `data/growth/work/social/YYYY-MM-DD/`, then
+   `jura-growth social submit`.
 3. `submit` enforces the rules in code (below), renders the cards, writes
    `outputs/growth/social/YYYY-MM-DD/`, logs `social_posts` and posts to `#social-drafts`.
 4. For a platform in `draft` mode, Ting Yu copies the post, or skips it, and can record that it
@@ -30,26 +41,26 @@ the Posts API, `publish_mode: auto` and the two-hour skip window are dropped. `p
 |---|---|
 | `jura-growth social today [--date D] [--json]` | Today's theme and fallbacks, platform rules, the 14-day history (story URLs, tools, themes), the toolbox's newest and most-used tools, and the scratch folder |
 | `jura-growth social submit <dir> [--theme ID]` | Check, render, save, log and post the drafts in `<dir>` |
-| `jura-growth social render <spec.json> --out <dir> [--size NAME\|WxH ...] [--carousel N] [--source URL ...]` | Render a card on its own, after a brand check of its words. Default sizes: linkedin, facebook, instagram |
-| `jura-growth social skip <date> <platform\|all> [--reason]` | Don't post that draft. Works before the draft exists too (`tomorrow` is accepted) |
+| `jura-growth social render <spec.json> --out <dir> [--size NAME\|WxH ...] [--carousel N] [--source URL ...]` | Render a card on its own, after a brand check of its words. Default sizes: each platform switched on (facebook, instagram); any named size still renders with `--size` |
+| `jura-growth social skip <date> <platform\|all> [--reason]` | Don't post that draft. Works before the draft exists too (`tomorrow` is accepted). `all` is every platform switched on |
 | `jura-growth social published <date> <platform> [--url]` | Record that a draft went out by hand, for the digest's published count |
 | `jura-growth social history [--days 14] [--json]` | Posts in the window, with status, tool and sources |
 | `jura-growth social no-draft "<reason>"` | Post "No draft today" with the reason |
-| `jura-growth social setup-images [--out DIR]` | Profile picture and the LinkedIn and Facebook covers, into `outputs/growth/setup/social-images/` |
+| `jura-growth social setup-images [--out DIR]` | Profile picture and a cover for each platform switched on that has one (the Facebook cover; the LinkedIn cover only while LinkedIn is on), into `outputs/growth/setup/social-images/` |
 
 ## The submission folder
 
 ```
 data/growth/work/social/YYYY-MM-DD/
-  linkedin.md    exactly the text to post
-  facebook.md
+  facebook.md    exactly the text to post, one file per platform switched on
   instagram.md
   sources.md     one line per source: - URL | Publisher | YYYY-MM-DD | Title
   card.json      the image card spec (below)
 ```
 
 Every http(s) URL in `sources.md` is a source and a story for the no-repeat rule. News themes need
-the published date on each line.
+the published date on each line. A file for a platform that is switched off (a leftover
+`linkedin.md`) is ignored.
 
 ## What `submit` enforces
 
@@ -83,8 +94,8 @@ declared sources). The social channels add:
 
 | Channel | Rules |
 |---|---|
-| `social-linkedin` | 120–220 words; up to 3 hashtags, all on the last line; at least one link; every source in `sources.md` linked; no undeclared third-party links |
-| `social-facebook` | 60–120 words; 0–2 hashtags on the last line; links as LinkedIn |
+| `social-facebook` | 60–120 words; 0–2 hashtags on the last line; at least one link; every source in `sources.md` linked; no undeclared third-party links |
+| `social-linkedin` | Not used while LinkedIn is switched off; kept for `jura-growth check` and for switching it back on. 120–220 words; up to 3 hashtags, all on the last line; links as Facebook |
 | `social-instagram` | 50–120 words; up to 8 hashtags on the last line; no URL or domain at all; says "Link in bio" |
 | `social-card` | The card's words: no links, no hashtags, no markdown. Headline and item titles are checked as headings (sentence case, not a question) |
 
@@ -94,7 +105,7 @@ And on all three post channels:
 - Quotations of more than 12 words fail (`max_quote_words`).
 - Blocked topics (`blocked_topics`: elections, political parties, tragedies) fail.
 - A grant or scheme mention needs "Check the official page for current eligibility." and, on
-  LinkedIn and Facebook, a `.gov.sg` link. Any sentence implying Jura secures, gets, claims or
+  Facebook (and LinkedIn, while it is on), a `.gov.sg` link. Any sentence implying Jura secures, gets, claims or
   guarantees funding, or is an approved or pre-approved vendor, fails.
 - A news theme needs sources; a tool post must link `jurasolutions.sg/apps/<slug>`.
 
@@ -137,11 +148,11 @@ Words are counted without links and hashtags.
 
 | Name | Size | Use |
 |---|---|---|
-| `linkedin` | 1200×627 | LinkedIn post |
+| `linkedin` | 1200×627 | LinkedIn post (LinkedIn is switched off: rendered only when asked for by name) |
 | `facebook` | 1200×630 | Facebook post |
 | `instagram` | 1080×1350 | Instagram post; on Mondays and Thursdays a carousel of up to 5: the card, then one slide per item |
 | `profile` | 1080×1080 | Profile picture (mark only; `profile-green` is the white mark on the deep green) |
-| `linkedin-cover` | 1128×191 | LinkedIn page cover |
+| `linkedin-cover` | 1128×191 | LinkedIn page cover (not in `setup-images` while LinkedIn is switched off) |
 | `facebook-cover` | 1640×624 | Facebook Page cover (phones crop the sides, so the words stay central) |
 
 Any `WIDTHxHEIGHT` works with `render --size`.
@@ -168,7 +179,7 @@ post says the images use fallback fonts. `--offline` blocks the network (the tes
 | `weekends` | `true` | `false` makes the 07:00 job skip Saturday and Sunday (PRD open question 2) |
 | `rhythm` | PRD §5.2 | Weekday to theme. Fallbacks are the following days' themes, in order |
 | `themes.<id>` | | `label`, `brief`, `layout`, `news`, `min_sources`, `max_sources`, `max_source_age_days`, `needs_tool` |
-| `platforms.<name>` | PRD §5.3 | `label`, `enabled`, `words`, `hashtags_max`, `links` (`post` or `bio`), `image`, `carousel`, `publish_mode` (`draft` or `browser`), `page_url` (the page a browser run posts to; `https://` on the platform's own host; for LinkedIn the company page, `/company/<page>/`, and for Instagram the account's profile, `/<account>/`), `identity` (the posting identity the run must see; defaults to the Jura Solutions page or account) |
+| `platforms.<name>` | PRD §5.3 | `label`, `enabled` (`false` switches the platform off everywhere, whatever its `publish_mode`; LinkedIn since 2026-10-29), `words`, `hashtags_max`, `links` (`post` or `bio`), `image`, `carousel`, `publish_mode` (`draft` or `browser`), `page_url` (the page a browser run posts to; `https://` on the platform's own host; for LinkedIn the company page, `/company/<page>/`, and for Instagram the account's profile, `/<account>/`), `identity` (the posting identity the run must see; defaults to the Jura Solutions page or account) |
 | `eligibility_line` | "Check the official page for current eligibility." | |
 | `max_quote_words` | 12 | |
 | `blocked_topics` | elections, parties, tragedies | Whole words or phrases |
@@ -198,14 +209,18 @@ lives only in `approvals`, under the subject `publish_item:<id>`.
 ## Publishing through the browser (browser publishing PRD, BP-02a, BP-03 and BP-04)
 
 Nothing posts without Ting Yu's approval of that exact post (MC §4.6). The queue (BP-02a) works
-from Terminal and the tests; the scheduled `publish` job (BP-03, below) drives Chrome. All three
-platforms can be put in `browser` mode: the Facebook Page (BP-03), then the Jura Instagram account
-and the Jura LinkedIn company page (BP-04), each on its own once its fixture rehearsal and first
-live post are done.
+from Terminal and the tests; the scheduled `publish` job (BP-03, below) drives Chrome. The
+Facebook Page (BP-03) and the Jura Instagram account (BP-04) can be put in `browser` mode, each on
+its own once its fixture rehearsal and first live post are done. BP-04 built the Jura LinkedIn
+company page too, but LinkedIn was switched off on 2026-10-29: a switched-off platform gets no
+item, card or browser host even with `publish_mode: browser`. Its post counts as gone, so the
+next `items.sync()` supersedes a waiting card ("LinkedIn page is switched off") and withdraws the
+item; until then `use()` refuses it ("turned off in config/social.yaml"). Draft mode is different:
+there a waiting card stays live until it lapses (A13).
 
 **Weekends stay on.** This was decided at sign-off (BP1, for the Facebook Page). BP-04 asked again
-(BP §6 Q1), and the crew's recorded decision keeps weekends on with all three platforms in
-`browser` mode, so Saturday and Sunday bring up to three approval cards each. To turn weekend
+(BP §6 Q1), and the crew's recorded decision keeps weekends on with every platform switched on in
+`browser` mode, so Saturday and Sunday bring up to two approval cards each. To turn weekend
 posts off, set `weekends: false` in `config/social.yaml`: the 07:00 social job then skips
 Saturday and Sunday, so no weekend draft, item or card is made for any platform. There is no
 per-platform weekend switch.
@@ -274,7 +289,8 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
   not, the slot is a quiet run ("nothing due") and no Claude starts.
 - **What the run may do.** `--chrome`, only because `publish` is in `caps.BROWSER_JOBS`; no
   `--add-dir`. The tab tools by name, and the page tools only through one
-  `ClaudeInChromeDomain(<host>)` rule per host of each platform in `browser` mode. The lists are
+  `ClaudeInChromeDomain(<host>)` rule per host of each platform switched on and in `browser` mode
+  (none of LinkedIn's while it is switched off). The lists are
   `hosts.BROWSER_HOSTS`, one per platform, exact (`www.` and the bare host, plus
   `business.facebook.com` for the Page's composer) until BP-01's check U18 shows how the rule
   treats subdomains. No image CDN, link shim or country host is listed: a run never opens one
@@ -297,7 +313,8 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
     or a "Switch accounts" prompt is the wrong identity). Create, Post, then every image in the
     order given, never reordered or edited; the caption typed once; Share once. Permalink
     `https://www.instagram.com/p/<code>/` (or `/reel/<code>/`).
-  - **LinkedIn company page:** from the page's admin view, with the company name and logo at the
+  - **LinkedIn company page** (switched off since 2026-10-29; no LinkedIn item is handed out):
+    from the page's admin view, with the company name and logo at the
     top of the composer, never a person's. Permalink
     `https://www.linkedin.com/feed/update/urn:li:activity:<number>/` (or `share`, `ugcPost`).
     `page_url` must be the company page (`/company/<page>/`): a person's profile (`/in/…`)
