@@ -299,7 +299,43 @@ def test_follow_up_may_refer_back_and_skip_the_tool():
     assert issues(body, subject="A short follow-up on free tools", tool=None, kind="follow_up") == []
 
 
-def test_body_must_not_carry_its_own_footer():
+# --- a public job posting (scout PRD §5.2a point 5) ---------------------------
+
+POSTING_SENTENCE = (
+    "I was looking at Acme Aircon's aircon servicing packages and saw that customers request quotes "
+    "through a form and wait for a reply."
+)
+
+
+def with_posting(sentence: str) -> str:
+    return REFERENCE.replace(POSTING_SENTENCE, POSTING_SENTENCE + " " + sentence)
+
+
+def test_a_factual_mention_of_a_public_job_posting_passes():
+    body = with_posting("Your current job posting for an admin assistant lists preparing quotes among the duties.")
+    assert issues(body) == []
+
+
+def test_a_link_to_the_job_posting_fails():
+    body = with_posting("I saw the admin assistant posting at mycareersfuture.gov.sg/job/admin-assistant-1a2b.")
+    assert has(issues(body), "[links]")
+
+
+@pytest.mark.parametrize(
+    "guess",
+    [
+        "Your team must be stretched thin.",
+        "It sounds like you're short-staffed.",
+        "Your admin staff are probably overworked.",
+        "I imagine your office is struggling to keep up.",
+        "Your team seems understaffed at the moment.",
+        "Your staff must be drowning in paperwork.",
+        "It looks like your last admin left.",
+    ],
+)
+def test_a_guess_about_the_company_people_fails(guess):
+    body = with_posting("You're hiring an admin assistant. " + guess)
+    assert has(issues(body), "about the company's people")
     body = REFERENCE + "\n\nTo unsubscribe, reply stop."
     assert has(issues(body), "Leave the unsubscribe")
 

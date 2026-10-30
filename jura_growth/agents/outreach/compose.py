@@ -353,9 +353,23 @@ def name_parts(address: str | None) -> list[str]:
     return [part for part in re.split(r"[^A-Za-z]+", local) if len(part) >= 3]
 
 
+# Guesses about the company's people, which a job posting tempts (scout PRD
+# §5.2a point 5: mention a public posting only in neutral, factual terms).
+PEOPLE_GUESS_RE = re.compile(
+    r"\b(?:stretched(?:\s+too)?\s+thin|short[- ]?(?:staffed|handed)|under[- ]?staffed|over[- ]?worked|overloaded"
+    r"|struggl\w*|drowning|burn(?:ed|t)?[- ]?out|swamped|high\s+turnover"
+    r"|(?:last|previous|old)\s+(?:\w+\s+){0,2}(?:left|quit|resigned))\b",
+    re.I,
+)
+
+
 def _person_issues(draft: str, company: str | None, recipient: str | None) -> list[brand_check.Issue]:
     Issue = brand_check.Issue
     found = []
+    guess = PEOPLE_GUESS_RE.search(draft)
+    if guess:
+        found.append(Issue("channel", "No guesses about the company's people or workload; mention a job posting only as a "
+                                      "plain fact", guess.group(0)))
     greeting = greets_a_person(draft, company)
     if greeting:
         found.append(Issue("channel", "Greet the company, not a person: write “Hi there,” or “Hello <Company> team,”", greeting))
