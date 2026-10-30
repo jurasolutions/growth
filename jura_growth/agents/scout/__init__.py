@@ -45,9 +45,9 @@ def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     missing = icp.missing_reason()
     if missing:
         return missing
-    target = settings.daily_target()
-    if leads.added_today(conn) >= target:
-        return f"today's target of {target} new leads is already met"
+    shortlist = settings.shortlist()
+    if leads.added_today(conn) >= shortlist:
+        return f"today's shortlist of {shortlist} leads is already kept"
     queued = db.scalar(conn, "SELECT count(*) FROM outreach_messages WHERE status = 'queued'") or 0
     if queued >= settings.max_queue():
         return f"{queued} emails are already queued (max_queue {settings.max_queue()}); research waits for the queue to drain"

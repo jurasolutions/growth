@@ -23,7 +23,6 @@ UNSUBSCRIBE_MAILTO = "mailto:info@jurasolutions.sg?subject=unsubscribe"
 
 # The PRD's floor and the window's outer bounds. Config may tighten them.
 SCORE_THRESHOLD_MIN = 60
-DAILY_TARGET_MAX = 30
 WINDOW_EARLIEST = (9, 30)
 WINDOW_LATEST = (16, 30)
 FOLLOW_UP_MIN_BUSINESS_DAYS = 5
@@ -35,7 +34,8 @@ DEFAULTS: dict[str, Any] = {
     "sending_domain": None,
     "from_local_part": "tingyu",
     "research": {
-        "daily_target": 15,
+        "candidates": 20,
+        "shortlist": 10,
         "score_threshold": 60,
         "industries_per_day": 2,
         "max_queue": 40,
@@ -90,8 +90,16 @@ def score_threshold() -> int:
     return max(SCORE_THRESHOLD_MIN, int(get()["research"].get("score_threshold") or SCORE_THRESHOLD_MIN))
 
 
-def daily_target() -> int:
-    return max(0, min(int(get()["research"].get("daily_target") or 0), DAILY_TARGET_MAX))
+def candidates() -> int:
+    """Candidates a research run gathers and compares (§5.2a point 1), 1 to the code's ceiling."""
+    configured = get()["research"].get("candidates")
+    return max(1, caps.effective(caps.SCOUT_CANDIDATES_PER_RUN, 20 if configured is None else configured))
+
+
+def shortlist() -> int:
+    """Leads kept a day, the best by score (§5.2a point 4). Config may lower it, never raise it."""
+    configured = get()["research"].get("shortlist")
+    return caps.effective(caps.SCOUT_SHORTLIST_PER_DAY, 10 if configured is None else configured)
 
 
 def max_queue() -> int:

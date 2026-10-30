@@ -27,8 +27,14 @@ sending_domain: null
 from_local_part: tingyu
 
 research:
-  # New leads a day. The add-lead command refuses more (code ceiling: 30).
-  daily_target: 15
+  # PRD §5.2a. Each run gathers about this many candidates across the day's
+  # industries, job boards included, and scores them all (code ceiling: 40).
+  candidates: 20
+  # Every candidate at or above the threshold is kept, best first, up to this
+  # many a day; the rest are remembered as researched for 12 months. The code
+  # ranks and enforces it (ceiling: 10). Keeping more never sends more: the
+  # send caps below and max_queue decide what goes out.
+  shortlist: 10
   # Leads below this are not kept. The PRD's floor is 60; config may only raise it.
   score_threshold: 60
   # 1 or 2 industries a day, rotating by business day.

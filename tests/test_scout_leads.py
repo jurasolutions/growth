@@ -298,12 +298,12 @@ def test_careers_address_is_refused(conn):
     assert "not an enquiry address" in add(conn, data).reasons[0]
 
 
-def test_daily_target_is_a_ceiling(conn, monkeypatch):
-    configure(monkeypatch, research={"daily_target": 2})
+def test_the_shortlist_is_a_ceiling(conn, monkeypatch):
+    configure(monkeypatch, research={"shortlist": 2})
     assert add(conn, lead_data(1)).status == "added"
     assert add(conn, lead_data(2)).status == "added"
     outcome = add(conn, lead_data(3))
-    assert outcome.status == "rejected" and "target of 2" in outcome.reasons[0]
+    assert outcome.status == "rejected" and "shortlist of 2" in outcome.reasons[0]
 
 
 def test_bad_records_are_usage_errors(conn):
@@ -332,12 +332,12 @@ def test_research_refuses_to_start_without_the_icp(isolated, monkeypatch):
     assert "icp.md is missing" in outcome.summary and "icp-draft.md" in outcome.summary
 
 
-def test_precheck_skips_when_target_met_or_queue_full(conn, monkeypatch):
-    configure(monkeypatch, research={"daily_target": 1, "max_queue": 1})
+def test_precheck_skips_when_shortlist_kept_or_queue_full(conn, monkeypatch):
+    configure(monkeypatch, research={"shortlist": 1, "max_queue": 1})
     assert scout.precheck("scout-research", conn) is None
     seed(conn, 1)
-    assert "target of 1" in scout.precheck("scout-research", conn)
-    configure(monkeypatch, research={"daily_target": 5, "max_queue": 1})
+    assert "shortlist of 1" in scout.precheck("scout-research", conn)
+    configure(monkeypatch, research={"shortlist": 5, "max_queue": 1})
     assert "already queued" in scout.precheck("scout-research", conn)
     assert scout.precheck("scout-send", conn) is None
 
@@ -396,7 +396,7 @@ def test_today_and_tools_commands(isolated, monkeypatch):
     at(monkeypatch, "2026-10-26T09:00:00+08:00")
     result = CliRunner().invoke(cli, ["scout", "today", "--json"])
     info = json.loads(result.output)
-    assert info["daily_target"] == 15 and info["score_threshold"] == 60 and len(info["industries"]) == 2
+    assert info["shortlist"] == 10 and info["score_threshold"] == 60 and len(info["industries"]) == 2
     assert "quote-builder" in info["tools"] and "receipt-sorter" not in info["tools"]
     tools = json.loads(CliRunner().invoke(cli, ["scout", "tools", "--json"]).output)
     assert [t["slug"] for t in tools["tools"]][:2] == ["quote-builder", "invoice-checker"]

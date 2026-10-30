@@ -11,6 +11,7 @@ import pytest
 
 from jura_growth import db, timeutil
 from jura_growth.agents.outreach import approval, queue as queue_mod, requeue, send, store
+from jura_growth.agents.scout import settings as scout_settings
 
 from test_scout_support import (  # noqa: F401
     at,
@@ -43,6 +44,13 @@ def warm_up_day_3(conn, monkeypatch, day=TUESDAY):
     assert send.daily_cap(conn, "live")[0] == 5 and send.quota(conn, "live")[0] == 5
 
 
+def backlog(monkeypatch, size=15):
+    """Seed more first emails on one day than one day's shortlist keeps (§5.2a: up to 10),
+    as a backlog after a pause would leave. The shortlist cap itself is tested in
+    test_scout_shortlist.py; here only the queue matters."""
+    monkeypatch.setattr(scout_settings, "shortlist", lambda: size)
+
+
 def test_shadow_mode_raises_nothing(conn, monkeypatch):
     """AC-M8.10, first half: shadow raises and claims nothing; shadow recording works as today."""
     at(monkeypatch, f"{TUESDAY}T09:05:00+08:00")
@@ -57,6 +65,7 @@ def test_shadow_mode_raises_nothing(conn, monkeypatch):
 def test_queue_raises_requests_only_up_to_todays_quota(conn, monkeypatch):
     """AC-M8.2 (G35): 15 first emails due today on warm-up day 3, so 5 requests."""
     warm_up_day_3(conn, monkeypatch)
+    backlog(monkeypatch)
     queued = [seed(conn, n) for n in range(1, 16)]
     requests = outreach_requests(conn)
     assert len(requests) == 5 and all(r.status == "pending" for r in requests)
@@ -75,6 +84,7 @@ def test_sends_and_skips_open_room_for_more_requests(conn, monkeypatch):
     """AC-M8.2: 3 of the 5 sent and 2 skipped, so 2 more are raised; open requests never pass
     today's remaining quota (G35)."""
     warm_up_day_3(conn, monkeypatch)
+    backlog(monkeypatch)
     [seed(conn, n) for n in range(1, 16)]
     first_five = outreach_requests(conn)
     for request in first_five[:3]:
@@ -138,8 +148,9 @@ def test_a_follow_up_raises_no_request_until_its_day(conn, monkeypatch):
 def test_requeue_shadow_in_live_mode_raises_requests_only_up_to_todays_quota(conn, monkeypatch):
     """AC-M8.13 (G35), from Terminal: 40 shadow emails requeued, 5 requests on warm-up day 1."""
     seeded = []
-    for day, numbers in (("2026-11-03", range(1, 16)), ("2026-11-04", range(16, 31)), ("2026-11-05", range(31, 41))):
-        at(monkeypatch, f"{day}T08:00:00+08:00")  # the scout adds at most 15 leads a day
+    days = (("2026-11-03", range(1, 11)), ("2026-11-04", range(11, 21)), ("2026-11-05", range(21, 31)), ("2026-11-06", range(31, 41)))
+    for day, numbers in days:
+        at(monkeypatch, f"{day}T08:00:00+08:00")  # the scout keeps at most 10 leads a day (§5.2a)
         seeded += [seed(conn, n) for n in numbers]
     for item in seeded:
         conn.execute("UPDATE outreach_messages SET status = 'shadow', mode = 'shadow', sent_at = ? WHERE id = ?",

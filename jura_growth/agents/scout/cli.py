@@ -31,7 +31,7 @@ def scout_group() -> None:
 @scout_group.command("today")
 @click.option("--json", "as_json", is_flag=True)
 def today(as_json) -> None:
-    """Today's industries, lead target, threshold, queue room and tools."""
+    """Today's industries, candidates, shortlist, threshold, weights, queue room and tools."""
     from jura_growth.agents.outreach import sync
 
     with db.session() as conn:
@@ -40,13 +40,14 @@ def today(as_json) -> None:
         unqueued = len(leads.recent(conn, days=14, status="new"))
         follow_ups = len(sync.follow_ups_due(conn))
     tools, problem = registry.load()
-    target = settings.daily_target()
+    shortlist = settings.shortlist()
     info = {
         "date": timeutil.today_str(),
         "industries": icp.todays_industries(),
-        "daily_target": target,
-        "added_today": added,
-        "remaining": max(0, target - added),
+        "candidates": settings.candidates(),
+        "shortlist": shortlist,
+        "kept_today": added,
+        "remaining": max(0, shortlist - added),
         "score_threshold": settings.score_threshold(),
         "queue": {"queued": queued, "max_queue": settings.max_queue(), "room": max(0, settings.max_queue() - queued)},
         "leads_waiting_for_an_email": unqueued,
@@ -62,7 +63,8 @@ def today(as_json) -> None:
         return
     click.echo(f"date              {info['date']}")
     click.echo(f"industries        {', '.join(info['industries']) or 'none (check the ICP)'}")
-    click.echo(f"leads             {added} added today, target {target}, {info['remaining']} to go")
+    click.echo(f"candidates        about {info['candidates']} to compare")
+    click.echo(f"shortlist         {added} kept today, up to {shortlist}, {info['remaining']} to go")
     click.echo(f"score threshold   {info['score_threshold']}")
     click.echo(f"queue             {queued} queued, room for {info['queue']['room']}")
     click.echo(f"waiting for email {unqueued} recent leads with an address and no email yet")

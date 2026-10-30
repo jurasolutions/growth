@@ -11,7 +11,7 @@ In order, and the first failure rejects the lead:
     `contacted_domains`, a suppressed domain or address, or a row in
     `inputs/do-not-contact.csv` (by company name or domain).
  4. Score at or above the threshold (60, config may raise it).
- 5. Today's lead target not yet met.
+ 5. Today's shortlist not yet full (`research.shortlist`, §5.2a).
  6. The contact: an address that belongs to the business (on its website
     domain or a subdomain of it, or at an allowed free-mail provider), which
     the code finds on a source page of the company's own site (see
@@ -243,9 +243,9 @@ def add_lead(conn: sqlite3.Connection, data: dict, *, client: httpx.Client | Non
     if score < threshold:
         return _reject(conn, outcome, f"score {score} is below {threshold}", domain=domain, company=company)
 
-    target = settings.daily_target()
-    if added_today(conn) >= target:
-        return _reject(conn, outcome, f"today's target of {target} new leads is already met", domain=None, company=company)
+    shortlist = settings.shortlist()
+    if added_today(conn) >= shortlist:
+        return _reject(conn, outcome, f"today's shortlist of {shortlist} leads is already kept", domain=None, company=company)
 
     tool_slug = str(data.get("tool") or "").strip() or None
     if tool_slug and tool_slug not in registry.live_slugs():
