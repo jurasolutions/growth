@@ -37,7 +37,7 @@ def test_unsubscribe_link_command(monkeypatch):
 
 def test_list_unsubscribe_headers():
     headers = compose.list_unsubscribe_headers(VECTOR_URL)
-    assert headers["List-Unsubscribe"] == f"<{VECTOR_URL}>, <mailto:info@jurasolutions.sg?subject=unsubscribe>"
+    assert headers["List-Unsubscribe"] == f"<{VECTOR_URL}>, <mailto:levi@jurasolutions.sg?subject=unsubscribe>"
     assert headers["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
 
 

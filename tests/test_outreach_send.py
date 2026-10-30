@@ -212,7 +212,7 @@ def test_live_send_calls_resend_with_the_right_email(conn, monkeypatch):
     assert payload["to"] == ["info@alderlogistics.sg"] and payload["reply_to"] == "levi@jurasolutions.sg"
     url = compose.unsubscribe_url("info@alderlogistics.sg", "test-secret")
     assert payload["headers"] == {
-        "List-Unsubscribe": f"<{url}>, <mailto:info@jurasolutions.sg?subject=unsubscribe>",
+        "List-Unsubscribe": f"<{url}>, <mailto:levi@jurasolutions.sg?subject=unsubscribe>",
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
     }
     assert url in payload["text"] and "utm_source=outreach" in payload["html"] and "attachments" not in payload

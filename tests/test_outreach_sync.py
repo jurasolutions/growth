@@ -396,7 +396,8 @@ def test_reply_marks_the_lead_replied_without_storing_the_body(conn, monkeypatch
     assert suppression.is_suppressed(conn, lead["email"]) is None
     columns = [r["name"] for r in db.rows(conn, "PRAGMA table_info(outreach_replies)")]
     assert columns == ["id", "lead_id", "contact_id", "message_key", "received_at", "unsubscribe", "detected_at"]
-    assert any("**Reply** from alderlogistics.sg" in p["content"] for p in outbox("outreach-replies"))
+    [post] = [p["content"] for p in outbox("outreach-replies") if "**Reply** from alderlogistics.sg" in p["content"]]
+    assert post.endswith("It's in Levi's mailbox.") and "info@" not in post  # replies go to Reply-To levi@
     assert "0 replies detected" in sync.run(conn)  # the same reply is counted once
     assert db.scalar(conn, "SELECT count(*) FROM outreach_replies") == 1
 

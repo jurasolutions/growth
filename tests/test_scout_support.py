@@ -285,7 +285,7 @@ def fake_resend(monkeypatch, responder=None) -> list:
 def reply_message(sender: str, *, when: str, body: str, subject: str = "Re: A free tool", auto: str | None = None, message_id: str | None = None) -> bytes:
     message = EmailMessage()
     message["From"] = f"Someone <{sender}>"
-    message["To"] = "info@jurasolutions.sg"
+    message["To"] = "levi@jurasolutions.sg"
     message["Subject"] = subject
     message["Date"] = format_datetime(timeutil.parse(when))
     message["Message-ID"] = message_id or f"<{abs(hash((sender, when, body)))}@example.test>"
@@ -333,7 +333,7 @@ class FakeIMAP:
 
 def imap_env(monkeypatch, messages: list[bytes]) -> FakeIMAP:
     monkeypatch.setenv("OUTREACH_IMAP_HOST", "imap.example.test")
-    monkeypatch.setenv("OUTREACH_IMAP_USER", "info@jurasolutions.sg")
+    monkeypatch.setenv("OUTREACH_IMAP_USER", "levi@jurasolutions.sg")
     monkeypatch.setenv("OUTREACH_IMAP_PASSWORD", "app-password")
     fake = FakeIMAP(messages)
     monkeypatch.setattr(replies, "imap_factory", lambda host, port: fake)

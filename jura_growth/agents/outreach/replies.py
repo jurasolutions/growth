@@ -1,4 +1,5 @@
-"""Optional, read-only reply detection on info@jurasolutions.sg (PRD §5.5).
+"""Optional, read-only reply detection on levi@jurasolutions.sg, the Reply-To
+and List-Unsubscribe mailbox (PRD §5.5, §5.6a).
 
 On only when `OUTREACH_IMAP_HOST`, `OUTREACH_IMAP_USER` and
 `OUTREACH_IMAP_PASSWORD` are set (`OUTREACH_IMAP_PORT` defaults to 993).
@@ -208,9 +209,11 @@ def _record(conn, contact: dict, sender: str, received, key: str, wants_out: boo
         note = " They asked to be removed: the address is suppressed."
     result.replies.append({"lead_id": lead_id, "domain": contact["domain"], "unsubscribe": wants_out})
     log.event(conn, "outreach.reply", {"lead": lead_id, "domain": contact["domain"], "unsubscribe": wants_out}, agent=store.AGENT)
+    # "Levi's mailbox", not the address: privacy removes Ting Yu's own
+    # addresses from Discord (MC §4.4), so the address would read "[removed]".
     store.post(
         conn,
         "outreach-replies",
         f"**Reply** from {contact['domain']} ({contact['company']}, lead {lead_id}) at "
-        f"{timeutil.stamp(received)[:16].replace('T', ' ')} SGT. It's in info@jurasolutions.sg.{note}",
+        f"{timeutil.stamp(received)[:16].replace('T', ' ')} SGT. It's in Levi's mailbox.{note}",
     )

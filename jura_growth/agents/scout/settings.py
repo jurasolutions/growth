@@ -28,7 +28,8 @@ CALL_URL = "https://jurasolutions.sg/?from=outreach#contact"
 # `public/email/`. 96 px, shown at 48 px for sharp retina screens.
 MARK_URL = "https://jurasolutions.sg/email/jura-mark-96.png"
 UNSUBSCRIBE_URL = "https://jurasolutions.sg/unsubscribe"
-UNSUBSCRIBE_MAILTO = "mailto:info@jurasolutions.sg?subject=unsubscribe"
+# Opt-outs by mail reach the same mailbox as "or reply 'unsubscribe'" (Reply-To).
+UNSUBSCRIBE_MAILTO = f"mailto:{SIGNATURE_EMAIL}?subject=unsubscribe"
 
 # The PRD's floor and the window's outer bounds. Config may tighten them.
 SCORE_THRESHOLD_MIN = 60
