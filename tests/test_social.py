@@ -142,8 +142,12 @@ def fake_png(path: Path, width: int, height: int) -> None:
 
 @pytest.fixture
 def env(isolated, monkeypatch, tmp_path):
-    """A frozen Tuesday, a toolbox registry, working links, stub screenshots."""
+    """A frozen Tuesday, a toolbox registry, working links, stub screenshots.
+
+    Tuesday is pinned to the automation tip (its theme before 2026-10-30), so the flow tests
+    stay about submit and not the calendar; the rhythm tests read the shipped config."""
     monkeypatch.setenv("JURA_GROWTH_NOW", TUESDAY)
+    set_config(monkeypatch, rhythm={**config.agent_config("social")["rhythm"], "tue": "automation-tip"})
     site = tmp_path / "site"
     (site / "src" / "apps").mkdir(parents=True)
     (site / "src" / "apps" / "registry.json").write_text(
@@ -231,12 +235,12 @@ def channel_messages(result):
     "day, theme",
     [
         (date(2026, 10, 26), "ai-this-week"),
-        (date(2026, 10, 27), "automation-tip"),
+        (date(2026, 10, 27), "ai-finding"),
         (date(2026, 10, 28), "from-the-toolbox"),
-        (date(2026, 10, 29), "industry-pattern"),
-        (date(2026, 10, 30), "explainer"),
-        (date(2026, 10, 31), "light"),
-        (date(2026, 11, 1), "light"),
+        (date(2026, 10, 29), "ai-fun-facts"),
+        (date(2026, 10, 30), "ai-news"),
+        (date(2026, 10, 31), "ai-good-read"),
+        (date(2026, 11, 1), "automation-tip"),
     ],
 )
 def test_rhythm_picks_the_day_theme(day, theme):
@@ -245,9 +249,15 @@ def test_rhythm_picks_the_day_theme(day, theme):
 
 def test_fallbacks_are_the_next_themes_in_order():
     ids = [t.id for t in rhythm.fallbacks(date(2026, 10, 28), load())]
-    assert ids == ["industry-pattern", "explainer", "light", "ai-this-week", "automation-tip"]
-    saturday = [t.id for t in rhythm.fallbacks(date(2026, 10, 31), load())]
-    assert saturday[0] == "ai-this-week" and "light" not in saturday
+    assert ids == ["ai-fun-facts", "ai-news", "ai-good-read", "automation-tip", "ai-this-week", "ai-finding"]
+    sunday = [t.id for t in rhythm.fallbacks(date(2026, 11, 1), load())]
+    assert sunday[0] == "ai-this-week" and "automation-tip" not in sunday
+
+
+def test_every_day_has_its_own_ai_or_automation_theme():
+    settings = load()
+    assert len(set(settings.rhythm.values())) == 7
+    assert all(t.startswith("ai-") or "automation" in t or t == "from-the-toolbox" for t in settings.rhythm.values())
 
 
 def test_weekend_switch(monkeypatch):
@@ -665,9 +675,37 @@ def test_tool_theme_without_a_tool_card_is_refused(env, conn, monkeypatch):
     folder = write(paths.work_dir("social") / "2026-10-28", TIP)
     outcome = run_submit(conn, folder)
     assert outcome.status == "invalid" and "tool card" in outcome.text()
-    fallback = run_submit(conn, folder, theme_id="industry-pattern")
+    fallback = run_submit(conn, folder, theme_id="automation-tip")
     assert fallback.status == "delivered", fallback.text()
     assert json.loads(db.scalar(conn, "SELECT qa_json FROM social_posts LIMIT 1"))["theme_fallback"] is True
+
+
+def test_a_theme_posted_in_the_last_two_days_is_unavailable_and_refused(env, conn, monkeypatch):
+    # Monday took Tuesday's theme as a fallback; on Tuesday the same kind of post is off the menu.
+    add_post(conn, "2026-10-26", platform="facebook", theme="automation-tip")
+    data = plan.build(conn, timeutil.today())
+    assert data["theme"]["id"] == "automation-tip"
+    assert "posted on 2026-10-26" in data["theme"]["unavailable"]
+    assert "UNAVAILABLE" in plan.render_text(data)
+    outcome = run_submit(conn, write(paths.work_dir("social") / "2026-10-27", TIP))
+    assert outcome.status == "repeat" and "doesn't come back within 2 days" in outcome.text()
+    assert history.gated_attempts(conn, timeutil.today()) == 0  # no regeneration used
+    # Two days later it is free again.
+    monkeypatch.setenv("JURA_GROWTH_NOW", "2026-10-29T07:05:00+08:00")
+    assert history.theme_repeat(conn, timeutil.today(), "automation-tip", 2) is None
+
+
+def test_todays_own_drafts_dont_block_a_second_submission(env, conn):
+    add_post(conn, "2026-10-27", platform="facebook", theme="automation-tip")
+    assert history.theme_repeat(conn, timeutil.today(), "automation-tip", 2) is None
+    assert "unavailable" not in plan.build(conn, timeutil.today())["theme"]
+
+
+def test_theme_gap_zero_switches_the_variety_rule_off(env, conn, monkeypatch):
+    add_post(conn, "2026-10-26", platform="facebook", theme="automation-tip")
+    set_config(monkeypatch, theme_gap_days=0)
+    assert "unavailable" not in plan.build(conn, timeutil.today())["theme"]
+    assert run_submit(conn, write(paths.work_dir("social") / "2026-10-27", TIP)).status == "delivered"
 
 
 def test_two_runs_pick_different_stories(env, conn, monkeypatch):

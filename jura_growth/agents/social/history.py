@@ -80,6 +80,29 @@ def used_themes(conn: sqlite3.Connection, day: date) -> dict[str, str]:
     return {row["date"]: row["theme"] for row in recent(conn, day)}
 
 
+def recent_themes(conn: sqlite3.Connection, day: date, days: int) -> dict[str, str]:
+    """{theme: last date posted} over the `days` days before `day`, not counting `day` itself,
+    so a second submission today isn't refused for today's own drafts."""
+    start = (day - timedelta(days=days)).isoformat()
+    used: dict[str, str] = {}
+    for row in db.rows(
+        conn, "SELECT date, theme FROM social_posts WHERE date >= ? AND date < ?", (start, day.isoformat())
+    ):
+        used[row["theme"]] = max(used.get(row["theme"], ""), row["date"])
+    return used
+
+
+def theme_repeat(conn: sqlite3.Connection, day: date, theme_id: str, gap_days: int) -> str | None:
+    """Why the variety rule refuses `theme_id` today, or None: the same kind of post never
+    comes back within `gap_days` days (`theme_gap_days` in config/social.yaml)."""
+    if gap_days <= 0:
+        return None
+    last = recent_themes(conn, day, gap_days).get(theme_id)
+    if last:
+        return f"posted on {last}; the same kind of post doesn't come back within {gap_days} days"
+    return None
+
+
 def repeats(conn: sqlite3.Connection, day: date, urls: list[str], tool: str | None) -> list[str]:
     """Reasons the no-repeat rule refuses these stories or this tool."""
     problems = []

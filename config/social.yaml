@@ -11,18 +11,26 @@ weekends: true
 
 site: https://jurasolutions.sg
 
-# --- the weekly rhythm (PRD §5.2) -------------------------------------------
+# --- the weekly rhythm (PRD §5.2, amended 2026-10-30) ------------------------
 #
-# If nothing good fits the day's theme, the run takes the next one in this
-# order (the next day's theme, then the one after).
+# Every post is about AI or automation, and each day of the week has its own
+# kind of post (Ting Yu, 2026-10-30: new toolbox tools, AI fun facts, findings
+# and good reads, and AI news, varied). If nothing good fits the day's theme,
+# the run takes the next one in this order (the next day's theme, then the one
+# after).
 rhythm:
   mon: ai-this-week
-  tue: automation-tip
+  tue: ai-finding
   wed: from-the-toolbox
-  thu: industry-pattern
-  fri: explainer
-  sat: light
-  sun: light
+  thu: ai-fun-facts
+  fri: ai-news
+  sat: ai-good-read
+  sun: automation-tip
+
+# A theme posted in the last this many days is unavailable today, and submit
+# refuses it, so a fallback never puts the same kind of post on two days
+# running. 0 switches the rule off.
+theme_gap_days: 2
 
 themes:
   ai-this-week:
@@ -36,36 +44,52 @@ themes:
     # accepts developments from the last 7 days, newest first.
     max_source_age_days: 7
 
-  automation-tip:
-    label: Automation tip
-    brief: "One small thing a team can automate this week."
+  ai-finding:
+    label: AI finding
+    brief: "One finding from a published AI study or survey: what it found, and what it means for a small business."
     layout: headline
+    news: true
+    min_sources: 1
     max_sources: 2
+    # Studies take longer to be written up than news, so a finding may be a
+    # month old.
+    max_source_age_days: 30
 
   from-the-toolbox:
     label: From the toolbox
-    brief: "The newest or most-used tool, with a link to try it."
+    brief: "A tool from Jura's free toolbox, the newest first, with a link to try it."
     layout: tool
     needs_tool: true
     max_sources: 0
 
-  industry-pattern:
-    label: Industry pattern
-    brief: "How a business in one industry handles a task by hand, and what automating it looks like."
+  ai-fun-facts:
+    label: AI fun facts
+    brief: "3–4 short, true and surprising facts about AI: its history, how it works or how people use it."
     layout: list
-    max_sources: 2
+    min_sources: 1
+    max_sources: 4
 
-  explainer:
-    label: Explainer
-    brief: "One term in plain English, or a Singapore scheme explained with the official link."
+  ai-news:
+    label: AI news
+    brief: "One AI story from the last few days: what happened, and what it means for a small business."
     layout: headline
+    news: true
+    min_sources: 1
     max_sources: 2
+    max_source_age_days: 3
 
-  light:
-    label: Weekend
-    brief: "A question to the audience, or a pointer to a good free resource."
+  ai-good-read:
+    label: Worth reading
+    brief: "One newsletter, report, podcast or long read about AI worth a weekend's attention, and what you get from it."
     layout: headline
+    min_sources: 1
     max_sources: 1
+
+  automation-tip:
+    label: Automation tip
+    brief: "One small thing a team can automate this week, with AI or without."
+    layout: headline
+    max_sources: 2
 
 # --- platforms (PRD §5.3) ----------------------------------------------------
 #
