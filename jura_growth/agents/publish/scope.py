@@ -65,6 +65,14 @@ def browser_hosts(platforms: tuple[str, ...] | None = None) -> tuple[str, ...]:
 
 
 def domain_rules() -> list[str]:
+    """One `ClaudeInChromeDomain` rule per host the run may drive. Chrome matches a rule against the
+    address's host and port, so the fixture site's rule names its port when it has one: rehearsal
+    R1 (2026-10-30) showed `ClaudeInChromeDomain(publish-fixture.localhost)` denies
+    `http://publish-fixture.localhost:8765/…`. The real platforms use the default port."""
+    site = fixture.active()
+    if site is not None:
+        host = f"[{site.host}]" if ":" in site.host else site.host  # an IPv6 literal takes brackets
+        return [f"ClaudeInChromeDomain({host}" + (f":{site.port}" if site.port is not None else "") + ")"]
     return [f"ClaudeInChromeDomain({host})" for host in browser_hosts()]
 
 

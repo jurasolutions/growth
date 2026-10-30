@@ -18,8 +18,9 @@ This module decides whether the fixture may be used, through the UAT stubs' own 
 - the URL must be `http://` on `publish-fixture.localhost` or a loopback address literal
   (`127.0.0.1`, `[::1]`), read as a browser reads it (no backslash, percent-encoding, user name,
   whitespace or non-ASCII character), with no path, query or fragment. Not `localhost` or any other
-  `*.localhost` name: a domain rule names a host, not a port, so the dedicated name keeps the page
-  tools off every other local service (code review 07, SEC-n1);
+  `*.localhost` name, so the page tools stay off every other local service (code review 07,
+  SEC-n1). The domain rule names the host and its port, the way Chrome matches it (`scope.domain_rules`,
+  rehearsal R1 2026-10-30);
 - the data folder must be a temporary one (`uat_stub.temporary_data_problem`), so the fixture can
   never be switched on against the live `data/growth/`.
 

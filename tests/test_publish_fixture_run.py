@@ -81,7 +81,7 @@ def test_r1_a_clean_fixture_post_passes_the_audit_and_records_its_permalink(conn
 
     assert outcome.status == "ok", outcome
     domain_rules = [rule for rule in fake.argv if rule.startswith("ClaudeInChromeDomain(")]
-    assert domain_rules == ["ClaudeInChromeDomain(publish-fixture.localhost)"]
+    assert domain_rules == ["ClaudeInChromeDomain(publish-fixture.localhost:8765)"]
     row = pw.item_row(conn, found.id)
     assert row["state"] == "done" and row["post_url"] == POST
     assert not pause.is_paused(conn, "publish")
