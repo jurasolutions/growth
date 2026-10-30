@@ -33,11 +33,13 @@ def test_live_problems_lists_the_buttons_when_all_else_is_ready(monkeypatch):
     assert "approvals.discord_buttons: true" in problems[0]
 
 
-def test_the_shipped_settings_keep_the_buttons_off_so_live_stays_refused():
-    """E14: on the branch head the switch is off, so live outreach stays off."""
-    assert config.settings()["approvals"]["discord_buttons"] is False
+def test_the_shipped_buttons_switch_is_on_and_live_stays_refused_by_the_other_preconditions():
+    """E14, after U17 passed on 2026-10-31: the buttons switch ships on, so its line is gone, but
+    live outreach stays refused until the legal review and the other live pre-conditions are met."""
+    assert config.settings()["approvals"]["discord_buttons"] is True
     problems = send.live_problems()
-    assert any(p.startswith(BUTTONS) for p in problems)
+    assert not any(p.startswith(BUTTONS) for p in problems)
+    assert any("legal_review_done" in p for p in problems)
     assert not any(OLD_LINE in p for p in problems)
 
 

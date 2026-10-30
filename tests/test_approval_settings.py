@@ -10,14 +10,14 @@ import yaml
 from jura_growth import approval_settings, caps, config, discord, paths
 
 
-def test_the_block_sits_directly_after_the_discord_channels_with_only_post_buttons_on():
-    """post_buttons ships on since 2026-10-31, when Dispatch began owning the #approvals webhook;
-    discord_buttons (U17) and dispatch_builds stay off until their own checks pass."""
+def test_the_block_sits_directly_after_the_discord_channels_with_only_the_button_switches_on():
+    """post_buttons ships on since 2026-10-31, when Dispatch began owning the #approvals webhook,
+    and discord_buttons since U17 passed the same day; dispatch_builds stays off until GC-05/06."""
     text = (paths.config_dir() / "settings.yaml").read_text(encoding="utf-8")
     top_level = [line.split(":")[0] for line in text.splitlines() if line and not line[0].isspace() and not line.startswith("#")]
     assert top_level[top_level.index("discord") + 1] == "approvals"
     block = yaml.safe_load(text)["approvals"]
-    assert block["discord_buttons"] is False
+    assert block["discord_buttons"] is True
     assert block["post_buttons"] is True
     assert block["dispatch_builds"] is False
 
@@ -26,7 +26,7 @@ def test_approvals_is_a_discord_channel():
     assert "approvals" in discord.channels()
 
 
-@pytest.mark.parametrize("name", ["discord_buttons", "dispatch_builds"])
+@pytest.mark.parametrize("name", ["dispatch_builds"])
 def test_each_switch_reads_off_from_the_shipped_settings(name):
     assert approval_settings.switch(name) is False
 
