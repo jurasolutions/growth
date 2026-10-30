@@ -32,7 +32,7 @@ from datetime import timedelta
 import httpx
 
 from jura_growth import db, discord, log, privacy, suppression, timeutil
-from jura_growth.agents.scout import contact, dnc, registry, settings
+from jura_growth.agents.scout import contact, dnc, registry, scoring, settings
 
 USERNAME = "Jura growth · scout"
 GOVERNMENT_SUFFIXES = ("gov.sg", "mil.sg")
@@ -135,14 +135,14 @@ def check(conn: sqlite3.Connection, value: str) -> dict:
         reasons.append("government domain (ICP exclusion)")
     if domain and contact.is_third_party_host(domain):
         reasons.append(f"{domain} is a social, directory or marketplace site, not a company website")
-    rejected = db.one(conn, "SELECT reason, rejected_at FROM scout_rejections WHERE domain = ?", (domain or "",))
+    rejected = db.one(conn, "SELECT reason, score, rejected_at FROM scout_rejections WHERE domain = ?", (domain or "",))
     return {
         "value": value,
         "domain": domain,
         "known": bool(reasons),
         "reasons": reasons,
         "looked_at_before": (
-            {"reason": rejected["reason"], "on": rejected["rejected_at"][:10]} if rejected else None
+            {"reason": rejected["reason"], "score": rejected["score"], "on": rejected["rejected_at"][:10]} if rejected else None
         ),
     }
 
@@ -160,16 +160,22 @@ def _strings(value, name: str) -> list[str]:
     return [v.strip() for v in value if v and v.strip()]
 
 
-def _reject(conn, outcome: Outcome, reason: str, *, domain: str | None, company: str, remember: bool = True) -> Outcome:
+def remember_rejection(conn, *, domain: str, company: str, reason: str, score: int | None) -> None:
+    """Record a company looked at and not kept, with its score, for `rejection_months`."""
+    conn.execute(
+        "INSERT INTO scout_rejections (domain, company, reason, score, rejected_at) VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT (domain) DO UPDATE SET company = excluded.company, reason = excluded.reason, "
+        "score = excluded.score, rejected_at = excluded.rejected_at",
+        (domain, company, reason, score, timeutil.stamp()),
+    )
+
+
+def _reject(conn, outcome: Outcome, reason: str, *, domain: str | None, company: str, remember: bool = True,
+            score: int | None = None) -> Outcome:
     outcome.status = "rejected"
     outcome.reasons.append(reason)
     if remember and domain:
-        conn.execute(
-            "INSERT INTO scout_rejections (domain, company, reason, rejected_at) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT (domain) DO UPDATE SET company = excluded.company, reason = excluded.reason, "
-            "rejected_at = excluded.rejected_at",
-            (domain, company, reason, timeutil.stamp()),
-        )
+        remember_rejection(conn, domain=domain, company=company, reason=reason, score=score)
     log.event(conn, "scout.rejected", {"domain": domain, "reason": _mask(reason)}, agent="scout")
     return outcome
 
@@ -180,11 +186,32 @@ def added_today(conn: sqlite3.Connection, day: str | None = None) -> int:
     ) or 0
 
 
-def add_lead(conn: sqlite3.Connection, data: dict, *, client: httpx.Client | None = None) -> Outcome:
-    outcome = Outcome("rejected")
+@dataclass
+class Record:
+    """A lead record that passed the structural checks (`parse`)."""
+
+    data: dict
+    company: str
+    website: str
+    domain: str
+    industry: str
+    observations: list[str]
+    sources: list[str]
+    reasons: list[str]
+    score: int
+    raw_contact: dict
+    email: str
+    hiring_evidence: list[dict]
+    comparison: str | None
+    breakdown: dict | None
+    notes: list[str]
+
+
+def parse(data) -> Record:
+    """Check a lead record's shape, with no side effects. Raises `LeadError`."""
     if not isinstance(data, dict):
         raise LeadError("the lead file must hold one JSON object")
-
+    notes: list[str] = []
     company = str(data.get("company") or "").strip()
     website = str(data.get("website") or "").strip()
     industry = str(data.get("industry") or "").strip()
@@ -200,7 +227,7 @@ def add_lead(conn: sqlite3.Connection, data: dict, *, client: httpx.Client | Non
     if missing:
         raise LeadError("missing: " + ", ".join(missing))
     if len(observations) > 3:
-        outcome.notes.append("kept the first 3 observations")
+        notes.append("kept the first 3 observations")
         observations = observations[:3]
     try:
         score = int(data.get("score"))
@@ -215,10 +242,36 @@ def add_lead(conn: sqlite3.Connection, data: dict, *, client: httpx.Client | Non
     if not website.lower().startswith(("http://", "https://")):
         website = f"https://{website}"
 
+    raw_contact = data.get("contact") or {}
+    if not isinstance(raw_contact, dict):
+        raise LeadError("`contact` must be an object: {email, source_url} or {form_url}")
+    email = contact.normalise_email(str(raw_contact.get("email") or ""))
+
+    try:
+        evidence, evidence_notes = scoring.hiring_evidence(data.get("hiring_evidence"))
+        comparison = scoring.comparison(data.get("comparison"))
+        breakdown = scoring.breakdown(data.get("score_breakdown"), score, evidence=evidence, has_email=bool(email))
+    except scoring.ScoringError as error:
+        raise LeadError(str(error)) from None
+    return Record(data, company, website, domain, industry, observations, sources, reasons, score, raw_contact,
+                  email, evidence, comparison, breakdown, notes + evidence_notes)
+
+
+def add_lead(conn: sqlite3.Connection, data: dict, *, client: httpx.Client | None = None) -> Outcome:
+    return keep(conn, parse(data), client=client)
+
+
+def keep(conn: sqlite3.Connection, record: Record, *, client: httpx.Client | None = None) -> Outcome:
+    """Apply the rules to a parsed record and add it as a lead, or say why not."""
+    outcome = Outcome("rejected", notes=list(record.notes))
+    data, company, domain, website, score = record.data, record.company, record.domain, record.website, record.score
+    observations, sources, reasons = record.observations, record.sources, record.reasons
+    raw_contact, email, industry = record.raw_contact, record.email, record.industry
+
     if contact.is_third_party_host(domain):
-        return _reject(conn, outcome, f"{domain} is a social, directory or marketplace site, not the company's own website", domain=domain, company=company)
+        return _reject(conn, outcome, f"{domain} is a social, directory, marketplace, job board or recruiter site, not the company's own website", domain=domain, company=company, score=score)
     if is_government(domain):
-        return _reject(conn, outcome, f"{domain} is a government domain (ICP exclusion)", domain=domain, company=company)
+        return _reject(conn, outcome, f"{domain} is a government domain (ICP exclusion)", domain=domain, company=company, score=score)
     if not contact.is_site_root(website):
         return _reject(
             conn, outcome,
@@ -229,20 +282,16 @@ def add_lead(conn: sqlite3.Connection, data: dict, *, client: httpx.Client | Non
     if not any(contact.on_domain(url, domain) for url in sources):
         return _reject(conn, outcome, f"no source URL is on the company's own website ({domain})", domain=domain, company=company, remember=False)
 
-    raw_contact = data.get("contact") or {}
-    if not isinstance(raw_contact, dict):
-        raise LeadError("`contact` must be an object: {email, source_url} or {form_url}")
-    email = contact.normalise_email(str(raw_contact.get("email") or ""))
     emails = [email] if email else []
 
     known = known_reasons(conn, company=company, domain=domain, emails=emails)
     if known:
         duplicate = any(r.startswith("already a lead") for r in known)
-        return _reject(conn, outcome, "; ".join(known), domain=domain, company=company, remember=not duplicate)
+        return _reject(conn, outcome, "; ".join(known), domain=domain, company=company, remember=not duplicate, score=score)
 
     threshold = settings.score_threshold()
     if score < threshold:
-        return _reject(conn, outcome, f"score {score} is below {threshold}", domain=domain, company=company)
+        return _reject(conn, outcome, f"score {score} is below {threshold}", domain=domain, company=company, score=score)
 
     shortlist = settings.shortlist()
     if added_today(conn) >= shortlist:
@@ -274,7 +323,8 @@ def add_lead(conn: sqlite3.Connection, data: dict, *, client: httpx.Client | Non
         cursor = conn.execute(
             "INSERT INTO leads (company, display_name, domain, website, industry, size_signal, summary, "
             "observations_json, source_urls_json, score, score_reasons, channel, form_url, tool_slug, status, "
-            "run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "hiring_evidence_json, comparison, score_breakdown_json, run_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 company,
                 str(data.get("display_name") or "").strip() or display_name(company),
@@ -291,6 +341,9 @@ def add_lead(conn: sqlite3.Connection, data: dict, *, client: httpx.Client | Non
                 form_url,
                 tool_slug,
                 status,
+                json.dumps(record.hiring_evidence, ensure_ascii=False),
+                record.comparison,
+                json.dumps(record.breakdown) if record.breakdown is not None else None,
                 log.current_run_id(),
                 now,
                 now,
@@ -313,6 +366,25 @@ def add_lead(conn: sqlite3.Connection, data: dict, *, client: httpx.Client | Non
     log.event(conn, "scout.lead", {"lead": lead_id, "domain": domain, "channel": channel, "score": score}, agent="scout")
     _post_lead(conn, lead_id)
     return outcome
+
+
+def check_contact(conn: sqlite3.Connection, *, website: str, email: str, source: str, enquiry_contact: bool = False,
+                  client: httpx.Client | None = None) -> dict:
+    """`scout check-contact`: the contact rules alone, with no record written."""
+    domain = contact.site_domain(website)
+    outcome = Outcome("rejected")
+    email = contact.normalise_email(email)
+    raw = {"email": email, "source_url": source, "enquiry_contact": enquiry_contact}
+    if not domain or "." not in domain:
+        verdict = "`--website` must be the company's own website URL"
+    elif contact.is_third_party_host(domain):
+        verdict = f"{domain} is a social, directory, marketplace, job board or recruiter site, not the company's own website"
+    else:
+        verdict = _verify_email(conn, outcome, email, raw, domain, client)
+    if isinstance(verdict, str):
+        return {"ok": False, "email": email, "kind": None, "source_url": source, "reason": verdict, "notes": outcome.notes}
+    return {"ok": True, "email": verdict["email"], "kind": verdict["kind"], "source_url": verdict["source_url"],
+            "reason": None, "notes": outcome.notes}
 
 
 def _verify_email(conn, outcome: Outcome, email: str, raw: dict, domain: str, client) -> dict | str:

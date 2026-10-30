@@ -26,13 +26,16 @@ def register(cli) -> None:
 
 def permissions(job: str):
     """The `jura-growth` commands `prompts/scout.md` uses. Sending, syncing,
-    requeueing and unsubscribe links stay with code and Ting Yu."""
+    requeueing and unsubscribe links stay with code and Ting Yu. Leads come in
+    only as a ranked batch (`scout shortlist`, PRD §5.2a), so the code picks the
+    day's best; `scout add-lead` stays for Ting Yu in Terminal."""
     if job != "scout-research":
         return None
     from jura_growth.headless import Permissions
 
     return Permissions(commands=(
-        "scout today", "scout tools", "scout check", "scout add-lead", "scout leads",
+        "scout today", "scout tools", "scout check", "scout check-contact", "scout shortlist", "scout add-lead",
+        "scout leads",
         "outreach status", "outreach follow-ups-due", "outreach queue",
     ))
 
@@ -40,11 +43,14 @@ def permissions(job: str):
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     if job != "scout-research":
         return None
-    from jura_growth.agents.scout import icp, leads, settings
+    from jura_growth.agents.scout import icp, leads, settings, shortlist as ranking
 
     missing = icp.missing_reason()
     if missing:
         return missing
+    done = ranking.ranked_today(conn)
+    if done:
+        return f"today's candidates are already ranked ({done['kept']} kept of {done['candidates']})"
     shortlist = settings.shortlist()
     if leads.added_today(conn) >= shortlist:
         return f"today's shortlist of {shortlist} leads is already kept"
