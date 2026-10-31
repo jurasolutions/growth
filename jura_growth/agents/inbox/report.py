@@ -22,7 +22,7 @@ from typing import Callable
 
 from datetime import timedelta
 
-from jura_growth import caps, discord, log, privacy, timeutil
+from jura_growth import approvals, caps, discord, log, privacy, timeutil
 from jura_growth.agents.inbox import settings, store
 
 CHANNEL = "mission-control"
@@ -164,7 +164,7 @@ def _next_step(newest: dict) -> str:
     label = store.label(newest["id"])
     if newest["state"] == store.NEEDS_HAND_REPLY:
         return f"`/growth inbox done {label}` clears it once you have."
-    if newest["state"] == store.REPORTED and newest["text"] and "unsuppress" not in newest["note"]:
+    if newest["state"] == store.REPORTED and newest["text"] and not newest["suppressed_by_this"]:
         return f"Want a reply anyway? `/growth inbox draft {label} [guidance]`"
     return ""
 
@@ -265,9 +265,9 @@ def _alert_text(conn: sqlite3.Connection, item: dict, *, again: bool) -> str:
     label = store.label(item["id"])
     what = "a spam complaint" if item["source"] == store.EMAIL_SIGNAL else item["class"].replace("-", " ") if item["class"] else "a message"
     who = item["sender_domain"] or "an unknown sender"
-    row = conn.execute("SELECT id, status, decide_by FROM approvals WHERE subject = ? ORDER BY id DESC LIMIT 1", (store.approval_subject(item["id"]),)).fetchone()
-    if row and row["status"] == "pending":
-        action = f"Decide A-{row['id']:04d} in #approvals by {timeutil.when(row['decide_by'])}."
+    record = approvals.latest_for_subject(conn, store.approval_subject(item["id"]))
+    if record and record.status == approvals.PENDING:
+        action = f"Decide {record.id} in #approvals by {timeutil.when(record.decide_by)}."
     elif item["state"] == store.TRIAGED:
         action = "Its card follows in #approvals."
     elif item["state"] == store.NEEDS_HAND_REPLY:
@@ -281,8 +281,8 @@ def _alert_text(conn: sqlite3.Connection, item: dict, *, again: bool) -> str:
 def _still_undecided(conn: sqlite3.Connection, item: dict) -> bool:
     if item["state"] != store.WAITING:
         return True
-    row = conn.execute("SELECT status FROM approvals WHERE subject = ? ORDER BY id DESC LIMIT 1", (store.approval_subject(item["id"]),)).fetchone()
-    return row is None or row["status"] == "pending"
+    record = approvals.latest_for_subject(conn, store.approval_subject(item["id"]))
+    return record is None or record.status == approvals.PENDING
 
 
 def alert_high(conn: sqlite3.Connection) -> int:

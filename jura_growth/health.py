@@ -131,7 +131,7 @@ def day_label(moment: datetime) -> str:
     return f"{moment:%a} {moment.day} {moment:%b}"
 
 
-def _plural(n: int, word: str, many: str | None = None) -> str:
+def plural(n: int, word: str, many: str | None = None) -> str:
     return f"{n} {word if n == 1 else many or word + 's'}"
 
 
@@ -168,7 +168,7 @@ def strip(snapshot) -> list[str]:
     if waiting_in_outbox:
         verb = "waits" if waiting_in_outbox == 1 else "wait"
         items.append(
-            f"{_plural(waiting_in_outbox, 'Discord message')} since the last one-pager {verb} in the outbox. "
+            f"{plural(waiting_in_outbox, 'Discord message')} since the last one-pager {verb} in the outbox. "
             "Check the webhooks with `jura-growth discord test`."
         )
     requests = snapshot.approvals or ()
@@ -203,7 +203,7 @@ def _missed(snapshot) -> list[str]:
         # "; " because each time holds a comma of its own.
         shown = "; ".join(timeutil.when(at) for at in times[:MISSED_SHOWN])
         more = f" and {len(times) - MISSED_SHOWN} more" if len(times) > MISSED_SHOWN else ""
-        items.append(f"`{job}` missed {_plural(len(times), 'slot')} since {day_label(since)}: {shown}{more}.")
+        items.append(f"`{job}` missed {plural(len(times), 'slot')} since {day_label(since)}: {shown}{more}.")
     return items
 
 

@@ -315,6 +315,16 @@ def latest(conn: sqlite3.Connection, kind: str, subject: str) -> Approval | None
     return _latest(conn, kind, subject)
 
 
+def latest_for_subject(conn: sqlite3.Connection, subject: str) -> Approval | None:
+    """The newest record for a subject, whichever kind asked. Reads only, as `latest` does."""
+    return _one(conn, "SELECT * FROM approvals WHERE subject = ? ORDER BY id DESC LIMIT 1", (subject,))
+
+
+def claimed(conn: sqlite3.Connection, subject: str) -> bool:
+    """Whether any request for this subject was ever claimed, so it may have gone out. Reads only."""
+    return conn.execute("SELECT 1 FROM approvals WHERE subject = ? AND used_at IS NOT NULL LIMIT 1", (subject,)).fetchone() is not None
+
+
 def _reload(conn: sqlite3.Connection, number: int) -> Approval:
     return Approval.from_row(conn.execute("SELECT * FROM approvals WHERE id = ?", (number,)).fetchone())
 

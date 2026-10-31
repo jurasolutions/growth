@@ -191,10 +191,15 @@ def _platform(item: dict) -> str | None:
     return None if item["source"] in store.MAIL_SOURCES else item["source"].split("-")[0]
 
 
+def _still_asked(item: dict) -> bool:
+    """An ask of his, on an item it can still mean something for (code review 04, P-2)."""
+    return bool(item["asked_at"]) and item["state"] in store.ASK_LIVES_IN
+
+
 def _message(item: dict) -> dict:
     return {
         "id": store.label(item["id"]),
-        "new": item["state"] == store.NEW or bool(item["asked_at"]),
+        "new": item["state"] == store.NEW or _still_asked(item),
         "received": item["received_at"] or item["recorded_at"],
         "subject": item["subject"],
         "text": item["text"],
@@ -207,7 +212,7 @@ def _shown(conn: sqlite3.Connection, items: list[dict]) -> dict:
     newest = items[-1]
     every = store.history(conn, newest["conversation"])
     earlier = _open_draft(conn, newest["conversation"], {item["id"] for item in items if item["state"] == store.NEW})
-    asked_of = [item for item in [*store.in_conversation(conn, newest["conversation"])] if item["asked_at"]]
+    asked_of = [item for item in store.in_conversation(conn, newest["conversation"]) if _still_asked(item)]
     return {
         "id": store.label(newest["id"]),
         "channel": _channel(newest),
@@ -368,6 +373,7 @@ def _without_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], k
         if kind == "opt-out":
             if store.thread_of(newest).get("own_sender"):
                 replies.honour_opt_out(conn, newest["sender_address"], newest["lead_id"], newest["key"])
+                store.mark_suppressed_by(conn, newest["id"])
                 note = _OPTED_OUT.format(label=store.label(newest["id"]))
             else:
                 note = _OPTED_OUT_UNPROVEN if newest["sender_address"] else _OPTED_OUT_SOCIAL
@@ -396,6 +402,12 @@ def draft_problems(conn: sqlite3.Connection, newest: dict, draft: str, *, high: 
 def _redrafted(conn: sqlite3.Connection, payload: dict, item: dict, kind: str, draft: str, high: bool) -> Submitted:
     """The redraft he asked for. In one transaction the new request is raised and the old card closes
     (S1), so a failure anywhere leaves the card he has."""
+    record = approvals.latest(conn, kinds.KIND, kinds.subject_of(item["id"]))
+    if record is None or record.status != approvals.PENDING:  # he decided the card first, and that stands (P-3)
+        with db.transaction(conn):
+            store.clear_ask(conn, item["id"])
+            log.event(conn, "inbox.redraft_dropped", {"item": item["id"]}, agent=AGENT)
+        return Submitted(0, [f"OK: {payload['id']}: Ting Yu has decided that card, so this redraft is dropped"])
     candidate = {**item, "draft": draft, "class": kind, "priority": "high" if high else item["priority"]}
     reply = kinds.reply_of(candidate)
     if reply is None or not kinds.card_fits(conn, candidate, reply):

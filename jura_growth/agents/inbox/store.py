@@ -58,8 +58,15 @@ PEOPLE_SOURCES = (*MAIL_SOURCES, *SOCIAL_SOURCES)
 # item's words aren't proved to be anyone's, a baseline is old enough to be left alone, and the Page's own
 # aren't a person's (code review 05).
 NOT_HISTORY = (NOISE, OBSERVED, UNVERIFIED, BASELINE, OWN)
+# On R4 for `caps.INBOX_LISTED_DAYS`, and what `/growth inbox done` clears from it.
+LISTED_STATES = (NEEDS_HAND_REPLY, LAPSED, FAILED, UNKNOWN, UNVERIFIED)
+# Cleared, these keep their state, because it is the guard: what may have gone out is never sent again (N13),
+# what Resend refused keeps its one key, and what was never proved stays out of what triage reads (N3).
+KEPT_WHEN_CLEARED = (FAILED, UNKNOWN, UNVERIFIED)
+SUBJECT_PREFIX = "inbox_item:"
 JUNK_NOTE = "it was in the junk folder"  # noise's evidence for a Junk message, which R2 lists with its subject (S16)
 
+ID_DIGITS = 12  # more than any row will reach, and well inside what SQLite can hold
 NAME_CHARS = 120
 SUBJECT_CHARS = 300
 ADDRESS_CHARS = 254
@@ -177,12 +184,13 @@ def label(item_id: int) -> str:
 
 def approval_subject(item_id: int) -> str:
     """The subject of the requests about this inbox item."""
-    return f"inbox_item:{int(item_id)}"
+    return f"{SUBJECT_PREFIX}{int(item_id)}"
 
 
 def number_of(text: str) -> int:
     """The row id in `I-0012`. `remote` has checked its shape; anything else names no row."""
-    return int(text.removeprefix("I-")) if text.removeprefix("I-").isdigit() else 0
+    digits = text.removeprefix("I-")
+    return int(digits) if digits.isdigit() and len(digits) <= ID_DIGITS else 0
 
 
 def has_state(conn: sqlite3.Connection, state: str) -> bool:
@@ -197,6 +205,8 @@ def set_item_state(conn: sqlite3.Connection, item_id: int, state: str, *, note: 
     said = " ".join(part for part in (found["note"], note) if part) if found else None
     conn.execute("UPDATE inbox_items SET state = ?, note = COALESCE(?, note), updated_at = ? WHERE id = ?",
                  (state, said, timeutil.stamp(), item_id))
+    if state not in ASK_LIVES_IN:
+        clear_ask(conn, item_id)
 
 
 # --- reports ------------------------------------------------------------------
@@ -310,12 +320,17 @@ def update_triage(conn: sqlite3.Connection, item_id: int, *, state: str, note: s
         raise ValueError(f"unknown state {state!r}")
     conn.execute(
         "UPDATE inbox_items SET state = ?, note = ?, class = ?, priority = ?, language = ?, draft = ?, promised = ?, asked_at = NULL, "
-        "updated_at = ? WHERE id = ?",
+        "guidance = NULL, updated_at = ? WHERE id = ?",
         (state, note, kind, priority, language, draft, int(promised), timeutil.stamp(), item_id),
     )
 
 
 # --- what Ting Yu asks for ------------------------------------------------------
+
+
+# Where an ask of his can still mean something. It ends the moment an item leaves these, on a skip, a
+# claim, a send or a supersede, so his guidance for one card can't reach their next message (code review 04, P-2).
+ASK_LIVES_IN = (NEW, WAITING)
 
 
 def asked_redrafts(conn: sqlite3.Connection) -> list[dict]:
@@ -331,7 +346,8 @@ def ask_for_draft(conn: sqlite3.Connection, item_id: int, guidance: str) -> None
 
 
 def clear_ask(conn: sqlite3.Connection, item_id: int) -> None:
-    conn.execute("UPDATE inbox_items SET asked_at = NULL, guidance = NULL, updated_at = ? WHERE id = ?", (timeutil.stamp(), item_id))
+    """`updated_at` stays: R4 and retention read it as when the item reached its state."""
+    conn.execute("UPDATE inbox_items SET asked_at = NULL, guidance = NULL WHERE id = ?", (item_id,))
 
 
 def reopen_for_draft(conn: sqlite3.Connection, item_id: int, guidance: str, *, note: str) -> None:
@@ -350,15 +366,31 @@ def update_draft(conn: sqlite3.Connection, item_id: int, draft: str, *, promised
     """A new draft on an open card, whose request is raised in the same transaction."""
     conn.execute(
         "UPDATE inbox_items SET draft = ?, promised = ?, class = COALESCE(?, class), priority = COALESCE(?, priority), "
-        "language = COALESCE(?, language), asked_at = NULL, brand_failures = 0, updated_at = ? WHERE id = ?",
+        "language = COALESCE(?, language), asked_at = NULL, guidance = NULL, brand_failures = 0, updated_at = ? WHERE id = ?",
         (draft, int(promised), kind, priority, language, timeutil.stamp(), item_id),
     )
 
 
-def mark_done(conn: sqlite3.Connection, item_ids: list[int]) -> None:
+def mark_done(conn: sqlite3.Connection, items: list[dict]) -> None:
+    """He has cleared these from R4. Clearing doesn't erase what an item was (`KEPT_WHEN_CLEARED`)."""
     now = timeutil.stamp()
-    for item_id in item_ids:
-        conn.execute("UPDATE inbox_items SET state = ?, closed_at = ?, updated_at = ? WHERE id = ?", (DONE, now, now, item_id))
+    for item in items:
+        state = item["state"] if item["state"] in KEPT_WHEN_CLEARED else DONE
+        conn.execute("UPDATE inbox_items SET state = ?, closed_at = ?, updated_at = ? WHERE id = ?", (state, now, now, item["id"]))
+
+
+def mark_suppressed_by(conn: sqlite3.Connection, item_id: int) -> None:
+    """This item's own message is what suppressed its sender, so this item can lift it."""
+    conn.execute("UPDATE inbox_items SET suppressed_by_this = 1 WHERE id = ?", (item_id,))
+
+
+def lifted(conn: sqlite3.Connection, address: str) -> None:
+    conn.execute("UPDATE inbox_items SET suppressed_by_this = 0 WHERE sender_address = ?", (address,))
+
+
+def what_suppressed(conn: sqlite3.Connection, address: str) -> dict | None:
+    """The message from this address that suppressed it, if one here did."""
+    return db.one(conn, "SELECT * FROM inbox_items WHERE sender_address = ? AND suppressed_by_this = 1 ORDER BY id LIMIT 1", (address,))
 
 
 def engine_note(conn: sqlite3.Connection, what: str, text: str) -> None:

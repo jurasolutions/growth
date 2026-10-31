@@ -357,10 +357,14 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
     with db.transaction(conn):
         outcome = store.record(conn, reaction)
         if isinstance(outcome, store.Recorded):
-            if wants_out:  # code review 02, SEC-2: a phrase match can be wrong, so the report says how to undo it
-                store.set_item_state(conn, outcome.item_id, state, note=f"If that's wrong, `/growth inbox unsuppress {store.label(outcome.item_id)}` lifts it.")
+            held_before = suppression.source_of(conn, sender) if sender else None
             if contact is not None and received is not None and not counted_already:
                 result.replies += int(replies.apply_reply(conn, contact, sender, received, key, bool(wants_out), post=False))
+            # This message is what suppressed them, here or at the 16:45 check. A phrase match can be wrong,
+            # so its report says how to undo it (code review 02, SEC-2; code review 04, SEC-2).
+            if wants_out and suppression.source_of(conn, sender) == suppression.FROM_A_REPLY and (held_before is None or counted_already):
+                store.mark_suppressed_by(conn, outcome.item_id)
+                store.set_item_state(conn, outcome.item_id, state, note=f"If that's wrong, `/growth inbox unsuppress {store.label(outcome.item_id)}` lifts it.")
             log.event(conn, "inbox.recorded", {"item": outcome.item_id, "source": reaction.source,
                                                "domain": reaction.sender_domain, "state": state}, agent=AGENT)
     result.recorded += 1

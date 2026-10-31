@@ -368,9 +368,8 @@ def test_iw_s16_a_junk_message_never_gets_a_draft(conn, box, sent, discord_doubl
 
 
 def test_iw_e2_a_suppressed_person_gets_no_draft_and_the_answer_says_how_to_lift_it(conn, box, sent, discord_double):
-    item = reported(conn, box)
-    with db.transaction(conn):
-        suppression.add(conn, email=PRIYA, reason="unsubscribe", source="reply")
+    item = arrives(conn, box)
+    assert triage.submit(conn, {"id": store.label(item["id"]), "class": "opt-out"}).exit_code == 0
     body = remote("inbox", "draft", store.label(item["id"]))
     assert body["exit_code"] == 1 and "unsuppress" in body["text"]
 
@@ -410,13 +409,16 @@ def test_iw_s2_done_takes_the_conversations_hand_replies(conn, box, sent, discor
     assert reload(conn, first)["state"] == reload(conn, second)["state"] == store.DONE
 
 
-@pytest.mark.parametrize("state", [store.LAPSED, store.FAILED, store.UNKNOWN, store.UNVERIFIED])
-def test_iw_s2_done_clears_a_lapsed_or_uncertain_line_too(conn, box, sent, discord_double, state):
+@pytest.mark.parametrize("state, becomes", [(store.LAPSED, store.DONE), (store.FAILED, store.FAILED), (store.UNKNOWN, store.UNKNOWN),
+                                            (store.UNVERIFIED, store.UNVERIFIED)])
+def test_iw_s2_done_clears_a_lapsed_or_uncertain_line_too(conn, box, sent, discord_double, state, becomes):
+    """It leaves the list either way. What may have gone out, or was never proved, stays what it was."""
     item = arrives(conn, box)
     with db.transaction(conn):
         store.set_item_state(conn, item["id"], state)
     assert remote("inbox", "done", store.label(item["id"]))["exit_code"] == 0
-    assert reload(conn, item)["state"] == store.DONE
+    assert reload(conn, item)["state"] == becomes and reload(conn, item)["closed_at"]
+    assert store.label(item["id"]) not in remote("inbox", "list")["text"]
 
 
 def test_iw_n13_done_on_an_unknown_item_never_sends_it(conn, box, sent, discord_double):
@@ -467,11 +469,17 @@ def lead_with_contact(conn) -> int:
     return 50
 
 
-def test_iw_e2_unsuppress_lifts_a_reply_suppression_and_restores_the_lead(conn, box, sent, discord_double):
+def opted_out(conn, box) -> dict:
+    """Their own message asks not to be contacted, and triage classes it so."""
     item = arrives(conn, box)
+    assert triage.submit(conn, {"id": store.label(item["id"]), "class": "opt-out"}).exit_code == 0
+    return reload(conn, item)
+
+
+def test_iw_e2_unsuppress_lifts_a_reply_suppression_and_restores_the_lead(conn, box, sent, discord_double):
+    item = opted_out(conn, box)
     lead = lead_with_contact(conn)
     with db.transaction(conn):
-        suppression.add(conn, email=PRIYA, reason="unsubscribe", source="reply")
         conn.execute("UPDATE inbox_items SET lead_id = ? WHERE id = ?", (lead, item["id"]))
         conn.execute("INSERT INTO outreach_replies (lead_id, contact_id, message_key, received_at, unsubscribe, detected_at) "
                      "SELECT 50, id, ?, ?, 1, ? FROM contacts WHERE lead_id = 50", (item["key"], item["recorded_at"], item["recorded_at"]))
@@ -526,18 +534,14 @@ def test_iw_e2_unsuppress_refuses_when_the_website_also_lists_them_or_cant_say(c
     import httpx
 
     fake_d1(monkeypatch, rows if rows != "down" else lambda request: httpx.Response(500, json={"success": False}))
-    item = arrives(conn, box)
-    with db.transaction(conn):
-        suppression.add(conn, email=PRIYA, reason="unsubscribe", source="reply")
+    item = opted_out(conn, box)
     body = remote("inbox", "unsuppress", store.label(item["id"]))
     assert body["exit_code"] == 1, body
     assert suppression.is_suppressed(conn, PRIYA)
 
 
 def test_iw_e2_a_lifted_person_can_then_have_a_draft(conn, box, sent, discord_double):
-    item = reported(conn, box)
-    with db.transaction(conn):
-        suppression.add(conn, email=PRIYA, reason="unsubscribe", source="reply")
+    item = opted_out(conn, box)
     label = store.label(item["id"])
     assert remote("inbox", "draft", label)["exit_code"] == 1
     assert remote("inbox", "unsuppress", label)["exit_code"] == 0

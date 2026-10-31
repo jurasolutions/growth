@@ -52,7 +52,7 @@ REFERENCES_SENT = 20
 # What `cards.build` puts around a preview, past its title and reason: the header and the answer line,
 # as an edited card's header is longest. A card never splits, so this is counted before the quote is.
 CARD_FRAME = 150
-_SUBJECT = store.approval_subject(0).removesuffix("0")
+_SUBJECT = store.SUBJECT_PREFIX
 _WROTE_AGAIN = "they wrote again"
 _TOO_LONG = "The draft and its card won't fit one Discord message, so there is no card. Answer by hand if it needs one."
 _NO_ADDRESS = "It has no single address to answer: reply by hand if it matters."

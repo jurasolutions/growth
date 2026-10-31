@@ -113,7 +113,9 @@ def _pause(words: list[str], ref: str | None) -> list[str]:
 
 
 _A_ID = re.compile(r"A-[0-9]+")
-_I_ID = re.compile(r"I-[0-9]+")
+# An inbox id can't be too big for SQLite, and a word that isn't one isn't logged as one.
+_INBOX_A_ID = re.compile(r"A-[0-9]{1,12}")
+_INBOX_I_ID = re.compile(r"I-[0-9]{1,12}")
 _RESOLVE = "say `publish resolve A-nnnn posted --url <url>` or `publish resolve A-nnnn not-posted`"
 
 
@@ -213,12 +215,12 @@ ALLOWLIST: dict[str, Entry] = {
     "apps release-plan": Entry("apps release-plan <APP-NNN>", _positional("apps release-plan", 1, 1)),
     "apps released": _with_options("apps released <APP-NNN> --task <T-nnnn>"),
     "community removed": Entry("community removed <group-id>", _positional("community removed", 1, 1)),
-    "inbox done": _inbox("inbox done <I-nnnn>", _I_ID, words_after=(0, 0)),
-    "inbox draft": _inbox("inbox draft <I-nnnn> [guidance]", _I_ID, words_after=(0, None)),
+    "inbox done": _inbox("inbox done <I-nnnn>", _INBOX_I_ID, words_after=(0, 0)),
+    "inbox draft": _inbox("inbox draft <I-nnnn> [guidance]", _INBOX_I_ID, words_after=(0, None)),
     "inbox list": Entry("inbox list", _none("inbox list")),
-    "inbox redraft": _inbox("inbox redraft <A-nnnn> <guidance>", _A_ID, words_after=(1, None)),
-    "inbox reword": _inbox("inbox reword <A-nnnn> <your words>", _A_ID, words_after=(1, None)),
-    "inbox unsuppress": _inbox("inbox unsuppress <I-nnnn>", _I_ID, words_after=(0, 0)),
+    "inbox redraft": _inbox("inbox redraft <A-nnnn> <guidance>", _INBOX_A_ID, words_after=(1, None)),
+    "inbox reword": _inbox("inbox reword <A-nnnn> <your words>", _INBOX_A_ID, words_after=(1, None)),
+    "inbox unsuppress": _inbox("inbox unsuppress <I-nnnn>", _INBOX_I_ID, words_after=(0, 0)),
     "one-pager": Entry("one-pager", _none("one-pager")),
     "outreach requeue-shadow": Entry("outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]", _requeue_shadow),
     "pause": Entry("pause <agent|all> [reason]", _pause),
@@ -450,12 +452,16 @@ def payload(reply: Reply) -> str:
 
 
 def _logged(words: list[str]) -> list[str]:
-    """The words a `remote.command` event keeps: all of them, unless the command says otherwise."""
+    """The words a `remote.command` event keeps. All of them, unless the command says otherwise, and only
+    the first two of anything refused: a mistyped `inbox reword` is a draft naming a person, and `events`
+    is never pruned (code review 04, SEC-5). A word kept after an inbox command's name is only ever its id."""
     try:
         name, entry, rest = match(words)
     except Refusal:
+        return list(words)[:2]
+    if entry.logged_words is None:
         return list(words)
-    return list(words) if entry.logged_words is None else [*name.split(), *rest[: entry.logged_words]]
+    return [*name.split(), *[word for word in rest[: entry.logged_words] if _INBOX_A_ID.fullmatch(word) or _INBOX_I_ID.fullmatch(word)]]
 
 
 def _record(words: list[str], actor: str | None, ref: str | None, reply: Reply) -> None:

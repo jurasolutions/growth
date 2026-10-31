@@ -527,6 +527,23 @@ def honour_opt_out(conn: sqlite3.Connection, sender: str, lead_id: int | None, k
         conn.execute("UPDATE outreach_replies SET unsubscribe = 1 WHERE message_key = ?", (key,))
 
 
+def undo_opt_out(conn: sqlite3.Connection, sender: str, lead_id: int | None, key: str) -> bool:
+    """Undo `honour_opt_out` for one message: lift `sender` if a reply is what suppressed them, and clear
+    that message's mark. Their lead goes back to having replied, unless a colleague's suppression or
+    opt-out, a bounce or a complaint also stands on it. True if a lead was restored."""
+    suppression.lift_reply(conn, sender)
+    conn.execute("UPDATE outreach_replies SET unsubscribe = 0 WHERE message_key = ?", (key,))
+    theirs = db.rows(conn, "SELECT lead_id FROM contacts WHERE email_hash = ?", (suppression.email_hash(sender),))
+    restored = False
+    for lead in sorted({row["lead_id"] for row in theirs} | ({lead_id} if lead_id else set())):
+        still = db.one(conn, "SELECT 1 FROM contacts c JOIN suppression s ON s.email_hash = c.email_hash WHERE c.lead_id = ? "
+                             "UNION SELECT 1 FROM outreach_replies WHERE lead_id = ? AND unsubscribe = 1", (lead, lead))
+        if not still and db.scalar(conn, "SELECT status FROM leads WHERE id = ?", (lead,)) == "unsubscribed":
+            store.set_lead_status(conn, [lead], "replied")
+            restored = True
+    return restored
+
+
 def apply_reply(conn: sqlite3.Connection, contact: dict, sender: str, received: datetime, key: str, wants_out: bool,
                 result: Result | None = None, *, post: bool = True) -> bool:
     """A lead replied: count it, cancel what was queued, and suppress the sender on an opt-out,

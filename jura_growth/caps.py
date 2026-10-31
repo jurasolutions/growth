@@ -53,6 +53,7 @@ THIRD_PARTY_TEXT_JOBS = BROWSER_JOBS | {"inbox-check"}
 CLEAN_CWD_JOBS = frozenset({"inbox-check", "inbox-watch", "inbox-reply"})
 # Days a browser job's transcript is kept: it holds third-party page text (BP §4.7).
 BROWSER_TRANSCRIPT_DAYS = 7
+OUTBOX_DAYS = 14  # Discord messages that were refused: they can hold a person's words, and nothing replays them
 COMMUNITY_POSTS_PER_DAY = 1
 COMMUNITY_JOINS_PER_WEEK = 3  # ISO week, SGT
 PUBLISH_ITEMS_PER_RUN = 1
@@ -89,6 +90,7 @@ INBOX_EMAIL_DRAFT_LINES = 30  # each line takes a quote mark on the card
 INBOX_REPLY_SUBJECT_CHARS = 120  # longer and a reply goes under a safe subject: the card shows all of what goes out
 INBOX_SOCIAL_DRAFT_CHARS = 600
 INBOX_GUIDANCE_CHARS = 1000  # what he types to steer a draft: he is on a phone, and triage reads it
+INBOX_LISTED_DAYS = 7  # R4: anything lapsed, dropped or uncertain stays on the list this long
 INBOX_HIGH_REPEAT_HOURS = 24  # S7: a high item still undecided goes to #alerts once more
 INBOX_USAGE_DAYS = 7  # S14: unreported days of app usage on one message
 INBOX_USAGE_COUNT_MAX = 100_000_000  # a count past this from the website isn't a count
