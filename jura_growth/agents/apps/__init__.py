@@ -82,6 +82,12 @@ def health(conn: sqlite3.Connection) -> list[str]:
     return builds.health_lines(conn) + releases.health_lines(conn)
 
 
+def pending(conn: sqlite3.Connection) -> list:
+    """`jura-growth pending`: unreleased apps and open build handoffs, on the read-only connection,
+    and Ting Yu's own ideas waiting in the backlog."""
+    return releases.pending_items(conn) + builds.pending_items(conn) + ideas.pending_items()
+
+
 def digest(conn: sqlite3.Connection, day: str) -> dict:
     """The factory's day, after a line for each idea of Ting Yu's it held that day: the reason it
     gave reaches him even when it then filed another PRD."""

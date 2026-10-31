@@ -94,9 +94,11 @@ brackets are required; words in square brackets are optional.
 | `apps release-plan <APP-NNN>` | `apps release-plan` | Claims the approved `app-release` request, then answers with the merge of exactly the approved SHA into `main`, for Ting Yu to run on the Mac. The claim is spent once it runs. A retry while the build is still the claimed commit and preview answers with the same merge and makes no new claim, so a lost answer can be fetched again; the merge names a fixed SHA, so it releases nothing new. Exit 1, with nothing to run, when no approved release is waiting, or when the build moved on from the claimed commit |
 | `apps released <APP-NNN> --task <T-nnnn>` | `apps released` | Records the release once `main` of the landing-page repository holds the claimed SHA, and moves the PRD to `prd/done/apps/`. Exit 1 while the release isn't claimed or `main` lacks the SHA |
 | `community removed <group-id>` | `community removed` | |
+| `help` | `help` | Lists every command on this allowlist, built from `ALLOWLIST`, each with its usage and a one-line summary. Always fits the 1,900 characters with no cut. It needs no database: when `growth.db` is missing, empty or has an unfinished write, it isn't opened read-write, and the event goes only to the JSONL mirror. Exit 2 for any word after it. No scheduled run can send it |
 | `one-pager` | `one-pager` | Posts the morning picture to `#mission-control` with a short message, dedupe off: asked twice, it posts twice. Exit 0 and `recorded` either way, like `heartbeat`: the text says "posted to #mission-control", or "not posted to #mission-control: <why>" when Discord didn't take it and it waits in the outbox, which the next one-pager lists under Needs you. Read the text, not the exit code, to tell them apart |
 | `outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]` | `outreach requeue-shadow` | Live mode only; each requeued email raises its own approval request. Exit 1 in shadow mode |
 | `pause <agent\|all> [reason]` | `pause` | The rest of the words are the reason; "paused from Discord" without one |
+| `pending` | `pending` | Growth's unfinished work under "Waiting for you" and "Growth is on it", most urgent first, each with what to send next. Read-only: it writes no row but its own `remote.command` event, and takes no backlog lock. When `growth.db` is missing, empty or has an unfinished write, it isn't opened read-write at all: the event goes only to the JSONL mirror, so a second send answers as the first did. Exit 0 and `recorded` even when something couldn't be read: the text then starts with a `**Couldn't be read**` heading and never says "Nothing pending", so read the text, as for `one-pager`. A long answer is cut from the end, so what growth holds gives way first. Exit 2 for any word after it. No scheduled run can send it |
 | `publish queue` | `publish queue` | Every publish item with its `P-nnnn` label, its A-id, platform, day and state |
 | `publish resolve <A-nnnn> posted --url <url> \| not-posted` | `publish resolve` | Settles an item whose outcome is `unknown`. `posted` needs the live post's URL (`--url <url>` or `--url=<url>`) on the platform's own host, or exits 1. It records no decision. A scheduled run can never send it |
 | `resume <agent\|all>` | `resume` | With a PAUSE file present, the answer says it can only be removed on the Mac |
@@ -107,7 +109,8 @@ brackets are required; words in square brackets are optional.
 Ticket 09 added `one-pager` and ticket 12 the four `apps` commands. Browser publishing's ticket 03
 adds `publish queue` and `publish resolve`, as rows of their own in this order. `apps idea` came
 on 2026-10-31; Dispatch passes `/growth` text through unfiltered, so it needs no change to send
-it.
+it. The growth-help-pending feature's ticket 01 added `help` and `pending` the same way, on the same
+date, and Dispatch needs no change for them either.
 
 ## Answers and exit codes
 
