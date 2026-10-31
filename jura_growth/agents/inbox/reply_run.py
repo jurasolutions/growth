@@ -144,6 +144,8 @@ def hand_out(conn: sqlite3.Connection, *, run_id: int | None) -> dict:
         return _nothing("no reply is waiting")
     item = waiting[0]
     record = social.latest_for(conn, item)
+    if record is None:
+        return _nothing("no reply is waiting")
     if run_id is not None:
         store.set_state(conn, f"{_HANDED}{run_id}", str(item["id"]))
     Path(_read_file()).unlink(missing_ok=True)  # a claim goes on what this run reads, never on what an earlier one left
@@ -186,18 +188,18 @@ def read_of(given: Any) -> Read | None:
     """A run's report, or None when it isn't one. Never raises."""
     if not isinstance(given, dict):
         return None
-    words = (given.get("approval"), given.get("target"), given.get("acting_as", ""), given.get("author", ""), given.get("newest_from_them", ""),
-             given.get("newest_url", ""))
+    approval, target = given.get("approval"), given.get("target")
+    words = (given.get("acting_as", ""), given.get("author", ""), given.get("newest_from_them", ""), given.get("newest_url", ""))
     occurrence = given.get("occurrence", 1)
-    if not all(isinstance(word, str) for word in words) or given.get("target") not in TARGET_WORDS:
+    if not isinstance(approval, str) or not isinstance(target, str) or target not in TARGET_WORDS or not all(isinstance(word, str) for word in words):
         return None
     if isinstance(occurrence, bool) or not isinstance(occurrence, int) or not 1 <= occurrence <= watch.MAX_OCCURRENCE:
         return None
     if not isinstance(given.get("page_answered", False), bool):
         return None
     attachment = given.get("newest_attachment")
-    return Read(words[0], words[1], words[2], words[3], store.clean_text(words[4]).strip(), occurrence,
-                isinstance(attachment, str) and attachment in watch.ATTACHMENTS, given.get("page_answered", False), words[5])
+    return Read(approval, target, words[0], words[1], store.clean_text(words[2]).strip(), occurrence,
+                isinstance(attachment, str) and attachment in watch.ATTACHMENTS, given.get("page_answered", False), words[3])
 
 
 def parse_read(raw: bytes) -> Read | None:
@@ -245,7 +247,7 @@ def next_reply(conn: sqlite3.Connection, read: Read | None, *, run_id: int | Non
         return _nothing("no reply is waiting")
     item = waiting[0]
     record = social.latest_for(conn, item)
-    if read is None or read.approval != record.id:
+    if record is None or read is None or read.approval != record.id:
         return _close(conn, item, store.NEEDS_HAND_REPLY, _UNCLEAN, "the read didn't make sense", run_id)
     if read.target == "gone":
         return _close(conn, item, store.CLOSED, _GONE, "the target has gone", run_id)
