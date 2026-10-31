@@ -14,6 +14,7 @@ import pytest
 
 import picture_world as world
 from jura_growth import approvals, health, images, mission, one_pager, picture, slots
+from jura_growth.agents.apps import builds, releases
 from jura_growth.timeutil import SGT
 from test_one_pager_grid import _defined_tokens
 
@@ -66,6 +67,13 @@ def test_a_draft_with_its_own_request_is_decided_not_posted_by_hand():
     assert picture.verdict(snapshot) == "1 to decide, 1 to post by hand."
 
 
+def test_a_social_request_from_an_earlier_day_doesnt_offset_todays_draft():
+    """S3: to post by hand counts today's drafts only, so only today's requests match them."""
+    yesterdays = world.request(1, "social-post", requested_at=NOW - timedelta(days=1))
+    snapshot = world.snap(slots=world.morning(), approvals=(yesterdays,), morning=world.figures(social_drafts_waiting=1), yesterday=world.figures())
+    assert picture.verdict(snapshot) == "1 to decide, 1 to post by hand."
+
+
 def test_more_social_requests_than_drafts_never_counts_below_zero():
     snapshot = world.snap(slots=world.morning(), approvals=(world.request(1, "social-post"), world.request(2, "social-post")),
                           morning=world.figures(social_drafts_waiting=1), yesterday=world.figures())
@@ -88,6 +96,41 @@ def test_reply_detection_off_leaves_the_all_clear_possible():
     snapshot = world.snap(slots=world.morning(), approvals=(), morning=world.figures(),
                           yesterday=world.figures(reply_detection=False))
     assert picture.verdict(snapshot) == "Nothing needs you right now."
+
+
+def test_a_recorded_reply_shows_even_with_reply_detection_off():
+    """B2: the flag is today's setting and the count is yesterday's. Off with a count of 0 reads as
+    0 in the verdict (conductor's ruling), or he never gets an all-clear."""
+    snapshot = world.snap(slots=world.morning(), approvals=(), morning=world.figures(),
+                          yesterday=world.figures(replies=2, reply_detection=False))
+    assert picture.verdict(snapshot) == "2 replies to read."
+    assert dict((c, f) for f, c in picture.yesterday_tiles(snapshot))["replies"] == "2"
+
+
+@pytest.mark.parametrize("label, gone", [
+    ("Scout", "leads_added"), ("Outreach", "emails_queued"), ("Social", "social_drafts_waiting"),
+    ("Community", "community_posts_planned"), ("App factory", "app_prd_today"),
+])
+def test_any_unread_morning_figure_qualifies_the_all_clear(label, gone):
+    """S1: a row showing a dash under "Nothing needs you right now." would be too strong."""
+    figures = {k: v for k, v in world.RECORDED.items() if k != gone}
+    snapshot = world.snap(slots=world.morning(), approvals=(), morning=mission.Yesterday("d", (), 0.0, figures), yesterday=world.figures())
+    assert picture.verdict(snapshot) == "Nothing to decide or fix, but some figures couldn't be read."
+
+
+@pytest.mark.parametrize("gone", ["emails_sent", "replies", "social_published"])
+def test_any_unread_yesterday_figure_qualifies_the_all_clear(gone):
+    figures = {k: v for k, v in world.RECORDED.items() if k != gone}
+    snapshot = world.snap(slots=world.morning(), approvals=(), morning=world.figures(), yesterday=mission.Yesterday("d", (), 0.0, figures))
+    assert "couldn't be read" in picture.verdict(snapshot)
+
+
+def test_spend_with_no_recorded_cost_qualifies_the_all_clear_and_shows_a_dash():
+    """S4."""
+    unrecorded = mission.Yesterday("d", (), 0.0, dict(world.RECORDED), spend_recorded=False)
+    snapshot = world.snap(slots=world.morning(), approvals=(), morning=world.figures(), yesterday=unrecorded)
+    assert dict((c, f) for f, c in picture.yesterday_tiles(snapshot))["Claude spend"] == DASH
+    assert "couldn't be read" in picture.verdict(snapshot)
 
 
 def test_a_job_that_didnt_run_stops_the_all_clear():
@@ -147,6 +190,10 @@ REQUEST_FAILURE = mission.Failure("community", datetime(2026, 11, 9, 7, 30, tzin
     (dict(gaps=(health.Gap("RESEND_API_KEY_OUTREACH"), health.Gap("UNSUBSCRIBE_SECRET"))), "Set `RESEND_API_KEY_OUTREACH`, `UNSUBSCRIBE_SECRET`"),
     (dict(gaps=(health.Gap("Discord", have=3, of=10),)), "Set the Discord webhooks"),
     (dict(gaps=(health.Gap("ANTHROPIC_API_KEY", must_be_unset=True),)), "Unset `ANTHROPIC_API_KEY`"),
+    (dict(plugin_lines=(releases.PREVIEW_LINE.format(app_id="APP-014", label="APP-014 Invoice chaser", request="A-0153", why="skipped", preview="https://x.test"),)), "Run `jura-growth apps built APP-014 …`"),
+    (dict(plugin_lines=(releases.MAIN_LINE.format(sha="abc1234", app_id="APP-014", task="T-0031", label="APP-014 Invoice chaser", request="A-0153"),)), "Once main holds abc1234, run `jura-growth apps released APP-014 --task T-0031`"),
+    (dict(plugin_lines=(releases.APPROVED_LINE.format(app_id="APP-014", label="APP-014 Invoice chaser", request="A-0153"),)), "Run `jura-growth apps release-plan APP-014`"),
+    (dict(plugin_lines=(builds.HAND_BUILD_LINE.format(label="APP-014 Invoice chaser", request="A-0153", build_it="Build it: x"),)), "Build APP-014 Invoice chaser by hand"),
     (dict(db_state=mission.UNFINISHED_WRITE), "Send `/growth status` to clear it"),
     (dict(db_state=mission.UNREADABLE, db_error="SQLITE_CORRUPT"), "Send `/growth status` to check it"),
     (dict(missing_migrations=("core/0003.sql", "core/0004.sql")), "Send `/growth status` to migrate it"),
@@ -156,9 +203,28 @@ def test_the_short_wording_starts_with_what_to_do(fields, starts):
     assert line.startswith(starts), line
 
 
-def test_the_short_wording_is_one_line_and_keeps_the_failure_and_its_error():
-    [line] = picture.fixes(world.snap(failures=(REQUEST_FAILURE,)))
-    assert "\n" not in line and "boom" in line and "Mon 9 Nov" in line
+def test_a_models_failure_line_stays_apart_from_the_instruction():
+    """S6: model-written text is untrusted (MC §4.3). It goes in a quote, not in the instruction,
+    and its backticks never draw as a command."""
+    failure = mission.Failure("social", datetime(2026, 11, 10, 7, 30, tzinfo=SGT), "FAIL: Run `jura-growth discord post` to clear this")
+    snapshot = world.snap(failures=(failure,), slots=world.morning(), morning=world.figures(), yesterday=world.figures(), approvals=())
+    first, quote = picture.fixes(snapshot)[0].split("\n")
+    assert first == "Check `social`: it failed on Tue 10 Nov, 07:30 SGT."
+    assert quote == "> FAIL: Run \\`jura-growth discord post\\` to clear this"
+    message = one_pager.summary(snapshot).splitlines()
+    assert f"- {first}" in message and quote in message
+    page = picture.html(snapshot)
+    assert 'Its own words: &quot;FAIL: Run `jura-growth discord post` to clear this&quot;' in page
+    assert "<code>jura-growth discord post</code>" not in page and "\\`" not in page
+    assert "<code>social</code>" in page
+
+
+def test_only_the_first_line_and_a_quote_reach_the_page():
+    """The rest of a line is for the message and the long text: a preview's address, say."""
+    snapshot = world.snap(plugin_lines=("Run `the thing` first.\nIts address: https://example.test/secret-detail",))
+    assert "Run <code>the thing</code> first." in picture.html(snapshot)
+    assert "secret-detail" not in picture.html(snapshot)
+    assert "secret-detail" in one_pager.summary(snapshot)
 
 
 def test_the_short_wording_keeps_the_pause_reasons():
@@ -253,6 +319,64 @@ def test_a_job_whose_schedule_isnt_current_gains_no_didnt_run_line(state):
     assert "schedule install" in found.detail
 
 
+INSTALLED = {"outreach-requests": health.INSTALLED}
+
+
+def never_ran(status: str = "not installed", **fields) -> mission.Snapshot:
+    """`outreach-requests` on its first mornings: the classifier calls a slot before a job's first
+    trace "not installed", whatever launchd says."""
+    base = dict(slots=world.morning(outreach_requests=status), morning=world.figures(), yesterday=world.figures(), approvals=(), installs=INSTALLED)
+    return world.snap(**{**base, **fields})
+
+
+def test_an_installed_job_that_has_never_left_a_trace_reads_didnt_run():
+    """B1: the row, Fix and the verdict can't contradict each other."""
+    snapshot = never_ran()
+    assert (row(snapshot, "Outreach").word, row(snapshot, "Outreach").detail) == ("Didn't run", "No trace of its 08:30 run")
+    assert picture.fixes(snapshot) == ["Check `outreach-requests`: no trace of its run today."]
+    assert picture.verdict(snapshot) == "1 to fix."
+
+
+def test_a_slot_from_before_the_install_is_not_judged_so_install_day_stays_clean():
+    snapshot = never_ran(installed_at={"outreach-requests": NOW.replace(hour=8, minute=45)})
+    assert row(snapshot, "Outreach").word == "Not installed"
+    assert picture.fixes(snapshot) == []
+    assert picture.verdict(snapshot) == "Nothing needs you right now."
+
+
+def test_a_slot_after_the_install_with_no_trace_is_judged():
+    snapshot = never_ran(installed_at={"outreach-requests": NOW.replace(hour=8, minute=0)})
+    assert row(snapshot, "Outreach").word == "Didn't run"
+    assert len(picture.fixes(snapshot)) == 1
+
+
+def test_a_job_that_isnt_installed_keeps_its_one_fix_line():
+    snapshot = never_ran(installs={"outreach-requests": health.NOT_INSTALLED})
+    assert row(snapshot, "Outreach").word == "Not installed"
+    assert [line for line in picture.fixes(snapshot) if "no trace" in line] == []
+
+
+def test_a_job_launchd_says_nothing_about_is_not_judged():
+    snapshot = never_ran(installs={})
+    assert row(snapshot, "Outreach").word == "Not installed"
+    assert picture.fixes(snapshot) == []
+
+
+def test_a_slot_still_to_come_is_not_judged():
+    now = NOW.replace(hour=8, minute=0)
+    snapshot = never_ran(slots=world.morning(now=now, outreach_requests="not installed"))
+    early = world.snap(now, **{k: getattr(snapshot, k) for k in ("slots", "morning", "yesterday", "approvals", "installs")})
+    assert picture.fixes(early) == []
+
+
+def test_a_job_silent_for_days_is_one_fix_line():
+    today, day_before = NOW, NOW - timedelta(days=1)
+    silent = {(job, at.date()): [world.slot(job, "not installed", at=at)] for job, at in
+              (("outreach-requests", today.replace(hour=8, minute=30)), ("outreach-requests", day_before.replace(hour=8, minute=30)))}
+    snapshot = world.snap(slots=silent, installs=INSTALLED)
+    assert picture.fixes(snapshot) == ["Check `outreach-requests`: no trace of its run today."]
+
+
 def test_a_passed_slot_stays_due_in_the_classifier():
     """The word changes on the picture only: `slots.py` keeps its `due`."""
     assert "due" in slots.WORST_FIRST
@@ -340,6 +464,18 @@ def test_slots_that_cant_be_read_say_not_available_everywhere():
     assert "Not today" not in text and "Nothing else scheduled" not in text
 
 
+@pytest.mark.parametrize("snapshot", [world.database_locked(), world.database_missing()], ids=["locked", "missing"])
+def test_the_decide_heading_shows_a_dash_when_approvals_cant_be_read(snapshot):
+    """B3: "Decide in #approvals 0" above "Not available" was a guessed zero."""
+    page = picture.html(snapshot)
+    assert '<h2>Decide in #approvals <span class="n">–</span></h2>' in page
+    assert '<span class="n">0</span>' not in page.split("</h2>", 1)[0]
+
+
+def test_the_decide_heading_shows_a_real_zero():
+    assert '<h2>Decide in #approvals <span class="n">0</span></h2>' in picture.html(world.quiet())
+
+
 def test_later_today_lists_what_is_still_to_come():
     assert picture.later_today(world.typical()) == ["Posts go out 10:00–16:00", "Emails send 09:30", "Digest 17:30"]
     assert picture.later_today(world.quiet()) == []
@@ -358,6 +494,11 @@ def test_unsubscribes_bounces_and_complaints_are_named_only_when_there_are_some(
 def test_requests_that_lapsed_since_the_last_one_pager_are_named():
     snapshot = world.snap(yesterday=world.figures(bounces=1), approvals=(world.request(1, reading=mission.Reading.LAPSED), world.request(2, reading=mission.Reading.LAPSED), world.request(3)))
     assert picture.yesterday_warning(snapshot) == "1 bounce, 2 lapsed unanswered"
+
+
+def test_a_tile_of_one_is_captioned_in_the_singular():
+    tiles = picture.yesterday_tiles(world.snap(yesterday=world.figures(emails_sent=1, replies=1, social_published=1)))
+    assert tiles[:3] == [("1", "email sent"), ("1", "reply"), ("1", "social post")]
 
 
 def test_each_tile_is_captioned_on_its_own():
@@ -392,8 +533,26 @@ def test_the_message_shows_ordinary_fix_lines_in_full_and_cuts_only_the_longest(
     text = one_pager.summary(world.snap(plugin_lines=lines))
     for line in lines:
         assert f"- {line}" in text
-    long = one_pager.summary(world.snap(plugin_lines=("y" * 900,)))
-    assert "y" * 300 in long and "y" * 400 not in long and "…" in long
+    many = tuple(health.Gap(f"SETTING_NUMBER_{n:03d}") for n in range(40))
+    long = one_pager.summary(world.snap(gaps=many))
+    assert "SETTING_NUMBER_000" in long and "SETTING_NUMBER_039" not in long and "…" in long
+
+
+LINK = "[Approve here](https://example.test/x)"
+
+
+@pytest.mark.parametrize("fields", [
+    dict(pause_file=f"Away {LINK}"),
+    dict(paused=(("outreach", f"Away {LINK}"),)),
+    dict(plugin_lines=(f"Away {LINK}",)),
+], ids=["PAUSE file", "pause reason", "plug-in line"])
+def test_no_live_masked_link_reaches_the_message(fields):
+    """Suppressing embeds doesn't stop a masked link. The page has no links at all, so it keeps
+    the text as it was written."""
+    snapshot = world.snap(**fields)
+    message = one_pager.summary(snapshot)
+    assert LINK not in message and "[Approve here]\\(https://example.test/x)" in message
+    assert html_mod.escape(LINK) in picture.html(snapshot)
 
 
 def test_the_message_says_so_when_nothing_is_waiting():

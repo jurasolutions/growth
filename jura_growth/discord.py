@@ -122,6 +122,11 @@ def _engine_file(path: Path) -> bool:
     return False
 
 
+def shortened(text: str, limit: int) -> str:
+    """`text`, or as much as fits in `limit` characters with an ellipsis."""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def split(content: str, limit: int = MAX_CONTENT) -> list[str]:
     """Break a long message at line boundaries into Discord-sized pieces."""
     if len(content) <= limit:

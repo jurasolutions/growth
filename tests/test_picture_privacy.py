@@ -22,7 +22,7 @@ import mission_world as world
 import sweep
 from discord_double import discord_double  # noqa: F401 - a fixture
 from sweep import d2_secrets  # noqa: F401 - a fixture
-from jura_growth import agents, cli as cli_mod, images, one_pager, paths
+from jura_growth import agents, cli as cli_mod, images, mission, one_pager, paths, picture
 from jura_growth.cli import cli
 from test_discord_sweep import contact_lead
 
@@ -65,15 +65,26 @@ def _health_line(conn, monkeypatch, text):
     monkeypatch.setattr(plugin("app-factory"), "health", lambda conn: [text])
 
 
-def _app_prd_today(conn, monkeypatch, text):
+def _app_prd_today(conn, monkeypatch, text, *, wrap=lambda text: text):
     real = plugin("app-factory").digest
     conn.execute("INSERT INTO runs (agent, job, started_at, status) VALUES ('app-factory', 'app-factory', '2026-11-10T08:45:00+08:00', 'ok')")
 
     def digest(conn, day):
         part = real(conn, day)
-        return {**part, "figures": {**part["figures"], "app_prd_today": text}}
+        return {**part, "figures": {**part["figures"], "app_prd_today": wrap(text)}}
 
     monkeypatch.setattr(plugin("app-factory"), "digest", digest)
+
+
+def _nested_figure(conn, monkeypatch, text):
+    """A value deep in a figure, drawn through the one row that prints what it is given."""
+    _app_prd_today(conn, monkeypatch, text, wrap=lambda text: {"deep": [{"name": text}]})
+
+
+def _icp_line(conn, monkeypatch, text):
+    """Scout's `health()`, where the ICP line comes from. The real line is fixed text, so this
+    plants what the route would carry; the next test holds the real line."""
+    monkeypatch.setattr(plugin("scout"), "health", lambda conn: [text])
 
 
 ROUTES = {
@@ -84,6 +95,8 @@ ROUTES = {
     "PAUSE file": _pause_file,
     "a plug-in's health line": _health_line,
     "app_prd_today": _app_prd_today,
+    "a figure nested in the digest": _nested_figure,
+    "the ICP line": _icp_line,
 }
 
 
@@ -92,6 +105,7 @@ def seen(monkeypatch):
     """Runs the post, and hands back the spy's page, the saved page and the double's texts."""
     monkeypatch.setenv("JURA_GROWTH_NOW", NINE)
     monkeypatch.setattr(one_pager, "OFFLINE", True)
+    monkeypatch.setattr(picture, "FIX_SHOWN", 20)  # every planted line on the page, past the cap of four
     # The fake rows here have no real item behind them, and upkeep would supersede them.
     monkeypatch.setattr(cli_mod, "_approval_upkeep", lambda conn, *, post: None)
     pages = []
@@ -133,6 +147,45 @@ def test_a_line_naming_the_finance_folder_is_dropped_whole(route, conn, discord_
     found = seen()
     assert sweep.FINANCE not in found.page and sweep.FINANCE not in found.saved
     assert not [text for text in discord_double.texts() if sweep.FINANCE in text]
+
+
+def test_the_real_icp_line_reaches_the_page_with_no_absolute_path(conn, discord_double, d2_secrets, seen):
+    page = seen().page
+    assert "Put the ICP in inputs/icp.md" in page
+    assert str(paths.JURA_ROOT) not in page.split("</style>", 1)[1]
+
+
+# B5: text was cut before it was masked. An address straddling the cut lost its domain, no longer
+# looked like an address, and went out as `jane.tan@exam`.
+ADDRESS = sweep.NAMED_ADDRESS
+FRAGMENT = "jane.tan"
+
+
+def _straddling(limit: int, value: str = ADDRESS) -> str:
+    """`value` with its first 13 characters before the cut: `jane.tan@exam` when it's the address."""
+    return f"{sweep.MARKER} " + "x" * (limit - len(sweep.MARKER) - 15) + f" {value}"
+
+
+@pytest.mark.parametrize("route, limit", [("runs.error", 300), ("PAUSE file", 200)])
+def test_an_address_straddling_a_cut_is_masked_before_the_cut(route, limit, conn, discord_double, d2_secrets, seen, monkeypatch):
+    ROUTES[route](conn, monkeypatch, _straddling(limit))
+    found = seen()
+    assert sweep.MARKER in found.page
+    for text in (found.page, found.saved, *discord_double.texts()):
+        assert FRAGMENT not in text, text[:200]
+
+
+def test_a_secret_straddling_a_cut_leaves_no_piece_behind(conn, discord_double, d2_secrets, seen, monkeypatch):
+    ROUTES["runs.error"](conn, monkeypatch, _straddling(300, sweep.RESEND_KEY))
+    found = seen()
+    double = SimpleNamespace(texts=lambda: [found.page, found.saved, *discord_double.texts()])
+    sweep.assert_clean(double, sweep.outbox_dir(), sweep.Planted(secrets=sweep.SECRETS))
+
+
+def test_a_broken_plugins_problem_is_masked_before_its_cut(monkeypatch):
+    monkeypatch.setattr(agents, "BROKEN", {"social": "x" * 106 + f" {ADDRESS}"})
+    (broken,) = mission.read(world.source(NINE, jobs={})).broken
+    assert FRAGMENT not in broken
 
 
 def test_the_page_is_escaped_as_well_as_masked(conn, discord_double, d2_secrets, seen, monkeypatch):

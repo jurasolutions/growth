@@ -4,7 +4,8 @@ One image in #mission-control at 09:00 SGT, after the agents have drafted, that
 reads at the size Discord shows it. Built from a `mission.Snapshot`, never from
 the database, in the order Ting Yu acts on it:
 
-- the verdict: how many things to decide, to fix, to post by hand and to read;
+- the verdict: how many things to decide, to fix, to post by hand and to read,
+  which clears him only when every count could be read and is 0;
 - Decide: approval requests still waiting, soonest to lapse first;
 - Fix: the health strip, one short line each, with the action first;
 - This morning: what each growth agent did and how many requests it raised;
@@ -53,10 +54,17 @@ def waiting(snapshot: mission.Snapshot) -> list[mission.Request]:
     return sorted(found, key=lambda r: (r.decide_by, r.id))
 
 
-def _overdue(slot: slots.SlotStatus, now: datetime) -> bool:
+def _overdue(snapshot: mission.Snapshot, slot: slots.SlotStatus) -> bool:
     """A slot whose time has passed with no trace. `slots.py` keeps it `due` until the next
-    slot, which is right for a classifier and wrong for someone reading at 09:00."""
-    return slot.status == "due" and now - slot.at > DUE_GRACE
+    slot, which is right for a classifier and wrong for someone reading at 09:00. It also calls
+    any slot before a job's first trace `not installed`, whatever launchd says, so a job that is
+    installed and has never fired counts too, from its install on: slots before that aren't judged."""
+    if snapshot.now - slot.at <= DUE_GRACE:
+        return False
+    if slot.status == "due":
+        return True
+    since = snapshot.installed_at.get(slot.job)
+    return slot.status == "not installed" and snapshot.installs.get(slot.job) == health.INSTALLED and (since is None or slot.at >= since)
 
 
 def _schedule_stale(snapshot: mission.Snapshot, job: str) -> bool:
@@ -72,31 +80,48 @@ def _didnt_run(snapshot: mission.Snapshot) -> list[str]:
     for agent in AGENTS:
         if _schedule_stale(snapshot, agent.job):
             continue
-        for (job, day), statuses in snapshot.slots.items():
-            if job == agent.job and any(_overdue(s, now) and s.at >= since for s in statuses):
-                when = "today" if day == now.date() else f"on {health.day_label(statuses[0].at)}"
-                lines.append(f"Check `{job}`: no trace of its run {when}.")
+        passed = [s.at for (job, _), statuses in snapshot.slots.items() if job == agent.job
+                  for s in statuses if s.at >= since and _overdue(snapshot, s)]
+        if passed:
+            latest = max(passed)
+            when = "today" if latest.date() == now.date() else f"on {health.day_label(latest)}"
+            lines.append(f"Check `{agent.job}`: no trace of its run {when}.")
     return lines
 
 
 def fixes(snapshot: mission.Snapshot) -> list[str]:
-    """What needs fixing, each item on one short line with the action first."""
-    return _didnt_run(snapshot) + [item.splitlines()[0] for item in health.strip(snapshot, short=True)]
+    """What needs fixing, each item with the action first. An item's first line is its own row on
+    the page. Any more of it is for the message: a failed run's words in a quote, or a plug-in's detail."""
+    return _didnt_run(snapshot) + health.strip(snapshot, short=True)
 
 
 def _to_post_by_hand(snapshot: mission.Snapshot) -> int | None:
-    """Today's social drafts with no request of their own, or None if the figure can't be read."""
+    """Today's social drafts with no request of their own, or None if the figure can't be read.
+    Today's only, by decision: a daily post from an earlier day shouldn't go out, so it asks
+    nothing of him. Requests match drafts by the day they were raised."""
     drafts = (snapshot.morning.figures if snapshot.morning else {}).get("social_drafts_waiting")
     if drafts is None:
         return None
-    return max(0, drafts - sum(1 for r in waiting(snapshot) if r.kind == "social-post"))
+    today = snapshot.now.date()
+    return max(0, drafts - sum(1 for r in waiting(snapshot) if r.kind == "social-post" and r.requested_at.date() == today))
 
 
 def _replies_to_read(snapshot: mission.Snapshot) -> int | None:
-    """Yesterday's replies, or None if the figure can't be read. Reply detection off is a
-    standing setting, not an unread figure: it mustn't rule out the all-clear for good."""
+    """Yesterday's replies, or None if the figure can't be read. A recorded reply always counts.
+    Reply detection off with none recorded reads as 0: it is a standing setting, and it mustn't
+    rule out the all-clear for good. The tile says a dash."""
     figures = snapshot.yesterday.figures if snapshot.yesterday else {}
-    return 0 if figures.get("reply_detection") is False else figures.get("replies")
+    return figures.get("replies") or (0 if figures.get("reply_detection") is False else figures.get("replies"))
+
+
+def _unread(day: mission.Yesterday | None, keys: tuple[str, ...]) -> bool:
+    return day is None or any(key not in day.figures for key in keys)
+
+
+def _some_figure_unread(snapshot: mission.Snapshot) -> bool:
+    """A figure on the page reads as a dash, so the verdict can't say all is well without it."""
+    yesterday = snapshot.yesterday
+    return _unread(snapshot.morning, MORNING_FIGURES) or _unread(yesterday, YESTERDAY_FIGURES) or not (yesterday and yesterday.spend_recorded)
 
 
 def verdict(snapshot: mission.Snapshot) -> str:
@@ -105,11 +130,11 @@ def verdict(snapshot: mission.Snapshot) -> str:
         *([f"{n} to decide"] if (n := len(waiting(snapshot))) else []),
         *([f"{n} to fix"] if (n := len(fixes(snapshot))) else []),
         *([f"{by_hand} to post by hand"] if by_hand else []),
-        *([f"{_plural(replies, 'reply', 'replies')} to read"] if replies else []),
+        *([f"{health._plural(replies, 'reply', 'replies')} to read"] if replies else []),
     ]
     if parts:
         return ", ".join(parts) + "."
-    if by_hand is None or replies is None:
+    if _some_figure_unread(snapshot):
         return "Nothing to decide or fix, but some figures couldn't be read."
     return "Nothing needs you right now."
 
@@ -131,17 +156,18 @@ def _sentence(text: str) -> str:
     return text[:1].upper() + text[1:] if text else text
 
 
-def _plural(n: int, word: str, many: str | None = None) -> str:
-    return f"{n} {word if n == 1 else many or word + 's'}"
-
-
 def _counted(figures: Mapping, key: str, word: str, then: str) -> str:
     """"3 new leads kept", or a dash when the figure isn't there."""
     found = figures.get(key)
-    return DASH if found is None else f"{_plural(found, word)} {then}"
+    return DASH if found is None else f"{health._plural(found, word)} {then}"
 
 
 # --- the five growth agents ---------------------------------------------------------------
+
+
+# The figures the page draws: without one of them, a row or a tile reads as a dash.
+MORNING_FIGURES = ("leads_added", "emails_queued", "social_drafts_waiting", "community_posts_planned", "app_prd_today")
+YESTERDAY_FIGURES = ("emails_sent", "replies", "social_published")
 
 
 def _scout(figures: Mapping) -> str:
@@ -221,7 +247,7 @@ def _row(snapshot: mission.Snapshot, agent: Agent, figures: Mapping, to_approve:
         return row("none", STATUS_WORDS["none"])
     status = slots.day_cell(statuses).status or "none"
     slot = next(s for s in statuses if s.status == status)
-    if _overdue(slot, snapshot.now):
+    if _overdue(snapshot, slot):
         return _overdue_row(snapshot, agent, slot, row)
     if status == "ok":
         detail = agent.says(figures)
@@ -266,21 +292,26 @@ def later_today(snapshot: mission.Snapshot) -> list[str]:
     return lines
 
 
+TILE_CAPTIONS = (("emails sent", "email sent"), ("replies", "reply"), ("social posts", "social post"))
+SPEND_CAPTION = "Claude spend"
+
+
 def _tile(figures: Mapping, key: str) -> str:
     found = figures.get(key)
     return DASH if found is None else str(found)
 
 
 def yesterday_tiles(snapshot: mission.Snapshot) -> list[tuple[str, str]]:
-    """(figure, caption). A dash for anything that can't be read: never a guessed zero."""
+    """(figure, caption). A dash for anything that can't be read: never a guessed zero. With
+    reply detection off, a day with no reply recorded can't say 0, and one with a reply still shows it."""
     found = snapshot.yesterday
-    captions = ("emails sent", "replies", "social posts", "Claude spend")
     if found is None:
-        return [(DASH, caption) for caption in captions]
+        return [(DASH, many) for many, _ in TILE_CAPTIONS] + [(DASH, SPEND_CAPTION)]
     figures = found.figures
-    replies = DASH if figures.get("reply_detection") is False else _tile(figures, "replies")
-    values = (_tile(figures, "emails_sent"), replies, _tile(figures, "social_published"), f"US${found.spend:,.2f}")
-    return list(zip(values, captions))
+    replies = DASH if figures.get("reply_detection") is False and not figures.get("replies") else _tile(figures, "replies")
+    values = (_tile(figures, "emails_sent"), replies, _tile(figures, "social_published"))
+    tiles = [(value, one if value == "1" else many) for value, (many, one) in zip(values, TILE_CAPTIONS)]
+    return tiles + [(f"US${found.spend:,.2f}" if found.spend_recorded else DASH, SPEND_CAPTION)]
 
 
 def yesterday_warning(snapshot: mission.Snapshot) -> str:
@@ -288,7 +319,7 @@ def yesterday_warning(snapshot: mission.Snapshot) -> str:
         return ""
     figures = snapshot.yesterday.figures
     named = (("unsubscribes", "unsubscribe"), ("bounces", "bounce"), ("complaints", "complaint"))
-    parts = [_plural(figures[key], word) for key, word in named if figures.get(key)]
+    parts = [health._plural(figures[key], word) for key, word in named if figures.get(key)]
     lapsed = sum(1 for r in snapshot.approvals or () if r.reading == mission.Reading.LAPSED)
     return ", ".join(parts + ([f"{lapsed} lapsed unanswered"] if lapsed else []))
 
@@ -349,7 +380,7 @@ def _more(hidden: int) -> str:
 
 def _decide(snapshot: mission.Snapshot) -> str:
     if snapshot.approvals is None:
-        return f'<p class="empty">{escape(_unavailable(snapshot))}</p>'
+        return f'<p class="empty">{escape(mission.unavailable(snapshot))}</p>'
     found = waiting(snapshot)
     if not found:
         return '<p class="empty">Nothing waiting for you.</p>'
@@ -362,16 +393,23 @@ def _decide(snapshot: mission.Snapshot) -> str:
     return f"<ul>{items}</ul>{_more(len(found) - DECIDE_SHOWN)}"
 
 
-def _unavailable(snapshot: mission.Snapshot) -> str:
-    problem = mission.db_problem(snapshot)
-    return (problem or mission.NOT_MIGRATED).unavailable
-
-
 def _fix(found: list[str]) -> str:
     if not found:
         return '<p class="empty">Nothing broken.</p>'
-    items = "".join(f'<li><span class="clamp">{_inline(item)}</span></li>' for item in found[:FIX_SHOWN])
+    items = "".join(f'<li><span class="clamp">{_fix_row(item)}</span></li>' for item in found[:FIX_SHOWN])
     return f"<ul>{items}</ul>{_more(len(found) - FIX_SHOWN)}"
+
+
+def _fix_row(item: str) -> str:
+    """An item's first line, then a run's own words apart from it. Those are the model's, so
+    they never draw as a command: a code span comes only from the engine's wording. The
+    backslashes `untrusted_line` adds are for Discord."""
+    first, *rest = item.splitlines()
+    quote = next((line[2:] for line in rest if line.startswith("> ")), "")
+    if not quote:
+        return _inline(first)
+    plain = re.sub(r"\\(.)", r"\1", quote)
+    return _inline(first) + " Its own words: " + escape('"' + plain + '"')
 
 
 def _agents(snapshot: mission.Snapshot) -> str:
@@ -411,7 +449,7 @@ def html(snapshot: mission.Snapshot) -> str:
         f"<header><h1>{escape(verdict(snapshot))}</h1>"
         f'<div class="overline">Jura growth · {escape(health.day_label(now))}, as of {now:%H:%M} SGT</div></header>'
         '<div class="columns">'
-        f'<section class="decide"><h2>Decide in #approvals <span class="n">{len(waiting(snapshot))}</span></h2>{_decide(snapshot)}</section>'
+        f'<section class="decide"><h2>Decide in #approvals <span class="n">{DASH if snapshot.approvals is None else len(waiting(snapshot))}</span></h2>{_decide(snapshot)}</section>'
         f'<section class="fix"><h2>Fix <span class="n">{len(found_fixes)}</span></h2>{_fix(found_fixes)}</section>'
         "</div>"
         f'<section class="morning"><h2>This morning</h2>{_agents(snapshot)}</section>'

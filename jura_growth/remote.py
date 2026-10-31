@@ -44,7 +44,7 @@ from typing import Callable
 
 import click
 
-from jura_growth import approvals, approvals_cli, config, db, handoff_fit, log, origin, pause, privacy
+from jura_growth import approvals, approvals_cli, config, db, discord, handoff_fit, log, origin, pause, privacy
 
 CONTRACT = 1
 TEXT_LIMIT = 1900  # Dispatch adds its own words; Discord takes 2,000
@@ -220,8 +220,8 @@ def match(words: list[str]) -> tuple[str, Entry, list[str]]:
     raise Refusal(f"`{_short(typed)}` isn't a control command. Send one of: {', '.join(ALLOWLIST)}")
 
 
-def _short(text: str, limit: int = 60) -> str:
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+def _short(text: str) -> str:
+    return discord.shortened(text, 60)
 
 
 # --- the answer ---------------------------------------------------------------------------------

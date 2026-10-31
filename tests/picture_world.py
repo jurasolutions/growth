@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from jura_growth import mission, slots
+from jura_growth.agents.apps import builds, releases
 from jura_growth.timeutil import SGT
 from test_one_pager import HEALTH_ITEMS
 
@@ -96,12 +97,25 @@ def database_locked() -> mission.Snapshot:
     return snap(db_state=mission.UNFINISHED_WRITE, db_error="SQLITE_BUSY")
 
 
+LABEL = "APP-014 Delivery order maker"
+PRD = "prd/pending/apps/prd-app-014-delivery-order-maker-2026-10-24.md"
+PLUGIN_WORDINGS = {  # the plug-ins' real Fix lines, with the longest of what fills them
+    **{f"app on its preview, {why}": releases.PREVIEW_LINE.format(
+        app_id="APP-014", label=LABEL, request="A-0153", why=why, preview="https://claude-t-0031-app.jura-site.pages.dev")
+       for why in ("skipped", "expired unanswered", releases.NEVER_PRINTED)},
+    "app release waiting for main": releases.MAIN_LINE.format(sha="abc1234", app_id="APP-014", task="T-0031", label=LABEL, request="A-0153"),
+    "app release approved": releases.APPROVED_LINE.format(app_id="APP-014", label=LABEL, request="A-0153"),
+    "build handoff by hand": builds.HAND_BUILD_LINE.format(label=LABEL, request="A-0153", build_it=builds.build_it(PRD, "A-0153")),
+    "build handoff to Dispatch": builds.DISPATCH_LINE.format(label=LABEL, request="A-0153"),
+    "the ICP": "Put the ICP in inputs/icp.md, from the draft in outputs/growth/setup/. Scout research waits until it's there.",
+}
+
+
 def health_pages() -> dict[str, mission.Snapshot]:
     """One page per real wording in the strip, on an otherwise quiet day."""
-    pages = {}
-    for cause, fields, _ in HEALTH_ITEMS:
-        base = dict(slots=morning(), morning=figures(), yesterday=figures(), approvals=())
-        pages[cause] = snap(**{**base, **fields})
+    base = dict(slots=morning(), morning=figures(), yesterday=figures(), approvals=())
+    pages = {cause: snap(**{**base, **fields}) for cause, fields, _ in HEALTH_ITEMS}
+    pages.update({cause: snap(**base, plugin_lines=(line,)) for cause, line in PLUGIN_WORDINGS.items()})
     return pages
 
 

@@ -6,16 +6,21 @@
 
 from __future__ import annotations
 
+import dataclasses
 import plistlib
 import sqlite3
+from datetime import datetime, timedelta
 
 import pytest
 
 import mission_world as world
 import picture_world
-from jura_growth import agents, approvals, mission, paths, picture, schedule, slots
+import sweep
+from jura_growth import agents, approvals, mission, paths, picture, privacy, schedule, slots
 from jura_growth.agents.outreach import replies, send
 from jura_growth.agents.scout import settings as scout_settings
+from jura_growth.timeutil import SGT
+from test_discord_sweep import contact_lead
 
 NINE = "2026-11-10T09:00:00+08:00"
 DASH = "–"
@@ -116,6 +121,35 @@ def _holding_the_lock(monkeypatch):
     return holder
 
 
+def _spend_tile(conn) -> str:
+    return tiles(read())["Claude spend"]
+
+
+def test_a_claude_job_that_ran_with_no_recorded_cost_shows_a_dash_for_spend(conn):
+    """S4: abandoned runs leave `cost_usd` empty, and US$0.00 would be a guessed zero."""
+    conn.execute("INSERT INTO runs (agent, job, started_at, status) VALUES ('social', 'social', '2026-11-09T07:30:30+08:00', 'failed')")
+    conn.execute("INSERT INTO runs (agent, job, started_at, status, cost_usd) VALUES ('apps', 'app-factory', '2026-11-09T07:00:30+08:00', 'ok', 0.4)")
+    assert _spend_tile(conn) == DASH
+
+
+def test_recorded_spend_shows_and_nothing_else_leaves_a_dash(conn):
+    jobs = {**JOBS, "backup": {"agent": "backup", "kind": "command", "schedule": {"daily": "23:30"}}}
+    conn.execute("INSERT INTO runs (agent, job, started_at, status, cost_usd) VALUES ('social', 'social', '2026-11-09T07:30:30+08:00', 'ok', 0.41)")
+    conn.execute("INSERT INTO runs (agent, job, started_at, status) VALUES ('apps', 'app-factory', '2026-11-09T07:00:30+08:00', 'skipped')")  # a skip costs nothing
+    conn.execute("INSERT INTO runs (agent, job, started_at, status) VALUES ('backup', 'backup', '2026-11-09T23:30:00+08:00', 'ok')")  # a command job has no cost
+    conn.execute("INSERT INTO runs (agent, job, started_at, status) VALUES ('social', 'social', '2026-11-08T07:30:30+08:00', 'failed')")  # another day
+    assert tiles(read(jobs))["Claude spend"] == "US$0.41"
+
+
+def test_a_day_with_no_claude_run_shows_a_real_zero(conn):
+    assert _spend_tile(conn) == "US$0.00"
+
+
+def test_the_long_form_spend_stays_a_number(conn):
+    conn.execute("INSERT INTO runs (agent, job, started_at, status) VALUES ('social', 'social', '2026-11-09T07:30:30+08:00', 'failed')")
+    assert read().yesterday.spend == 0.0 and read().yesterday.spend_recorded is False
+
+
 def test_a_locked_database_gives_the_bad_day_page(monkeypatch):
     holder = _holding_the_lock(monkeypatch)
     try:
@@ -129,6 +163,7 @@ def test_a_locked_database_gives_the_bad_day_page(monkeypatch):
     assert any("unfinished write" in line for line in picture.fixes(snapshot))
     assert "to fix" in picture.verdict(snapshot) and "to decide" not in picture.verdict(snapshot)
     assert "Not available: growth.db has an unfinished write" in picture.html(snapshot)
+    assert '<span class="n">–</span>' in picture.html(snapshot)
 
 
 def test_a_missing_database_gives_the_bad_day_page():
@@ -136,6 +171,7 @@ def test_a_missing_database_gives_the_bad_day_page():
     assert snapshot.db_state == mission.MISSING
     assert [r.word for r in picture.agent_rows(snapshot)] == ["Not available"] * 5
     assert list(tiles(snapshot).values()) == [DASH] * 4
+    assert '<span class="n">–</span>' in picture.html(snapshot)
 
 
 # --- MB6, through the classifier ---------------------------------------------------------------
@@ -160,6 +196,29 @@ def test_a_job_with_no_trace_this_morning_reads_didnt_run_and_reaches_fix(conn):
     assert slots.day_cell(snapshot.slots[("social", snapshot.now.date())]).status == "due"  # the classifier's word stands
     assert (row(snapshot, "Social").word, row(snapshot, "Social").detail) == ("Didn't run", "No trace of its 07:30 run")
     assert "Check `social`: no trace of its run today." in picture.fixes(snapshot)
+
+
+def test_an_installed_job_with_no_record_at_all_reaches_fix(conn):
+    """B1: `outreach-requests` on its first mornings, if launchd never fires it."""
+    _current_plist("social")
+    source = dataclasses.replace(world.source(NINE, jobs={"social": JOBS["social"]}), installed_at=lambda job: None)
+    snapshot = mission.read(source)
+    assert snapshot.installs["social"] == "installed"
+    assert row(snapshot, "Social").word == "Didn't run"
+    assert "Check `social`: no trace of its run today." in picture.fixes(snapshot)
+
+
+def test_install_day_stays_clean_through_the_read(conn):
+    """B1, with ticket 02's rule: the plist went in after the slot, so the slot isn't judged."""
+    _current_plist("social")
+    after_the_slot = datetime(2026, 11, 10, 8, 0, tzinfo=SGT)
+    source = dataclasses.replace(world.source(NINE, jobs={"social": JOBS["social"]}), installed_at=lambda job: after_the_slot)
+    snapshot = mission.read(source)
+    assert snapshot.installed_at["social"] == after_the_slot
+    assert row(snapshot, "Social").word == "Not installed"
+    assert not [line for line in picture.fixes(snapshot) if "no trace" in line]
+    before_the_slot = dataclasses.replace(source, installed_at=lambda job: after_the_slot - timedelta(hours=1))
+    assert row(mission.read(before_the_slot), "Social").word == "Didn't run"
 
 
 def test_a_job_whose_plist_is_out_of_date_gets_no_didnt_run_line(conn):
@@ -213,7 +272,128 @@ def test_the_post_path_retries_a_held_lock_and_reads_once_it_clears(monkeypatch)
     assert len(slept) == 2
 
 
-def test_past_sixty_seconds_the_post_path_gives_the_bad_day_snapshot(monkeypatch):
+def test_the_whole_wait_leaves_dispatch_room_to_answer():
+    """S5: Dispatch runs `/growth one-pager` with a 60-second timeout, and a report of failure for
+    a post that still goes out means asking twice and posting twice."""
+    assert mission.LOCK_PATIENCE == 45
+
+
+@pytest.mark.parametrize("day", ["2026-11-09", "2026-11-10"], ids=["yesterday", "this morning"])
+def test_a_lock_inside_a_plugins_digest_is_retried(day, conn, monkeypatch):
+    """S2: both hook routes used to catch it, so `db_state` stayed ok and the figures went quietly."""
+    real = plugin("social").digest
+    calls = []
+
+    def digest(conn, asked):
+        calls.append(asked)
+        if asked == day and calls.count(day) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return real(conn, asked)
+
+    monkeypatch.setattr(plugin("social"), "digest", digest)
+    slept = []
+    snapshot = mission.read_patiently(world.source(NINE, jobs=JOBS), sleep=slept.append)
+    assert slept == [mission.LOCK_RETRY] and snapshot.db_state == mission.OK
+    assert "social_drafts_waiting" in snapshot.morning.figures
+
+
+def test_a_lock_inside_a_plugins_health_hook_is_retried_not_reported_as_broken(conn, monkeypatch):
+    calls = []
+
+    def health(conn):
+        calls.append(1)
+        if len(calls) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return []
+
+    monkeypatch.setattr(plugin("social"), "health", health, raising=False)
+    slept = []
+    snapshot = mission.read_patiently(world.source(NINE, jobs=JOBS), sleep=slept.append)
+    assert slept == [mission.LOCK_RETRY] and snapshot.db_state == mission.OK
+    assert not [line for line in snapshot.plugin_lines if "health check failed" in line]
+
+
+def test_any_other_hook_failure_still_stays_inside_that_plugin(conn, monkeypatch):
+    def broken(conn, *rest):
+        raise sqlite3.OperationalError("no such table: social_posts")
+
+    monkeypatch.setattr(plugin("social"), "digest", broken)
+    monkeypatch.setattr(plugin("social"), "health", broken, raising=False)
+    snapshot = read()
+    assert snapshot.db_state == mission.OK
+    assert [line for line in snapshot.plugin_lines if "health check failed" in line]
+
+
+def _lock_during_learning(monkeypatch):
+    """A real `BEGIN EXCLUSIVE` held only while the first read learns what to mask, then gone."""
+    holder = sqlite3.connect(paths.db_path(), isolation_level=None)
+    monkeypatch.setattr(mission, "BUSY_TIMEOUT", 0.01)
+    real, calls = privacy.learn, []
+
+    def learn(conn, **kwargs):
+        calls.append(1)
+        if len(calls) > 1:
+            return real(conn, **kwargs)
+        holder.execute("BEGIN EXCLUSIVE")
+        try:
+            return real(conn, **kwargs)
+        finally:
+            holder.execute("ROLLBACK")
+
+    monkeypatch.setattr(privacy, "learn", learn)
+    return holder
+
+
+def _named_request(conn) -> None:
+    contact_lead(conn)
+    conn.execute(
+        "INSERT INTO approvals (id, kind, subject, content_hash, status, reason, requested_at, decide_by)"
+        " VALUES (7, 'outreach-email', 's', 'h', 'pending', ?, '2026-11-10T08:00:00+08:00', '2026-11-10T16:30:00+08:00')",
+        (f"Asked for {sweep.PERSON}",),
+    )
+    privacy.reset()
+
+
+def test_a_lock_during_mask_learning_is_an_unfinished_write_and_never_an_unmasked_page(conn, monkeypatch):
+    """B6: with `db_state` ok and the names unlearned, the page read "Asked for Jane Tan"."""
+    _named_request(conn)
+    holder = _lock_during_learning(monkeypatch)
+    try:
+        snapshot = read()
+    finally:
+        holder.close()
+    assert snapshot.db_state == mission.UNFINISHED_WRITE
+    assert sweep.PERSON not in picture.html(snapshot)
+
+
+def test_the_post_path_retries_a_lock_during_learning_and_then_masks(conn, monkeypatch):
+    _named_request(conn)
+    holder = _lock_during_learning(monkeypatch)
+    slept = []
+    try:
+        snapshot = mission.read_patiently(world.source(NINE, jobs=JOBS), sleep=slept.append)
+    finally:
+        holder.close()
+    assert slept == [mission.LOCK_RETRY] and snapshot.db_state == mission.OK
+    (request,) = snapshot.approvals
+    assert request.reason.startswith("Asked for") and sweep.PERSON not in picture.html(snapshot)
+
+
+def test_learning_without_a_lock_masks_the_name(conn):
+    """The control for the two above: the plant is one the masking knows."""
+    _named_request(conn)
+    assert sweep.PERSON not in picture.html(read())
+
+
+def test_other_callers_of_learn_still_swallow_a_plugin_error(conn, monkeypatch):
+    def broken(conn):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(plugin("social"), "privacy_terms", broken, raising=False)
+    privacy.learn(conn)  # a message still goes: "one plug-in never stops a message"
+
+
+def test_past_its_patience_the_post_path_gives_the_bad_day_snapshot(monkeypatch):
     holder = _holding_the_lock(monkeypatch)
     slept = []
     monkeypatch.setattr(mission, "BUSY_TIMEOUT", 2)

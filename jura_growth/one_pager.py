@@ -17,13 +17,14 @@ The one-pager is for Ting Yu only and shows only figures the engine recorded.
 
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 from collections import Counter
 from datetime import timedelta
 from html import escape
 from pathlib import Path
 
-from jura_growth import cards, discord, health, images, log, mission, paths, picture, privacy, slots, timeutil
+from jura_growth import cards, discord, health, images, log, mission, paths, picture, privacy, run_update, slots, timeutil
 
 ASK_ME = ("`/growth status`", "`/growth approvals`", "`/growth one-pager`", "`/growth pause <agent|all>`", "`/growth resume <agent|all>`")
 # Today shows these jobs as counts per status, whatever their slot count,
@@ -57,16 +58,25 @@ def summary(snapshot: mission.Snapshot) -> str:
             "Decide in #approvals: " + ", ".join(f"{kind} {counts[kind]}" for kind in sorted(counts))
             + f". Soonest: {soonest.id}, by {picture.by_when(soonest.decide_by, now)}."
         )
-    fixes = picture.fixes(snapshot)
-    lines += [f"- {_fix_line(item)}" for item in fixes[:picture.FIX_SHOWN]]
+    fixes = picture.fixes(_markdown_safe(snapshot))
+    lines += [f"- {discord.shortened(item, SUMMARY_FIX_LIMIT)}" for item in fixes[:picture.FIX_SHOWN]]
     if len(fixes) > picture.FIX_SHOWN:
         lines.append(f"- and {len(fixes) - picture.FIX_SHOWN} more: `/growth status`")
     lines.append(" · ".join(ASK_ME[:2]))
     return "\n".join(lines)
 
 
-def _fix_line(item: str) -> str:
-    return item if len(item) <= SUMMARY_FIX_LIMIT else item[: SUMMARY_FIX_LIMIT - 1] + "…"
+def _markdown_safe(snapshot: mission.Snapshot) -> mission.Snapshot:
+    """The snapshot with the text others wrote made safe for Discord markdown: `[Approve
+    here](https://…)` would otherwise be a live link, which suppressing embeds doesn't stop.
+    Only for the message: the page has no links, and its text is escaped."""
+    safe = run_update.untrusted_line
+    return dataclasses.replace(
+        snapshot,
+        pause_file=safe(snapshot.pause_file) if snapshot.pause_file else None,
+        paused=tuple((agent, safe(reason)) for agent, reason in snapshot.paused),
+        plugin_lines=tuple(safe(line) for line in snapshot.plugin_lines),
+    )
 
 
 def messages(snapshot: mission.Snapshot) -> list[str]:
@@ -89,15 +99,9 @@ def _needs_you(snapshot: mission.Snapshot) -> list[str]:
     return lines
 
 
-def _unavailable(snapshot: mission.Snapshot) -> str:
-    # A section is missing with nothing else wrong only when its table is.
-    problem = mission.db_problem(snapshot)
-    return (problem or mission.NOT_MIGRATED).unavailable
-
-
 def _approvals(snapshot: mission.Snapshot) -> list[str]:
     if snapshot.approvals is None:
-        return [_unavailable(snapshot)]
+        return [mission.unavailable(snapshot)]
     waiting = [r for r in snapshot.approvals if r.reading == mission.Reading.WAITING]
     if not waiting:
         return ["Nothing waiting"]
@@ -119,7 +123,7 @@ def _approvals(snapshot: mission.Snapshot) -> list[str]:
 
 def _today(snapshot: mission.Snapshot) -> list[str]:
     if not snapshot.slots:
-        return [_unavailable(snapshot)]
+        return [mission.unavailable(snapshot)]
     today = snapshot.now.date()
     lines = []
     for (job, day), statuses in snapshot.slots.items():
@@ -142,7 +146,7 @@ def _slot(slot: slots.SlotStatus) -> str:
 
 def _yesterday(snapshot: mission.Snapshot) -> list[str]:
     if snapshot.yesterday is None:
-        return [_unavailable(snapshot)]
+        return [mission.unavailable(snapshot)]
     lines = [f"- {line}" for line in snapshot.yesterday.lines] or ["- No agent figures recorded."]
     lines.append(f"Claude spend: US${snapshot.yesterday.spend:.2f} yesterday, US${snapshot.spend_today:.2f} so far today")
     return lines
@@ -225,7 +229,7 @@ def grid_html(snapshot: mission.Snapshot) -> str:
     body = (
         f'<table><thead><tr><th class="job">Job</th>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
         if jobs
-        else f'<p class="note">{escape(_unavailable(snapshot))}</p>'
+        else f'<p class="note">{escape(mission.unavailable(snapshot))}</p>'
     )
     keys = [(status.replace(" ", "-"), *GRID_LABELS[status]) for status in slots.WORST_FIRST]
     keys.append(("none", GRID_NO_SLOT, "no slot that day"))

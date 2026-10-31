@@ -149,8 +149,8 @@ def strip(snapshot, *, short: bool = False) -> list[str]:
     """The "Needs you" items, in the order of MC §5.4. Empty means nothing
     needs Ting Yu. `snapshot` is a `mission.Snapshot`; its strings are
     already masked. `short` is the morning picture's Fix wording: each item
-    on one line with the action first, and a job's missed slots as a count
-    without the times."""
+    with the action first, on one line apart from a failed run's own words in
+    a quote, and a job's missed slots as a count without the times."""
     from jura_growth import mission  # mission imports this module
     from jura_growth.run_update import untrusted_line
 
@@ -168,7 +168,7 @@ def strip(snapshot, *, short: bool = False) -> list[str]:
         # A claude job's error is the model's own `FAIL:` line: untrusted (MC §4.3, final review Sp2).
         error = untrusted_line(failure.error) if failure.error else ""
         item = f"`{failure.job}` failed on {timeutil.when(failure.at)}." + (f"\n> {error}" if error else "")
-        items.append(worded(item, f"Check `{failure.job}`: it failed on {timeutil.when(failure.at)}." + (f" {error}" if error else "")))
+        items.append(worded(item, f"Check `{failure.job}`: it failed on {timeutil.when(failure.at)}." + (f"\n> {error}" if error else "")))
     items += _missed_counts(snapshot) if short else _missed(snapshot)
     waiting_in_outbox = max(snapshot.undelivered, snapshot.outbox)
     if waiting_in_outbox:
