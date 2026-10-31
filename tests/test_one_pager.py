@@ -183,7 +183,7 @@ def five_waiting(conn):
 
 
 def test_approvals_waiting_counts_by_kind_names_the_oldest_and_what_lapses_first(five_waiting):
-    lines = section(one_pager.text(mission.read(world.source())), "Approvals waiting")
+    lines = section(one_pager.text(mission.read(world.source("2026-11-10T09:00:00+08:00"))), "Approvals waiting")
     assert lines[0] == "outreach-email 4, social-post 1"
     assert lines[1].startswith("Oldest: A-0101 (outreach-email), waiting since Mon 9 Nov, 09:11 SGT, decide by ")
     assert lines[1].endswith(" SGT")

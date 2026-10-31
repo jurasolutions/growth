@@ -20,7 +20,7 @@ and `community audit-run` proves the run fetched none of them from its transcrip
 
 ## How a Monday goes
 
-1. **07:30 SGT**, launchd runs `jura-growth run community` (`prompts/community.md`).
+1. **08:00 SGT**, launchd runs `jura-growth run community` (`prompts/community.md`).
 2. `jura-growth community context --json` records any ticked checklist items first, then gives the
    register, the groups a plan may use and their open days.
 3. **Register (block 1).** Web search for groups; facts only from search results and

@@ -188,10 +188,16 @@ def _table(conn, world):
           "--preview", "https://x.jura-site.pages.dev"], 1, "bare preview link of the landing-page-eq7 Pages project"),
         (["apps", "built", "APP-999", "--task", "T-0031"], 2, "refused:"),
         (["apps", "handoffs"], 0, "No build handoffs are waiting."),
+        # Ting Yu's own idea; the rest of its paths are in test_apps_idea.py.
+        (["apps", "idea", "Site", "visit", "report:", "write", "up", "a", "visit"], 0, "Added to the app backlog"),
+        (["apps", "idea", "Site", "visit", "report:", "again"], 1, "not added:"),
+        (["apps", "idea"], 2, "refused:"),
         (["apps", "release-plan", "APP-999"], 1, "There is no merge to run."),
         (["apps", "released", "APP-999", "--task", "T-0031"], 1, "APP-999"),
         (["community", "removed", str(group_id)], 0, "is now skip, permanently"),
         (["community", "removed", "999"], 1, "999"),
+        (["help"], 0, "`status`: "),  # the rest of its paths are in test_remote_help.py
+        (["help", "me"], 2, "refused:"),
         # Inbox watch ticket 04. Their happy paths are in test_inbox_steer.py.
         (["inbox", "done", "I-9999"], 1, "there is no inbox item I-9999"),
         (["inbox", "draft", "I-9999"], 1, "there is no inbox item I-9999"),
@@ -204,6 +210,8 @@ def _table(conn, world):
         (["one-pager"], 0, "not posted to #mission-control: DISCORD_WEBHOOK_MISSION_CONTROL not set; saved to outbox"),
         (["outreach", "requeue-shadow", "--dry-run"], 1, "live sending is ready"),
         (["pause", "all", "holiday"], 0, "paused all"),
+        (["pending"], 0, "Waiting for you"),  # the rest of its paths are in test_pending.py
+        (["pending", "now"], 2, "refused:"),
         (["publish", "queue"], 0, "no publish items"),  # browser-publishing#03
         (["publish", "resolve", "A-0999", "not-posted"], 1, "there is no approval request A-0999"),
         (["resume", "all"], 0, "resumed all"),
@@ -654,7 +662,7 @@ def test_masking_without_a_database_leaves_its_event_in_the_mirror(world, monkey
     import sqlite3
     import types
 
-    def session():
+    def session(*, wait=None):
         raise sqlite3.OperationalError("database is locked")
 
     # Only remote's own opens fail (masking, its event); the status command opens its own.

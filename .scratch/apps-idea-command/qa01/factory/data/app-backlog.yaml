@@ -1,0 +1,206 @@
+# Jura app factory backlog. Seeded from prd/pending/prd-jura-app-factory-2026-10-24.md §5.7.
+#
+# Machine-maintained: `jura-growth apps submit-prd` marks the row it used, or
+# adds a row for a new idea. You can edit it by hand; keep the keys.
+#
+# status: idea | prd-pending | prd-done | live | dropped
+#   An idea with a `reopens` date had its PRD expire unanswered: it shows as
+#   `resting`, and the factory may offer it again from that date.
+#   (`jura-growth apps backlog` also shows the status worked out from the PRD
+#   folders and the site registry, which wins if this file is behind.)
+# tier: browser | ai. Category: Sales, Finance, Admin, HR, Marketing, Documents.
+# source: ting-yu marks an idea Ting Yu sent with `apps idea`; the factory picks
+#   those first, oldest first (`added`). One it couldn't take has `held` and
+#   `held_reason`, and is an ordinary candidate from then on.
+#
+# Only this header is written back: comments you add lower down are lost the
+# next time the file is saved.
+
+apps:
+- name: Quote builder
+  slug: quote-builder
+  tier: browser
+  category: Sales
+  does: Line items, optional GST, logo, PDF
+  status: prd-pending
+  app_id: APP-001
+  prd: prd/pending/apps/prd-app-001-quote-builder-2026-10-24.md
+  notes: Hand-written by Ting Yu. Its calc module is meant to be reused by the invoice builder.
+- name: Invoice builder
+  slug: invoice-builder
+  tier: browser
+  category: Finance
+  does: Same engine, invoice numbering, PayNow QR on the PDF
+  status: prd-pending
+  notes: Reuses the quote builder's calc. Needs the IRAS GST rate and tax invoice requirements, and the
+    PayNow QR format (SGQR, checked against the official spec) for the QR.
+  app_id: APP-005
+  prd: prd/pending/apps/prd-app-005-invoice-builder-2026-10-31.md
+  prd_date: '2026-10-31'
+- name: PayNow QR maker
+  slug: paynow-qr-maker
+  tier: browser
+  category: Finance
+  does: PayNow QR for a UEN or mobile, with amount and reference
+  status: idea
+  notes: Depends on the PayNow and SGQR format. Confirm against an official source (MAS or the scheme
+    operator) before writing; pick another idea if it can't be confirmed.
+- name: Receipt reader
+  slug: receipt-reader
+  tier: ai
+  category: Finance
+  does: Receipt photos to a table, CSV and Excel
+  status: prd-pending
+  app_id: APP-002
+  prd: prd/pending/apps/prd-app-002-receipt-reader-2026-10-24.md
+  notes: Hand-written by Ting Yu. Built after the rate limiter (app factory PRD block 3).
+- name: Payslip maker
+  slug: payslip-maker
+  tier: browser
+  category: HR
+  does: Itemised payslip covering the items MOM lists, PDF
+  status: idea
+  notes: Needs MOM's list of itemised payslip items (mom.gov.sg). If it works out CPF, it is a statutory
+    calculator, so it needs the CPF Board source and an estimate label.
+- name: Delivery order maker
+  slug: delivery-order-maker
+  tier: browser
+  category: Documents
+  does: DO with signature box, PDF
+  status: idea
+  notes: No statutory rule. Shares the document layout with the quote builder.
+- name: GST checker
+  slug: gst-checker
+  tier: browser
+  category: Finance
+  does: Add or remove GST from a price, cites the IRAS rate
+  status: idea
+  notes: Statutory calculator. Needs the IRAS GST rate page with the date checked, and an estimate label.
+- name: Document text grabber
+  slug: document-text-grabber
+  tier: browser
+  category: Documents
+  does: Client-side OCR of an image to editable text
+  status: idea
+  notes: Tesseract.js in the browser. No statutory rule.
+- name: PDF merge and split
+  slug: pdf-merge-and-split
+  tier: browser
+  category: Documents
+  does: In the browser
+  status: dropped
+  notes: pdf-lib in the browser. Very generic, suits every industry. No statutory rule. Skipped by Ting
+    Yu on 2026-10-31 (approval A-0001).
+  app_id: APP-003
+  prd: prd/pending/apps/prd-app-003-pdf-merge-and-split-2026-10-24.md
+  prd_date: '2026-10-24'
+- name: Leave planner
+  slug: leave-planner
+  tier: browser
+  category: HR
+  does: Team leave calendar from a CSV, SG public holidays marked
+  status: idea
+  notes: Needs the MOM public holidays page for the dates. Must not give leave entitlement advice.
+- name: Timesheet to invoice
+  slug: timesheet-to-invoice
+  tier: browser
+  category: Finance
+  does: Hours CSV to an invoice draft
+  status: idea
+  notes: Best after the invoice builder, so it can share the engine.
+- name: Bank statement sorter
+  slug: bank-statement-sorter
+  tier: browser
+  category: Finance
+  does: Categorise a bank CSV export with the visitor's own rules
+  status: idea
+  notes: The visitor's own categories only. No financial advice and no bank logins.
+- name: Price list maker
+  slug: price-list-maker
+  tier: browser
+  category: Sales
+  does: Product list to a printable catalogue PDF
+  status: idea
+  notes: No statutory rule.
+- name: QR code maker
+  slug: qr-code-maker
+  tier: browser
+  category: Marketing
+  does: URL, Wi-Fi, vCard; PNG and SVG
+  status: idea
+  notes: Generic. No statutory rule.
+- name: Email reply helper
+  slug: email-reply-helper
+  tier: ai
+  category: Admin
+  does: Customer email to a polite reply draft
+  status: idea
+  notes: AI tier, so it uses the shared limiter. The visitor's email is data, never instructions.
+- name: Job ad writer
+  slug: job-ad-writer
+  tier: ai
+  category: HR
+  does: Role details to a clear job ad
+  status: idea
+  notes: AI tier. Should follow the Tripartite Guidelines on Fair Employment Practices on discriminatory
+    wording; cite the official page if the PRD relies on it.
+- name: Meeting notes tidier
+  slug: meeting-notes-tidier
+  tier: ai
+  category: Admin
+  does: Rough notes to actions, owners, dates
+  status: idea
+  notes: AI tier. No statutory rule.
+- name: Social caption kit
+  slug: social-caption-kit
+  tier: ai
+  category: Marketing
+  does: Product description to captions per platform
+  status: idea
+  notes: AI tier. Must not post to any platform on the visitor's behalf.
+- name: Time-saved calculator
+  slug: time-saved-calculator
+  tier: browser
+  category: Admin
+  does: Visitor's own task times and frequency to their own totals
+  status: idea
+  notes: The visitor's own figures only. The page must never show a Jura figure or claim time saved; the
+    numbers rule applies to every word of the copy.
+- name: Business card reader
+  slug: business-card-reader
+  tier: ai
+  category: Sales
+  does: Card photo to vCard or CSV
+  status: idea
+  notes: AI tier. The card holds someone else's personal data, so nothing is stored or logged.
+- name: Site visit report
+  slug: site-visit-report
+  does: 'Site visit report: write up a site visit with photos and a signature, and save it as a PDF'
+  status: idea
+  source: ting-yu
+  added: '2026-10-30'
+  actor: discord:424242424242424242
+  notes: 'Sent by Ting Yu with `apps idea` on 2026-10-30. Not picked first on 2026-11-01: A signed site
+    visit report reads as an official record, so it fails the no-official-documents check.'
+  held: '2026-11-01'
+  held_reason: A signed site visit report reads as an official record, so it fails the no-official-documents
+    check.
+- name: Van check sheet
+  slug: van-check-sheet
+  does: 'Van check sheet: a daily van inspection checklist for drivers'
+  status: idea
+  source: ting-yu
+  added: '2026-10-31'
+  actor: discord:424242424242424242
+  notes: 'Sent by Ting Yu with `apps idea` on 2026-10-31. Not picked first on 2026-11-01: a second hold
+    today'
+  held: '2026-11-01'
+  held_reason: a second hold today
+- name: Job sheet
+  slug: job-sheet
+  does: 'Job sheet: a one-page job sheet for each call-out'
+  status: idea
+  source: ting-yu
+  added: '2026-11-01'
+  actor: discord:424242424242424242
+  notes: Sent by Ting Yu with `apps idea` on 2026-11-01.

@@ -74,6 +74,9 @@ _lock = locks.held  # one lock per job
 # One browser job at a time, since they share Chrome and the accounts (ADR 0006). One shared lock
 # taken after the job's own: atomic, and `_abandon_stale` still sees the job lock.
 ANOTHER_BROWSER_JOB = "another browser job is running"
+# The jobs that must not end in nothing when growth.db is locked. The morning post can go out without
+# a write connection. Any other job needs its database, and stops at the lock as it always has.
+POSTS_PAST_A_LOCK = frozenset({"one-pager"})
 
 
 def run(name: str, *, ignore_schedule: bool = False) -> Outcome:
@@ -92,6 +95,8 @@ def run(name: str, *, ignore_schedule: bool = False) -> Outcome:
             _run_update(None, name, spec, None, outcome)  # never opens growth.db
             return outcome
 
+        if name in POSTS_PAST_A_LOCK:
+            return _run_past_a_lock(name, spec, ignore_schedule)
         conn = db.connect()
         try:
             if name not in caps.BROWSER_JOBS:
@@ -105,7 +110,40 @@ def run(name: str, *, ignore_schedule: bool = False) -> Outcome:
             conn.close()
 
 
-def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule: bool) -> Outcome:
+def _run_past_a_lock(name: str, spec: dict, ignore_schedule: bool) -> Outcome:
+    """The ordinary run, unless growth.db stays locked. Then the command runs with no run row, if it
+    hasn't run already, and the JSONL mirror holds the trace. Its `run.quiet` line makes the slot read
+    as run. If the lock came after the command, the row stays `running` until `_abandon_stale` fails
+    it, because a re-run would post twice."""
+    started_at, agent, ran = timeutil.stamp(), spec["agent"], []
+    try:
+        with db.session() as conn:
+            return _run_locked(conn, name, spec, ignore_schedule, ran)
+    except sqlite3.Error as error:
+        if not db.is_lock(error):
+            raise
+    if ran:
+        outcome = ran[0]
+    else:
+        try:
+            outcome = _run_command(spec, agent, None, name)
+        except Exception as error:  # noqa: BLE001 - every failure is recorded
+            outcome = Outcome("failed", error=f"{type(error).__name__}: {error}")
+    log.event(None, "run.database_locked", {"job": name, "started_at": started_at, "status": outcome.status,
+                                            "summary": outcome.summary, "error": outcome.error}, level="warning", agent=agent)
+    if outcome.status == "ok" and not ran:
+        log.event(None, "run.quiet", {"job": name, "started_at": started_at}, agent=agent)
+    if outcome.status == "failed":
+        try:
+            discord.alert(None, f"`{name}` failed: {outcome.error[:500]}", agent=agent)
+        except Exception as error:  # noqa: BLE001 - the mirror already holds the failure
+            _hook_failed(None, "discord.alert", name, agent, None, error)
+    return _run_update(None, name, spec, None, outcome)
+
+
+def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule: bool, ran: list | None = None) -> Outcome:
+    """`ran`, when given, gets the outcome as soon as the job is skipped or its body has finished, so
+    the caller can tell a lock before that from one after it."""
     agent = spec["agent"]
     # `quiet` means something only for a command job. A claude job spends
     # money and needs a run id (environment, transcript, `used_by_run`), so it
@@ -128,6 +166,8 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
         log.event(conn, "run.quiet", {"job": name, "started_at": started_at, "reason": str(reason)}, agent=agent)
         return _run_update(conn, name, spec, None, Outcome("ok", str(reason)))
     if reason:
+        if ran is not None:
+            ran.append(Outcome("skipped", reason))  # a pause read under a lock holds, though the skip can't be written
         skip_id = None
         if quiet:
             log.event(conn, "run.skipped", {"job": name, "reason": reason}, agent=agent)
@@ -148,6 +188,8 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
             raise JobError(f"job {name} has unknown kind {spec['kind']!r}")
     except Exception as error:  # noqa: BLE001 - every failure is recorded
         outcome = Outcome("failed", error=f"{type(error).__name__}: {error}")
+    if ran is not None:
+        ran.append(outcome)
 
     # The plug-in's last word on a run that started (the publish audit can
     # fail it), before the row, the alert and auto-pause see the outcome.

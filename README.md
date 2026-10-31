@@ -41,7 +41,7 @@ jurasolutions/data/growth/
   runs/YYYY-MM-DD.jsonl       every event, one JSON line each
   transcripts/YYYY-MM-DD/     full stream-json transcript of each headless run (30 days)
   backups/                    nightly copies of growth.db (14 days)
-  one-pager/                  the one-pager's grid PNG, grid-YYYY-MM-DD.png, one a day (14 days)
+  one-pager/                  the morning picture, picture-YYYY-MM-DD.png and .html, one set a day, and any grid drawn on request (14 days)
   discord-outbox/             messages Discord didn't take: no webhook yet, or unreachable
   daily-summary.json          what the digest and the morning brief read
   work/<job>/                 scratch space a headless run may write drafts into
@@ -67,7 +67,9 @@ The database stays in rollback-journal mode, not WAL, because it lives in OneDri
 | `jura-growth status` | Pauses, last runs, schedule, Discord setup and setup gaps (the same list as the one-pager's) |
 | `jura-growth approvals [kind]` | Pending approval requests, the 15 soonest to lapse first. Decisions come only from `#approvals`, through Dispatch (ADR 0004) |
 | `jura-growth remote …` | Control commands from Discord, reached only through Dispatch's SSH forced command (`bin/growth-remote`) and refused anywhere else. See `docs/dispatch-contract.md` |
-| `jura-growth one-pager [--no-post]` | Post the one-pager to `#mission-control`: Needs you, approvals waiting, today's slots, yesterday's figures, and the 14-day grid as a PNG. It writes the approval lapses that are due first, then reads `growth.db` read-only and never repairs it (ADR 0002). `--no-post` only prints it |
+| `jura-growth help` | List the control commands you can send from Discord, each with a one-line summary. Also `/growth help` |
+| `jura-growth pending` | Growth's unfinished work, by who holds the next step, and what to send next. It reads only, and a source it couldn't read gets its own line. Also `/growth pending` |
+| `jura-growth one-pager [--no-post] [--grid]` | Post the morning picture to `#mission-control` with a short message: the verdict, Decide, Fix, This morning, Yesterday and Later today. It writes the approval lapses that are due first, unless `growth.db` is locked, then reads `growth.db` read-only and never repairs it (ADR 0002). When the picture can't be drawn, the long text goes instead and says why. `--no-post` only prints the long text. `--grid` only draws the 14-day grid to a file and prints its path |
 | `jura-growth run <job>` | Run a scheduled job now. `--dry-run` prints the command, `--ignore-schedule` runs on a weekend or holiday |
 | `jura-growth schedule list\|render\|install\|uninstall [jobs]` | launchd jobs |
 | `jura-growth heartbeat` | Post a heartbeat to `#daily-digest` |
@@ -84,15 +86,21 @@ All times SGT, from `config/settings.yaml`:
 
 | Job | When | Kind |
 |---|---|---|
-| `app-factory` | 06:30 daily | headless Claude |
-| `social` | 07:00 daily: drafts for the Facebook Page and Instagram (LinkedIn switched off since 2026-10-29) | headless Claude |
-| `one-pager` | 08:00 daily | command |
-| `scout-research` | 09:00 business days | headless Claude |
+| `scout-research` | 06:30 business days | headless Claude |
+| `app-factory` | 07:00 daily | headless Claude |
+| `inbox-check` | 07:00–23:45 daily, every 15 minutes: Claude starts only when someone wrote | headless Claude |
+| `social` | 07:30 daily: drafts for the Facebook Page and Instagram (LinkedIn switched off since 2026-10-29) | headless Claude |
+| `community` | Mondays 08:00 | headless Claude |
+| `inbox-send` | 08:00–22:00 daily, every 10 minutes: sends the email replies Ting Yu approved | command |
+| `outreach-requests` | 08:30 business days: raises requests for emails queued earlier, and posts their cards | command |
+| `one-pager` | 09:00 daily | command |
+| `publish` | 09:00–17:40 daily, every 20 minutes | headless Claude |
+| `inbox-watch` | 09:05–21:05 daily, hourly: reads Facebook and Instagram through Chrome | headless Claude |
+| `inbox-reply` | 09:10–20:50 daily, every 20 minutes: posts one approved reply a run | headless Claude |
 | `scout-send` | 09:30–16:30 business days, every 10 minutes | command |
 | `heartbeat` | 12:00 daily | command |
 | `scout-sync` | 16:45 business days | command |
 | `digest` | 17:30 daily | command |
-| `community` | Mondays 07:30 | headless Claude |
 | `backup` | 23:30 daily | command |
 
 `jura-growth schedule install` loads them into launchd (`~/Library/LaunchAgents/sg.jurasolutions.growth.*`).
@@ -185,7 +193,13 @@ The one-pager's **Replies waiting** section, between Needs you and Approvals wai
 conversation: who wrote, where, how long ago, an excerpt and what Ting Yu must do. A promised reply comes
 first, then anything high priority. Under the lines are the noise it filtered and each surface's last good
 read. It reads on the read model's read-only connection through the plug-in hook `one_pager_section(conn,
-since)`, and calls no kind's `content()`. `/growth inbox list` shows the same on request.
+since)`, and calls no kind's `content()`. `/growth inbox list` shows the same on request. The 09:00 post is
+the morning picture and its message. The message carries this section, plain-masked, after its own lines whenever
+something is waiting, happened or was filtered, and stays as it was on a quiet morning. Past 2,000 characters it
+splits at a line, with the picture on the last piece. The picture itself carries counts, with no name or words. A card waiting is one of "to decide", and what only
+he can move is "to answer by hand", on the verdict and on its Inbox row, which owns the two reply kinds. `/growth pending` lists the same lines through the plug-in's `pending(conn)` hook,
+plain-masked and read-only: a promised reply or a hand reply under Waiting for you with what to send, and what is
+being read or sent under Growth is on it. A card still to decide is the core's own line there.
 
 From Discord he can steer it: `/growth inbox redraft A-nnnn <guidance>`, `reword A-nnnn <his words>`, `draft
 I-nnnn [guidance]`, `done I-nnnn` and `unsuppress I-nnnn`. They come only through `remote` and are refused to
@@ -270,8 +284,9 @@ imports it by name. The module may define:
 | `REQUIRED_SETTINGS` | The `.env` settings the agent needs, by name. Each one not set is a setup gap in `jura-growth status` and the one-pager |
 | `setup_gaps()` | `[health.Gap(name, ok=...)]` in place of `REQUIRED_SETTINGS`: names and booleans only, never a value. `Gap(name, ok=..., must_be_unset=True)` is a setting that must *not* be set (the publish job's `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`), shown as "set, and must not be" |
 | `health(conn)` | Extra "Needs you" lines for the one-pager. `conn` is the read model's read-only connection, so a write raises |
-| `one_pager_section(conn, since)` | The plug-in's own section of the one-pager, `(name, lines)` or `None`, between Needs you and Approvals waiting. `conn` is the same read-only connection, and `since` is when the last one-pager went out. It may not call a kind's `content()`. An exception shows as one line naming its type |
+| `one_pager_section(conn, since)` | The plug-in's own section of the one-pager, `(name, lines)`, `(name, lines, quiet)` or `None`, between Needs you and Approvals waiting. The morning's message carries it too, unless it says it is `quiet`. `conn` is the same read-only connection, and `since` is when the last one-pager went out. It may not call a kind's `content()`. An exception shows as one line naming its type |
 | `retention(conn)` | Called first by the nightly backup, so tonight's copy doesn't hold what it removed: remove what the plug-in may no longer keep, and return counts for the backup's event. An exception is logged and the backup goes on |
+| `pending(conn)` | What the agent has unfinished, for `jura-growth pending`: `[agents.PendingItem(holder, text, order)]`, where `holder` is `agents.YOU`, `agents.GROWTH` or `agents.UNREAD` (a source that couldn't be read), and `order` places the line among its holder's: `agents.NEXT_STEP` (the default), `LISTED`, `COUNT` or `BACKLOG`, most urgent first. `conn` is the same read-only connection. An exception shows as one line saying what couldn't be read |
 
 Every hook except `NAME` is optional and found with `getattr`. Its prompt goes in
 `prompts/<job>.md`, its settings in `config/<name>.yaml`, and its hard limits in `caps.py`.

@@ -27,7 +27,8 @@ This module then:
    `handoff` Dispatch builds from, verbatim, since the PRD text must hash to
    what Ting Yu approved;
 7. writes one `remote.command` event with the actor, the words, the ref and
-   the answer, never the command's output.
+   the answer, never the command's output (for `pending` and `help` on a
+   growth.db that is missing, empty or mid-write, in the JSONL mirror only).
 
 Anything not on the allowlist exits 2 with a line starting "refused:".
 """
@@ -44,7 +45,7 @@ from typing import Callable
 
 import click
 
-from jura_growth import approvals, approvals_cli, config, db, discord, handoff_fit, log, origin, pause, privacy
+from jura_growth import approvals, approvals_cli, config, db, discord, handoff_fit, log, mission, origin, paths, pause, privacy
 
 CONTRACT = 1
 TEXT_LIMIT = 1900  # Dispatch adds its own words; Discord takes 2,000
@@ -60,11 +61,12 @@ class Refusal(Exception):
 
 @dataclass(frozen=True)
 class Entry:
-    """One control command: how Ting Yu types it, and how it becomes the real
-    command's arguments. `decision` commands answer from the closed enum."""
+    """One control command: how Ting Yu types it, how it becomes the real command's arguments, and
+    `summary`, its one plain line in `help`. `decision` commands answer from the closed enum."""
 
     usage: str
     argv: Callable[[list[str], str | None], list[str]]
+    summary: str
     decision: bool = False
     logged_words: int | None = None  # words after the name its event keeps; None keeps them all
 
@@ -140,7 +142,7 @@ def _publish_resolve(words: list[str], ref: str | None) -> list[str]:
     return ["publish", "resolve", f"--url={url}", "--", approval, outcome]
 
 
-def _inbox(usage: str, shape: re.Pattern, *, words_after: tuple[int, int | None]) -> Entry:
+def _inbox(usage: str, summary: str, shape: re.Pattern, *, words_after: tuple[int, int | None]) -> Entry:
     """`inbox <verb> <id> [words …]`, with the id checked here. What he types after an id can be a draft
     naming the person, so its event keeps only the name and the id: `events` is never pruned (N6)."""
     name = " ".join(usage.split()[:2])
@@ -151,7 +153,22 @@ def _inbox(usage: str, shape: re.Pattern, *, words_after: tuple[int, int | None]
             raise Refusal(f"say it as `{usage}`")
         return [*name.split(), "--", *words]
 
-    return Entry(usage, build, logged_words=1)
+    return Entry(usage, build, summary, logged_words=1)
+
+
+_OPTION = re.compile(r"--?[A-Za-z]")
+
+
+def _idea(words: list[str], ref: str | None) -> list[str]:
+    """Ting Yu's idea in his own words, as one argument after `--`. A word that reads as an option
+    (`--source`, `-x`) is refused, so nothing typed can set the row's source or status; a hyphen
+    or a dash inside the text is fine. The command checks the length and duplicates."""
+    if not words:
+        raise Refusal("say the idea: `apps idea <text>`")
+    option = next((word for word in words if _OPTION.match(word)), None)
+    if option:
+        raise Refusal(f"`apps idea` takes no options (found {_short(option, 20)}); send the idea as plain words")
+    return ["apps", "idea", "--", " ".join(words)]
 
 
 def _requeue_shadow(words: list[str], ref: str | None) -> list[str]:
@@ -170,7 +187,7 @@ def _requeue_shadow(words: list[str], ref: str | None) -> list[str]:
     return argv
 
 
-def _with_options(usage: str) -> Entry:
+def _with_options(usage: str, summary: str) -> Entry:
     """The entry for a command typed as its usage says: one id, then each `--option <…>` of the
     usage exactly once, as `--option value` or `--option=value`, in any order. The values go over as
     `--option=value`, so none of them is ever read as an option of its own, and the id goes after
@@ -202,34 +219,37 @@ def _with_options(usage: str) -> Entry:
             raise Refusal(f"say it as `{usage}`, each option once")
         return [*name.split(), *(f"{option}={given[option]}" for option in options), "--", ids[0]]
 
-    return Entry(usage, build)
+    return Entry(usage, build, summary)
 
 
 # Sorted by command, one entry per line, so tickets 09, 12 and browser-publishing#03 each add
 # their rows in a hunk of their own. `docs/dispatch-contract.md` lists them in the same order.
 ALLOWLIST: dict[str, Entry] = {
-    "approvals": Entry("approvals [kind]", _positional("approvals", 0, 1)),
-    "approve": Entry("approve <A-nnnn> [key=value …] [note]", _decision("approve"), decision=True),
-    "apps built": _with_options("apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>"),
-    "apps handoffs": Entry("apps handoffs", _none("apps handoffs")),
-    "apps release-plan": Entry("apps release-plan <APP-NNN>", _positional("apps release-plan", 1, 1)),
-    "apps released": _with_options("apps released <APP-NNN> --task <T-nnnn>"),
-    "community removed": Entry("community removed <group-id>", _positional("community removed", 1, 1)),
-    "inbox done": _inbox("inbox done <I-nnnn>", _INBOX_I_ID, words_after=(0, 0)),
-    "inbox draft": _inbox("inbox draft <I-nnnn> [guidance]", _INBOX_I_ID, words_after=(0, None)),
-    "inbox list": Entry("inbox list", _none("inbox list")),
-    "inbox redraft": _inbox("inbox redraft <A-nnnn> <guidance>", _INBOX_A_ID, words_after=(1, None)),
-    "inbox reword": _inbox("inbox reword <A-nnnn> <your words>", _INBOX_A_ID, words_after=(1, None)),
-    "inbox unsuppress": _inbox("inbox unsuppress <I-nnnn>", _INBOX_I_ID, words_after=(0, 0)),
-    "one-pager": Entry("one-pager", _none("one-pager")),
-    "outreach requeue-shadow": Entry("outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]", _requeue_shadow),
-    "pause": Entry("pause <agent|all> [reason]", _pause),
-    "publish queue": Entry("publish queue", _none("publish queue")),
-    "publish resolve": Entry("publish resolve <A-nnnn> posted --url <url> | not-posted", _publish_resolve),
-    "resume": Entry("resume <agent|all>", _positional("resume", 1, 1)),
-    "skip": Entry("skip <A-nnnn> [note]", _decision("skip"), decision=True),
-    "social skip": Entry("social skip <date> <platform>", _positional("social skip", 2, 2)),
-    "status": Entry("status", _none("status")),
+    "approvals": Entry("approvals [kind]", _positional("approvals", 0, 1), "List the requests waiting for you, soonest to lapse first."),
+    "approve": Entry("approve <A-nnnn> [key=value …] [note]", _decision("approve"), "Approve a request.", decision=True),
+    "apps built": _with_options("apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>", "Dispatch sends this when a build ships. Send it yourself to ask again."),
+    "apps handoffs": Entry("apps handoffs", _none("apps handoffs"), "Dispatch sends this, to list the builds waiting for a builder."),
+    "apps idea": Entry("apps idea <text>", _idea, "Add your own idea to the app backlog."),
+    "apps release-plan": Entry("apps release-plan <APP-NNN>", _positional("apps release-plan", 1, 1), "Claim an approved release and get its merge."),
+    "apps released": _with_options("apps released <APP-NNN> --task <T-nnnn>", "Record a release once main holds it."),
+    "community removed": Entry("community removed <group-id>", _positional("community removed", 1, 1), "Mark a group as removed, for good."),
+    "help": Entry("help", _none("help"), "List these commands."),
+    "inbox done": _inbox("inbox done <I-nnnn>", "Clear a reply you've dealt with.", _INBOX_I_ID, words_after=(0, 0)),
+    "inbox draft": _inbox("inbox draft <I-nnnn> [guidance]", "Ask for a draft where none was made.", _INBOX_I_ID, words_after=(0, None)),
+    "inbox list": Entry("inbox list", _none("inbox list"), "List the replies waiting."),
+    "inbox redraft": _inbox("inbox redraft <A-nnnn> <guidance>", "Have a reply redrafted.", _INBOX_A_ID, words_after=(1, None)),
+    "inbox reword": _inbox("inbox reword <A-nnnn> <your words>", "Make your words the reply.", _INBOX_A_ID, words_after=(1, None)),
+    "inbox unsuppress": _inbox("inbox unsuppress <I-nnnn>", "Lift a suppression that reply caused.", _INBOX_I_ID, words_after=(0, 0)),
+    "one-pager": Entry("one-pager", _none("one-pager"), "Post the morning picture to #mission-control."),
+    "outreach requeue-shadow": Entry("outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]", _requeue_shadow, "Queue shadow emails again, each with a request."),
+    "pause": Entry("pause <agent|all> [reason]", _pause, "Stop an agent, or all of them."),
+    "pending": Entry("pending", _none("pending"), "List what is unfinished, and what to send next."),
+    "publish queue": Entry("publish queue", _none("publish queue"), "List every publish item and its state."),
+    "publish resolve": Entry("publish resolve <A-nnnn> posted --url <url> | not-posted", _publish_resolve, "Settle a publish item whose outcome is unknown."),
+    "resume": Entry("resume <agent|all>", _positional("resume", 1, 1), "Start an agent again, or all of them."),
+    "skip": Entry("skip <A-nnnn> [note]", _decision("skip"), "Skip a request.", decision=True),
+    "social skip": Entry("social skip <date> <platform>", _positional("social skip", 2, 2), "Leave out a platform's post, today or tomorrow."),
+    "status": Entry("status", _none("status"), "Show pauses, last runs, the schedule and setup gaps."),
 }
 
 
@@ -245,7 +265,16 @@ def match(words: list[str]) -> tuple[str, Entry, list[str]]:
 
 
 def _short(text: str, limit: int = 60) -> str:
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+    return discord.shortened(text, limit)
+
+
+HELP_INTRO = "Send each as `/growth <command>`, or as a plain message in #control."
+
+
+def help_text() -> str:
+    """`help`: built from `ALLOWLIST`, so the list can't go stale. It fits `TEXT_LIMIT` with no cut
+    (`tests/test_remote_help.py`), so keep each summary to one short line."""
+    return "\n".join([HELP_INTRO, *(f"`{entry.usage}`: {entry.summary}" for entry in ALLOWLIST.values())])
 
 
 # --- the answer ---------------------------------------------------------------------------------
@@ -406,19 +435,41 @@ def _listed(kind: str | None) -> list[dict]:
 # --- the command -------------------------------------------------------------------------------------
 
 
-def _masked(reply: Reply) -> Reply:
+_READ_ONLY = (["pending"], ["help"])  # control commands that write nothing but their own event
+
+
+def _leave_database_alone(words: list[str]) -> bool:
+    """For `pending` and `help` only: growth.db is missing, empty or mid-write, so nothing here may
+    open it read-write. That open would create or migrate it or roll back its journal, and turn
+    `pending`'s answer, whichever of the two was sent first, into a false one (ADR 0002; code review
+    01, QA 01 defect 02). Neither needs it to answer. Every other command opens it, as it always has."""
+    if words[:1] not in _READ_ONLY:
+        return False
+    if mission.is_empty(paths.db_path()):
+        return True
+    conn, state, _ = mission.connect(paths.db_path())
+    if conn is not None:
+        conn.close()
+    return state in (mission.MISSING, mission.UNFINISHED_WRITE)
+
+
+def _masked(reply: Reply, wait: float | None = None, *, database: bool = True) -> Reply:
     """The text and the listing as they may reach Discord.
 
     If the named contacts or the Keychain values can't be loaded, masking
     still runs on what is known (configured secrets always go first) and a
     `remote.masking_degraded` event says so: in growth.db, or only in the
-    JSONL mirror when the database can't be opened (code review 11)."""
+    JSONL mirror when the database can't be opened (code review 11). Without
+    `database`, it runs on what is known with growth.db left closed."""
     try:
-        with db.session() as conn:
-            try:
-                privacy.load_for_masking(conn)
-            except Exception as error:  # noqa: BLE001 - the answer still goes back, masked
-                log.event(conn, "remote.masking_degraded", {"error": f"{type(error).__name__}: {error}"}, level="warning")
+        if database:
+            with db.session(wait=wait) as conn:
+                try:
+                    privacy.load_for_masking(conn)
+                except Exception as error:  # noqa: BLE001 - the answer still goes back, masked
+                    log.event(conn, "remote.masking_degraded", {"error": f"{type(error).__name__}: {error}"}, level="warning")
+        else:
+            privacy.load_for_masking(None)
     except Exception as error:  # noqa: BLE001 - no database: the mirror holds the event
         try:
             log.event(None, "remote.masking_degraded", {"error": f"{type(error).__name__}: {error}"}, level="warning")
@@ -464,18 +515,30 @@ def _logged(words: list[str]) -> list[str]:
     return [*name.split(), *[word for word in rest[: entry.logged_words] if _INBOX_A_ID.fullmatch(word) or _INBOX_I_ID.fullmatch(word)]]
 
 
-def _record(words: list[str], actor: str | None, ref: str | None, reply: Reply) -> None:
-    """One `remote.command` event: who, what, and the answer. Never the output."""
+def _record(words: list[str], actor: str | None, ref: str | None, reply: Reply, wait: float | None = None, *, database: bool = True) -> None:
+    """One `remote.command` event: who, what, and the answer. Never the output. Without `database`,
+    only in the JSONL mirror."""
+    payload = {"actor": actor, "words": _logged(words), "ref": ref, "origin": reply.origin, "answer": reply.answer, "exit_code": reply.exit_code}
+    level = "info" if reply.exit_code == OK else "warning"
+    if database:
+        try:
+            with db.session(wait=wait) as conn:
+                log.event(conn, "remote.command", payload, level=level)
+            return
+        except Exception:  # noqa: BLE001 - the answer still goes back; the mirror line may be all there is
+            pass
     try:
-        with db.session() as conn:
-            log.event(conn, "remote.command", {"actor": actor, "words": _logged(words), "ref": ref, "origin": reply.origin,
-                                               "answer": reply.answer, "exit_code": reply.exit_code},
-                      level="info" if reply.exit_code == OK else "warning")
-    except Exception:  # noqa: BLE001 - the answer still goes back; the mirror line may be all there is
+        log.event(None, "remote.command", payload, level=level)
+    except OSError:
         pass
 
 
 def register(cli: click.Group) -> None:
+    @cli.command("help")
+    def help_command() -> None:
+        """List the control commands you can send from Discord."""
+        click.echo(help_text())
+
     @cli.command("remote", context_settings={"allow_interspersed_args": False, "ignore_unknown_options": True})
     @click.option("--actor", help="Who sent it: discord:<id> (attribution).")
     @click.option("--ref", help="Dispatch's delivery reference: <message id>:<delivery id>.")
@@ -485,7 +548,13 @@ def register(cli: click.Group) -> None:
     def remote_command(ctx, actor, ref, as_json, words) -> None:
         """A control command from Discord, through Dispatch's SSH forced command only."""
         words = list(words)
-        reply = _masked(handle(ctx, words, actor=actor, ref=ref))
-        _record(words, actor, ref, reply)
+        # The one-pager's post path has Dispatch's 60 seconds for everything, and has used most of
+        # them if growth.db is locked: its answer can't wait another 30 on each of these. `pending`
+        # and `help` only read, and an answer saying growth.db is locked must get back in time.
+        wait = db.SHORT_WAIT if words[:1] in (["one-pager"], *_READ_ONLY) else None
+        reply = handle(ctx, words, actor=actor, ref=ref)
+        database = not _leave_database_alone(words)
+        reply = _masked(reply, wait, database=database)
+        _record(words, actor, ref, reply, wait, database=database)
         click.echo(payload(reply) if as_json else reply.text)
         ctx.exit(reply.exit_code)

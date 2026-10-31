@@ -25,7 +25,7 @@ discord:
 approvals:
   discord_buttons: true    # U17 passed 2026-10-31 (Approve on A-0002 from the phone); unlocks live outreach (06)
   post_buttons: true       # send Approve/Skip components on cards (11); Dispatch owns the #approvals webhook since 2026-10-31
-  dispatch_builds: true    # Dispatch GC-05/06 live, crew builds (PRD §9); previews behind Cloudflare Access (2026-10-31)
+  dispatch_builds: true    # Dispatch GC-05/06 live, crew builds (PRD §9); previews public by decision (2026-10-31): anyone with the link, no sign-in
   # In the units of jura_growth/caps.py. A value may shorten a deadline, never
   # lengthen it: anything above the cap reads as the cap.
   deadlines:
@@ -50,7 +50,7 @@ retention:
   transcripts_days: 30
   # Publish transcripts hold page text: at most 7 days (caps.BROWSER_TRANSCRIPT_DAYS); may only be lower.
   browser_transcripts_days: 7
-  one_pager_days: 14 # the one-pager's grid PNGs in data/growth/one-pager/
+  one_pager_days: 14 # the morning picture, its page and any grid drawn on request, in data/growth/one-pager/
   # Discord messages that were refused, in data/growth/discord-outbox/: they can hold a person's words.
   # At most 14 days (caps.OUTBOX_DAYS); may only be lower.
   outbox_days: 14
@@ -71,7 +71,7 @@ jobs:
     kind: claude
     prompt: app-factory.md
     tools: [WebSearch, WebFetch]
-    schedule: {daily: "06:30"}
+    schedule: {daily: "07:00"}
     run_update: true # one message per run in #app-factory
 
   social:
@@ -79,7 +79,7 @@ jobs:
     kind: claude
     prompt: social.md
     tools: [WebSearch, WebFetch]
-    schedule: {daily: "07:00"}
+    schedule: {daily: "07:30"}
     run_update: true # one message per run in #social-drafts
 
   scout-research:
@@ -87,7 +87,7 @@ jobs:
     kind: claude
     prompt: scout.md
     tools: [WebSearch, WebFetch]
-    schedule: {business_days: "09:00"}
+    schedule: {business_days: "06:30"}
     run_update: true # one message per run in #scout-leads
 
   scout-send:
@@ -103,6 +103,15 @@ jobs:
     command: [outreach, sync]
     schedule: {business_days: "16:45"}
 
+  # Raises requests for emails queued on an earlier day and posts their cards,
+  # so they are in #approvals before the 09:00 one-pager. It sends nothing.
+  outreach-requests:
+    agent: outreach
+    kind: command
+    command: [outreach, raise-due]
+    quiet: true # no run row when nothing is raised
+    schedule: {business_days: "08:30"}
+
   digest:
     agent: digest
     kind: command
@@ -115,7 +124,7 @@ jobs:
     agent: digest
     kind: command
     command: [one-pager]
-    schedule: {daily: "08:00"}
+    schedule: {daily: "09:00"}
 
   community:
     agent: community
@@ -124,7 +133,7 @@ jobs:
     tools: [WebSearch, WebFetch]
     # No WebFetch denials here: the community plug-in denies every domain in
     # config/community.yaml blocked_fetch_domains, and every subdomain of it.
-    schedule: {weekly: {day: mon, time: "07:30"}}
+    schedule: {weekly: {day: mon, time: "08:00"}}
     run_update: true # one message per run in #community
 
   # Browser publishing (prd-jura-browser-publishing §5.8; ADR 0005). Posts one

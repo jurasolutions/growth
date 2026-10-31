@@ -36,6 +36,34 @@ Candidates are the backlog rows whose `effective_status` is `idea`, plus a new i
 if it clearly beats them. Never pick a row that is `prd-pending`, `prd-done`, `live`, `dropped` or `resting`,
 and never write a near-duplicate of anything live or pending (a second quote tool, say).
 
+### Ting Yu's own ideas come first
+
+Ting Yu sends ideas from Discord with `apps idea`. They are the backlog rows with
+`source: ting-yu`, and `ting_yu_ideas` in the context lists the open ones, oldest first. If it
+isn't empty, take its first idea before any other candidate, without weighing. Read its `does`:
+that is his text, word for word. It still has to pass every check a candidate does:
+
+- any rate, rule or format it depends on must be confirmed against the official source today
+  (§2);
+- it must not be a near-duplicate of anything live or pending;
+- it must not give legal, medical or financial advice, imitate a government service or pass as
+  an official document, need accounts or third-party logins, or store customer data.
+
+If it passes, write its PRD. Its row's name came from his words and may not meet the name rules
+in §3: choose a plain name that does, and file the PRD with
+`jura-growth apps submit-prd --idea <slug>` (the row's slug), so the PRD is marked against his
+row whatever its name.
+
+If it fails a check, never skip it silently. Run
+`jura-growth apps hold-idea <slug> --reason "<the check it failed, in one plain sentence>"`. That
+records the reason in the row's notes and in the digest, and the idea stops coming first. Then
+fall back to the normal pick below. Hold only the first idea in the list; the next one waits for
+tomorrow's run.
+
+His ideas count against `prds_per_day` like any other PRD: one PRD a day, his or not.
+
+### The normal pick
+
 Weigh each candidate on:
 
 1. **Industries helped.** How many of the scout's industries (`scout_insights.industries`, and
@@ -138,12 +166,24 @@ time or money ("saves you hours", "in seconds"). Never mention Jura client count
 1. `jura-growth apps submit-prd --dry-run <your file>`: runs every check, brand check included,
    without filing anything or using up an attempt. Fix everything it reports. Use at most two dry
    runs.
+   For one of Ting Yu's ideas, add `--idea <slug>` to every `submit-prd` call, dry runs too.
 2. `jura-growth apps submit-prd <your file>`. It files the PRD in `prd/pending/apps/`, updates the
    backlog and sends the PRD with its pitch to Ting Yu as an `app-build` request in #approvals;
    don't do any of those yourself.
 3. If the brand check fails, fix **every** reason in one regeneration and submit once more. A
-   second brand failure drops today's PRD: finish with `FAIL: brand check failed twice`.
+   second brand failure drops today's PRD. If it was one of Ting Yu's ideas, hold it first
+   (step 5), then finish with `FAIL: brand check failed twice`.
 4. If `submit-prd` refuses because of a limit, finish with `SKIP: <reason>`.
+   If it answers `refused: the backlog is busy, try submit-prd again`, nothing was filed and no
+   attempt was used: run the same `submit-prd` once more in this run. If it is still busy, finish
+   with `SKIP: backlog busy`. Never hold an idea because the backlog was busy.
+5. If the PRD was for one of Ting Yu's ideas and it still can't be filed, hold the idea, so it
+   isn't first again tomorrow:
+   `jura-growth apps hold-idea <slug> --reason "<what submit-prd said, in one plain sentence>"`.
+   That covers the brand check fails twice, and any rejection or refusal you can't fix within your
+   two dry runs (a duplicate it found, a source it wouldn't accept). A limit or busy refusal
+   (step 4) is not the idea's fault: don't hold it then. While his oldest idea waits unheld,
+   `submit-prd` refuses any other PRD, so hold it before you fall back to the normal pick.
 
 ## 5. Finish
 
@@ -151,3 +191,8 @@ Your final message is one to three lines and its **very first characters** are `
 `FAIL:` (the scheduler reads only that prefix to record the run). For example:
 `OK: APP-NNN <Name> written (prd/pending/apps/<file>)`, then why you picked it and which official
 source you confirmed, if any. If anything stopped you from filing the PRD, start with `FAIL:`.
+
+If you picked Ting Yu's idea, say so: `OK: APP-NNN <Name> written from Ting Yu's idea <slug> (…)`.
+If you held Ting Yu's idea, the summary line says that too, whatever you did next:
+`OK: APP-NNN <Name> written (…); held Ting Yu's idea <slug>: <reason>`, or
+`SKIP: held Ting Yu's idea <slug>: <reason>; no other idea passed today`.

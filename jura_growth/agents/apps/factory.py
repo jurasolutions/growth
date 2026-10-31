@@ -10,12 +10,13 @@ the brand gate's attempts.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import sqlite3
 from dataclasses import dataclass, field
 
 from jura_growth import brand_check, db, gate, log, paths, privacy, timeutil
-from jura_growth.agents.apps import backlog, builds, catalog
+from jura_growth.agents.apps import backlog, builds, catalog, ideas
 from jura_growth.agents.apps import prd as prd_mod
 
 NAME = catalog.NAME
@@ -102,7 +103,24 @@ def rejections_today(conn: sqlite3.Connection) -> int:
     ) or 0
 
 
-def submit(conn: sqlite3.Connection, text: str, *, dry_run: bool = False) -> Submission:
+BUSY = "refused: the backlog is busy, try submit-prd again"
+
+
+def submit(conn: sqlite3.Connection, text: str, *, dry_run: bool = False, idea: str | None = None) -> Submission:
+    """A real run takes the backlog lock before it writes anything (the brand attempt, the file,
+    the `app_prds` row, the request) and holds it through marking the backlog, so the row it
+    checked against Ting Yu's queue is the row it marks, and a busy backlog files nothing. A dry
+    run writes nothing and takes no lock."""
+    with contextlib.ExitStack() as stack:
+        if not dry_run:
+            try:
+                stack.enter_context(backlog.locked())
+            except TimeoutError:
+                return Submission(False, [BUSY], status="refused")
+        return _submit(conn, text, dry_run=dry_run, idea=idea)
+
+
+def _submit(conn: sqlite3.Connection, text: str, *, dry_run: bool, idea: str | None) -> Submission:
     today = timeutil.today_str()
     limit = catalog.limit_reason(conn, today)
     if limit:
@@ -114,6 +132,9 @@ def submit(conn: sqlite3.Connection, text: str, *, dry_run: bool = False) -> Sub
     ctx = context(conn)
     errors = prd_mod.validate_factory(text, ctx) + private_problems(conn, text)
     parsed = prd_mod.parse(text)
+    # Ting Yu's oldest idea first, and only his rows renamed (`ideas.binding`).
+    idea, problems = ideas.binding(prd_slug=parsed.slug, prd_name=parsed.name, idea=idea)
+    errors += problems
     if errors:
         if not dry_run:
             log.event(conn, "apps.submit.rejected", {"app": parsed.app_id, "slug": parsed.slug, "errors": errors[:20]}, level="warning", agent=NAME)
@@ -156,7 +177,7 @@ def submit(conn: sqlite3.Connection, text: str, *, dry_run: bool = False) -> Sub
         request = builds.request(conn, parsed.app_id, reason=f"the app factory filed {parsed.app_id} on {today}", run_id=run_id)
         log.event(conn, "apps.prd.written", {"app": parsed.app_id, "name": parsed.name, "path": relative,
                                              "approval": request.id if request else None}, agent=NAME)
-    backlog.mark_written(
+    backlog.mark_written_held(  # `submit` holds the backlog lock
         name=parsed.name,
         slug=parsed.slug,
         app_id=parsed.app_id,
@@ -164,6 +185,7 @@ def submit(conn: sqlite3.Connection, text: str, *, dry_run: bool = False) -> Sub
         tier=parsed.tier,
         category=parsed.category,
         does=entry.get("description", parsed.one_line),
+        idea=idea,
     )
     lines = [
         f"filed: {parsed.app_id} {parsed.name} at {relative}",
