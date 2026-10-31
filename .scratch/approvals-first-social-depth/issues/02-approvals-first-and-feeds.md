@@ -16,3 +16,5 @@ Asks go to #approvals, an approval triggers the action, and outcomes go to the a
 **Acceptance:** the criteria above pass at the seams in `reviews/technical.md` "Ticket 02". `uv run pytest` is green across the suite. Nothing in `browser` mode asks Ting Yu to post by hand: a test greps every message of a submit for it.
 
 ## Comments
+
+2026-10-31, conductor: `approvals.dispatch_builds` is now on (growth PR #15, merged into the feature branch). Functional S2 changes: `app-build`'s feed line reads the switch and says Dispatch's crew builds it when on, and gives the by-hand text only when off. Read `builds.py:220` and use the same wording source as the decision's answer.
