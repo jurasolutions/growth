@@ -54,8 +54,11 @@ def channels() -> list[str]:
     return list(config.settings()["discord"]["channels"])
 
 
+WEBHOOK_ENV_PREFIX = "DISCORD_WEBHOOK_"
+
+
 def env_name(channel: str) -> str:
-    return "DISCORD_WEBHOOK_" + channel.upper().replace("-", "_")
+    return WEBHOOK_ENV_PREFIX + channel.upper().replace("-", "_")
 
 
 def webhook(channel: str) -> str | None:

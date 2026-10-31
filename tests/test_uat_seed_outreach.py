@@ -361,11 +361,21 @@ def untouched_snapshot() -> dict:
     return stat_snapshot(REAL_CONFIG)
 
 
-# Runs the seed and stops it dead the moment it opens or changes anything in the folder named first,
-# so this can neither race the live engine nor let a write land. Exit 99 is the seed reaching in.
+# The seed with a planted live env file, so no run of it here can open the real one.
+SEED_PLANTED = """
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("planted_seed", sys.argv[2])
+seed = importlib.util.module_from_spec(spec)
+sys.modules["planted_seed"] = seed
+spec.loader.exec_module(seed)
+seed.LIVE_ENV_FILES = (pathlib.Path(sys.argv[1]),)
+sys.exit(seed.main(sys.argv[3:]))
+"""
+# The same, stopped dead the moment it opens or changes anything in the folder named first, so this
+# can neither race the live engine nor let a write land. Exit 99 is the seed reaching in.
 SEED_WATCHED = """
-import os, runpy, sys
-watched = os.path.realpath(sys.argv[1])
+import os, sys
+watched = os.path.realpath(sys.argv.pop(1))
 reaching_in = {"open", "sqlite3.connect", "os.mkdir", "os.remove", "os.rename", "os.rmdir", "os.truncate", "shutil.copytree"}
 
 def stop_at_the_folder(event, args):
@@ -376,9 +386,14 @@ def stop_at_the_folder(event, args):
             os._exit(99)
 
 sys.addaudithook(stop_at_the_folder)
-sys.argv = sys.argv[2:]
-runpy.run_path(sys.argv[0], run_name="__main__")
-"""
+""" + SEED_PLANTED
+
+
+def seed_args(driver: str, *first: object, tmp_path) -> list[str]:
+    """`driver`, then what it takes before the seed's own arguments, with the planted live file."""
+    planted = tmp_path / "planted-live.env"
+    planted.write_text("", encoding="utf-8")
+    return [sys.executable, "-c", driver, *map(str, first), str(planted), str(Path(seed.__file__))]
 
 
 def refusal_env(data, root, tmp_path) -> dict:
@@ -408,7 +423,7 @@ def planted_live(tmp_path):
 @pytest.mark.parametrize("scenario", list(seed.SCENARIOS))
 def test_every_scenario_refuses_the_live_folders_without_opening_them(scenario, tmp_path):
     env = refusal_env(LIVE_DATA, paths.JURA_ROOT, tmp_path)
-    args = [sys.executable, "-c", SEED_WATCHED, str(LIVE_DATA), str(Path(seed.__file__)), str(LIVE_DATA), "--scenario", scenario, "--lead", "240"]
+    args = [*seed_args(SEED_WATCHED, LIVE_DATA, tmp_path=tmp_path), str(LIVE_DATA), "--scenario", scenario, "--lead", "240"]
     ran = subprocess.run(args, env=env, capture_output=True, text=True, timeout=60)
     assert ran.returncode == 2 and ran.stdout.startswith("refused:"), ran.stdout + ran.stderr
     assert not (tmp_path / "outputs").exists() and not (tmp_path / "prd").exists()
@@ -418,7 +433,7 @@ def test_every_scenario_refuses_the_live_folders_without_opening_them(scenario, 
 def test_every_scenario_refuses_a_live_looking_folder_and_changes_nothing(scenario, tmp_path):
     root, data = planted_live(tmp_path)
     before = stat_snapshot(root)
-    args = [sys.executable, str(Path(seed.__file__)), str(data), "--scenario", scenario, "--lead", "240"]
+    args = [*seed_args(SEED_PLANTED, tmp_path=tmp_path), str(data), "--scenario", scenario, "--lead", "240"]
     ran = subprocess.run(args, env=refusal_env(data, root, tmp_path), capture_output=True, text=True, timeout=60)
     assert ran.returncode == 2 and ran.stdout.startswith("refused:"), ran.stdout + ran.stderr
     assert stat_snapshot(root) == before
@@ -434,10 +449,10 @@ def test_those_two_checks_would_catch_a_seed_that_got_in(tmp_path):
            "JURA_GROWTH_OUTPUTS_DIR": str(data / "outputs"), "JURA_PRD_DIR": str(data / "prd"),
            "JURA_GROWTH_CONFIG_DIR": str(data / "config")}
     before = stat_snapshot(data)
-    watched = [sys.executable, "-c", SEED_WATCHED, str(data), str(Path(seed.__file__)), str(data), "--scenario", "drift"]
+    watched = [*seed_args(SEED_WATCHED, data, tmp_path=tmp_path), str(data), "--scenario", "drift"]
     ran = subprocess.run(watched, env=env, capture_output=True, text=True, timeout=60)
     assert ran.returncode == 99, ran.stdout + ran.stderr
-    let_in = [sys.executable, str(Path(seed.__file__)), str(data), "--scenario", "drift"]
+    let_in = [*seed_args(SEED_PLANTED, tmp_path=tmp_path), str(data), "--scenario", "drift"]
     ran = subprocess.run(let_in, env=env, capture_output=True, text=True, timeout=60)
     assert ran.returncode == 0, ran.stdout + ran.stderr
     assert stat_snapshot(data) != before

@@ -141,6 +141,32 @@ NETWORK = NetworkGuard()
 sys.addaudithook(NETWORK.hook)
 
 
+class LiveEnvGuard:
+    """Refuses any open of the live `.env`, read or write: it holds real webhooks and keys, and no
+    test has a reason to see them. Tests plant `seed.LIVE_ENV_FILES` (`isolated`). Subprocesses are
+    outside the hook, as for the other two guards."""
+
+    def __init__(self, *files):
+        self.files = {os.path.realpath(file) for file in files}
+        self.violations: list[str] = []
+
+    def take(self) -> list[str]:
+        found, self.violations = self.violations, []
+        return found
+
+    def hook(self, event, args):
+        if event != "open" or not args or not isinstance(args[0], (str, bytes, os.PathLike)):
+            return
+        target = os.path.realpath(os.fsdecode(args[0]))
+        if target in self.files:
+            self.violations.append(target)
+            raise PermissionError(f"tests must not open the live .env: {target}")
+
+
+LIVE_ENV = LiveEnvGuard(paths.REPO_ROOT / ".env", paths.JURA_ROOT / "repos" / "growth" / ".env")
+sys.addaudithook(LIVE_ENV.hook)
+
+
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
     """Every test gets its own data, outputs and launchd folders, no Discord
@@ -169,13 +195,23 @@ def isolated(tmp_path, monkeypatch):
     # set (BP-03, AC-P9.5), so a shell that exported one doesn't change a test.
     for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
         monkeypatch.delenv(name, raising=False)
+    # The seed compares a UAT env file against the live one. Here it compares against this.
+    from uat import seed
+
+    planted = tmp_path / "planted-live.env"
+    planted.write_text("DISCORD_WEBHOOK_ALERTS=https://discord.invalid/api/webhooks/900/planted-live-token\n", encoding="utf-8")
+    monkeypatch.setattr(seed, "LIVE_ENV_FILES", (planted,))
     config.reset_caches()
     GUARD.take()
     NETWORK.take()
+    LIVE_ENV.take()
     yield tmp_path
     config.reset_caches()
     refused = GUARD.take()
     reached = NETWORK.take()
+    opened = LIVE_ENV.take()
+    if opened:
+        pytest.fail("this test opened the live .env:\n  " + "\n  ".join(opened))
     if refused:
         pytest.fail("this test wrote into the repo or jurasolutions/:\n  " + "\n  ".join(refused))
     if reached:
@@ -194,6 +230,12 @@ def network_guard():
     """The session's network guard. A test that provokes it on purpose calls
     `network_guard.take()` so its own refusals don't fail it."""
     return NETWORK
+
+
+@pytest.fixture
+def live_env_guard():
+    """The session's live `.env` guard. A test that provokes it on purpose calls `take()`."""
+    return LIVE_ENV
 
 
 @pytest.fixture

@@ -77,6 +77,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -84,18 +85,25 @@ import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import yaml
 
-from jura_growth import cards, cloudflare, config, db, holidays, paths, schedule, suppression, timeutil, uat_stub
+from jura_growth import cards, cloudflare, config, db, discord, holidays, paths, schedule, suppression, timeutil, uat_stub
 from jura_growth.agents.outreach import send, store
 
 FOLDERS = ("JURA_GROWTH_DATA_DIR", "JURA_GROWTH_OUTPUTS_DIR", "JURA_PRD_DIR")
 # Folders the seed writes to only when they are set, and then only inside the UAT folder.
 OPTIONAL_FOLDERS = ("JURA_GROWTH_CONFIG_DIR",)
-LIVE_ENV_FILES = (paths.REPO_ROOT / ".env", paths.JURA_ROOT / "repos" / "growth" / ".env")  # where the live webhooks are
-WEBHOOK_PREFIX = "DISCORD_WEBHOOK_"
+
+
+def live_env_places() -> tuple[Path, ...]:
+    """Where the live webhooks are. Only a real seed run reads them, read-only: the suite plants
+    `LIVE_ENV_FILES`."""
+    return (paths.REPO_ROOT / ".env", paths.JURA_ROOT / "repos" / "growth" / ".env")
+
+
+LIVE_ENV_FILES = live_env_places()
 HISTORY_DAYS = 8  # S1: run history from eight days before the seeded day
 OUTREACH_SCENARIOS = ("outreach-live", "edit-draft", "shadow-trial")  # only email waits for a business day; social runs daily
 
@@ -191,11 +199,43 @@ def _webhook_refusal() -> str | None:
     if paths.is_within(value, paths.REPO_ROOT) or paths.is_within(value, paths.JURA_ROOT):
         return f"JURA_GROWTH_ENV_FILE ({value}) is inside the repo or jurasolutions/, where the live webhooks are: use a file of its own"
     for name, url in os.environ.items():
-        if name.startswith(WEBHOOK_PREFIX) and url and not _cannot_leave_this_mac(url):
+        if name.startswith(discord.WEBHOOK_ENV_PREFIX) and url and not _cannot_leave_this_mac(url):
             return f"{name} is set in this shell: unset it, and put the test server's webhook in the UAT env file"
-    live = {url for path in LIVE_ENV_FILES for name, url in config._parse_env(path).items() if name.startswith(WEBHOOK_PREFIX) and url}
-    for name, url in config._parse_env(Path(value)).items():
-        if name.startswith(WEBHOOK_PREFIX) and url in live:
+    return _live_webhook_refusal(Path(value))
+
+
+def _webhook_id(url: str) -> str | None:
+    """A Discord webhook's id, however its URL is spelled: any host, API version, slash or query."""
+    match = re.search(r"/webhooks/+(\d+)", unquote(urlsplit(url).path), re.I)
+    return match.group(1) if match else None
+
+
+def _live_webhook_refusal(env_file: Path) -> str | None:
+    """Why the UAT env file could reach a live webhook, or None. It compares ids, and it refuses
+    what it can't compare: nothing to compare against, a `keychain:` value that `config.secret`
+    would resolve only after this check, or a value with no id."""
+    found = [path for path in LIVE_ENV_FILES if path.exists()]
+    if not found:
+        return "no live env file to compare the webhooks against: export JURA_ROOT, as uat.md says"
+    live: set[str] = set()
+    for path in found:
+        for name, url in config._parse_env(path).items():
+            if not name.startswith(discord.WEBHOOK_ENV_PREFIX) or not url:
+                continue
+            resolved = config._keychain(url.removeprefix("keychain:")) if url.startswith("keychain:") else url
+            found_id = _webhook_id(resolved or "")
+            if found_id is None:
+                return f"{name} in the live env file can't be read to compare against: check it, then run this again"
+            live.add(found_id)
+    for name, url in config._parse_env(env_file).items():
+        if not name.startswith(discord.WEBHOOK_ENV_PREFIX) or not url or _cannot_leave_this_mac(url):
+            continue
+        if url.startswith("keychain:"):
+            return f"{name} in the UAT env file is a keychain value, which can't be checked: write the test server's webhook itself"
+        found_id = _webhook_id(url)
+        if found_id is None:
+            return f"{name} in the UAT env file isn't a webhook address that can be checked: write the test server's webhook itself"
+        if found_id in live:
             return f"{name} in the UAT env file is a live webhook: use the test server's"
     return None
 
