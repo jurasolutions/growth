@@ -1,6 +1,6 @@
 """The social content agent (jurasolutions/prd/pending/prd-jura-social-content-2026-10-24.md).
 
-Every morning at 07:00 SGT a headless Claude run (`prompts/social.md`) writes
+Every morning at 07:30 SGT a headless Claude run (`prompts/social.md`) writes
 one post for the day's theme, adapted for each platform switched on in
 `config/social.yaml` (the Facebook Page and Instagram; LinkedIn was switched off
 on 2026-10-29), and hands it to `jura-growth social submit`. The submit command

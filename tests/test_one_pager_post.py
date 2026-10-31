@@ -78,9 +78,9 @@ def section_order(text: str) -> list[int]:
 # --- the settings (AC-M1.5, ticket review N8) ----------------------------------------------------
 
 
-def test_the_one_pager_job_runs_at_08_00_as_the_digest_agent_directly_after_digest():
+def test_the_one_pager_job_runs_at_09_00_as_the_digest_agent_directly_after_digest():
     jobs = config.settings()["jobs"]
-    assert jobs["one-pager"] == {"agent": "digest", "kind": "command", "command": ["one-pager"], "schedule": {"daily": "08:00"}}
+    assert jobs["one-pager"] == {"agent": "digest", "kind": "command", "command": ["one-pager"], "schedule": {"daily": "09:00"}}
     names = list(jobs)
     assert names[names.index("digest") + 1] == "one-pager"
     assert "mission-control" in discord.channels()

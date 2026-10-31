@@ -170,13 +170,13 @@ paused     nothing
 
 job              schedule                                 installed  last run
 heartbeat        daily 12:00                              no         never
-app-factory      daily 06:30                              no         never
-social           daily 07:00                              no         never
-scout-research   business days 09:00                      no         never
+app-factory      daily 07:00                              no         never
+social           daily 07:30                              no         never
+scout-research   business days 06:30                      no         never
 scout-send       business days 09:30–16:30, every 10 min  no         never
 scout-sync       business days 16:45                      no         never
 digest           daily 17:30                              no         never
-community        Mon 07:30                                no         never
+community        Mon 08:00                                no         never
 backup           daily 23:30                              yes        never
 
 discord    0 of {channels} channel webhooks set

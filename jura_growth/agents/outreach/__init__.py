@@ -1,7 +1,7 @@
 """Outreach: queues, checks and sends the scout's emails (scout PRD §5.3–5.8).
 
-Jobs `scout-send` (every 10 minutes, quiet) and `scout-sync` (16:45) run as
-agent `outreach`, so `jura-growth pause outreach` / `resume outreach` stop and
+Jobs `outreach-requests` (08:30, quiet), `scout-send` (every 10 minutes, quiet)
+and `scout-sync` (16:45) run as agent `outreach`, so `jura-growth pause outreach` / `resume outreach` stop and
 start sending without touching research. Settings: `config/scout.yaml`
 (`mode: shadow` by default). Hard limits: `caps.py`.
 """

@@ -68,7 +68,7 @@ jobs:
     kind: claude
     prompt: app-factory.md
     tools: [WebSearch, WebFetch]
-    schedule: {daily: "06:30"}
+    schedule: {daily: "07:00"}
     run_update: true # one message per run in #app-factory
 
   social:
@@ -76,7 +76,7 @@ jobs:
     kind: claude
     prompt: social.md
     tools: [WebSearch, WebFetch]
-    schedule: {daily: "07:00"}
+    schedule: {daily: "07:30"}
     run_update: true # one message per run in #social-drafts
 
   scout-research:
@@ -84,7 +84,7 @@ jobs:
     kind: claude
     prompt: scout.md
     tools: [WebSearch, WebFetch]
-    schedule: {business_days: "09:00"}
+    schedule: {business_days: "06:30"}
     run_update: true # one message per run in #scout-leads
 
   scout-send:
@@ -121,7 +121,7 @@ jobs:
     agent: digest
     kind: command
     command: [one-pager]
-    schedule: {daily: "08:00"}
+    schedule: {daily: "09:00"}
 
   community:
     agent: community
@@ -130,7 +130,7 @@ jobs:
     tools: [WebSearch, WebFetch]
     # No WebFetch denials here: the community plug-in denies every domain in
     # config/community.yaml blocked_fetch_domains, and every subdomain of it.
-    schedule: {weekly: {day: mon, time: "07:30"}}
+    schedule: {weekly: {day: mon, time: "08:00"}}
     run_update: true # one message per run in #community
 
   # Browser publishing (prd-jura-browser-publishing §5.8; ADR 0005). Posts one

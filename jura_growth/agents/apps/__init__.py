@@ -1,7 +1,7 @@
 """The daily app PRD factory (prd-jura-app-factory-2026-10-24.md §5.6, §5.7,
 block 4).
 
-At 06:30 SGT a headless run reads `jura-growth apps context --json`, picks the
+At 07:00 SGT a headless run reads `jura-growth apps context --json`, picks the
 next tool idea, checks any rule it depends on against the official source,
 writes a PRD to `prd/templates/prd-app-template.md` in its scratch folder and
 files it with `jura-growth apps submit-prd`. The code enforces one PRD a day,
@@ -57,7 +57,7 @@ def permissions(job: str):
 
 
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
-    """Before the 06:30 run: the catch-up pass first, so PRDs filed before requests existed count
+    """Before the 07:00 run: the catch-up pass first, so PRDs filed before requests existed count
     toward the waiting pile and get their cards, then the limits."""
     if job != JOB:
         return None

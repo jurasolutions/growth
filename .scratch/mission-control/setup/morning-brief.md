@@ -4,7 +4,7 @@
 09; the release copies it to `outputs/growth/setup/morning-brief.md`, replacing the guide that
 added the line.*
 
-The one-pager now tells you how the growth engine is doing, every morning at 08:00 SGT in
+The one-pager now tells you how the growth engine is doing, every morning at 09:00 SGT in
 `#mission-control` on Discord: what needs you, approvals waiting, today's runs, yesterday's figures
 and spend, and the 14-day grid. The Jura growth line in the Cowork morning brief says less, a day
 later, so it goes. All growth communication is now in Discord.
@@ -12,7 +12,7 @@ later, so it goes. All growth communication is now in Discord.
 ## Before you start
 
 Check that the one-pager reaches `#mission-control`: run `.venv/bin/jura-growth one-pager` in
-`repos/growth`, or wait for the 08:00 post. If `#mission-control` doesn't exist yet, do
+`repos/growth`, or wait for the 09:00 post. If `#mission-control` doesn't exist yet, do
 `discord.md` first. Until the one-pager arrives, keep the line.
 
 ## Remove the Jura growth line
@@ -34,4 +34,4 @@ Check that the one-pager reaches `#mission-control`: run `.venv/bin/jura-growth 
 - The one-pager's Yesterday section repeats the digest's figure lines for the day before.
 
 **Done when:** the next morning brief has no Jura growth line, and `#mission-control` had the
-one-pager at 08:00.
+one-pager at 09:00.
