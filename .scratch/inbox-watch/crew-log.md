@@ -73,3 +73,13 @@ decisions: ticket 05 reconciles onto the merge. Its publish/job.py alert questio
 decisions: the clean working folder extends to both inbox browser jobs; publish and the web-reading jobs are follow-up ticket 07, and Ting Yu is told
 questions: -
 evidence:  developer: 4770 passed at 03a71e0 (02); 4739 passed (05, before the merge)
+
+## 2026-11-01 conductor (ticket 03 merged)
+status:    done
+persona:   conductor
+ticket:    03
+artifacts: crew/inbox-watch; PRD "Amended after code review 03"
+decisions: live outreach sends carry no new header, reversing my R-3 call after the reviewer's evidence. inbox-send pauses no other agent, and a failed suppression read holds its replies
+decisions: merged after one fix round; the final review checks the fixes
+questions: -
+evidence:  developer: 5380 passed at a7a3324 on the merged tree; 22 of 22 review fixes caught when undone
