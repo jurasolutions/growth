@@ -292,6 +292,15 @@ def _recent_starts(conn: sqlite3.Connection, jobs: Mapping[str, Any]) -> dict[st
     return found
 
 
+def _drift(conn: sqlite3.Connection, jobs: Mapping[str, Any], now: datetime) -> health.Drift | None:
+    """A malformed `started_at` costs this one check, never the one-pager. `sqlite3.Error` still
+    raises: a hot journal or a lock is the snapshot's `db_state`."""
+    try:
+        return health.schedule_drift(_recent_starts(conn, jobs), jobs, now)
+    except ValueError:
+        return None
+
+
 def _from_db(
     conn: sqlite3.Connection, source: Source, now: datetime, days: tuple[date, ...], installs: dict[str, str], last: datetime
 ) -> dict:
@@ -306,7 +315,7 @@ def _from_db(
         found = slots.classify(source.jobs, records, now, days, installed=loaded)
         facts["slots"] = {key: [_clean_slot(slot) for slot in statuses] for key, statuses in found.items()}
         facts["failures"] = _failures(conn, now)
-        facts["drift"] = health.schedule_drift(_recent_starts(conn, source.jobs), source.jobs)
+        facts["drift"] = _drift(conn, source.jobs, now)
         facts["yesterday"], facts["spend_today"] = _yesterday(conn, now)
     if "pause_flags" in tables:
         rows = conn.execute("SELECT agent, reason FROM pause_flags WHERE paused = 1 ORDER BY agent").fetchall()
@@ -327,7 +336,14 @@ def _failures(conn: sqlite3.Connection, now: datetime) -> tuple[Failure, ...]:
         " ORDER BY started_at, id",
         (day_ago,),
     ).fetchall()
-    return tuple(Failure(_clean(row["job"]), timeutil.parse(row["started_at"]).astimezone(SGT), _clean((row["error"] or "")[:300]) or None) for row in rows)
+    found = []
+    for row in rows:
+        try:
+            at = timeutil.parse(row["started_at"]).astimezone(SGT)
+        except ValueError:  # as in `_record`: a stamp that doesn't parse drops its row, not the one-pager
+            continue
+        found.append(Failure(_clean(row["job"]), at, _clean((row["error"] or "")[:300]) or None))
+    return tuple(found)
 
 
 def _yesterday(conn: sqlite3.Connection, now: datetime) -> tuple[Yesterday | None, float]:
@@ -388,7 +404,10 @@ def _last_one_pager(conn: sqlite3.Connection, now: datetime, scheduled: datetime
     ).fetchone()[0]
     if not found:
         return scheduled
-    ran = timeutil.parse(found).astimezone(SGT)
+    try:
+        ran = timeutil.parse(found).astimezone(SGT)
+    except ValueError:  # a stamp that doesn't parse never breaks the one-pager
+        return scheduled
     return ran if ran >= now - ONE_PAGER_LOOKBACK else scheduled
 
 
