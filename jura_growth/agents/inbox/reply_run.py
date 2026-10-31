@@ -298,7 +298,7 @@ def _claim(conn: sqlite3.Connection, item: dict, read: Read, run_id: int) -> dic
             if reply is None or reply.content_hash() != used.content_hash:
                 raise approvals.NotApproved(approvals.NotApproved.MISMATCH, f"what would go out isn't what {used.id} approved", used)
             now = timeutil.stamp()
-            conn.execute("UPDATE inbox_items SET state = ?, send_attempts = send_attempts + 1, updated_at = ? WHERE id = ?",
+            conn.execute("UPDATE inbox_items SET state = ?, send_attempts = send_attempts + 1, asked_at = NULL, guidance = NULL, updated_at = ? WHERE id = ?",
                          (store.SENDING, now, item["id"]))
             store.update_thread(conn, item["id"], claim_read={"author": read.author, "newest": read.newest})
             log.event(conn, "inbox.reply_claimed", {"item": item["id"], "approval": used.id}, agent=AGENT, run_id=run_id)

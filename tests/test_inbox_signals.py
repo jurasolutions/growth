@@ -200,6 +200,7 @@ def complaint(conn, domains=("acme.example",)) -> None:
 
 
 def test_iw_s12_a_spam_complaint_gets_a_high_report_with_no_draft(conn, box, monkeypatch, discord_double):
+    signals.report_complaints(conn)  # the first check starts from now
     complaint(conn)
     conn.commit()
     job.precheck(conn)
@@ -212,6 +213,7 @@ def test_iw_s12_a_spam_complaint_gets_a_high_report_with_no_draft(conn, box, mon
 
 
 def test_iw_s12_a_complaint_is_reported_once(conn, box, monkeypatch, discord_double):
+    signals.report_complaints(conn)  # the first check starts from now
     complaint(conn)
     conn.commit()
     signals.report_complaints(conn)

@@ -484,6 +484,50 @@ def test_iw_s4_a_missing_page_or_a_closed_box_is_an_outcome_not_a_stop(conn, fak
     assert any(store.label(item_id) in content for content in discord_double.contents("mission-control"))
 
 
+def test_iw_s4_a_closed_box_stays_on_replies_waiting_and_a_gone_target_leaves_it(conn, fake, monkeypatch, discord_double):
+    box, _ = approved(conn, monkeypatch)
+    fake.scenario([*opening(shows="The reply box is closed"), *claim_steps(target="closed"), *w.browser(t.closed())])
+    run()
+    since = "2026-11-01T00:00:00+08:00"
+    assert store.label(box) in "\n".join(one_pager.lines(conn, since, limit=None))
+    assert steer.done(conn, store.label(box)).text == f"{store.label(box)} is cleared."
+    gone = "https://www.instagram.com/direct/t/222/"
+    second, _ = approved(conn, monkeypatch, key="k2", conversation="c2", target=gone, author="Mei Ling")
+    pw.at(monkeypatch, LATER)
+    fake.scenario([*opening(gone, "This content isn't available"), *claim_steps(target="gone"), *w.browser(t.closed())])
+    run()
+    assert store.get(conn, second)["state"] == store.CLOSED
+    assert gone not in "\n".join(one_pager.lines(conn, since, limit=None))
+
+
+def test_iw_d6_a_claim_ends_any_redraft_he_asked_for(conn, fake, monkeypatch, discord_double):
+    """His guidance for one card can't reach their next message (code review 04, P-2)."""
+    item_id, _ = approved(conn, monkeypatch)
+    store.ask_for_draft(conn, item_id, "shorter")
+    fake.scenario(good_dm())
+    run()
+    item = store.get(conn, item_id)
+    assert item["state"] == store.SENT and item["asked_at"] is None and item["guidance"] is None
+
+
+def test_iw_d6_a_redraft_after_he_approved_a_social_card_keeps_his_yes(conn, fake, monkeypatch, discord_double):
+    item_id, record = approved(conn, monkeypatch)
+    conn.execute("UPDATE inbox_items SET asked_at = ?, state = ? WHERE id = ?", (timeutil.stamp(), store.WAITING, item_id))
+    outcome = triage.submit(conn, {"id": store.label(item_id), "class": "question", "draft": "We do, and Levi can tell you more."})
+    assert outcome.exit_code == 0 and "decided" in outcome.text()
+    assert store.get(conn, item_id)["draft"] == DRAFT and approvals.get(conn, record.id).status == approvals.APPROVED
+
+
+def test_iw_n13_clearing_an_unknown_social_reply_never_sends_it_again(conn, fake, monkeypatch, discord_double):
+    item_id, _ = approved(conn, monkeypatch)
+    fake.scenario([*opening(), *claim_steps(), *w.browser(t.closed())])
+    run()
+    assert steer.done(conn, store.label(item_id)).exit_code == 0
+    assert store.get(conn, item_id)["state"] == store.UNKNOWN
+    assert "may have" in steer.draft(conn, store.label(item_id), ()).text
+    assert reply_run.due(conn) == []
+
+
 def test_iw_f9_the_author_on_the_thread_must_be_the_items(conn, fake, monkeypatch, discord_double):
     item_id, record = approved(conn, monkeypatch)
     fake.scenario([*opening(shows=f"Someone Else\n{SAID}"), *claim_steps(author="Someone Else"), *w.browser(t.closed())])

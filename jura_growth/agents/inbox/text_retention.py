@@ -16,6 +16,9 @@ row and from its cards' `approval_cards.first_piece`. **What stays:** the state,
 domain and the hashes and ids that count a message once, so a read of an old thread doesn't report it as
 new (W5).
 
+**What this can't reach:** the cards and reports already posted are Discord's copies, which stay until he
+deletes them there. PRD §4 accepts Discord as a third party, and nothing here calls its delete.
+
 The nightly backup runs this before it copies the database, through the plug-in's `retention` hook: that
 job keeps running when `inbox` is paused. The outbox has its own limit (`backup.prune_outbox`), and
 backups and transcripts theirs. `remote.command` events keep no typed words for these commands, because
@@ -28,11 +31,10 @@ import json
 import sqlite3
 from datetime import timedelta
 
-from jura_growth import db, log, timeutil
+from jura_growth import caps, db, log, timeutil
 from jura_growth.agents.inbox import kinds, settings, store
 
 AGENT = "inbox"
-HAND_REPLY_LISTED_DAYS = 7  # R4
 _THREAD_KEPT = ("run", "surface", "thread", "comment_id", "words_key", "loose_key", "occurrence", "attachment", "answered")
 _STILL_MOVING = (store.NEW, store.TRIAGED, store.WAITING, store.SENDING, store.OBSERVED)
 _TOLD = (store.REPORTED, store.UNVERIFIED)
@@ -51,7 +53,7 @@ def closes_at(item: dict) -> str | None:
     if state == store.NEEDS_HAND_REPLY:
         if item["promised"] and item["sent_at"]:
             return item["sent_at"]
-        return timeutil.stamp(timeutil.parse(item["updated_at"]) + timedelta(days=HAND_REPLY_LISTED_DAYS))
+        return timeutil.stamp(timeutil.parse(item["updated_at"]) + timedelta(days=caps.INBOX_LISTED_DAYS))
     return item["closed_at"] or item["updated_at"]
 
 

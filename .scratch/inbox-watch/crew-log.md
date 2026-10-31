@@ -83,3 +83,13 @@ decisions: live outreach sends carry no new header, reversing my R-3 call after 
 decisions: merged after one fix round; the final review checks the fixes
 questions: -
 evidence:  developer: 5380 passed at a7a3324 on the merged tree; 22 of 22 review fixes caught when undone
+
+## 2026-11-01 conductor (ticket 04 merged)
+status:    done
+persona:   conductor
+ticket:    04
+artifacts: crew/inbox-watch; PRD "Amended after code review 04"
+decisions: merged after one fix round; the final review checks the fixes. A redraft's old card stays open; `unsuppress` lifts only a reply's own suppression
+decisions: developer changed `done`'s contract so a new card can't block clearing a promise; accepted
+questions: -
+evidence:  developer: 5642 passed at 78009f6; reviewer: scheduled runs refused on all six steer commands

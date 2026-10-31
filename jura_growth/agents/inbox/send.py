@@ -208,7 +208,7 @@ def _claim(conn: sqlite3.Connection, item_id: int) -> _Claimed | None:
 
 def _in_flight(conn: sqlite3.Connection, item: dict, reply: kinds.Reply, subject: str, claim: approvals.Approval) -> _Claimed:
     now = timeutil.stamp()
-    conn.execute("UPDATE inbox_items SET state = ?, send_attempts = send_attempts + 1, updated_at = ? WHERE id = ?",
+    conn.execute("UPDATE inbox_items SET state = ?, send_attempts = send_attempts + 1, asked_at = NULL, guidance = NULL, updated_at = ? WHERE id = ?",
                  (store.SENDING, now, item["id"]))
     message_id = _outgoing_id(subject, claim)
     store.remember_outgoing(conn, message_id, lead_id=item["lead_id"])

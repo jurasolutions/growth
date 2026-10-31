@@ -11,9 +11,11 @@ person's words can't reach them through a model.
   exists, because triage may fail, and approving it meanwhile sends what it says and drops the redraft.
 - **draft I-nnnn [guidance]:** the way back when the model said no reply was needed. It answers the
   conversation's newest message, since a reply to an older one would be gone at once (D5).
-- **done I-nnnn:** clears a conversation's hand replies and lapsed or uncertain lines from R4.
-- **unsuppress I-nnnn:** lifts a suppression that came from a reply, and nothing else, and restores the
-  lead. An unsubscribe click, a bounce, a complaint or a manual entry stays.
+- **done I-nnnn:** clears a conversation's hand replies and lapsed or uncertain lines from R4. It doesn't
+  erase what they were, so what may have gone out is still never sent again.
+- **unsuppress I-nnnn:** lifts a suppression its own message caused, on the address its own sender wrote
+  from, and restores the lead. An unsubscribe click, a bounce, a complaint, a manual entry or a whole
+  domain stays, and so does anything a stranger's `Reply-To` names.
 
 Reword and redraft work only on a card still waiting for him. A decided, lapsed, superseded or claimed
 card refuses and says why. While `inbox` is paused nothing here raises a card or asks for one, since a
@@ -25,16 +27,16 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from jura_growth import approvals, caps, cards, cloudflare, db, log, pause, privacy, suppression, timeutil
-from jura_growth.agents.inbox import checks, kinds, social, store, triage
-from jura_growth.agents.outreach import store as outreach_store
+from jura_growth import approvals, caps, cards, db, log, pause, suppression, timeutil
+from jura_growth.agents.inbox import checks, kinds, mail, social, store, triage
+from jura_growth.agents.outreach import replies
 
 AGENT = "inbox"
-PARAGRAPH_BREAKS = ("//", "\\n\\n")  # Dispatch splits on whitespace, so a line break must be typed as a word (N9, S1)
+_TYPED_BREAK = "\\n\\n"
+PARAGRAPH_BREAKS = ("//", _TYPED_BREAK)  # Dispatch splits on whitespace, so a line break must be typed as a word (N9, S1)
 _REPLY_SENT = (store.SENDING, store.SENT, store.UNKNOWN)
 _NEVER_DRAFTED = {store.BASELINE: "A baseline message is never drafted for.", store.OWN: "That is the Page's own message, so it gets no draft.",
                   store.OBSERVED: "The watch's checks haven't read that yet. Try again after the run."}
-_CLEARED_BY_DONE = (store.NEEDS_HAND_REPLY, store.LAPSED, store.FAILED, store.UNKNOWN, store.UNVERIFIED)
 
 
 @dataclass(frozen=True)
@@ -70,8 +72,12 @@ def paragraphs(words: tuple[str, ...]) -> str:
     for word in words:
         if word in PARAGRAPH_BREAKS:
             found.append([])
-        else:
-            found[-1].append(word)
+            continue
+        first, *rest = word.split(_TYPED_BREAK)  # a natural slip on a phone: it can come glued to a word
+        if first:
+            found[-1].append(first)
+        for part in rest:
+            found.append([part] if part else [])
     return "\n\n".join(" ".join(part) for part in found if part)
 
 
@@ -186,12 +192,12 @@ def _why_no_draft(conn: sqlite3.Connection, item: dict) -> str | None:
         return _NEVER_DRAFTED[state]
     if state == store.UNVERIFIED:
         return "It's unverified, so its words aren't proved to be anyone's. Read the thread and answer by hand."
-    if state in _REPLY_SENT or item["sent_at"]:
-        return "A reply already went, or may have. Answer by hand if there is more to say."
     if state == store.FAILED and item["source"] in store.SOCIAL_SOURCES:
         return "The last reply on this one didn't post, and it isn't tried again. Answer by hand."
     if state == store.FAILED:  # a new draft would go under the one idempotency key this item has used
         return "Resend refused the last reply on this one. Answer by hand."
+    if state in _REPLY_SENT or item["sent_at"] or item["send_attempts"] or approvals.claimed(conn, store.approval_subject(item["id"])):
+        return "A reply already went, or may have. Answer by hand if there is more to say."
     if state == store.WAITING:
         record = social.latest_for(conn, item)
         number = record.id if record else "its card"
@@ -202,8 +208,10 @@ def _why_no_draft(conn: sqlite3.Connection, item: dict) -> str | None:
         return "There are no words kept to draft from. Answer by hand if it needs one."
     reason = kinds.suppressed_because(conn, item)
     if reason:
-        return f"The address is suppressed ({reason}), so no reply can go. `/growth inbox unsuppress {store.label(item['id'])}` lifts one that came from a reply."
-    if item["source"] in store.MAIL_SOURCES and kinds.reply_of({**item, "draft": "x"}) is None:
+        # Offered only on the message that caused it: a stranger can name anyone in a `Reply-To` (SEC-2).
+        lift = f" `/growth inbox unsuppress {store.label(item['id'])}` lifts it if that's wrong." if item["suppressed_by_this"] else ""
+        return f"The address is suppressed ({reason}), so no reply can go.{lift}"
+    if item["source"] in store.MAIL_SOURCES and mail.valid_recipient(store.thread_of(item).get("reply_to")) is None:
         return "It has no single address to answer. Answer by hand."
     if item["source"] in store.SOCIAL_SOURCES and not item["target"]:
         return "The watch kept no safe address for it. Answer by hand."
@@ -243,72 +251,60 @@ def done(conn: sqlite3.Connection, label: str) -> Answer:
     if item is None:
         return _refused(f"there is no inbox item {label}.")
     conversation = store.in_conversation(conn, item["conversation"])
-    clearable = [other["id"] for other in conversation if other["state"] in _CLEARED_BY_DONE]
+    clearable = [other for other in conversation if other["state"] in store.LISTED_STATES and not other["closed_at"]]
+    carded = next((other for other in conversation if other["state"] == store.WAITING), None)
+    record = social.latest_for(conn, carded) if carded else None
     if not clearable:
-        carded = next((other for other in conversation if other["state"] == store.WAITING), None)
-        record = social.latest_for(conn, carded) if carded else None
         if record:
             return _refused(f"it has a card waiting. `/growth skip {record.id}` if you've answered by hand.")
         return Answer(0, f"{label} has nothing open.")
     with db.transaction(conn):
         store.mark_done(conn, clearable)
-        log.event(conn, "inbox.done", {"items": clearable}, agent=AGENT)
-    return Answer(0, f"{label} is cleared.")
+        log.event(conn, "inbox.done", {"items": [other["id"] for other in clearable]}, agent=AGENT)
+    still = f" {record.id} still waits in #approvals." if record else ""
+    return Answer(0, f"{label} is cleared.{still}")
 
 
 # --- unsuppress ----------------------------------------------------------------------------------------
 
 
-def _also_on_the_website(addresses: list[str]) -> str | None:
-    """The website's D1 may hold a click, bounce or complaint for this address, past the sync's cursor, so
-    lifting the local row alone would mail someone who said stop there. It fails closed."""
-    if not cloudflare.configured():
-        return None
-    hashes = [suppression.email_hash(address) for address in addresses]
-    try:
-        rows = cloudflare.query(f"SELECT reason FROM suppression WHERE email_hash IN ({', '.join('?' for _ in hashes)})", hashes)
-    except Exception as error:  # noqa: BLE001 - any failure means this can't be checked
-        return f"the website's list can't be read just now ({type(error).__name__}), so it stays. Try again later."
-    return f"the website's list holds them as well ({rows[0].get('reason')}), so it stays." if rows else None
-
-
-def _restore_lead(conn: sqlite3.Connection, item: dict, addresses: list[str]) -> list[int]:
-    """Their lead goes back to having replied. A bounce or a complaint on it is stronger, and stays."""
-    hashes = [suppression.email_hash(address) for address in addresses]
-    found = {row["lead_id"] for row in db.rows(conn, f"SELECT lead_id FROM contacts WHERE email_hash IN ({', '.join('?' for _ in hashes)})", tuple(hashes))}
-    lead_ids = sorted(found | ({item["lead_id"]} if item["lead_id"] else set()))
-    restored = []
-    for lead_id in lead_ids:
-        conn.execute("UPDATE outreach_replies SET unsubscribe = 0 WHERE lead_id = ?", (lead_id,))
-        if db.scalar(conn, "SELECT status FROM leads WHERE id = ?", (lead_id,)) == "unsubscribed":
-            outreach_store.set_lead_status(conn, [lead_id], "replied")
-            restored.append(lead_id)
-    return restored
+def _why_it_stays(conn: sqlite3.Connection, item: dict, address: str) -> str | None:
+    """Why this item can't lift this address, or None. In order: only a suppression a reply caused, with
+    nothing stronger on top of it, and only the message that caused it (code review 04, SEC-1, SEC-2, SEC-3)."""
+    label = store.label(item["id"])
+    domain = suppression.is_domain_suppressed(conn, suppression.domain_of(address))
+    if domain:
+        return f"a whole domain is suppressed ({domain}), and that can't be lifted here, so it stays."
+    source = suppression.source_of(conn, address)
+    if source is None:
+        return f"{label}'s address isn't suppressed."
+    if source != suppression.FROM_A_REPLY:
+        return f"that suppression didn't come from a reply, so it stays: {suppression.is_suppressed(conn, address)}, from {source}."
+    if not item["suppressed_by_this"]:
+        earlier = store.what_suppressed(conn, address) if store.thread_of(item).get("own_sender") else None
+        where = f" {store.label(earlier['id'])} is the one that did." if earlier else ""
+        return f"{label}'s message isn't what suppressed that address, so it stays.{where}"
+    return None
 
 
 def unsuppress(conn: sqlite3.Connection, label: str) -> Answer:
+    """Only the address the item's own sender wrote from, never one a `Reply-To` names, which anyone can write."""
     item = store.get(conn, store.number_of(label))
     if item is None:
         return _refused(f"there is no inbox item {label}.")
-    addresses = kinds.addresses_of(item)
-    if not addresses:
+    address = item["sender_address"]
+    if not address:
         return _refused(f"{label} has no address to lift.")
-    held = [(address, suppression.is_suppressed(conn, address)) for address in addresses]
-    held = [(address, reason) for address, reason in held if reason]
-    if not held:
-        return _refused(f"{label}'s address isn't suppressed.")
-    if any(suppression.source_of(conn, address) != suppression.FROM_A_REPLY for address, _ in held):
-        return _refused(f"that suppression didn't come from a reply ({held[0][1]}), so it stays.")
-    found = [address for address, _ in held]
-    problem = _also_on_the_website(found)
+    why = _why_it_stays(conn, item, address)
+    if why:
+        return _refused(why)
+    problem = suppression.website_holds([address])
     if problem:
         return _refused(problem)
     with db.transaction(conn):
-        for address in found:
-            suppression.lift_reply(conn, address)
-        restored = _restore_lead(conn, item, found)
+        restored = replies.undo_opt_out(conn, address, item["lead_id"], item["key"])
+        store.lifted(conn, address)
         store.set_item_state(conn, item["id"], item["state"], note="You lifted the suppression.")
-        log.event(conn, "inbox.unsuppressed", {"item": item["id"], "leads": restored}, agent=AGENT)
-    privacy.load_for_masking(conn)
+        log.event(conn, "inbox.unsuppressed", {"item": item["id"], "lead_restored": restored}, agent=AGENT)
     lead = " Their lead is back to having replied. Queued follow-ups stay cancelled." if restored else ""
-    return Answer(0, f"{label}'s suppression is lifted.{lead} `/growth inbox draft {label}` asks for a draft.")
+    return Answer(0, f"{label}'s suppression on {suppression.domain_of(address)} is lifted.{lead} `/growth inbox draft {label}` asks for a draft.")

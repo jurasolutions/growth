@@ -50,9 +50,9 @@ def backup(conn: sqlite3.Connection) -> Path:
 
 
 def prune_outbox() -> int:
-    """Delete Discord outbox days older than `retention.outbox_days` (14). A message Discord refused
-    can hold what a person wrote, and nothing replays this folder, so it mustn't outlive PRD §4's limit."""
-    keep = int(config.settings().get("retention", {}).get("outbox_days", 14))
+    """Delete Discord outbox days older than `caps.OUTBOX_DAYS`, or `retention.outbox_days` if shorter. A
+    message Discord refused can hold what a person wrote, and nothing replays this folder."""
+    keep = caps.effective(caps.OUTBOX_DAYS, config.settings().get("retention", {}).get("outbox_days"))
     cutoff = timeutil.today() - timedelta(days=keep - 1)
     folder = discord.outbox_dir()
     count = 0

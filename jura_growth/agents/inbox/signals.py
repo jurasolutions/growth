@@ -20,7 +20,7 @@ import re
 import sqlite3
 from datetime import date, timedelta
 
-from jura_growth import caps, cloudflare, db, log, timeutil
+from jura_growth import caps, cloudflare, db, health, log, timeutil
 from jura_growth.agents.inbox import store
 
 AGENT = "inbox"
@@ -35,10 +35,6 @@ _COMPLAINTS_AFTER = "signals.complaints_after"
 
 def _warn(conn: sqlite3.Connection, why: str) -> None:
     log.event(conn, "inbox.usage_unavailable", {"why": why}, level="warning", agent=AGENT)
-
-
-def _plural(count: int, word: str) -> str:
-    return f"{count} {word}{'s' if count != 1 else ''}"
 
 
 def _count(value) -> int:
@@ -64,7 +60,8 @@ def _lines(rows: list[dict], first: date, last: date) -> list[str]:
     lines = []
     for day, apps in sorted(days.items()):
         ranked = sorted(apps, key=lambda app: (-app[1], app[0]))
-        parts = [f"{slug} {_plural(opens, 'open')}" + (f", {_plural(done, 'completion')}" if done else "") for slug, opens, done in ranked[:APPS_SHOWN_PER_DAY]]
+        parts = [f"{slug} {health.plural(opens, 'open')}" + (f", {health.plural(done, 'completion')}" if done else "")
+                 for slug, opens, done in ranked[:APPS_SHOWN_PER_DAY]]
         if len(ranked) > APPS_SHOWN_PER_DAY:
             parts.append(f"and {len(ranked) - APPS_SHOWN_PER_DAY} more")
         lines.append(f"{day:%a} {day.day} {day:%b}: " + "; ".join(parts))
@@ -101,8 +98,14 @@ def report_usage(conn: sqlite3.Connection) -> None:
 
 
 def report_complaints(conn: sqlite3.Connection) -> None:
-    """S12: a spam complaint gets a high report and no draft. Each event once, by its id."""
-    after = int(store.get_state(conn, _COMPLAINTS_AFTER) or 0)
+    """S12: a spam complaint gets a high report and no draft. Each event once, by its id. The first check
+    starts from now: an old complaint isn't news, and its "outreach is paused" may no longer be so."""
+    cursor = store.get_state(conn, _COMPLAINTS_AFTER)
+    if cursor is None:
+        newest = db.scalar(conn, "SELECT max(id) FROM events WHERE kind = 'outreach.suppressed'") or 0
+        store.set_state(conn, _COMPLAINTS_AFTER, str(newest))
+        return
+    after = int(cursor)
     rows = db.rows(conn, "SELECT id, payload_json FROM events WHERE kind = 'outreach.suppressed' AND id > ? AND "
                          "json_extract(payload_json, '$.reason') = 'complaint' ORDER BY id", (after,))
     for row in rows:

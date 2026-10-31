@@ -14,7 +14,8 @@ The read model never writes and never repairs:
 - `approvals` rows are read with its own `SELECT`s. A request past its decide-by
   or use-by counts as lapsed by the clock, without writing; the one-pager job
   writes those transitions on its own connection before this runs (A17). No
-  approval function and no kind's `content()` is called: either may supersede.
+  kind's `content()` and no approval function that judges a request is called:
+  either may supersede. A plug-in's section may use the plain reads, `latest`.
 - No job lock is taken: a running run is judged by its row.
 
 Every string in a snapshot has been through `privacy.for_discord()`.

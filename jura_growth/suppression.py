@@ -15,7 +15,7 @@ import hashlib
 import sqlite3
 from collections.abc import Callable
 
-from jura_growth import cloudflare, db, log, timeutil
+from jura_growth import cloudflare, config, db, log, timeutil
 
 
 FROM_A_REPLY = "reply"  # the `source` of an entry a person's own reply caused
@@ -77,6 +77,13 @@ def add(
     if not cursor.rowcount and email:
         # A hash-only row from an unsubscribe link learns its address later.
         conn.execute("UPDATE suppression SET email = ? WHERE email_hash = ? AND email IS NULL", (email, hashed))
+    if not cursor.rowcount and hashed and source != FROM_A_REPLY:
+        # A row a reply started takes on anything stronger that lands on it, or a later manual block or
+        # website event would hide behind `source = reply` and could be lifted with it (code review 04, SEC-1).
+        taken = conn.execute("UPDATE suppression SET reason = ?, source = ? WHERE email_hash = ? AND source = ?",
+                             (reason, source, hashed, FROM_A_REPLY)).rowcount
+        if taken:
+            log.event(conn, "suppression.add", {"reason": reason, "source": source, "over": FROM_A_REPLY, "domain": domain_of(email or "") or None})
     if cursor.rowcount:
         log.event(conn, "suppression.add", {"reason": reason, "source": source, "domain": domain_of(email or domain or "") or None})
     return bool(cursor.rowcount)
@@ -93,6 +100,22 @@ def lift_reply(conn: sqlite3.Connection, email: str) -> bool:
     if cursor.rowcount:
         log.event(conn, "suppression.lifted", {"source": FROM_A_REPLY, "domain": domain_of(email)})
     return bool(cursor.rowcount)
+
+
+def website_holds(emails: list[str]) -> str | None:
+    """Why the website's D1 stops a lift, or None. It may hold a click, a bounce or a complaint the sync
+    hasn't brought over. It fails closed: secrets that are named and can't be read, as with a locked
+    Keychain under SSH, are no answer. Only a D1 that was never set up has nothing to hold."""
+    if not cloudflare.configured():
+        if any(config.is_set(name) for name in cloudflare.SECRETS):
+            return "the website's list can't be read just now (its secrets can't be read), so it stays. Try again later."
+        return None
+    hashes = [email_hash(email) for email in emails]
+    try:
+        rows = cloudflare.query(f"SELECT reason FROM suppression WHERE email_hash IN ({', '.join('?' for _ in hashes)})", hashes)
+    except Exception as error:  # noqa: BLE001 - any failure means this can't be checked
+        return f"the website's list can't be read just now ({type(error).__name__}), so it stays. Try again later."
+    return f"the website's list holds them as well ({rows[0].get('reason')}), so it stays." if rows else None
 
 
 D1_CURSOR = "d1:suppression"
