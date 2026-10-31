@@ -647,7 +647,7 @@ def test_masking_without_a_database_leaves_its_event_in_the_mirror(world, monkey
     import sqlite3
     import types
 
-    def session():
+    def session(*, wait=None):
         raise sqlite3.OperationalError("database is locked")
 
     # Only remote's own opens fail (masking, its event); the status command opens its own.
