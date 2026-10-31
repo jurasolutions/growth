@@ -7,7 +7,7 @@ Not part of this feature's release. It predates this branch, and it needs to be 
 
 **What happens.** From `reviews/code-review-10.md`, SEC2, reproduced on the Discord double. A contact `marta.most@other.example.sg` teaches "Most" as a name. An outreach card then shows "> [name removed] delivery firms sign on paper.", the approval is recorded, and the send double takes one email. A community-post card behaves the same way. Neither kind has `card_problem` or `own_copy`.
 
-**Why it matters less than B1, and still matters.** Ting Yu sees the marker, so he isn't misled silently, but he approves words he couldn't read. The reviewer did not read the sent email's body, so whether the prospect receives the real word is unconfirmed. Check that first.
+**Why it matters less than B1, and still matters.** Ting Yu sees the marker, so he isn't misled silently, but he approves words he couldn't read. The quality gate's probe settled what the prospect gets: the real word, with no marker ("Most delivery firms"). `inputs/icp.md` is in place, so these cards can appear now. This ticket is next.
 
 **Fix.** Give those kinds the rule `social-post` has: a card that can't show the exact text isn't posted and can't be approved, with a note saying why. For `community-post`, also apply ticket 11's no-card rule. Add `outreach-email`'s no-card rule here too if ticket 11 had to stop at social.
 

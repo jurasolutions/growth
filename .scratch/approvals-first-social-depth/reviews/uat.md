@@ -305,7 +305,7 @@ Do them in this order, after 18:05 if you can, so that day's digest isn't confus
 2. `uv run jura-growth schedule install`. The digest moved to 18:05.
 3. Restart the Mac. Log in, because the scheduled jobs and Chrome need your session.
 4. Check the env file's mode: in `repos/growth`, `stat -f '%Lp' .env` should print `600`. If it doesn't, run `chmod 600 .env`. Do this before you approve anything by typing, because while the file is loose a refusal reads "the command was not understood", and retrying can approve a card you haven't read. No agent may do this step.
-5. Once, read-only, from `jurasolutions/`: `sqlite3 -readonly data/growth/growth.db "SELECT id, kind, decided_at FROM approvals WHERE status='approved' AND used_at IS NULL AND posted_at IS NULL"`. Any row is a request approved with no card before this merge, and it can still go out. Skip it if you want it stopped.
+5. Once, read-only, from `jurasolutions/`: `sqlite3 -readonly data/growth/growth.db "SELECT id, kind, decided_at FROM approvals WHERE status='approved' AND used_at IS NULL AND posted_at IS NULL"`. Any row is a request approved with no card before this merge, and it can still go out. To stop one, send `/growth skip A-nnnn` in Discord. Terminal refuses decisions.
 6. Leave `inputs/icp.md` as it is. It has been in place since 2026-11-01, so don't move the draft over it. Scout research reads it, and `config/scout.yaml` is `mode: live`, so real outreach cards can reach #approvals.
 7. Open Chrome on the Jura publishing profile, signed in to the Facebook Page and Instagram, with Claude in Chrome connected. Keep it open 09:00 to 18:00, every day.
 

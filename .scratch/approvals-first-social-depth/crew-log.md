@@ -225,3 +225,22 @@ artifacts: reviews/uat.md L1; PRD §5; docs/agents/crew.md; tickets 01 to 04 clo
 decisions: the after-merge steps now hold the env file mode check and the read-only query, and no longer move the draft over inputs/icp.md. The gate's conditions stay Ting Yu's: the standing instruction covers the crew's decisions, not his acceptance, and only he can grant X15
 questions: -
 evidence:  tests/test_uat_seed_script.py -> 53 passed; the query runs on a freshly migrated temp database
+
+## 2026-11-01T05:10+0800 release-manager (appended by the conductor)
+status:    needs-human
+persona:   release-manager
+ticket:    -
+artifacts: reviews/release.md; reviews/pr-body.md
+decisions: open the PR; merge with a merge commit so the revert stays clean; no migrations; no version bump or changelog, per the card
+questions: for G4, in the PR body: C1, C2, C3, C5, C7
+evidence:  suite at 9036d1b in a stand-in root on Python 3.12 -> 5967 passed, 0 skipped; temp clone, revert -m 1 -> tree equals 019133d
+open:      the card's Python and pyright notes are still stale, left as minor
+
+## 2026-11-01T05:12+0800 conductor (PR)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: reviews/uat.md L1 step 5 says how to skip; issue 12 records the gate's probe; PR opened from reviews/pr-body.md
+decisions: the PR stays open for Ting Yu: G4 is his, and the gate's conditions are not the crew's to accept. C6 in the gate keeps its old numbering as a record, and the PR body says so
+questions: -
+evidence:  git main checkout -> clean, on main at 019133d; tests/test_uat_seed_script.py -> passed
