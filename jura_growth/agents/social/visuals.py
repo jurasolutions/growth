@@ -21,8 +21,8 @@ Three kinds, set under `"visual"` in `card.json`:
 
 from __future__ import annotations
 
-import math
 import html
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
