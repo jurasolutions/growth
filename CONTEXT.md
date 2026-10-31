@@ -31,9 +31,13 @@ it ran, but no Discord post.
 **Slot status**:
 What happened at a slot: **ok**, **failed**, **skipped** (with its reason: paused, not a business
 day, precheck, previous run still going), **running**, **due** (the slot's time has passed but its
-window is still open and nothing is recorded yet; never counts as needing attention), **missed**
-(the next slot came with no run or skip recorded), **upcoming**, or **not installed** (the job isn't
-loaded in launchd, or the slot is earlier than the job's first run, skip or quiet-run trace).
+window is still open and nothing is recorded yet), **missed** (the next slot came with no run or skip
+recorded), **upcoming**, or **not installed** (the job isn't loaded in launchd, the slot is earlier
+than the job's first run, skip or quiet-run trace, or the slot has no trace and is earlier than the
+job's plist was last installed). These are the classifier's words. The long text doesn't count `due`
+as needing attention, but the morning picture reads a growth agent's slot more than 5 minutes past as
+"Didn't run" and puts it in Fix, along with a passed `not installed` slot of an installed job, from
+its install on.
 _Avoid_: result, state
 
 **Install state**:
