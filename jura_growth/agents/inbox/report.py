@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from typing import Callable
 
 from jura_growth import discord, log, privacy, timeutil
 from jura_growth.agents.inbox import settings, store
@@ -99,27 +100,48 @@ def _block(items: list[dict], texts: list[str], cuts: list[bool]) -> str:
     return quoted("\n".join(lines))
 
 
+def _fit(items: list[dict], over_by: Callable[[str], int]) -> str:
+    """The quote block, cut until `over_by(block)` says it fits. What goes first is the longest
+    message's end, so one long mail can't crowd out a short one."""
+    texts = [item["text"] for item in items]
+    cuts = [bool(item["text_cut"]) for item in items]
+    while True:
+        block = _block(items, texts, cuts)
+        over = over_by(block)
+        if over <= 0 or not any(texts):
+            return block
+        longest = max(range(len(texts)), key=lambda number: len(texts[number]))
+        texts[longest] = texts[longest][: max(0, len(texts[longest]) - over - len(CUT_NOTE) - 8)].rstrip()
+        cuts[longest] = True
+
+
+def card_quote(items: list[dict], room: int) -> str:
+    """What they said, for a card: cut to fit `room` characters as masked, because a card is always
+    one message and its draft is never the part that gives way (technical review B8)."""
+    block = _fit(items, lambda block: len(privacy.for_discord(block, conversation=[block])) - room)
+    return block if len(privacy.for_discord(block, conversation=[block])) <= room else quoted(CUT_NOTE)
+
+
+def shown_name(name: str) -> str:
+    """A display name outside a quote block, unable to restyle anything or ping anyone."""
+    return _neutral(store.clean_line(name))[:NAME_SHOWN]
+
+
 def _build(items: list[dict]) -> tuple[str, str]:
     """One conversation's report and the quote block in it, always one Discord message, measured
-    masked: masking can lengthen text, and a piece past the limit would split the report. What
-    goes first is the longest message's end, so one long mail can't crowd out a short one."""
+    masked: masking can lengthen text, and a piece past the limit would split the report."""
     newest = items[-1]
     where = newest["sender_domain"] or newest["target"] or "an unknown sender"
     count = f", {len(items)} messages" if len(items) > 1 else ""
     high = " · **high priority**" if newest["priority"] == "high" else ""
     head = f"**{store.label(newest['id'])} · {_heading(newest)}{count}**{high} · {where}, {_when(newest)}"
     note = " ".join(dict.fromkeys(item["note"] for item in items if item["note"]))
-    texts = [item["text"] for item in items]
-    cuts = [bool(item["text_cut"]) for item in items]
-    while True:
-        block = _block(items, texts, cuts)
-        content = "\n".join(part for part in (head, block, note) if part)
-        over = len(privacy.for_discord(content, conversation=[block])) - discord.MAX_CONTENT
-        if over <= 0 or not any(texts):
-            return content, block
-        longest = max(range(len(texts)), key=lambda number: len(texts[number]))
-        texts[longest] = texts[longest][: max(0, len(texts[longest]) - over - len(CUT_NOTE) - 8)].rstrip()
-        cuts[longest] = True
+
+    def whole(block: str) -> str:
+        return "\n".join(part for part in (head, block, note) if part)
+
+    block = _fit(items, lambda block: len(privacy.for_discord(whole(block), conversation=[block])) - discord.MAX_CONTENT)
+    return whole(block), block
 
 
 def _fold(items: list[dict]) -> str:

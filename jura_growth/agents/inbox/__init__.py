@@ -1,7 +1,7 @@
 """Inbox watch: every reaction to Jura reported, every reply approved
 (prd/pending/prd-jura-inbox-watch-2026-10-31.md).
 
-So far this agent sees mail, triages it and reports it:
+This agent sees mail, triages it, reports it, and sends the replies Ting Yu approves:
 
 - `store`: the record of every reaction, and `store.record`, the one way in.
 - `mail`: the mail intake. Read-only IMAP, the noise filter, a lead's reply recorded as the 16:45
@@ -9,12 +9,15 @@ So far this agent sees mail, triages it and reports it:
 - `triage`: what the model may do, and everything that holds whatever it does.
 - `checks`: the brand channels for a reply, `inbox-email` and `inbox-social`.
 - `report`: one message per conversation in #mission-control, retried until delivered.
+- `kinds`: the `email-reply` approval kind: what a reply is, its card, and what each answer does.
+- `send`: `inbox send-due`, which claims an approved reply and sends exactly that.
 - `job`: the job's precheck.
-- `commands`: `jura-growth inbox status | pending | submit`.
+- `commands`: `jura-growth inbox status | pending | submit | send-due`.
 - `settings`: the limits in `caps.py`, tightened by `config/inbox.yaml`.
 
 Job `inbox-check` runs every 15 minutes, 07:00 to 23:45 SGT. Its precheck reads the mail and reports
 what needs no model. Claude starts only when something waits for triage (`prompts/inbox-check.md`).
+Job `inbox-send` runs every 10 minutes, 08:00 to 22:00 SGT, with no model.
 """
 
 from __future__ import annotations
@@ -38,6 +41,12 @@ def register(cli) -> None:
     from jura_growth.agents.inbox.commands import inbox_group
 
     cli.add_command(inbox_group)
+
+
+def approval_kinds() -> dict:
+    from jura_growth.agents.inbox import kinds
+
+    return kinds.kinds()
 
 
 def channels() -> dict:
@@ -90,7 +99,15 @@ def setup_gaps() -> list:
     from jura_growth import health
     from jura_growth.agents.inbox import mail
 
-    return [health.Gap(name, ok=False) for name in mail.setup_gaps()]
+    return [health.Gap(name, ok=False) for name in [*mail.setup_gaps(), *_sending_gaps()]]
+
+
+def _sending_gaps() -> list[str]:
+    """No Resend key means no reply can go, and so no card is raised: the draft waits, which would
+    otherwise look like nothing to do. The sender's other settings are outreach's to report."""
+    from jura_growth import config
+
+    return [] if config.is_set("RESEND_API_KEY_OUTREACH") else ["RESEND_API_KEY_OUTREACH"]
 
 
 def health(conn: sqlite3.Connection) -> list[str]:

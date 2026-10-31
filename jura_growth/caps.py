@@ -83,10 +83,12 @@ INBOX_TRIAGE_PER_RUN = 10  # conversations handed to one triage run (technical r
 INBOX_TRIAGE_ATTEMPTS = 2  # hand-outs before a conversation is reported for a hand reply
 INBOX_SUBMIT_BYTES = 64_000  # one `inbox submit` file: a class and a draft
 # Each channel also limits words. A long word is still long, and an inbox card is one message (B8).
-INBOX_EMAIL_DRAFT_CHARS = 1400
+INBOX_EMAIL_DRAFT_CHARS = 1200
+INBOX_EMAIL_DRAFT_LINES = 30  # each line takes a quote mark on the card
 INBOX_SOCIAL_DRAFT_CHARS = 600
 # SGT, both ends inclusive. Launchd can fire early until the Mac restarts, so the code checks too.
 INBOX_CHECK_WINDOW = ("07:00", "23:59")
+INBOX_SEND_WINDOW = ("08:00", "22:00")  # D3: an email reply approved outside it goes at 08:00
 
 # App factory
 APP_PRDS_PER_DAY = 1

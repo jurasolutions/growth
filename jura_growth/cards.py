@@ -173,6 +173,12 @@ def sweep_safely(conn: sqlite3.Connection, *, post: bool = True) -> int:
         return 0
 
 
+def _conversation(kind: approvals.ApprovalKind, body: str) -> tuple[str, ...]:
+    """A kind with `conversation_card` shows what a person wrote and the answer to it, so its card
+    keeps their name and a greeting: phones, addresses and secrets are still masked (`privacy.py`)."""
+    return (body,) if getattr(kind, "conversation_card", False) else ()
+
+
 def _post_unposted(conn: sqlite3.Connection) -> int:
     registry = approvals.kinds()
     posted = 0
@@ -188,7 +194,8 @@ def _post_unposted(conn: sqlite3.Connection) -> int:
                       level="warning", agent=registered.agent)
             continue
         result = discord.post(conn, CHANNEL, content, files=files, username=USERNAME, dedupe=False,
-                              suppress_embeds=True, wait=True, components=button_row(approval, registered.kind))
+                              suppress_embeds=True, wait=True, components=button_row(approval, registered.kind),
+                              conversation=_conversation(registered.kind, content))
         if not result.delivered:
             continue  # saved to the outbox by post(); the next sweep posts it again
         message_id = result.message_ids[0] if result.message_ids else None
@@ -221,7 +228,10 @@ def _edit_changed(conn: sqlite3.Connection) -> int:
             continue
         rest = row["first_piece"].split("\n", 1)
         content = header(conn, approval) + ("\n" + rest[1] if len(rest) > 1 else "")
-        done = row["message_id"] and discord.edit(conn, CHANNEL, row["message_id"], content, components=no_buttons).delivered
+        registered = approvals.kinds().get(approval.kind)
+        body = _conversation(registered.kind, rest[1]) if registered and len(rest) > 1 else ()
+        done = row["message_id"] and discord.edit(conn, CHANNEL, row["message_id"], content, components=no_buttons,
+                                                  conversation=body).delivered
         if not done:
             follow_up = f"{approval.id}: {status_line(conn, approval)} (the card couldn't be edited)."
             discord.post(conn, CHANNEL, follow_up, username=USERNAME, dedupe=False, suppress_embeds=True)

@@ -154,6 +154,8 @@ def _too_long(text: str, limit: int, what: str) -> list[Issue]:
 def check_email(text: str, ctx: dict) -> list[Issue]:
     """Levi signs an email, so on a holding reply he says he will reply."""
     issues = _shared(text, ctx) + _too_long(text, caps.INBOX_EMAIL_DRAFT_CHARS, "An email reply")
+    if text.count("\n") >= caps.INBOX_EMAIL_DRAFT_LINES:
+        issues.append(Issue("channel", f"An email reply is at most {caps.INBOX_EMAIL_DRAFT_LINES} lines, so its card stays one message"))
     words = words_in(text)
     if words >= EMAIL_WORDS_UNDER:
         issues.append(Issue("channel", f"An email reply is under {EMAIL_WORDS_UNDER} words; this is {words}"))
