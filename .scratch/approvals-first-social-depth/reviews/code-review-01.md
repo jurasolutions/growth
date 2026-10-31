@@ -159,3 +159,227 @@ No. `test_hashtag_limits_and_position` still tests both sides of the limit: 6 ta
 - `uv run pytest` on the ticket's named files plus the new test files: 427 passed.
 - Full suite: 4307 passed, 7 failed. All 7 are in ticket 02's table: `test_publish_items.py` (4), `test_publish_instagram_linkedin.py` (2), `test_publish_run.py` (1).
 - Worktree exports on every run. Probes lived in the scratchpad, with temp data folders.
+
+---
+
+# Round 2: fix commits `12fef2e`, `078cf4a`, `322afa7`, `04f9c4e`
+
+Checked at `04f9c4e`. Round 1 above stands as written; this section replaces its verdict.
+
+## Verdict: changes-requested
+
+One blocking finding remains: **a made-up count about Jura still passes the numbers rule (R2-B1).** Round 1's B1 is closed for every form it named. All round 1 should-fixes and nits are closed except the `caps.py` nit, which stays a nit. R2-B1 and one regression (R2-S1) share a root and can go in one commit, so this should be the last round.
+
+## Round 1 findings, checked
+
+**B1, the five forms: closed, on the card and on the core rule.** Each was rerun, not read.
+
+| Form | On a card, post silent | Core rule, about Jura |
+|---|---|---|
+| Month: `62 marketing teams`, `40 junior staff`, `30 decisions`, `Marketing 62% faster` | refused | `We helped 62 marketing teams.` and `Jura served 40 junior staff.` fail |
+| Hyphen: `62-percent`, `10-times`, `5-million` | refused | `We cut errors by 62-percent.` and `We are 10-times faster.` fail |
+| Year: `2000 shops`, `1900 owners` | refused | `Jura has 2000 shops on its books.` fails |
+| Words: `Sixty-two percent`, `Forty firms` | refused | `Sixty percent of our clients stay.` fails |
+| Share: `Nine in ten`, `Two-thirds` | refused | `Nine in ten of our clients stay.` fails |
+
+Each of these cards passes when the posts say the same thing.
+
+| Round 1 finding | Result | Evidence |
+|---|---|---|
+| Standards S1, tie met by a date, URL or hashtag | closed | `31 October`, `10:45`, `/news/62/flow`, `#62` no longer state a figure (run) |
+| Standards S2, honest cards refused | closed | `1950s`, `5G`, `3D`, `2nd`, `Pick 3,` and `Over 1,000,` pass when every post says them (run) |
+| Standards S3, fabricated case study | closed | `prompts/social.md:83-85`: "Write it as a picture... never as something that happened to a real business or client" |
+| Standards S4, stale "were" rule and its "86%" | closed | removed from `prompts/social.md` and `docs/social.md`; `grep '86%'` finds nothing |
+| Prompt, item titles as headings | closed | `prompts/social.md:154-155` and the `proper_nouns` line |
+| Prompt nits, bare domains, "half" and "twice" | closed | `prompts/social.md:106,111` |
+| Spec S1, query string as a host | closed | `example.com?a=1` and `www.example.com?a=2` give one host (run). A subdomain counts as another host; the commit and `test_a_subdomain_counts_as_another_host` record that choice |
+| Spec S2, test gaps | closed | new tests for an icon on every theme, cover first on a Tuesday (it reads the pages, not only the names), a figure's `value` at the gate, the compare's right column, 4 sources refused, a 12-character value |
+| Spec S3, X3 record | still QA's | `test_social.py` is untouched by these commits, so Appendix A's one `CHANGED` line is unchanged. QA lists it under N9 |
+| Nit, `80ch` | closed | `card.css:396` uses `--measure-prose`, which exists in `tokens/typography.css:35` |
+| Nit, host helper | closed | `drafts.py:200` uses `brand_check.host_of` |
+| Nit, `chars_max` not in `caps.py` | open, still a nit | no change |
+
+## Standards
+
+### Blocking
+
+**R2-B1. A made-up count about Jura still passes the numbers rule, on every channel.** `jura_growth/brand_check.py:396-403` (year) and `:408-409` (compound).
+
+- **Rule broken:** `design-system/README.md` §3 ("Never publish a figure the business cannot evidence", with "trusted by 90+ companies" as the banned example); `repos/growth/CLAUDE.md` (the numbers rule); `reviews/test-strategy.md` §7, where "an unevidenced figure passes the gate" is critical and no waiver covers it.
+- **Reproduced, all passing the numbers rule at `04f9c4e`:**
+
+| Sentence | Form |
+|---|---|
+| `We helped 2000 small shops.` `Jura served 1999 local owners.` `Our 2000 happy owners stay.` `We served 2000 retail shops in Singapore.` `Our 2000 Singapore shops stay.` | a year-shaped number, then another word, then a noun off the list |
+| `We served 100-plus firms.` `We served 50-odd firms.` `Our 500-strong client base grows.` `We have a 500-client base.` `We deliver 6-figure savings.` | a number fused to a word by a hyphen (new to this round: `:408-409` closes percent and times, and leaves these) |
+
+- **On a card, the same forms skip the tie:** `2000 small shops use it`, `1999 local owners use it`, `100-plus firms use it`, `50-odd firms use it`, `A 500-strong client base`, `A 6-figure saving` all pass the tie and the gate with the posts silent.
+- These are older than the branch (`main` passes them too). They block because the branch's job is to close this class, and the strategy allows no open critical at the gate.
+
+**Can "2000 small shops" reach a live post about Jura? Yes, if Ting Yu approves it.**
+- I put `We helped 2000 small shops do this.` into both posts of the Friday draft. `submit.submit` returned `delivered`: Facebook `pass`, Instagram `pass`, card `pass`, on attempt 1. The checker doesn't stop it.
+- What stands after the checker: the prompt forbids a digit in a sentence about Jura, and that is an instruction, not a check. Then Ting Yu reads the post on its approval card (or, in `draft` mode as this branch ships, posts it by hand). So a fabricated client count reaches the public only if he misses it. His read is the only check left.
+- The same goes for outreach, since `outreach/queue.py` uses the same core rule. An email saying `We helped 2000 small shops` passes the numbers check and then waits on its own approval.
+
+**The developer's two calls:**
+
+- **"2000 small shops stays a commented limit": not acceptable.** The reason given is that "2026 tax rates" reads alike. That is true only because the exemption is decided before the sentence is read. Inside a sentence about Jura the costs are lopsided: a false refusal costs one rewrite, and a miss is a fabricated client count. The limit also has no test, only a comment at `:397-398`. And the branch doesn't hold the line it defends: `The 2026 tax rates apply to you.` passes while `The 2026 rates apply to you.` now fails (R2-S1).
+- **"May needs its capital": acceptable.** `It closes on 30 May`, `It opens on 1 May` and `May 2026` pass, and `30 may apply` counts as a figure. What's left is `We helped 5 May firms`, `We have served 12 Dec firms` and `May 30 staff use it`, which nobody writes, and `it closes on 30 may`, which fails safe. Keep the comment.
+
+**Fix: the outcomes to meet.** How is the developer's choice. One way is to make the year rule depend on the word before the number and on whether the sentence is about Jura, and to add `plus`, `odd`, `strong` and `figure`, and client nouns, to the fused words at `:378`.
+
+| Must fail the numbers rule | Must pass the numbers rule |
+|---|---|
+| the ten sentences in the table above | `We updated the 2026 tax rates.` |
+| | `Our 2026 tax rates guide is free.` |
+| | `We can look at your 2026 business plan.` |
+| | `Your 2026 business plan is due.` |
+| | `The 2026 rates apply to you.` |
+| | `In 2026 prices rose.` |
+| | `Budget 2026 grants open soon.` |
+| | `Plan your 2026 sales target.` |
+| | `Book a 30-minute call.`, `Our 45-minute call maps one process.`, `We offer a 30-day trial.` |
+
+A card saying `2000 small shops use it`, `100-plus firms use it` or `A 6-figure saving` must be refused when no post says it, and `A survey from 2026` must still pass. Update the "Known limits" comment at `:467`, which names `forty-odd` and `twenty-plus` "shared with the digit path". The word forms can stay there if the digit forms are closed; say which.
+
+`We wrote our 2026 plans.` fails today; either answer is fine, since it costs a rewrite and names no count.
+
+### Should fix
+
+**R2-S1. Honest copy that passes on `main` now fails the core rule.** `brand_check.py:385` (`_COUNTS_A_PLURAL`). It reaches every channel with no sources, outreach email included (`outreach/compose.py:485`), and social posts with none, where it uses the regeneration.
+
+| Sentence | `main` | Branch |
+|---|---|---|
+| `Your 2026 business plan is due.` | pass | fails: "2026" needs a source |
+| `We can look at your 2026 business plan.` | pass | fails: figure about Jura |
+| `Plan your 2026 sales target.` | pass | fails |
+| `The 2026 rates apply to you.` | pass | fails |
+| `Budget 2026 grants open soon.` | pass | fails |
+| `In 2026 prices rose.` | pass | fails |
+
+"business" and "sales" match because the guard takes any lower-case word ending in `s`. `_NOT_A_PLURAL` (`:380`) can't be finished as a list. It fails safe, so it doesn't block alone, but the R2-B1 fix should clear it: the table above pins it.
+
+**R2-S2. A ratio can be no share.** `brand_check.py:449` and `:572` (`_shares`). `Step 2 out of 3.` and `It sends one in five minutes.` now fail with "needs a source" on a channel with no sources, and pass on `main`. Skip a ratio that follows "step" or "page", or that a unit of time follows. `_is_interface_quantity` can't help, because a share has no match object.
+
+### Nit
+
+- `drafts.py:175`: `reversed(...)` inside a dict comprehension, so the first spelling wins. It works; a plain loop reads better.
+- `Output x10 overnight` still passes the tie as an identifier. The shape is rare, and `10x` is covered.
+
+## Spec
+
+### Blocking
+
+None of its own. R2-B1 is the open gap against test strategy §7.
+
+### Should fix
+
+None new. The ticket's criteria are met and now pinned: DP1 to DP5, PC1 to PC3, N8, N9, N13, N14. `publish_mode: draft` stays.
+
+## Security
+
+No HIGH or MEDIUM finding at confidence 8 or above. The fix commits add no input path, no subprocess and no file access. They change one CSS custom property and a set of regular expressions. X6 prints nothing (no approval code touched), and no blocked path is touched. No live `data/growth` was used.
+
+## UI
+
+`card.css:396` swaps a value for a design-system token. `tests/test_social_cards_real_chrome.py` still passes at both sizes. Otherwise unchanged.
+
+## Friday walk, again
+
+The same `ai-news` draft through `submit.submit`, screenshots stubbed: `delivered` on attempt 1, Facebook 226 words, Instagram 173, four Instagram images. The first-try traps from round 1 are now in the prompt.
+
+## Evidence
+
+- Brand and social test files, including the new ones: 680 passed.
+- Full suite: 4425 passed, 7 failed. The same 7 as round 1, all in ticket 02's table (`test_publish_items.py` 4, `test_publish_instagram_linkedin.py` 2, `test_publish_run.py` 1).
+- X5 prints nothing. X6 prints nothing. X7 prints nothing.
+- `main`'s `brand_check.py`, loaded beside the branch's, for the `main` column.
+- Probes lived in the scratchpad, with temp data folders.
+
+---
+
+# Round 3: commit `0dcd665`
+
+Checked at `0dcd665`. This section replaces the round 2 verdict. The conductor's ruling stands as given: in a sentence naming Jura, we, our or us, any digit fails unless it is an approved claim or the channel's allowance. The round 2 must-pass rows that conflict with it (`We updated the 2026 tax rates.` and the like) now fail by decision, and I don't count them against the branch.
+
+## Verdict: changes-requested
+
+One blocking finding, and the fix is one line: **a figure with a thousands comma, fused to a noun, newly passes (R3-B1).** Round 2's blocker is closed. The conductor can confirm the fix by running the sentences below, without a round 4.
+
+## 1. The newly passing sentences
+
+The developer's list of 174 isn't on disk, so I rebuilt the comparison: `main`'s `brand_check._numbers` against `0dcd665`, over 44,015 unique sentences from every tracked text file (Python strings included), `outputs/growth` and `design-system/README.md`. I can't say whether my set contains all 174, since I don't have theirs. It is wider than the repo alone, which is why it finds more.
+
+| Channel | Newly pass | Newly fail |
+|---|---|---|
+| general (no sources) | 416 | 279 |
+| email | 416, the same sentences | 276 |
+| news, with a source | 0 | 236 |
+
+I read all 416.
+
+| What they are | Count | Brand-facing figure? |
+|---|---|---|
+| A small count followed by a comma (`With 3, on a Tuesday`, `Blocked by: 01, 02`, `substr(ts, 1, 10)`). Values run 0 to 12 only | 409 | No. They now read as the small counts they are, as `5 tips` always did. Nearly all are tickets, crew logs, SQL and JSON |
+| `1,900-character cap`, twice | 2 | **Yes, this is R3-B1** |
+| `18:00 decide-by` (2), `17:00 decide-by` (1): `main` read "00 decide" as a date | 3 | No. It's a clock time |
+| `CVE-2025-27516`, `growth-2026-10-` | 2 | No. They're identifiers |
+
+**Figures about Jura newly passing: none.** Only one of the 416 matches the Jura pattern at all: a review note quoting the host `x.jura-site.pages.dev`, and once the link is blanked it doesn't name Jura. It holds no claim.
+
+**Brand-facing figures with no source newly passing: one form.** The trailing-comma attribution is right for the 409 and hides this one, because the same change opened it.
+
+## Blocking
+
+**R3-B1. `A 5,000-user rollout.` passes on the branch and fails on `main`.** `jura_growth/brand_check.py:410`.
+
+- **Rule broken:** `design-system/README.md` §3; `reviews/test-strategy.md` §7 ("an unevidenced figure passes the gate").
+- **Why it happens:** the compound rule blanks `000-user`, leaving `5`. `main` read the remainder as `5,`, which isn't a small count, so it refused it by accident. With the trailing comma gone it reads as `5`, a small count.
+- **Reproduced, general channel, no source:**
+
+| Sentence | `main` | Branch |
+|---|---|---|
+| `A 5,000-user rollout.` | fail | passes |
+| `A 2,000-store chain.` | fail | passes |
+| `A 12,000-person survey.` | fail | passes |
+| `A 12,400-hour project.` | fail | passes |
+
+- **Reach:** every channel with no sources, outreach email included, in a sentence that doesn't name Jura. It also weakens the card tie, which reads this as `5`: a card saying `A 5,000-user rollout.` passes when the posts say only `There are 5 steps.` (run).
+- **It blocks** because this branch introduces it, on the rule the whole ticket exists to hold. An unsourced `12,400-hour` is the shape the design system names as not allowed.
+- **Fix:** add `(?<![\d,])` in front of the rule at `:410`. Tried in memory: all four sentences above fail again and read whole (`figures_in` gives `5,000`), and `Book a 30-minute call.`, `A 3rd-party tool.`, `A 2-step handover works.`, `Pick 3, then test them.` and `Version 1.2-beta is out.` still pass. Add the four sentences to the core tests, and `A 5,000-user rollout.` to the card tie's table.
+
+## 2. Round 2's sentences
+
+**Must-fail, all closed.** Each fails the core rule on the general, email and Facebook channels, with a source on Facebook, and on a card.
+
+- About Jura (`We helped 2000 small shops.`, `Jura served 1999 local owners.`, `Our 2000 happy owners stay.`, `We served 2000 retail shops in Singapore.`, `Our 2000 Singapore shops stay.`, `We served 100-plus firms.`, `We served 50-odd firms.`, `Our 500-strong client base grows.`, `We have a 500-client base.`, `We deliver 6-figure savings.`, `We helped 62 marketing teams.`): the `social-card` gate fails each one I ran on a card (nine of the eleven).
+- The same forms not about Jura (`2000 small shops use it.`, `1999 local owners use it.`, `100-plus firms use it.`, `50-odd firms use it.`, `A 500-strong client base.`, `A 500-client base.`, `A 6-figure saving.`): the card tie refuses each when the posts are silent.
+- End to end: `We helped 2000 small shops do this.` in both posts now returns `retry` with the numbers reason on both platforms. In round 2 it returned `delivered`.
+
+**Must-pass, not about Jura: all pass.** `Your 2026 business plan is due.`, `The 2026 rates apply to you.`, `In 2026 prices rose.`, `Budget 2026 grants open soon.`, `Plan your 2026 sales target.`, `Book a 30-minute call.`, `Step 2 out of 3.`, `It sends one in five minutes.`
+
+**The two reported limits:**
+
+- **`The 2000 shops use it.` passes: acceptable.** It passes on `main` too, it doesn't name Jura, and the sentence can't be told from `The 2026 rates apply to you.` without reading its meaning. The same goes for `Your 2000 shops` and `Last 2000 shops`. The cost is that the card tie misses it, so it relies on Ting Yu's read of the card. Pin it with a test, as it has only a comment now (`:422`).
+- **`2026 tax rates apply.` at a sentence start fails: acceptable, should fix at most.** It passes on `main`, and `2026 brings new rules.` still passes, so the line is uneven. It fails safe and costs one rewrite (`Tax rates for 2026 apply.`), and a post with a source passes it, since the numbers rule lets a figure through there.
+
+## Should fix
+
+- **R3-S1. A claim about Jura across two sentences.** `We help shops. 2000 of them renew.` passes the general channel, and `We help shops. 62 of them renew.` passes on Facebook with any source. The rule reads one sentence at a time, so this is the one honest gap left in the conductor's rule, and no regular expression closes it fully. Ting Yu's read is the control. The first form has a cheap fix: a year-shaped number before `of` counts (`_YEAR_COUNTS_RE`, `:414`).
+- **R3-S2. A noun compound on a card skips the tie.** `A 500-store chain.` passes the tie and the gate. On the gate that is `main`'s behaviour too, and `_FUSED_QUANTITY` (`:384`) closes only client nouns. The tie could treat any compound of three or more digits as a figure, since a refusal there uses no regeneration.
+
+## Nit
+
+- `\bjura\b` also matches `jura-growth`, so 65 lines in docs, config and code comments newly fail if ever checked, nearly all naming `jura-growth` or a `prd-jura-...` file. None of it goes out, so it doesn't matter today.
+- Spec S3 is unchanged: QA lists `test_hashtag_limits_and_position` under N9 for X3.
+
+## Scope and security
+
+The commit also edits `prompts/scout.md`, `prompts/community.md`, `prompts/app-factory.md` and `outreach/compose.py`. Each follows from the conductor's ruling, so they are in scope. `tests/test_brand_check.py` moved four sentences from must-pass to must-fail, which is tighter. No new input path, subprocess or file access, and no security finding at confidence 8 or above.
+
+## Evidence
+
+- Full suite at `0dcd665`: 4497 passed, 7 failed, the same 7 ticket 02 tests as rounds 1 and 2.
+- Friday `ai-news` draft through `submit.submit`, screenshots stubbed: `delivered` on attempt 1, Facebook 226 words, Instagram 173.
+- X5, X6 and X7 print nothing. `tests/test_social.py` is untouched since round 1, so Appendix A is unchanged.
+- Scratchpad probes with temp data folders. `main`'s `brand_check.py` was loaded beside the branch's for the comparison.

@@ -49,3 +49,25 @@ artifacts: reviews/code-review-03.md
 decisions: approve, four should-fixes, all applied in the fix round. Live rows through mission.read gave "about 9 hours off"; a simulated restart clears it
 questions: -
 evidence:  see reviews/code-review-03.md
+
+## 2026-10-31T22:10+0800 developer (ticket 01, appended by the conductor)
+status:    done
+persona:   developer
+ticket:    01
+artifacts: crew/approvals-first-social-depth-01-depth-and-pictures, through bd78cac; reviews/samples/
+decisions: every figure on a card and item source label is tied to the post and sources.md; subdomain counts as a second host
+decisions: conductor's ruling, round 2: in a sentence naming Jura or we/our/us, any digit fails unless it is an approved claim or the channel's allowance. Dates and product names beside Jura fail too; a run rewrites them
+questions: -
+evidence:  uv run pytest -> 7 failed, 4508 passed; all 7 are ticket 02's
+evidence:  real Chrome, offline, full matrix -> pass; web-font matrix not rerun after the ring fix, X9 stays open for QA
+
+## 2026-10-31T22:11+0800 reviewer and conductor (ticket 01, three rounds)
+status:    done
+persona:   reviewer
+ticket:    01
+artifacts: reviews/code-review-01.md
+decisions: round 1 and 2 blockers closed: numeric forms that skipped the numbers rule, including "We helped 62 marketing teams." and "We helped 2000 small shops.", which predate this branch
+decisions: round 3 blocker "A 5,000-user rollout." fixed by the conductor as the reviewer specified, no round 4; red then green on the four named sentences. Conductor also took R3-S1 (a year's shape before "of")
+decisions: left open, recorded for the PR: R3-S2 "A 500-store chain." skips the card tie and passes on main too; "The 2000 shops" pinned as a known limit; a claim split over two sentences with a small count ("We help shops. 62 of them renew." with a source) relies on Ting Yu's read of the card
+questions: -
+evidence:  tests/test_brand_check.py -> 5 red, then 336 passed with test_social_figures.py
