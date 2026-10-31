@@ -139,13 +139,16 @@ jobs:
     schedule: {daily_every: {start: "09:00", end: "17:40", minutes: 20}}
     run_update: claimed-only # one message per run that claimed an item
 
-  # Inbox watch (prd-jura-inbox-watch). The precheck reads the mailbox read-only and reports what
-  # is new, with no model, so a quiet check starts no Claude. Its hours are checked in code too.
+  # Inbox watch (prd-jura-inbox-watch). The precheck reads the mailbox read-only with no model, so a
+  # quiet check starts no Claude. When something waits for triage, Claude classifies and drafts, with
+  # its own scratch folder and nothing else. Its hours are checked in code too, and the short timeout
+  # keeps a stuck triage from holding the lock past the next check.
   inbox-check:
     agent: inbox
     kind: claude
     prompt: inbox-check.md
     quiet: true
+    timeout_minutes: 10
     schedule: {daily_every: {start: "07:00", end: "23:45", minutes: 15}}
 
   backup:

@@ -28,6 +28,12 @@ NOISE = "noise"
 REPORTED = "reported"
 NEEDS_HAND_REPLY = "needs-you"  # the state's name in the PRD; in words, "needs a hand reply"
 NEW = "new"
+TRIAGED = "triaged"  # classed, with a draft ready for its card
+WAITING = "waiting"  # its card is up
+SUPERSEDED = "superseded"
+# The sources a person writes through, and so what triage reads. `MAIL_SOURCES` answer by email.
+MAIL_SOURCES = ("email", "enquiry")
+PEOPLE_SOURCES = (*MAIL_SOURCES, "facebook-comment", "facebook-dm", "instagram-comment", "instagram-dm")
 
 NAME_CHARS = 120
 SUBJECT_CHARS = 300
@@ -37,7 +43,8 @@ TARGET_CHARS = 1000
 _ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-Z\\-_])")
 LINE_BREAKS = re.compile(r"\r\n|[\r\x0b\x0c\x85\u2028\u2029]")
 # C0 and C1 controls but tab and newline, bidi marks and overrides, zero-width characters.
-_INVISIBLE = re.compile(r"[\x00-\x08\x0e-\x1f\x7f-\x9f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
+# A soft hyphen and the tag block too: they render as nothing, so `evil<U+00AD>.com` reads `evil.com`.
+_INVISIBLE = re.compile(r"[\x00-\x08\x0e-\x1f\x7f-\x9f\xad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\U000e0000-\U000e007f]")
 
 
 def clean_text(value: str) -> str:
@@ -146,9 +153,22 @@ def set_item_state(conn: sqlite3.Connection, item_id: int, state: str) -> None:
 # --- reports ------------------------------------------------------------------
 
 
+# Owed a report now. Noise never is (R2), and a message waiting for triage isn't yet: its report says
+# what triage made of it (R1).
+_OWED = "reported_at IS NULL AND state NOT IN ('noise', 'new')"
+
+
 def unreported(conn: sqlite3.Connection) -> list[dict]:
-    """Every inbox item still owed a report, oldest first. Noise never is (R2)."""
-    return db.rows(conn, "SELECT * FROM inbox_items WHERE reported_at IS NULL AND state != ? ORDER BY id", (NOISE,))
+    """Every inbox item owed a report now, oldest first."""
+    return db.rows(conn, f"SELECT * FROM inbox_items WHERE {_OWED} ORDER BY id")
+
+
+def by_conversation(items: list[dict]) -> dict[str, list[dict]]:
+    """`items` by conversation, in the order each first appears, keeping their order within it."""
+    found: dict[str, list[dict]] = {}
+    for item in items:
+        found.setdefault(item["conversation"], []).append(item)
+    return found
 
 
 def mark_reported(conn: sqlite3.Connection, item_ids: list[int]) -> None:
@@ -180,9 +200,49 @@ def day_counts(conn: sqlite3.Connection, day: str) -> dict[str, int]:
 def open_counts(conn: sqlite3.Connection) -> dict[str, int]:
     """What is still open, whatever day it arrived."""
     return {
-        "unreported": db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE reported_at IS NULL AND state != ?", (NOISE,)) or 0,
+        "unreported": db.scalar(conn, f"SELECT count(*) FROM inbox_items WHERE {_OWED}") or 0,
         "hand_replies": db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE state = ?", (NEEDS_HAND_REPLY,)) or 0,
     }
+
+
+# --- triage -------------------------------------------------------------------
+
+
+def waiting_for_triage(conn: sqlite3.Connection) -> list[dict]:
+    """Every message a person wrote that triage hasn't dealt with, oldest first."""
+    places = ", ".join("?" for _ in PEOPLE_SOURCES)
+    return db.rows(conn, f"SELECT * FROM inbox_items WHERE state = ? AND source IN ({places}) ORDER BY id", (NEW, *PEOPLE_SOURCES))
+
+
+def in_conversation(conn: sqlite3.Connection, conversation: str) -> list[dict]:
+    """Every message in one conversation, oldest first."""
+    return db.rows(conn, "SELECT * FROM inbox_items WHERE conversation = ? ORDER BY id", (conversation,))
+
+
+def count_attempt(conn: sqlite3.Connection, item_ids: list[int]) -> None:
+    for item_id in item_ids:
+        conn.execute("UPDATE inbox_items SET triage_attempts = triage_attempts + 1, updated_at = ? WHERE id = ?", (timeutil.stamp(), item_id))
+
+
+def set_attempts(conn: sqlite3.Connection, item_ids: list[int], attempts: int) -> None:
+    for item_id in item_ids:
+        conn.execute("UPDATE inbox_items SET triage_attempts = ?, updated_at = ? WHERE id = ?", (attempts, timeutil.stamp(), item_id))
+
+
+def set_brand_failures(conn: sqlite3.Connection, item_ids: list[int], failures: int) -> None:
+    for item_id in item_ids:
+        conn.execute("UPDATE inbox_items SET brand_failures = ?, updated_at = ? WHERE id = ?", (failures, timeutil.stamp(), item_id))
+
+
+def update_triage(conn: sqlite3.Connection, item_id: int, *, state: str, note: str, kind: str | None, priority: str | None,
+                  language: str | None, draft: str | None, promised: bool) -> None:
+    """What triage decided about one message. Its text and everything else read at intake stay."""
+    if state not in STATES:
+        raise ValueError(f"unknown state {state!r}")
+    conn.execute(
+        "UPDATE inbox_items SET state = ?, note = ?, class = ?, priority = ?, language = ?, draft = ?, promised = ?, updated_at = ? WHERE id = ?",
+        (state, note, kind, priority, language, draft, int(promised), timeutil.stamp(), item_id),
+    )
 
 
 # --- what the mail check remembers --------------------------------------------

@@ -53,6 +53,18 @@ def enquiry_mail(*, name: str = "Jane Tan", visitor: str = "jane.tan@acme.exampl
                     body="\n".join(lines), Reply_To=visitor, Authentication_Results=authentication, **kwargs)
 
 
+def triage_all(conn: sqlite3.Connection, kind: str = "thanks") -> int:
+    """What triage does when it finds nothing to draft, for each waiting conversation, as `inbox submit`
+    would, so a test about the report needn't start a run. Returns how many it answered."""
+    from jura_growth.agents.inbox import store, triage
+
+    newest = {item["conversation"]: item for item in store.waiting_for_triage(conn)}
+    for item in newest.values():
+        outcome = triage.submit(conn, {"id": store.label(item["id"]), "class": kind})
+        assert outcome.exit_code == 0, outcome.text()
+    return len(newest)
+
+
 def trust_servers(monkeypatch, *servers: str) -> None:
     """As if `auth_servers` in `config/inbox.yaml` named these, by default the ids this file's mail
     uses. Patched where it is read, because the scout tests' `configure` replaces `agent_config`."""

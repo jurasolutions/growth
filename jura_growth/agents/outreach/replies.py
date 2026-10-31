@@ -483,6 +483,16 @@ def counted(conn: sqlite3.Connection, key: str) -> bool:
 # --- recording a reply --------------------------------------------------------
 
 
+def honour_opt_out(conn: sqlite3.Connection, sender: str, lead_id: int | None, key: str | None = None) -> None:
+    """Suppress `sender`, and mark their lead as having unsubscribed if they have one. `key` is the
+    counted reply to mark, when triage classes as an opt-out what the words alone didn't."""
+    suppression.add(conn, email=sender, reason="unsubscribe", source="reply")
+    if lead_id is not None:
+        store.set_lead_status(conn, [lead_id], "unsubscribed")
+    if key is not None:
+        conn.execute("UPDATE outreach_replies SET unsubscribe = 1 WHERE message_key = ?", (key,))
+
+
 def apply_reply(conn: sqlite3.Connection, contact: dict, sender: str, received: datetime, key: str, wants_out: bool,
                 result: Result | None = None, *, post: bool = True) -> bool:
     """A lead replied: count it, cancel what was queued, and suppress the sender on an opt-out,
@@ -507,8 +517,7 @@ def apply_reply(conn: sqlite3.Connection, contact: dict, sender: str, received: 
         store.cancel_queued(conn, [lead_id], "the company replied")
         store.set_lead_status(conn, [lead_id], "replied")
         if wants_out:
-            suppression.add(conn, email=sender, reason="unsubscribe", source="reply")
-            store.set_lead_status(conn, [lead_id], "unsubscribed")
+            honour_opt_out(conn, sender, lead_id)
         log.event(conn, "outreach.reply", {"lead": lead_id, "domain": contact["domain"], "unsubscribe": wants_out}, agent=store.AGENT)
     if result is not None:
         result.unsubscribes += int(wants_out)

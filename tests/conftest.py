@@ -169,6 +169,13 @@ def isolated(tmp_path, monkeypatch):
     # set (BP-03, AC-P9.5), so a shell that exported one doesn't change a test.
     for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
         monkeypatch.delenv(name, raising=False)
+    # No test ever starts the real Claude Code, whatever job it runs: this one answers first on PATH,
+    # and gives no result, as a `claude` that died would. A test that wants more sets `claude.binary`.
+    stand_in = tmp_path / "no-real-claude"
+    stand_in.mkdir()
+    (stand_in / "claude").write_text("#!/bin/sh\nexit 1\n")
+    (stand_in / "claude").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stand_in}{os.pathsep}{os.environ.get('PATH', '')}")
     config.reset_caches()
     GUARD.take()
     NETWORK.take()

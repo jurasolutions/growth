@@ -69,12 +69,12 @@ def _browser_days() -> int:
 
 
 def prune_browser_work() -> int:
-    """Delete what browser jobs left in their scratch folders (`work/<job>/`) once it is as old
-    as their transcripts may get: the live text a run read back from a page, and the read-only
-    image copies. Judged by the newest file in each entry. Returns how many entries went."""
+    """Delete what the jobs in `caps.THIRD_PARTY_TEXT_JOBS` left in their scratch folders
+    (`work/<job>/`) once it is as old as their transcripts may get: the live text a run read back
+    from a page, triage's drafts, and the read-only image copies. Judged by the newest file in each entry. Returns how many entries went."""
     cutoff = (timeutil.now_sgt() - timedelta(days=_browser_days())).timestamp()
     count = 0
-    for job in sorted(caps.BROWSER_JOBS):
+    for job in sorted(caps.THIRD_PARTY_TEXT_JOBS):
         folder = paths.work_dir(job)
         for entry in sorted(folder.iterdir()) if folder.exists() else []:
             files = [entry, *entry.rglob("*")] if entry.is_dir() else [entry]
@@ -90,7 +90,7 @@ def prune_browser_work() -> int:
 
 def prune_transcripts() -> int:
     """Delete day folders older than `retention.transcripts_days` (30), and, sooner, the
-    transcripts of browser jobs (`caps.BROWSER_JOBS`), which hold third-party page text: after
+    transcripts of the jobs in `caps.THIRD_PARTY_TEXT_JOBS`, which hold third-party text: after
     `caps.BROWSER_TRANSCRIPT_DAYS` (7), or `retention.browser_transcripts_days` if shorter
     (BP §4.7). Returns how many folders and browser transcripts went."""
     keep = int(config.settings().get("retention", {}).get("transcripts_days", 30))
@@ -109,7 +109,7 @@ def prune_transcripts() -> int:
             shutil.rmtree(folder)
             count += 1
         elif day < browser_cutoff:
-            for job in caps.BROWSER_JOBS:
+            for job in caps.THIRD_PARTY_TEXT_JOBS:
                 for file in folder.glob(f"*-{job}.jsonl"):
                     file.unlink()
                     count += 1

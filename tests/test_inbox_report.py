@@ -11,7 +11,7 @@ import pytest
 import sweep
 from sweep import d2_secrets  # noqa: F401
 from discord_double import discord_double  # noqa: F401
-from inbox_world import NOW, enquiry_mail, mailbox_env, raw_mail, trust_servers
+from inbox_world import NOW, enquiry_mail, mailbox_env, raw_mail, triage_all, trust_servers
 from jura_growth import config, db, digest, discord, paths, privacy, runner, timeutil
 from jura_growth.agents import inbox
 from jura_growth.agents.inbox import mail, report, store
@@ -28,7 +28,9 @@ def servers_trusted(scout_env, monkeypatch):  # noqa: F811
 
 
 def check(conn):
+    """A check, with triage done: a report says what triage made of the message (R1)."""
     mail.intake(conn)
+    triage_all(conn)
     return report.report_due(conn)
 
 
@@ -49,7 +51,7 @@ def test_iw_r1_a_reaction_posts_one_message_saying_where_who_what_and_next(conn,
     [post] = discord_double.contents(CHANNEL)
     assert post.startswith("**I-0001 · Email** · clinic.example, 26 Oct 09:30 SGT")
     assert "> From: Priya Nair\n> Subject: Clinics\n>\n> Do you work with clinics?" in post
-    assert "Next:" in post
+    assert "No reply needed" in post
     assert store.unreported(conn) == []
 
 
@@ -72,19 +74,24 @@ def test_iw_r1_the_text_shown_is_the_stored_text_byte_for_byte(conn, monkeypatch
 
 
 def test_iw_r1_two_identical_messages_the_same_day_are_two_reports(conn, monkeypatch, discord_double):  # noqa: F811
-    """IW-R1: `dedupe=False`, or the second would vanish."""
+    """IW-R1: `dedupe=False`, or the second would vanish. Two checks, because one person's messages
+    in one check are one report (F8)."""
     at(monkeypatch, NOW)
-    mailbox_env(monkeypatch, [raw_mail(body="Hello?", subject="Hi"), raw_mail(body="Hello?", subject="Hi")])
+    fake = mailbox_env(monkeypatch, [raw_mail(body="Hello?", subject="Hi")])
+    assert check(conn) == 1
+    fake.messages.append(raw_mail(body="Hello?", subject="Hi"))
 
-    assert check(conn) == 2
+    assert check(conn) == 1
 
     assert len(discord_double.contents(CHANNEL)) == 2
 
 
 def test_iw_r1_running_again_reports_nothing_again(conn, monkeypatch, discord_double):  # noqa: F811
-    """IW-R1: the job end to end, through the runner, twice."""
+    """IW-R1: the job end to end, through the runner, twice, once triage has been."""
     at(monkeypatch, NOW)
     mailbox_env(monkeypatch, [raw_mail()])
+    mail.intake(conn)
+    triage_all(conn)
 
     assert runner.run("inbox-check").status == "ok"
     assert runner.run("inbox-check").status == "ok"
@@ -160,7 +167,7 @@ def test_iw_fs11_the_report_says_who_else_was_copied(conn, monkeypatch, discord_
 def test_iw_f12_five_old_messages_report_one_by_one(conn, monkeypatch, discord_double):  # noqa: F811
     """IW-F12: the fold starts above 5."""
     at(monkeypatch, NOW)
-    mailbox_env(monkeypatch, [raw_mail(when="2026-10-22T09:00:00+08:00", body=f"Old message {n}") for n in range(5)])
+    mailbox_env(monkeypatch, [raw_mail(when="2026-10-22T09:00:00+08:00", body=f"Old message {n}", subject=f"Subject {n}") for n in range(5)])
 
     assert check(conn) == 5
 
@@ -190,7 +197,7 @@ def test_iw_f12_more_than_five_fold_into_one_message(conn, monkeypatch, discord_
 def test_iw_b7_a_refused_report_goes_again_on_the_next_check_and_only_once(conn, monkeypatch, discord_double, mode):  # noqa: F811
     """IW-B7: Discord down loses nothing and repeats nothing."""
     at(monkeypatch, NOW)
-    mailbox_env(monkeypatch, [raw_mail(), raw_mail(body="A second message")])
+    mailbox_env(monkeypatch, [raw_mail(), raw_mail(body="A second message", subject="Something else")])
     discord_double.mode = mode
 
     assert check(conn) == 0
@@ -226,7 +233,8 @@ def test_iw_b7_after_run_reports_what_is_due_too(conn, monkeypatch, tmp_path, di
     still clears what the precheck couldn't."""
     at(monkeypatch, NOW)
     mailbox_env(monkeypatch, [])
-    store.record(conn, store.Reaction(source="email", key="k", conversation="c", sender_domain="clinic.example", text="Hello there"))
+    store.record(conn, store.Reaction(source="email", key="k", conversation="c", sender_domain="clinic.example", text="Hello there",
+                                      state=store.REPORTED))
     monkeypatch.setattr(inbox, "precheck", lambda job, conn: None)
     settings_with(monkeypatch, binary=str(fake_claude(tmp_path, "SKIP: nothing")))
 
@@ -240,7 +248,8 @@ def test_iw_b7_one_bad_row_doesnt_hold_up_the_rest(conn, monkeypatch, discord_do
     """IW-B7: it stays owed, and is logged."""
     at(monkeypatch, NOW)
     for key in ("bad", "good"):
-        store.record(conn, store.Reaction(source="email", key=key, conversation=key, sender_domain="x.example", text="Hello there"))
+        store.record(conn, store.Reaction(source="email", key=key, conversation=key, sender_domain="x.example", text="Hello there",
+                                          state=store.REPORTED))
     conn.execute("UPDATE inbox_items SET attachments_json = 'not json' WHERE key = 'bad'")
 
     assert report.report_due(conn) == 1
@@ -328,7 +337,7 @@ def test_iw_a5_forged_card_text_stays_inside_the_quote(conn, monkeypatch, discor
     unquoted = [line for line in post.splitlines() if not line.startswith(">")]
     assert len(unquoted) == 2
     assert unquoted[0].startswith("**I-0001 · Email** · clinic.example")
-    assert unquoted[1].startswith("Next:")
+    assert unquoted[1].startswith("No reply needed")
 
 
 def test_iw_n5_a_report_suppresses_link_previews(conn, monkeypatch, discord_double):  # noqa: F811
@@ -368,7 +377,7 @@ def test_iw_a6_a_long_message_is_cut_to_one_discord_message(conn, monkeypatch, d
     [request] = discord_double.posts(CHANNEL)
     assert len(request.content) <= discord.MAX_CONTENT
     assert request.content.startswith("**I-0001 · Email**")
-    assert "Next:" in request.content
+    assert "No reply needed" in request.content
     assert report.CUT_NOTE in request.content
     request.content.encode("utf-8")
 

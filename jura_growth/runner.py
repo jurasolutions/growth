@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import sqlite3
 import subprocess
 from contextlib import contextmanager
@@ -263,7 +264,9 @@ def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
 
     A job in `caps.BROWSER_JOBS` that sets `browser: true` gets `--chrome`, and `--add-dir` for its own
     scratch folder only (ADR 0005, amended 2026-10-30): its plug-in's rules scope the Chrome tools by
-    domain, and the files it needs are copied into that folder, which the upload tool must be able to read. Any other job that sets `browser` raises."""
+    domain, and the files it needs are copied into that folder, which the upload tool must be able to read. Any other job that sets `browser` raises.
+    Any job in `caps.THIRD_PARTY_TEXT_JOBS` adds only its scratch folder too: it holds a stranger's words.
+    A job in `caps.CLEAN_CWD_JOBS` also has its file tools fenced to its working folders (`claude_cwd`)."""
     settings = config.settings()["claude"]
     browser = name in caps.BROWSER_JOBS
     if spec.get("browser") and not browser:
@@ -295,16 +298,33 @@ def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
         "--setting-sources", "project",
         "--no-session-persistence",
         # A browser job adds only its own scratch folder, where its image copies are, so the Chrome upload
-        # tool may read them (rehearsal R1, 2026-10-30); every other job adds JURA_ROOT.
-        "--add-dir", str(work) if browser else str(paths.JURA_ROOT),
+        # tool may read them (rehearsal R1, 2026-10-30), and triage holds a stranger's words (inbox watch,
+        # B4); every other job adds JURA_ROOT.
+        "--add-dir", str(work) if name in caps.THIRD_PARTY_TEXT_JOBS else str(paths.JURA_ROOT),
         "--allowedTools", *allowed,
         "--disallowedTools", *disallowed,
     ]
     if browser and spec.get("browser"):
         argv.append("--chrome")
+    if name in caps.CLEAN_CWD_JOBS:
+        argv += ["--settings", json.dumps({"permissions": {"blockReadsOutsideWorkingDirectories": True}})]
     if spec.get("model") or settings.get("model"):
         argv += ["--model", spec.get("model") or settings["model"]]
     return argv, prompt_file.read_text(encoding="utf-8")
+
+
+def claude_cwd(name: str) -> Path:
+    """Where a claude job starts. For a job in `caps.CLEAN_CWD_JOBS`, an empty folder of its own: a
+    read-only Bash command run from the repo can read `.env`. It isn't the scratch folder, because
+    the session can write there, and Claude Code loads `.claude/settings.json` and `CLAUDE.md` from
+    where it starts, so a steered run could leave rules for the next one. No rule lets it write
+    here, and the folder is emptied before each run."""
+    if name not in caps.CLEAN_CWD_JOBS:
+        return paths.REPO_ROOT
+    folder = paths.data_dir() / "work" / f"{name}.cwd"
+    if folder.exists():
+        shutil.rmtree(folder)
+    return paths.writable(folder / ".keep").parent
 
 
 def _preamble(name: str, spec: dict, run_id: int | None) -> str:
@@ -338,7 +358,7 @@ def _commands_line(name: str) -> str:
 
 def _run_claude(name: str, spec: dict, agent: str, run_id: int | None) -> Outcome:
     argv, prompt = claude_command(name, spec)
-    timeout = int(config.settings()["claude"].get("timeout_minutes", 30)) * 60
+    timeout = int(spec.get("timeout_minutes") or config.settings()["claude"].get("timeout_minutes", 30)) * 60
     transcript = paths.writable(
         paths.data_dir() / "transcripts" / timeutil.today_str() / f"{run_id}-{name}.jsonl"
     )
@@ -351,7 +371,7 @@ def _run_claude(name: str, spec: dict, agent: str, run_id: int | None) -> Outcom
     with open(transcript, "w", encoding="utf-8") as out:
         process = subprocess.Popen(
             argv,
-            cwd=paths.REPO_ROOT,
+            cwd=claude_cwd(name),
             stdin=subprocess.PIPE,
             stdout=out,
             stderr=subprocess.PIPE,
@@ -370,8 +390,12 @@ def _run_claude(name: str, spec: dict, agent: str, run_id: int | None) -> Outcom
         return Outcome("failed", error=f"no result from claude (exit {process.returncode}): {(stderr or '')[-400:]}")
     text = (result.get("result") or "").strip()
     cost = result.get("total_cost_usd")
+    # A third-party-text job's commands and denied writes can hold a stranger's words, and this log
+    # is never pruned: the tool and a length, and the transcript keeps the rest for its 7 days.
+    third_party = name in caps.THIRD_PARTY_TEXT_JOBS
     denials = [
-        {"tool": d.get("tool_name"), "input": str(d.get("tool_input", ""))[:200]}
+        {"tool": d.get("tool_name"), "input_chars": len(str(d.get("tool_input", "")))} if third_party
+        else {"tool": d.get("tool_name"), "input": str(d.get("tool_input", ""))[:200]}
         for d in result.get("permission_denials") or []
     ]
     log.event(
@@ -383,10 +407,10 @@ def _run_claude(name: str, spec: dict, agent: str, run_id: int | None) -> Outcom
     )
     if result.get("is_error") or process.returncode != 0:
         return Outcome("failed", summary=text[:2000], error=f"claude {result.get('subtype', 'error')}", cost_usd=cost)
-    return _judge(text, cost, agent, run_id)
+    return _judge(text, cost, agent, run_id, third_party=third_party)
 
 
-def _judge(text: str, cost: float | None, agent: str, run_id: int | None) -> Outcome:
+def _judge(text: str, cost: float | None, agent: str, run_id: int | None, *, third_party: bool = False) -> Outcome:
     """A run fails if any line of its summary starts with FAIL:. A summary with
     no OK:/SKIP:/FAIL: prefix at all is recorded as ok but flagged."""
     lines = [line.strip().lstrip("*_`> ").upper() for line in text.splitlines() if line.strip()]
@@ -394,7 +418,8 @@ def _judge(text: str, cost: float | None, agent: str, run_id: int | None) -> Out
         failing = next(l for l in text.splitlines() if l.strip().lstrip("*_`> ").upper().startswith("FAIL:"))
         return Outcome("failed", summary=text[:2000], error=failing.strip()[:500], cost_usd=cost)
     if not any(line.startswith(("OK:", "SKIP:")) for line in lines):
-        log.event(None, "claude.unprefixed", {"summary": text[:300]}, level="warning", agent=agent, run_id=run_id)
+        said = {"summary_chars": len(text)} if third_party else {"summary": text[:300]}
+        log.event(None, "claude.unprefixed", said, level="warning", agent=agent, run_id=run_id)
     return Outcome("ok", summary=text[:2000], cost_usd=cost)
 
 

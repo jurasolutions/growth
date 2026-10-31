@@ -135,16 +135,16 @@ def intake(conn: sqlite3.Connection) -> Intake:
     check = _Check(conn, replies.sent_contacts(conn), result)
     for label in _unreadable_settings():
         result.failed += 1
-        _problem(conn, label, f"The {label} mailbox's settings can't be read, so new mail isn't being read. Check the Keychain.",
-                 "unreadable settings", at_once=True)
+        problem(conn, label, f"The {label} mailbox's settings can't be read, so new mail isn't being read. Check the Keychain.",
+                "unreadable settings", at_once=True)
     for login in mailboxes():
         started = timeutil.stamp()
         try:
             finished = _read_mailbox(check, login)
         except replies.RepliesAuthError as error:
             result.failed += 1
-            _problem(conn, login.label, f"The {login.label} mailbox refused the login, so new mail isn't being read. Check its password.",
-                     type(error).__name__, at_once=True)
+            problem(conn, login.label, f"The {login.label} mailbox refused the login, so new mail isn't being read. Check its password.",
+                    type(error).__name__, at_once=True)
             continue
         except Exception as error:  # noqa: BLE001 - a network fault, a locked database or a bug
             result.failed += 1
@@ -290,6 +290,10 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
     reply_to = _recipient(headers, sender)
     ours = replies.sent_subjects(conn, contact["lead_id"]) if contact else set()
     wants_out = replies.opt_out_reason(subject, own, ours) if contact else None
+    # A stated failure means it may not be from this address. An emailed contact's own opt-out words are
+    # still honoured: a real one lost is worse than a forged one honoured, which R1 shows and can be
+    # undone (code review 01, S-4). Only a model's reading of it needs better proof (`own_sender`).
+    forged = bool(sender) and replies.failed_verdict(headers, suppression.domain_of(sender))
     counted_already = contact is not None and replies.counted(conn, key)
     who = reply_to if from_form else (sender or reply_to or "")
     # The form's own display name is Jura's, so the person's name comes from what the form wrote.
@@ -299,6 +303,8 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
     state, notes = store.NEW, []
     if from_form and not signed:
         notes.append("It says it came from the website form, but it isn't signed by Jura.")
+    if forged and not from_form:
+        notes.append("The receiving server says this may not be from this address.")
     if wants_out:
         state = store.REPORTED
         notes.append(f"They asked to be removed ({wants_out}): the address is suppressed and no reply will be drafted.")
@@ -312,7 +318,8 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
     reaction = store.Reaction(
         source="enquiry" if signed else "email",
         key=key,
-        conversation=store.text_key("mail", who or key, replies.bare_subject(subject)),
+        # A forged sender doesn't join their conversation, so it can't replace their draft (SEC-6).
+        conversation=store.text_key("mail", who or key, replies.bare_subject(subject), *(("may be forged",) if forged else ())),
         sender_name=name,
         sender_address=who or "",
         sender_domain=suppression.domain_of(who) if who else "",
@@ -324,6 +331,9 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
             "references": _ids(headers.get("References"))[-REFERENCES_KEPT:],
             "reply_to": reply_to,
             "copied": _copied(headers),
+            # Whether `who` is this mail's own sender, and so whether triage may suppress it. Not an
+            # address typed on the form, nor a `Reply-To` standing in for a From it can't read (SEC-2).
+            "own_sender": bool(sender) and who == sender and not from_form and not forged,
         },
         attachments=attachments,
         lead_id=contact["lead_id"] if contact else None,
@@ -467,23 +477,23 @@ def failed(conn: sqlite3.Connection, label: str, error: Exception) -> None:
         store.set_state(conn, since_key, since)
     log.event(conn, "inbox.mail_failed", {"mailbox": label, "error": what}, level="warning", agent=AGENT)
     if timeutil.now() - timeutil.parse(since) >= timedelta(hours=OVERDUE_HOURS):
-        _problem(conn, label, f"The {label} mail check hasn't worked for over {OVERDUE_HOURS} hours, so new mail isn't being "
+        problem(conn, label, f"The {label} mail check hasn't worked for over {OVERDUE_HOURS} hours, so new mail isn't being "
                               f"seen. The last error was {what}.", what)
 
 
-def _problem(conn: sqlite3.Connection, label: str, problem: str, what: str, *, at_once: bool = False) -> None:
-    """Keep the line for the health strip, and alert at most once a day. `problem` is fixed text
+def problem(conn: sqlite3.Connection, label: str, line: str, what: str, *, at_once: bool = False) -> None:
+    """Keep the line for the health strip, and alert at most once a day. `line` is fixed text
     with a type name in it, never a host, an address or a word from a message."""
     if at_once:
         log.event(conn, "inbox.mail_failed", {"mailbox": label, "error": what}, level="warning", agent=AGENT)
-    store.set_state(conn, f"{store.PROBLEM}{label}", problem)
+    store.set_state(conn, f"{store.PROBLEM}{label}", line)
     today = timeutil.today_str()
     alerted_key = f"{store.ALERTED_ON}{label}"
     if store.get_state(conn, alerted_key) == today:
         return
     store.set_state(conn, alerted_key, today)
-    log.event(conn, "inbox.health", {"mailbox": label, "problem": problem}, level="warning", agent=AGENT)
-    discord.alert(conn, problem, agent=AGENT)
+    log.event(conn, "inbox.health", {"mailbox": label, "problem": line}, level="warning", agent=AGENT)
+    discord.alert(conn, line, agent=AGENT)
 
 
 def cleared(conn: sqlite3.Connection, label: str) -> None:
