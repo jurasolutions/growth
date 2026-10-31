@@ -27,7 +27,7 @@ usage_days: 7
 # preview link of it, https://<branch>.<pages_project>.pages.dev, so an
 # app-release card can't link anywhere else. Unset, `apps built` refuses
 # every preview (ticket 16).
-pages_project: landing-page
+pages_project: landing-page-eq7  # the pages.dev name Cloudflare gave the project (landing-page-eq7.pages.dev)
 insights_days: 30
 
 # Structural rejections allowed per day before submit-prd stops accepting

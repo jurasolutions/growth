@@ -43,12 +43,15 @@ def test_a_subject_names_one_message():
 # --- what the hash covers (AC-M8.9) -------------------------------------------------
 
 
-def test_content_is_canonical_json_of_recipient_subject_and_draft(conn, monkeypatch):
+def test_content_is_canonical_json_of_recipient_subject_draft_and_frame(conn, monkeypatch):
     at(monkeypatch, MONDAY_10AM)
     seeded = seed(conn, 1)
     content = kind().content(conn, outreach_approval.subject_of(seeded["message_id"]))
     message = db.one(conn, "SELECT subject, draft_body FROM outreach_messages WHERE id = ?", (seeded["message_id"],))
-    assert json.loads(content) == {"to": "info@alderlogistics.sg", "subject": message["subject"], "body": message["draft_body"]}
+    from jura_growth.agents.outreach import compose
+
+    assert json.loads(content) == {"to": "info@alderlogistics.sg", "subject": message["subject"], "body": message["draft_body"],
+                                   "frame": compose.frame_fingerprint()}
     assert content == json.dumps(json.loads(content), sort_keys=True, ensure_ascii=False).encode("utf-8")
     assert "unsubscribe" not in content.decode("utf-8")
 

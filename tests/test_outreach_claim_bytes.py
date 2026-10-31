@@ -217,3 +217,54 @@ def test_a_retry_before_the_use_by_and_inside_the_window_still_goes_under_the_sa
     at(monkeypatch, "2026-11-13T16:29:00+08:00")
     assert send.send_due(conn).summary.startswith("sent message")
     assert [r.headers["idempotency-key"] for r in sent] == [f"jura-outreach-{seeded['message_id']}"] * 2
+
+
+# --- the frame: what the code adds around the draft (code review S13-4) -------------------
+
+
+def test_the_hash_covers_the_template_frame(conn, monkeypatch):
+    from jura_growth.agents.outreach import compose, design
+
+    seeded, request = approved(conn, monkeypatch)
+    kind = approvals.kinds()[approval.KIND].kind
+    content = __import__("json").loads(kind.content(conn, request.subject))
+    assert content["frame"] == compose.frame_fingerprint()
+    monkeypatch.setattr(design, "CALL_LABEL", "Book a short call")  # a template change after approval
+    assert approvals.content_hash(kind.content(conn, request.subject)) != request.content_hash
+
+
+def test_a_template_change_after_approval_supersedes_and_sends_nothing(conn, monkeypatch):
+    from jura_growth.agents.outreach import design
+
+    seeded, request = approved(conn, monkeypatch)
+    monkeypatch.setattr(design, "SESSION_LABEL", "Book a session →")
+    sent = fake_resend(monkeypatch)
+    at(monkeypatch, TUESDAY_10)
+    send.send_due(conn)
+    assert sent == []
+    assert approvals.get(conn, request.id).status == "superseded"
+    assert approvals.get(conn, request.id).used_at is None
+    assert status_of(conn, seeded["message_id"]) == "queued"  # it waits for a fresh approval
+
+
+def test_the_frame_fingerprint_is_stable_and_changes_with_any_part_of_the_frame(monkeypatch):
+    import re
+
+    from jura_growth.agents.outreach import compose, design
+    from jura_growth.agents.scout import settings
+
+    first = compose.frame_fingerprint()
+    assert re.fullmatch(r"[0-9a-f]{64}", first) and compose.frame_fingerprint() == first
+    for module, name, value in (
+        (design, "TEMPLATE_VERSION", "another version"),
+        (design, "GREEN_600", "#000000"),
+        (settings, "SENDER_NAME", "Someone Else, Jura Solutions"),
+        (settings, "REPLY_TO", "someone@jurasolutions.sg"),
+        (settings, "UNSUBSCRIBE_MAILTO", "mailto:someone@jurasolutions.sg?subject=unsubscribe"),
+        (settings, "CALL_URL", "https://jurasolutions.sg/?from=elsewhere#contact"),
+        (settings, "MARK_URL", "https://jurasolutions.sg/email/other.png"),
+    ):
+        with monkeypatch.context() as patch:
+            patch.setattr(module, name, value)
+            assert compose.frame_fingerprint() != first, name
+    assert compose.frame_fingerprint() == first

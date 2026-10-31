@@ -132,8 +132,24 @@ def test_outreach_live_writes_live_mode_into_the_uat_config_only(live, window):
     settings = yaml.safe_load((window / "config" / "settings.yaml").read_text())
     assert settings["approvals"]["discord_buttons"] is False
     assert (window / "inputs" / "do-not-contact.csv").exists()
+    # The repo's own config/scout.yaml is never the one rewritten: it keeps its own values and
+    # has no seed header (it ships live from levi@jurasolutions.sg since 2026-10-31).
+    real_text = (paths.REPO_ROOT / "config" / "scout.yaml").read_text()
+    assert "Written by tests/uat/seed.py" not in real_text
+    assert yaml.safe_load(real_text)["sending_domain"] != seed.LIVE_SENDING_DOMAIN
+
+
+def test_the_uat_config_starts_in_shadow_whatever_the_repo_ships(uat, monkeypatch):
+    """Before `outreach-live`, the window's copy of config/ is in shadow mode with no legal review
+    and no sending domain, so a UAT window never inherits the repo's live settings."""
+    monkeypatch.setenv("JURA_GROWTH_CONFIG_DIR", str(uat / "config"))
+    monkeypatch.setenv("JURA_INPUTS_DIR", str(uat / "inputs"))
+    seed.seed(uat, today=TUESDAY)
+    scout = yaml.safe_load((uat / "config" / "scout.yaml").read_text())
+    assert scout["mode"] == "shadow" and scout["legal_review_done"] is False and scout["sending_domain"] is None
     real = yaml.safe_load((paths.REPO_ROOT / "config" / "scout.yaml").read_text())
-    assert real["mode"] == "shadow"
+    assert {k: v for k, v in scout.items() if k not in ("mode", "legal_review_done", "sending_domain")} == \
+        {k: v for k, v in real.items() if k not in ("mode", "legal_review_done", "sending_domain")}
 
 
 def test_every_live_pre_condition_holds_but_the_buttons(live):

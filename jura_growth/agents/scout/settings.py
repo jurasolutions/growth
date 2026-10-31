@@ -14,12 +14,22 @@ from typing import Any
 from jura_growth import caps, config
 from jura_growth.agents.scout import contact
 
-SENDER_NAME = "Ting Yu, Jura Solutions"
-SIGNATURE_NAME = "Ting Yu"
-REPLY_TO = "info@jurasolutions.sg"
+# Scout PRD §5.6a (amended 2026-10-31): emails go out as Levi, and replies
+# reach his mailbox. The From local part comes from config (`from_local_part`).
+SENDER_NAME = "Levi Ting, Jura Solutions"
+SIGNATURE_NAME = "Levi Ting"
+SIGNATURE_TITLE = "Principal Consultant"
+SIGNATURE_EMAIL = "levi@jurasolutions.sg"
+REPLY_TO = SIGNATURE_EMAIL
 SITE = "jurasolutions.sg"
+# The enquiry form on the home page; `from` labels where the visitor came from.
+CALL_URL = "https://jurasolutions.sg/?from=outreach#contact"
+# The Jura mark as a PNG (email clients block SVG), served by the website from
+# `public/email/`. 96 px, shown at 48 px for sharp retina screens.
+MARK_URL = "https://jurasolutions.sg/email/jura-mark-96.png"
 UNSUBSCRIBE_URL = "https://jurasolutions.sg/unsubscribe"
-UNSUBSCRIBE_MAILTO = "mailto:info@jurasolutions.sg?subject=unsubscribe"
+# Opt-outs by mail reach the same mailbox as "or reply 'unsubscribe'" (Reply-To).
+UNSUBSCRIBE_MAILTO = f"mailto:{SIGNATURE_EMAIL}?subject=unsubscribe"
 
 # The PRD's floor and the window's outer bounds. Config may tighten them.
 SCORE_THRESHOLD_MIN = 60

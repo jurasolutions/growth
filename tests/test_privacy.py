@@ -252,10 +252,18 @@ def test_learning_reads_named_contacts_and_companies_from_the_plugins(conn):
     assert privacy.for_discord("Mark Tan of Tan Holdings Pte Ltd") == "[name removed] of Tan Holdings Pte Ltd"
 
 
-def test_learning_reads_ting_yus_sender_address_from_the_outreach_settings(conn):
+def test_learning_reads_ting_yus_sender_address_from_the_outreach_settings(conn, monkeypatch):
+    # Set here, not read from the shipped config/scout.yaml, so a change of sender there
+    # doesn't change what this checks.
+    real = config.agent_config
+    scout = {"from_local_part": "levi", "sending_domain": "hello.jurasolutions.sg"}
+    monkeypatch.setattr(config, "agent_config", lambda agent: scout if agent == "scout" else real(agent))
+
     privacy.learn(conn)
 
-    assert privacy.for_discord("from tingyu@jurasolutions.sg") == "from [removed]"
+    assert privacy.for_discord("from levi@jurasolutions.sg") == "from [removed]"
+    assert privacy.for_discord("from levi@hello.jurasolutions.sg") == "from [removed]"
+    assert privacy.for_discord("from tingyu@jurasolutions.sg") == "from t***@jurasolutions.sg"
 
 
 def test_learning_keeps_ting_yus_signature_name(conn):

@@ -183,24 +183,40 @@ and queues ten leads and shows the first live day still sends five.
 
 ## Block 2: the email
 
-The model writes `subject` and `body`. The code appends:
+The model writes `subject` and `body`. The code appends the call button, Levi's signature and
+the footer (PRD §5.6a, amended 2026-10-31). In the plain-text part:
 
 ```
-Ting Yu
-Jura Solutions · jurasolutions.sg
+Book a 30-minute call: https://jurasolutions.sg/?from=outreach#contact
+
+Levi Ting
+Principal Consultant
+Jura Solutions
+AUTOMATION CONSULTANCY
+levi@jurasolutions.sg
+jurasolutions.sg
+
+We automate the repetitive parts of running a business. Book a discovery session → https://jurasolutions.sg/?from=outreach#contact
 
 You're receiving this because <Company> lists this address for business enquiries on <their
-site>. Not interested? Unsubscribe here: <link>, or reply "unsubscribe".
+site>. Not interested? Unsubscribe here: <link>, or reply "unsubscribe". How we handle your
+details: https://jurasolutions.sg/privacy
 ```
+
+There is no phone number anywhere in the email (Ting Yu, 2026-10-31). The call page is the
+enquiry form on the home page; `from=outreach` labels where the visitor came from.
 
 `<their site>` is the host of the verified source page. The `email` brand channel (links to
 jurasolutions.sg only) adds these checks to the core rules:
 
-- under 120 words in the body (excluding signature and footer);
+- under 150 words in the body (excluding the button, signature and footer);
+- the website, `jurasolutions.sg`, mentioned on its own in the body;
 - exactly one link to a live `/apps/<slug>` tool from the site registry (the chosen one), and
-  exactly one to `/apps`; no other links (follow-ups: the `/apps` link and at most one tool);
-- the signature, the why-you're-receiving line with this company's name, the unsubscribe link
-  and `or reply "unsubscribe"`;
+  exactly one to `/apps`; no other links besides `jurasolutions.sg` (follow-ups: the `/apps`
+  link and at most one tool);
+- an ask for a 30-minute call in the body ("a 30-minute call", or a half-hour one);
+- the call button, the signature, the why-you're-receiving line with this company's name, the
+  unsubscribe link and `or reply "unsubscribe"`;
 - a subject that isn't empty and has no `Re:`/`Fwd:` (questions and sentence case are core
   rules 5 and 8);
 - a first line that names the company (its name or first distinctive word) or uses a keyword
@@ -235,11 +251,36 @@ Test vector (`tests/test_outreach_email.py`): email `info@acme-aircon.sg`, secre
 `jura-test-secret-2026` gives
 `3e7f8903444b297047849d51c51d0872460db95817c314d72ea201f381258ba8.EP0Tuk-Ys4HLJC8W75A3xVyxnI3_pNqXpJlcQGS38ns`.
 
-Headers on every live send: `List-Unsubscribe: <url>, <mailto:info@jurasolutions.sg?subject=unsubscribe>`
-and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. HTML is built from the text:
-paragraphs, jurasolutions.sg links with `utm_source=outreach&utm_medium=email&utm_campaign=scout`
-(never on the unsubscribe link, never on another site), no images, no tracking pixel. The plain
-text keeps clean links.
+Headers on every live send: `List-Unsubscribe: <url>, <mailto:levi@jurasolutions.sg?subject=unsubscribe>`
+and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`.
+
+**The HTML part** (`agents/outreach/design.py`) carries the same words as the text. It is one
+white column at most 600 px wide, on table markup with every style inline, built from the
+design-system tokens: the body's paragraphs, a green "Book a 30-minute call" button, the
+signature (the mark, the name block with a text wordmark, a deep-green vertical rule, the email
+address and the site, a hairline, the tagline) and the footer in small grey text. A short
+`<style>` block stacks the signature on a phone and sets dark-mode colours for Apple Mail and
+Outlook. The one image is the mark, a PNG on a white tile served from
+`https://jurasolutions.sg/email/jura-mark-96.png` (email clients block SVG), shown at 48 px with
+alt text, so the email reads in full with images blocked. jurasolutions.sg links carry
+`utm_source=outreach&utm_medium=email&utm_campaign=scout` (never the unsubscribe or privacy
+link, never another site). No tracking pixel, no attachments. The plain text keeps clean links.
+
+Opt-outs by mail (the `List-Unsubscribe` mailto and "or reply 'unsubscribe'") and replies all
+reach levi@jurasolutions.sg, so reply detection (`OUTREACH_IMAP_*`) reads that one mailbox.
+Outlook for Windows ignores `max-width`, so it gets a fixed 600 px table through an MSO
+conditional comment. Long links wrap (`overflow-wrap:anywhere`), and the signature's links are
+44 px tall on a phone.
+
+**The approval covers the frame.** An `outreach-email` request hashes the recipient, the
+subject, the draft and `compose.frame_fingerprint()`: everything the code adds around the draft,
+rendered for a stand-in recipient. A template or sender change after approval supersedes the
+request. The card shows the subject, the whole draft, the call link and a template line naming
+`design.TEMPLATE_VERSION` and the frame's first eight hex digits.
+
+`jura-growth outreach sample [--out DIR] [--screenshots] [--mark FILE]` renders an email for a
+made-up company to `sample.html` and `sample.txt`, and with `--screenshots` draws desktop,
+phone, dark-mode and images-blocked PNGs with headless Chrome. Nothing is queued or sent.
 
 In shadow mode without `UNSUBSCRIBE_SECRET`, the link carries a visible placeholder
 signature. Live mode refuses to start without the secret, and every email is recomposed from
@@ -276,8 +317,8 @@ its draft at send time, so the real token is always the one sent.
    keeps one active first email per company), the brand gate again.
 8. Shadow: status `shadow`, posted to `#outreach-sent` as **SHADOW** with the subject and body;
    Resend is never called, and nothing goes into `contacted_domains` (no one was contacted). Live: `POST https://api.resend.com/emails` with the outreach key,
-   from `"Ting Yu, Jura Solutions" <tingyu@<sending_domain>>`, Reply-To
-   info@jurasolutions.sg, text and HTML, the unsubscribe headers and an `Idempotency-Key`; the
+   from `"Levi Ting, Jura Solutions" <<from_local_part>@<sending_domain>>`, Reply-To
+   levi@jurasolutions.sg, text and HTML, the unsubscribe headers and an `Idempotency-Key`; the
    domain goes into `contacted_domains`; `#outreach-sent` gets the domain, subject and first
    line.
 
@@ -399,10 +440,14 @@ lead with its comparison and strongest hiring evidence.
 
 ### Go-live checklist (block 4)
 
-- [ ] A Singapore lawyer's view on the Spam Control Act's address-harvesting provision (PRD
-      open question 1). Then `legal_review_done: true`.
-- [ ] Sending domain decided (open question 2), verified in Resend (SPF, DKIM, DMARC), and set
-      as `sending_domain`.
+- [x] PRD open question 1, a Singapore lawyer's view on the Spam Control Act's
+      address-harvesting provision. Answered 2026-10-31: waived, not done. Ting Yu has no
+      lawyer, chose to skip the review and accepts the legal risk. `legal_review_done: true`
+      records the waiver, with a comment beside it saying so; no legal view exists.
+- [x] Sending domain decided (open question 2, 2026-10-31): `sending_domain: jurasolutions.sg`,
+      from `levi@jurasolutions.sg` (`from_local_part: levi`).
+- [ ] That domain verified in Resend (SPF, DKIM, DMARC). The `resend._domainkey` DKIM record
+      is published; confirm the domain shows as verified in Resend's dashboard.
 - [ ] `RESEND_API_KEY_OUTREACH`: a sending-only key for that domain.
 - [ ] `UNSUBSCRIBE_SECRET` set to exactly the website's value. Check one link:
       `jura-growth outreach unsubscribe-link you@yourdomain` and open it; the next
@@ -412,7 +457,8 @@ lead with its comparison and strongest hiring evidence.
       and the privacy notice are live.
 - [ ] `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `D1_DATABASE_ID` set;
       `jura-growth outreach sync` reports suppressions without an error.
-- [ ] `inputs/do-not-contact.csv` exists.
+- [x] `inputs/do-not-contact.csv` exists (empty as of 2026-10-31; add companies as
+      Ting Yu decides, open question 4).
 - [ ] Open question 5: decide whether the footer shows a registered business name and UEN
       (not built in; the footer would need a code change).
 - [ ] Optional: `OUTREACH_IMAP_*` for reply detection and follow-ups (open question 3).

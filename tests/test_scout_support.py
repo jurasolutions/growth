@@ -72,10 +72,23 @@ def prepare_scout(tmp, monkeypatch):
     return tmp
 
 
+# The go-live settings every scout and outreach test starts from, whatever config/scout.yaml
+# ships: shadow mode, no legal review, no sending domain, the code's default sender. A test
+# that needs live sending (or any other value here) says so in its `configure(...)` call, so
+# flipping the shipped file never changes what a behaviour test checks. The shipped values
+# themselves are checked in test_outreach_approval.py.
+TEST_BASELINE = {
+    "mode": "shadow",
+    "legal_review_done": False,
+    "sending_domain": None,
+    "from_local_part": "tingyu",
+}
+
+
 def configure(monkeypatch, **overrides) -> dict:
-    """Use config/scout.yaml with `overrides` merged in."""
+    """Use config/scout.yaml, with TEST_BASELINE and then `overrides` merged in."""
     base = yaml.safe_load((paths.config_dir() / "scout.yaml").read_text(encoding="utf-8")) or {}
-    merged = settings._merge(base, overrides)
+    merged = settings._merge(settings._merge(base, TEST_BASELINE), overrides)
     monkeypatch.setattr(config, "agent_config", lambda agent: merged if agent == "scout" else {})
     return merged
 
@@ -148,8 +161,8 @@ def body_for(company: str, tool: str = "delivery-order-maker") -> str:
         f"from a few details and keeps it as a clean PDF: jurasolutions.sg/apps/{tool}\n\n"
         "It sits with our other small tools at jurasolutions.sg/apps. There's nothing to install, and what "
         "you enter stays in your browser.\n\n"
-        "If your team spends evenings retyping orders, reply and tell me how it works today. That's the kind "
-        "of work we help Singapore teams automate."
+        "We're Jura Solutions, a small automation consultancy (jurasolutions.sg). If your team spends "
+        "evenings retyping orders, I'd be glad to hear how it works today on a 30-minute call."
     )
 
 
@@ -285,7 +298,7 @@ def fake_resend(monkeypatch, responder=None) -> list:
 def reply_message(sender: str, *, when: str, body: str, subject: str = "Re: A free tool", auto: str | None = None, message_id: str | None = None) -> bytes:
     message = EmailMessage()
     message["From"] = f"Someone <{sender}>"
-    message["To"] = "info@jurasolutions.sg"
+    message["To"] = "levi@jurasolutions.sg"
     message["Subject"] = subject
     message["Date"] = format_datetime(timeutil.parse(when))
     message["Message-ID"] = message_id or f"<{abs(hash((sender, when, body)))}@example.test>"
@@ -333,7 +346,7 @@ class FakeIMAP:
 
 def imap_env(monkeypatch, messages: list[bytes]) -> FakeIMAP:
     monkeypatch.setenv("OUTREACH_IMAP_HOST", "imap.example.test")
-    monkeypatch.setenv("OUTREACH_IMAP_USER", "info@jurasolutions.sg")
+    monkeypatch.setenv("OUTREACH_IMAP_USER", "levi@jurasolutions.sg")
     monkeypatch.setenv("OUTREACH_IMAP_PASSWORD", "app-password")
     fake = FakeIMAP(messages)
     monkeypatch.setattr(replies, "imap_factory", lambda host, port: fake)

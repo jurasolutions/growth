@@ -179,13 +179,14 @@ time; a smaller batch is fine.
 12. For each `kept` lead whose contact is an email address, if there is queue room, outreach
     isn't paused and a tool fits, write its email (§5).
 
-## 5. The email (PRD §5.6)
+## 5. The email (PRD §5.6 and §5.6a)
 
-Write the subject and body only. The code adds the signature ("Ting Yu, Jura Solutions ·
-jurasolutions.sg"), the line saying why they're receiving it, and the unsubscribe link. Do
-not write any of those yourself, and don't sign off with your name.
+Write the subject and body only. The code adds the rest, below your body: a "Book a 30-minute
+call" button to the enquiry page, Levi's signature (Levi Ting, Principal Consultant, Jura
+Solutions, with his email and the site), the line saying why they're receiving it, and the
+unsubscribe link. Do not write any of those yourself, and don't sign off with a name.
 
-- **Under 120 words** in the body. Shorter is better.
+- **Under 150 words** in the body. Shorter is better.
 - **Greeting** "Hi there," or "Hello,".
 - **The first sentence is about this company:** name it and say something specific and true
   you saw on its own website (one of your observations).
@@ -193,13 +194,18 @@ not write any of those yourself, and don't sign off with your name.
   an admin assistant lists preparing quotations"). Never link to it, never name anyone, and
   never guess about the company's people or workload ("stretched thin", "short-staffed",
   "struggling", "your last admin left"): the code refuses those.
-- **Exactly one link to the chosen tool** written as `jurasolutions.sg/apps/<slug>`, and
-  **exactly one link to** `jurasolutions.sg/apps`. No other links: not to their site, not to
-  other Jura pages.
+- **The body must mention three things**, and the code refuses an email that misses one:
+  - **the website**, written on its own as `jurasolutions.sg` (for example "We're Jura
+    Solutions, a small automation consultancy (jurasolutions.sg).");
+  - **the toolbox**: exactly one link to the chosen tool, written as
+    `jurasolutions.sg/apps/<slug>`, and exactly one link to `jurasolutions.sg/apps`;
+  - **an ask for a 30-minute call**, in those words ("a 30-minute call"). The button below
+    the body carries the link, so don't write a booking link yourself.
+- No other links: not to their site, not to other Jura pages.
 - Say plainly what the tool does for them. Mention it's free, needs no sign-up, and that
   what they type stays in their browser (true of browser-tier tools; for an `ai` tier tool,
   don't claim that).
-- Close with a low-pressure invitation to reply about the repetitive part of their week.
+- Close with the call ask, low-pressure: an offer to hear how their week works, never a push.
 - **Subject:** sentence case, a plain statement, honest about what's inside, for example
   "A free quote builder for Acme Aircon". Never a question, never "Re:" or "Fwd:". Write
   tool names in lower case.
@@ -208,7 +214,7 @@ not write any of those yourself, and don't sign off with your name.
   urgency, no em dashes, no "this, not that" constructions.
 - **The numbers rule:** no figures about Jura or about results. A number word from two up
   ("twelve businesses") is a figure too. No client counts, hours saved, percentages or "go live
-  in N days". Avoid figures altogether if you can.
+  in N days". "A 30-minute call" is fine; avoid other figures if you can.
 
 Reference shape (write your own each time; never copy it):
 
@@ -223,8 +229,9 @@ Reference shape (write your own each time; never copy it):
 > It's one of a growing set of small tools at jurasolutions.sg/apps. No sign-up, and what you
 > type stays in your browser.
 >
-> If part of your week feels like copying the same details between systems, reply and tell me
-> about it. That's the work we help Singapore teams automate.
+> We're Jura Solutions, a small automation consultancy (jurasolutions.sg). If copying the same
+> details between systems takes up part of your week, I'd be glad to hear how it works on a
+> 30-minute call.
 
 Save it to `<scratch>/email-<lead id>.json`:
 
@@ -242,9 +249,10 @@ Queue it: `jura-growth outreach queue --lead <id> --file <path>`.
 ### Follow-ups
 
 Only for leads listed by `jura-growth outreach follow-ups-due`. One per company, ever.
-Under 60 words. Refer back to the first email in the first sentence ("Following up on my note
-last week about ..."), include the `jurasolutions.sg/apps` link, and optionally one newer tool
-from `newer_tools` (one link at most). New subject line (no "Re:"). Queue with
+Under 80 words. Refer back to the first email in the first sentence ("Following up on my note
+last week about ..."), mention `jurasolutions.sg` on its own, include the `jurasolutions.sg/apps`
+link and the ask for a 30-minute call, and optionally one newer tool from `newer_tools` (one link
+at most). The code adds the same button, signature and footer. New subject line (no "Re:"). Queue with
 `jura-growth outreach queue --lead <id> --file <path> --kind follow_up`.
 
 ## 6. Finish

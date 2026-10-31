@@ -3,8 +3,9 @@
 # Read by both plug-ins: `scout` (research, 09:00) and `outreach` (sending
 # every 10 minutes 09:30–16:30, sync at 16:45). Hard limits live in
 # jura_growth/caps.py; a value here may lower one, never raise it. The sender
-# name ("Ting Yu, Jura Solutions"), Reply-To (info@jurasolutions.sg) and the
-# footer are fixed in code.
+# name ("Levi Ting, Jura Solutions"), the signature, Reply-To
+# (levi@jurasolutions.sg) and the footer are fixed in code
+# (jura_growth/agents/scout/settings.py, PRD §5.6a).
 #
 # `jura-growth outreach status` shows what these add up to, including every
 # reason live mode would refuse to start.
@@ -14,17 +15,19 @@
 # live: real email through Resend. Refused unless legal_review_done is true,
 #   sending_domain is set, RESEND_API_KEY_OUTREACH and UNSUBSCRIBE_SECRET are
 #   set, inputs/do-not-contact.csv exists and D1 is configured.
-mode: shadow
+mode: live  # 2026-10-31, Ting Yu: go live. Every email still waits for Approve in #approvals.
 
 # PRD open question 1: a Singapore lawyer's view on the Spam Control Act's
-# address-harvesting provision. Set to true only once Ting Yu has it.
-legal_review_done: false
+# address-harvesting provision. Answered 2026-10-31: waived, not done. Ting Yu
+# has no lawyer, chose to skip the review and accepts the legal risk. The flag
+# is the live gate's input, so it reads true; no legal view exists.
+legal_review_done: true
 
 # PRD open question 2: jurasolutions.sg (Resend free plan, shared with the
 # enquiry form) or a subdomain such as hello.jurasolutions.sg (Resend Pro).
 # Must be verified in Resend. Mail goes out from <from_local_part>@<sending_domain>.
-sending_domain: null
-from_local_part: tingyu
+sending_domain: jurasolutions.sg  # 2026-10-31, Ting Yu
+from_local_part: levi             # levi@jurasolutions.sg, Ting Yu's own mailbox
 
 research:
   # PRD §5.2a. Each run gathers about this many candidates across the day's
