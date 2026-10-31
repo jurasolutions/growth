@@ -47,43 +47,27 @@ from jura_growth.agents.scout import contact as scout_contact
 
 SETTINGS = ("OUTREACH_IMAP_HOST", "OUTREACH_IMAP_USER", "OUTREACH_IMAP_PASSWORD")
 MAX_BODY_BYTES = 512_000
-OPT_OUT_MAX_WORDS = 12
-OPT_OUT_WORD_RE = re.compile(r"\b(remove|stop)\b", re.I)
-# Words that ask to be left alone wherever they are, however long the message (P-9). Each is about
-# the person or the mail, so "stop these duplicate invoices" and "remove my old invoices" aren't.
-_MAIL = r"(?:e-?mails?|mails?|messages?|newsletters?|marketing|spam)"
-EXPLICIT_OPT_OUT_RE = re.compile(
-    rf"""
-    \b(?P<unsubscribe>unsubscribe)\b
-    | \b(?P<stop>stop)\s+(?:spamming|bothering|harassing)\b
-    | \b(?P<stop2>stop)\s+(?:e-?mailing|contacting|messaging|mailing|writing\s+to)\s*(?:me\b|us\b|[.!?]|$)
-    | \b(?P<stop3>stop)\s+sending\s+(?:me|us)\b
-    | \b(?P<stop4>stop)\s+(?:sending\s+)?(?:the\s+|these\s+|this\s+|those\s+|your\s+|all\s+|any\s+)?(?:\w+\s+)?{_MAIL}\b
-    | \b(?P<remove>remove)\s+(?:me|us)\b
-    | \b(?P<remove2>remove)\s+(?:my|our)\s+(?:e-?mail(?:\s+address)?|address|contact(?:\s+details)?|details|name)\b
-    | \b(?P<remove3>remove)\s+(?:this|that)\s+(?:e-?mail\s+)?address\b
-    | \b(?P<remove4>remove)\s+\S+@\S+
-    | \b(?P<remove5>remove)\b[^.?!\n]{{0,40}}\bfrom\s+(?:your|the)\s+(?:\w+\s+)?list\b
-    | \b(?P<take>take)\s+(?:me|us|(?:my|our)\s+\S+)\s+off\b
-    | \b(?P<opt>opt)(?:ing)?\s+(?:me\s+|us\s+)?out\b
-    | \b(?P<dont>do\s+not|don'?t)\s+(?:e-?mail|contact|message|write\s+to)\s+(?:me|us)\b
-    | \b(?P<nomore>no\s+more)\s+{_MAIL}\b
-    """,
-    re.I | re.X | re.M,
+# What suppresses, and nothing else (inbox watch, conductor's decision in code review 01, round 3).
+# Any reply already cancels follow-ups and marks the lead replied, so a missed opt-out isn't chased by
+# the engine, and triage can still class it `opt-out`. Suppression only adds a permanent block, so
+# precision matters more than recall here. Each row: the fixed name a report shows, and the phrase,
+# matched at any length against text `_normal` has prepared. Don't widen this list.
+OPT_OUT_PHRASES = tuple(
+    (name, re.compile(pattern))
+    for name, pattern in (
+        ("unsubscribe", r"\bunsubscribe\b"),
+        ("remove me", r"\bremove (?:me|us)\b"),
+        ("take me off", r"\btake (?:me|us) off\b"),
+        ("stop contacting", r"\bstop (?:emailing|contacting|messaging|writing to)\b"),
+        ("stop sending", r"\bstop sending (?:me|us|this|these|emails to)\b"),
+        ("do not contact", r"\b(?:do not|don't) (?:email|contact|message) (?:me|us|this address)\b"),
+        ("opt out", r"\bopt (?:me|us) out\b|\bopt out of your\b"),
+    )
 )
-_OPT_OUT_NAMES = {"stop": "stop", "remove": "remove", "take": "take off", "opt": "opt out", "dont": "do not contact",
-                  "nomore": "no more", "unsubscribe": "unsubscribe"}
-# Words beside "stop" or "remove" that give it no other object, so a sentence of only these asks out.
-_FILLERS = frozenset("please pls kindly now immediately asap just thanks thank you it them that this at once right away".split())
-_NO_OTHER_OBJECT = frozenset("please pls kindly now immediately asap it them that me us".split())
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
-_TOKEN = re.compile(r"[\w'@.+-]*\w")
-_SIGN_OFF_RE = re.compile(
-    r"^[ \t]*(?:--[ \t]*|_{2,}[ \t]*"
-    r"|(?:(?:kind|best|warm|warmest)\s+)?regards[,.!]?|best(?:\s+wishes)?[,.!]?|thanks(?:\s*(?:and|&)\s*regards)?[,.!]?"
-    r"|thank\s+you[,.!]?|cheers[,.!]?|sincerely[,.!]?|yours\s+(?:sincerely|faithfully|truly)[,.!]?|rgds[,.!]?)[ \t]*$",
-    re.I | re.M,
-)
+# The whole message, once its greeting and punctuation are gone.
+OPT_OUT_WHOLE_MESSAGES = frozenset({"stop", "please stop", "remove", "unsubscribe"})
+_GREETING_RE = re.compile(r"^\s*(?:hi|hello|hey|dear|good (?:morning|afternoon|evening))\b[^,.!:;\n]{0,40}[,.!:;\n]+")
+_APOSTROPHES = str.maketrans({chr(0x2019): "'", chr(0x2018): "'", chr(0x02bc): "'"})
 SUBJECT_PREFIX_RE = re.compile(r"^(?:\s*(?:re|fwd?|aw|wg)\s*(?:\[\d+\])?\s*:\s*)+", re.I)
 AUTO_SUBJECT_RE = re.compile(r"\b(?:out of (?:the )?office|automatic reply|auto(?:matic)?[- ]?reply|autoreply|on leave|away from)\b", re.I)
 QUOTE_START_RE = re.compile(
@@ -316,78 +300,35 @@ def own_text(message: Message) -> str:
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(">"))
 
 
-def _without_signature(own: str) -> str:
-    """Their words up to a sign-off line, so a footer's "unsubscribe" and a long signature don't
-    count as what they said. A message that is only a sign-off stays as it is."""
-    match = _SIGN_OFF_RE.search(own)
-    head = own[: match.start()] if match else own
-    return head if head.strip() else own
+def _normal(text: str) -> str:
+    """Text as the opt-out rule reads it: straight apostrophes, casefolded, one space between words."""
+    return " ".join(text.translate(_APOSTROPHES).casefold().split())
 
 
-def _sentences(text: str) -> list[str]:
-    return [s.strip() for s in _SENTENCE_END.split(text) if s.strip()]
-
-
-def _is_only_the_word(sentence: str, word: str) -> bool:
-    """"Please stop." or "Remove it please.": nothing else in the sentence for it to be about."""
-    return [t for t in _TOKEN.findall(sentence.lower()) if t not in _FILLERS] == [word]
-
-
-def _word_is_about_them(sentence: str, word: str) -> bool:
-    """For a question: whether the word has no other object. "Can you stop?" asks out, and "How do
-    we stop this happening?" is about something else. In doubt it counts, because a wrong
-    suppression shows in the report and can be undone, and a lost opt-out shows nowhere."""
-    tokens = _TOKEN.findall(sentence.lower())
-    after = tokens[tokens.index(word) + 1 :] if word in tokens else []
-    return not after or after[0] in _NO_OTHER_OBJECT or after == ["this"]
-
-
-def _short_opt_out(text: str) -> str | None:
-    """`remove` or `stop` in a short text, judged by the sentence that holds it."""
-    for sentence in _sentences(text):
-        match = OPT_OUT_WORD_RE.search(sentence)
-        if match:
-            word = match.group(1).lower()
-            if not sentence.endswith("?") or _word_is_about_them(sentence, word):
-                return word
-    return None
-
-
-def _explicit_opt_out(text: str) -> str | None:
-    """The fixed name of an explicit ask in `text`, never the text itself: it goes in a report's
-    frame, outside the quote."""
-    match = EXPLICIT_OPT_OUT_RE.search(text)
-    if not match:
-        return None
-    return _OPT_OUT_NAMES[(match.lastgroup or "").rstrip("0123456789")]
+def _opt_out_phrase(text: str) -> str | None:
+    """The fixed name of the rule `text` meets, never the text itself: it goes in a report's frame,
+    outside the quote."""
+    normal = _normal(text)
+    for name, phrase in OPT_OUT_PHRASES:
+        if phrase.search(normal):
+            return name
+    whole = _normal(re.sub(r"[^\w\s]", " ", _GREETING_RE.sub("", text.translate(_APOSTROPHES).casefold(), count=1)))
+    return whole if whole in OPT_OUT_WHOLE_MESSAGES else None
 
 
 def opt_out_reason(subject: str, own: str, ours: frozenset[str] | set[str] = frozenset()) -> str | None:
-    """Why this message asks to be removed, in words for the report, or None. One rule for both
-    checks (inbox watch PRD, F1, as decided in code review 01):
+    """Why this message asks to be removed, in fixed words for the report, or None. One closed rule
+    for both checks, over the subject and all of a person's own words: only the quoted original has
+    gone from `own`, never a signature, so nothing they wrote is missed. Everything else goes to
+    triage, which may class it `opt-out`.
 
-    - an explicit ask (`unsubscribe`, `stop emailing`, `remove me`, `take me off` and the like)
-      suppresses at any length, in their own words with quote and signature removed;
-    - so does a sentence that is only the word: "Please stop.";
-    - `remove` or `stop` otherwise counts in the subject, or in a message of 12 words or fewer. A
-      question is exempt only when the word plainly has another object.
-
-    `ours` holds the subjects Jura sent them (`sent_subjects`), which aren't their words, so
-    "Re: Stop retyping invoices" says nothing about what they want."""
-    subject = "" if bare_subject(subject) in ours else subject
-    words = _without_signature(own)
-    named = _explicit_opt_out(subject) or _explicit_opt_out(words)
+    `ours` holds the subjects Jura sent them (`sent_subjects`), which aren't their words."""
+    subject = "" if bare_subject(subject) in ours else SUBJECT_PREFIX_RE.sub("", subject)
+    named = _opt_out_phrase(subject)
     if named:
-        return f"an explicit ask, with the word {named}"
-    for sentence in _sentences(words):
-        match = OPT_OUT_WORD_RE.search(sentence)
-        if match and _is_only_the_word(sentence, match.group(1).lower()):
-            return f"a sentence that is only the word {match.group(1).lower()}"
-    word = _short_opt_out(SUBJECT_PREFIX_RE.sub("", subject))
-    if word:
-        return f"the subject has the word {word}"
-    word = _short_opt_out(words) if len(words.split()) <= OPT_OUT_MAX_WORDS else None
-    return f"a short message with the word {word}" if word else None
+        return f'the subject says "{named}"'
+    named = _opt_out_phrase(own)
+    return f'they wrote "{named}"' if named else None
 
 
 def bulk_evidence(headers: Message, sender: str) -> str | None:
@@ -406,20 +347,32 @@ def bulk_evidence(headers: Message, sender: str) -> str | None:
     return None
 
 
+def _auth_servers() -> frozenset[str]:
+    """The mail servers whose `Authentication-Results` count, from `auth_servers` in
+    `config/inbox.yaml`. None until the first real message shows the id (UAT Part B)."""
+    named = (config.agent_config("inbox") or {}).get("auth_servers") or ()
+    return frozenset(str(server).strip().lower() for server in named)
+
+
 def verdicts(headers: Message) -> list[str]:
     """The clauses of the receiving server's own `Authentication-Results`, lower-cased, without
-    comments or quoted strings, because a sender chooses what those say. It is the top header:
-    a sender can add one of their own, but only below it."""
-    results = headers.get_all("Authentication-Results") or ()
-    if not results:
-        return []
-    text = re.sub(r'"[^"]*"', '""', str(results[0]))
-    while True:
-        stripped = re.sub(r"\([^()]*\)", " ", text)
-        if stripped == text:
-            break
-        text = stripped
-    return [clause.strip().lower() for clause in text.split(";")[1:]]
+    comments or quoted strings, because a sender chooses what those say.
+
+    A sender can add a header of their own, and if the server writes none theirs would be the top
+    one, so only the top header naming a server in `auth_servers` counts. Any other is no verdict
+    at all: not a pass for a forged enquiry, and not a failure for a real colleague."""
+    trusted = _auth_servers()
+    for result in headers.get_all("Authentication-Results") or ():
+        text = re.sub(r'"[^"]*"', '""', str(result))
+        while True:
+            stripped = re.sub(r"\([^()]*\)", " ", text)
+            if stripped == text:
+                break
+            text = stripped
+        server, *clauses = text.split(";")
+        if server.strip().split(" ")[0].lower() in trusted:
+            return [clause.strip().lower() for clause in clauses]
+    return []
 
 
 def dkim_pass_domains(headers: Message) -> list[str]:
@@ -433,16 +386,27 @@ def dkim_pass_domains(headers: Message) -> list[str]:
     return domains
 
 
+def _spf_pass_domains(clauses: list[str]) -> list[str]:
+    domains = []
+    for clause in clauses:
+        if clause.startswith("spf=pass"):
+            match = re.search(r"(?:^|\s)smtp\.mailfrom=(?:[^@\s]*@)?([a-z0-9.-]+)(?=\s|$)", clause)
+            if match:
+                domains.append(match.group(1))
+    return domains
+
+
 def failed_verdict(headers: Message, domain: str) -> bool:
-    """Whether the server says mail claiming `domain` failed, with nothing aligned passing. Only a
-    failure counts, not a missing verdict: plenty of small companies sign nothing, and treating them
-    as forged would chase a colleague who has already answered."""
+    """Whether the server says mail claiming `domain` didn't come from it. A stated failure counts,
+    and so does a pass that is only for someone else's domain, which is the shape of a forgery from
+    the forger's own server. A missing verdict doesn't: plenty of small companies sign nothing, and
+    treating them as forged would chase a colleague who has already answered. A real colleague
+    behind an unaligned sender is reported, not lost."""
     clauses = verdicts(headers)
-    if any(under_domain(d, domain) for d in dkim_pass_domains(headers)):
+    dkim, spf = dkim_pass_domains(headers), _spf_pass_domains(clauses)
+    if any(under_domain(d, domain) for d in [*dkim, *spf]) or any(c.startswith("dmarc=pass") for c in clauses):
         return False
-    if any(clause.startswith("dmarc=pass") for clause in clauses):
-        return False
-    return any(clause.startswith(("dmarc=fail", "dkim=fail", "spf=fail", "spf=softfail")) for clause in clauses)
+    return bool(dkim or spf) or any(c.startswith(("dmarc=fail", "dkim=fail", "spf=fail", "spf=softfail")) for c in clauses)
 
 
 class Contacts:

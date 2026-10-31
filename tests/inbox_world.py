@@ -53,6 +53,13 @@ def enquiry_mail(*, name: str = "Jane Tan", visitor: str = "jane.tan@acme.exampl
                     body="\n".join(lines), Reply_To=visitor, Authentication_Results=authentication, **kwargs)
 
 
+def trust_servers(monkeypatch, *servers: str) -> None:
+    """As if `auth_servers` in `config/inbox.yaml` named these, by default the ids this file's mail
+    uses. Patched where it is read, because the scout tests' `configure` replaces `agent_config`."""
+    named = frozenset(servers or ("mx.example.test", "mx.zoho.com"))
+    monkeypatch.setattr(replies, "_auth_servers", lambda: named)
+
+
 class Forbidden(AssertionError):
     pass
 

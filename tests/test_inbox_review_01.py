@@ -11,13 +11,18 @@ import sqlite3
 import pytest
 
 from discord_double import discord_double  # noqa: F401
-from inbox_world import DKIM_PASS, NOW, StrictIMAP, enquiry_mail, mailbox_env, raw_mail
+from inbox_world import DKIM_PASS, NOW, StrictIMAP, enquiry_mail, mailbox_env, raw_mail, trust_servers
 from jura_growth import caps, config, db, discord, pause, privacy, runner, suppression
 from jura_growth.agents import inbox
 from jura_growth.agents.inbox import job, mail, report, store
 from jura_growth.agents.outreach import replies, sync
 from test_outreach_sync import live_sends
 from test_scout_support import at, imap_env, outbox, reply_message, scout_env  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def servers_trusted(scout_env, monkeypatch):  # noqa: F811
+    trust_servers(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
@@ -41,85 +46,7 @@ def counted(conn) -> int:
 SIGNATURE = "\nJane Tan\nDirector of Operations\nAcme Logistics Pte Ltd\n10 Anson Road\nacme.example\n"
 
 
-# --- P-1 and P-9: what asks to be removed ------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "words",
-    [
-        # The review's table.
-        "Can you stop?",
-        "Could you please stop?",
-        "STOP?",
-        "Can you stop spamming me?",
-        "Stop. Who gave you my address?",
-        "Please stop. How did you get my email?",
-        "How did you get my email? Stop.",
-        "How did you get this address? Remove it please.",
-        "Can you remove this address?",
-        "Could you remove jane@acme.sg from your list?",
-        "Please stop or I will report you. Understood?",
-        # The conductor's patterns, past 12 words because of a signature (P-9).
-        "Please stop emailing me." + SIGNATURE,
-        "Please stop contacting us." + SIGNATURE,
-        "Please remove me from your list." + SIGNATURE,
-        "Please take me off your list." + SIGNATURE,
-        "Please take us off." + SIGNATURE,
-        "Unsubscribe" + SIGNATURE,
-        "Please stop." + SIGNATURE,
-        # An explicit ask inside a long message.
-        "I have asked before and I will say it again now, because nobody seems to read these: "
-        "please stop emailing me and tell your colleagues the same, thank you very much for that.",
-        "We looked at your tool and it isn't for us, and we don't need another one this year, "
-        "so please remove us from your mailing list and leave it there. Good luck with it.",
-    ],
-)
-def test_p1_p9_these_are_opt_outs(words):
-    """P-1, P-9: when in doubt, suppress. `inbox unsuppress` can undo it; a chased person can't be."""
-    assert replies.opt_out_reason("Re: A free tool", words)
-
-
-@pytest.mark.parametrize(
-    "words",
-    [
-        "How do we stop this happening?",
-        "Can your tool stop these duplicate invoices?",
-        "Can you remove my old invoices from the system?",
-        "Do you stop sending reminders once an invoice is paid?",
-        "How do we stop retyping invoices?",
-        "How do we stop emailing invoices back and forth?",
-        "Could you remove the second page?",
-        "Can you stop by on Thursday?",
-        # A long message with the word in it, and a disclaimer that isn't asking anything.
-        "We spend every evening trying to stop mistakes in our delivery orders, and the team would "
-        "like to see how your tool handles a second depot. Are you free next week?",
-        "Yes, tell me more.\n\nIf you are not the intended recipient, please notify the sender and "
-        "remove this email from your system.",
-        # A footer past the sign-off isn't their words.
-        "Sounds good, call me.\n\nRegards,\nJane\nTo unsubscribe from our newsletter, click here.",
-    ],
-)
-def test_p1_p9_these_are_customers_talking(words):
-    """P-1, P-9: the word's object is plainly something else."""
-    assert replies.opt_out_reason("Re: A free tool", words) is None
-
-
-@pytest.mark.parametrize("subject", ["Stop?", "Re: Can you stop?", "Re: stop", "RE: Fwd: Remove me", "Unsubscribe"])
-def test_p1_the_subject_is_judged_the_same_way(subject):
-    """P-1: a subject asking out suppresses, whatever the body says."""
-    assert replies.opt_out_reason(subject, "Sent from my phone")
-
-
-@pytest.mark.parametrize("subject", ["How do we stop this happening?", "Re: Can your tool stop these duplicate invoices?"])
-def test_p1_a_question_in_the_subject_stays_a_question(subject):
-    """P-1."""
-    assert replies.opt_out_reason(subject, "Tell me more") is None
-
-
-def test_p1_the_reason_quotes_nothing_they_wrote():
-    """P-1: the reason goes in the report's frame, outside the quote, so it is fixed words."""
-    hostile = "Please remove [x](https://evil.test) from your list"
-    assert "evil" not in replies.opt_out_reason("Re: hi", hostile)
+# --- P-1 and P-9: the table itself is `test_inbox_replies.OPT_OUT_TABLE` ----------------
 
 
 def test_p9_an_opt_out_with_a_signature_suppresses_through_the_check(conn, monkeypatch):
@@ -456,11 +383,11 @@ def test_p13_an_opt_out_in_someone_elses_body_suppresses_nobody_at_16_45(conn, m
 
 @pytest.mark.parametrize("path", ["intake", "1645"])
 def test_p10_a_subject_jura_wrote_isnt_their_words(conn, monkeypatch, path):
-    """P-10: an outreach subject with "stop" in it would suppress everyone who answered it."""
+    """P-10: an outreach subject the rule matches would suppress everyone who answered it."""
     seeded, _ = live_sends(conn, monkeypatch, 1)
     lead = seeded[0]
-    conn.execute("UPDATE outreach_messages SET subject = 'Stop retyping invoices' WHERE lead_id = ?", (lead["lead_id"],))
-    message = raw_mail(f"Info <{lead['email']}>", when="2026-10-26T11:00:00+08:00", subject="Re: Stop retyping invoices",
+    conn.execute("UPDATE outreach_messages SET subject = 'Stop emailing invoices by hand' WHERE lead_id = ?", (lead["lead_id"],))
+    message = raw_mail(f"Info <{lead['email']}>", when="2026-10-26T11:00:00+08:00", subject="Re: Stop emailing invoices by hand",
                        body="Tell me more, please, about how this works for a team of twenty.")
     mailbox_env(monkeypatch, [message])
     at(monkeypatch, "2026-10-26T16:45:00+08:00")
@@ -475,9 +402,9 @@ def test_p10_their_own_opt_out_under_that_subject_still_counts(conn, monkeypatch
     """P-10: only the subject is set aside."""
     seeded, _ = live_sends(conn, monkeypatch, 1)
     lead = seeded[0]
-    conn.execute("UPDATE outreach_messages SET subject = 'Stop retyping invoices' WHERE lead_id = ?", (lead["lead_id"],))
+    conn.execute("UPDATE outreach_messages SET subject = 'Stop emailing invoices by hand' WHERE lead_id = ?", (lead["lead_id"],))
     mailbox_env(monkeypatch, [raw_mail(f"Info <{lead['email']}>", when="2026-10-26T11:00:00+08:00",
-                                       subject="Re: Stop retyping invoices", body="Please remove me")])
+                                       subject="Re: Stop emailing invoices by hand", body="Please remove me")])
     at(monkeypatch, "2026-10-26T11:15:00+08:00")
 
     mail.intake(conn)
@@ -664,7 +591,14 @@ def _colleague(lead, authentication=None, **kwargs):
 
 @pytest.mark.parametrize(
     "verdict",
-    ["mx.example.test; dmarc=fail header.from=x", "mx.example.test; dkim=fail; spf=fail smtp.mailfrom=x@evil.test"],
+    [
+        "mx.example.test; dmarc=fail header.from=x",
+        "mx.example.test; dkim=fail; spf=fail smtp.mailfrom=x@evil.test",
+        # R-4: a pass, but only for someone else's domain.
+        "mx.example.test; spf=pass smtp.mailfrom=evil.test; dkim=pass header.d=evil.test; dmarc=none",
+        "mx.example.test; dkim=pass header.d=evil.test",
+        "mx.example.test; spf=pass smtp.mailfrom=x@evil.test",
+    ],
 )
 @pytest.mark.parametrize("path", ["intake", "1645"])
 def test_s4_a_failed_verdict_on_a_domain_match_changes_nothing_and_is_still_reported(conn, monkeypatch, verdict, path):
@@ -690,6 +624,8 @@ def test_s4_a_failed_verdict_on_a_domain_match_changes_nothing_and_is_still_repo
         "mx.example.test; dkim=none; spf=none",  # a small company with neither set up
         "mx.example.test; dmarc=pass header.from=x",
         "mx.example.test; spf=fail; dkim=pass header.d={domain}",
+        "mx.example.test; spf=pass smtp.mailfrom=jane@{domain}; dmarc=none",  # R-4: an aligned pass
+        "mx.example.test; dkim=pass header.d=mail.{domain}; dkim=pass header.d=evil.test",
     ],
 )
 def test_s4_without_a_failed_verdict_a_colleague_still_counts(conn, monkeypatch, verdict):
@@ -767,3 +703,68 @@ def test_the_old_mail_wording_follows_the_configured_hours(conn, monkeypatch):
 
     assert "older than 24 hours" in items(conn)[0]["note"]
     assert json.loads(items(conn)[0]["thread_json"])["reply_to"]
+
+
+# --- R-5: a sender's own Authentication-Results counts for nothing ---------------------------
+
+
+def test_r5_with_no_trusted_server_a_senders_own_pass_isnt_a_signature(conn, monkeypatch):
+    """R-5: as shipped, before UAT names the server. A forged enquiry stays a stranger."""
+    at(monkeypatch, NOW)
+    trust_servers(monkeypatch, "nobody-yet.test")
+    mailbox_env(monkeypatch, [enquiry_mail(visitor="attacker@evil.test", authentication=DKIM_PASS)])
+
+    mail.intake(conn)
+
+    [item] = items(conn)
+    assert item["source"] == "email" and "isn't signed" in item["note"]
+
+
+def test_r5_only_a_header_naming_a_trusted_server_counts_however_far_down(conn, monkeypatch):
+    """R-5: the server's own header wins, and a sender's above it is skipped."""
+    trust_servers(monkeypatch, "mx.real.test")
+    raw = (
+        "Authentication-Results: mx.forged.test; dkim=pass header.d=jurasolutions.sg\n"
+        "Authentication-Results: mx.real.test; dkim=fail header.d=jurasolutions.sg\n\n"
+    )
+    assert not mail._signed_by_jura(email.message_from_string(raw))
+    raw = "Authentication-Results: MX.Real.Test; dkim=pass header.d=jurasolutions.sg\n\n"
+    assert mail._signed_by_jura(email.message_from_string(raw))
+
+
+def test_r5_an_only_arc_header_from_the_server_is_no_verdict(monkeypatch):
+    """R-5: the reviewer's probe: the sender's header, and only `ARC-Authentication-Results` from the server."""
+    trust_servers(monkeypatch, "mx.real.test")
+    raw = (
+        "ARC-Authentication-Results: i=1; mx.real.test; dkim=fail\n"
+        "Authentication-Results: mx.forged.test; dkim=pass header.d=jurasolutions.sg\n\n"
+    )
+    assert not mail._signed_by_jura(email.message_from_string(raw))
+
+
+def test_r5_a_senders_own_failure_blocks_nobody_either(conn, monkeypatch):
+    """R-5: no verdict both ways, so a real colleague can't be stopped by a header they didn't write."""
+    seeded, _ = live_sends(conn, monkeypatch, 1)
+    lead = seeded[0]
+    trust_servers(monkeypatch, "mx.real.test")
+    mailbox_env(monkeypatch, [_colleague(lead, "mx.forged.test; dmarc=fail")])
+    at(monkeypatch, "2026-10-26T11:15:00+08:00")
+
+    mail.intake(conn)
+
+    assert items(conn)[0]["lead_id"] == lead["lead_id"]
+
+
+def test_r5_the_shipped_config_trusts_no_server_until_uat_names_one(monkeypatch):
+    """R-5: a guess here would be trusted, so it ships empty."""
+    monkeypatch.undo()
+    config.reset_caches()
+    assert config.agent_config("inbox")["auth_servers"] == []
+    assert replies._auth_servers() == frozenset()
+
+
+def test_r5_the_setting_is_read_from_config_in_any_case(monkeypatch):
+    """R-5: an id is compared in lower case, as `verdicts` reads the header."""
+    monkeypatch.undo()
+    monkeypatch.setattr(config, "agent_config", lambda agent: {"auth_servers": ["MX.Real.Test"]} if agent == "inbox" else {})
+    assert replies._auth_servers() == frozenset({"mx.real.test"})

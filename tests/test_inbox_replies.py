@@ -19,42 +19,133 @@ def lead_status(conn, lead_id):
 
 # --- F1: what counts as asking to be removed -------------------------------
 
+LONG = " And a long neutral sentence after it, so that length can't be what decides this at all."
+SIGNATURE = "\nJane Tan\nDirector of Operations\nAcme Logistics Pte Ltd\n10 Anson Road\nacme.example\n"
 
-@pytest.mark.parametrize(
-    "subject, words, word",
-    [
-        ("Re: A free tool", "Please remove me", "remove"),
-        ("Re: A free tool", "STOP", "stop"),
-        ("Re: A free tool", "Please remove us from your list.", "remove"),
-        ("Re: A free tool", "Could you remove me from your list?", "remove"),
-        ("Re: A free tool", "How do I stop these emails?", "stop"),
-        ("Re: A free tool", "unsubscribe", "unsubscribe"),
-        ("Re: A free tool", " ".join(["word"] * 40) + " unsubscribe " + " ".join(["word"] * 40), "unsubscribe"),
-        ("stop", " ".join(["word"] * 40), "stop"),
-        ("Remove me", "", "remove"),
-        ("Unsubscribe", "Thanks", "unsubscribe"),
-    ],
-)
-def test_iw_f1_these_ask_to_be_removed(subject, words, word):
-    """IW-F1: `unsubscribe` anywhere; `remove` or `stop` in the subject or in 12 words or fewer."""
-    assert word in replies.opt_out_reason(subject, words)
+# The one table: (subject, their own words, suppressed). The rule's own rows, then every case from
+# code review 01's rounds under the closed rule. Anything not suppressed goes to triage.
+OPT_OUT_TABLE = [
+    # unsubscribe
+    ("Re: A free tool", "unsubscribe", True),
+    ("Re: A free tool", "UNSUBSCRIBE me please" + LONG, True),
+    ("Unsubscribe", "Thanks", True),
+    # remove me, remove us
+    ("Re: A free tool", "Please remove me", True),
+    ("Re: A free tool", "Please remove me from your list." + SIGNATURE, True),
+    ("Re: A free tool", "Please remove us from your list.", True),
+    ("Re: A free tool", "Hi Levi,\nThank you.\nPlease remove me from your list.", True),
+    ("Re: A free tool", "please remove\nme", True),
+    ("Remove me", "", True),
+    ("RE: Fwd: Remove me", "Sent from my phone", True),
+    # take me off, take us off
+    ("Re: A free tool", "Please take me off your list." + SIGNATURE, True),
+    ("Re: A free tool", "Please take us off." + SIGNATURE, True),
+    # stop + emailing, contacting, messaging, writing to + anything
+    ("Re: A free tool", "Please stop emailing me." + SIGNATURE, True),
+    ("Re: A free tool", "Hi Levi,\nThanks,\nbut please stop emailing me.", True),
+    ("Re: A free tool", "Please stop contacting us." + SIGNATURE, True),
+    ("Re: A free tool", "Please stop emailing this address." + LONG, True),
+    ("Re: A free tool", "Stop contacting my team." + LONG, True),
+    ("Re: A free tool", "Please stop emailing our office." + LONG, True),
+    ("Re: A free tool", "Stop messaging us." + LONG, True),
+    ("Re: A free tool", "Please stop writing to me." + LONG, True),
+    # The rule says "+ anything", so this suppresses too, and the report names the rule.
+    ("Re: A free tool", "How do we stop emailing invoices back and forth?", True),
+    # stop sending me, us, this, these, emails to
+    ("Re: A free tool", "Stop sending me these." + LONG, True),
+    ("Re: A free tool", "Please stop sending us mail." + LONG, True),
+    ("Re: A free tool", "Stop sending these." + LONG, True),
+    ("Re: A free tool", "Stop sending this." + LONG, True),
+    ("Re: A free tool", "Stop sending emails to this address." + LONG, True),
+    # do not or don't + email, contact, message + me, us, this address
+    ("Re: A free tool", "Do not email me." + LONG, True),
+    ("Re: A free tool", "Please don\u2019t email me again." + LONG, True),
+    ("Re: A free tool", "Don\u2019t contact us." + LONG, True),
+    ("Re: A free tool", "Don't message us." + LONG, True),
+    ("Re: A free tool", "Please do not contact this address again." + LONG, True),
+    ("Re: A free tool", "Please do not email me the PDF, send it on WhatsApp instead." + LONG, True),
+    # opt me out, opt us out, opt out of your
+    ("Re: A free tool", "Please opt me out." + LONG, True),
+    ("Re: A free tool", "Opt us out." + LONG, True),
+    ("Re: A free tool", "I would like to opt out of your emails." + LONG, True),
+    ("Re: A free tool", "Customers should be able to opt out of your automated follow-ups." + LONG, True),
+    # the whole message, ignoring a greeting and punctuation
+    ("Re: A free tool", "STOP", True),
+    ("Re: A free tool", "Stop.", True),
+    ("Re: A free tool", "STOP?", True),
+    ("Re: A free tool", "Please stop!", True),
+    ("Re: A free tool", "Hi Levi,\n\nPlease stop.", True),
+    ("Re: A free tool", "Hello, stop", True),
+    ("Re: A free tool", "Dear Levi Ting:\nRemove.", True),
+    ("Re: A free tool", "Good morning,\nunsubscribe", True),
+    ("stop", " ".join(["word"] * 40), True),
+    ("Stop?", "Sent from my phone", True),
+    ("Re: stop", "", True),
+    ("Please stop", "Tell me more", True),
+    # A footer has their words in it too: no signature is cut, by decision.
+    ("Re: A free tool", "Sure, tell me more.\n\nRegards\nJohn\nTo unsubscribe from our newsletter click here", True),
+    # Nothing else suppresses: named in the decision.
+    ("Re: A free tool", "We want to stop sending manual emails", False),
+    ("Re: A free tool", "We want to stop sending manual emails to our suppliers." + LONG, False),
+    ("Re: A free tool", "Can our clients opt out", False),
+    ("Re: A free tool", "Can our clients opt out of the reminders?" + LONG, False),
+    # Round 1's table: real questions.
+    ("Re: A free tool", "How do we stop this happening?", False),
+    ("Re: A free tool", "How do we stop retyping invoices?", False),
+    ("Re: A free tool", "Can your tool stop these duplicate invoices?", False),
+    ("Re: A free tool", "Can you remove my old invoices from the system?", False),
+    ("Re: A free tool", "Do you stop sending reminders once an invoice is paid?", False),
+    ("Re: A free tool", "Could you remove the second page?", False),
+    ("Re: A free tool", "Can you stop by on Thursday?", False),
+    ("How do we stop this happening?", "Tell me more", False),
+    ("Re: Can your tool stop these duplicate invoices?", "Tell me more", False),
+    # Round 1's table: opt-outs in other words, which go to triage now.
+    ("Re: A free tool", "Can you stop?", False),
+    ("Re: A free tool", "Could you please stop?", False),
+    ("Re: A free tool", "Can you stop spamming me?", False),
+    ("Re: A free tool", "Stop. Who gave you my address?", False),
+    ("Re: A free tool", "Please stop. How did you get my email?", False),
+    ("Re: A free tool", "How did you get my email? Stop.", False),
+    ("Re: A free tool", "How did you get this address? Remove it please.", False),
+    ("Re: A free tool", "Can you remove this address?", False),
+    ("Re: A free tool", "Could you remove jane@acme.sg from your list?", False),
+    ("Re: A free tool", "Please stop or I will report you. Understood?", False),
+    ("Re: Can you stop?", "Tell me more", False),
+    # Round 2's table: customers describing what they want automated.
+    ("Re: A free tool", "We would love to stop sending reminder emails by hand." + LONG, False),
+    ("Re: A free tool", "How do I stop emails going to spam?" + LONG, False),
+    ("Re: A free tool", "Can you help us stop invoice emails bouncing?" + LONG, False),
+    ("Re: A free tool", "We need to stop the marketing emails going out twice." + LONG, False),
+    ("Re: A free tool", "With your tool we would have no more emails back and forth with suppliers." + LONG, False),
+    ("Re: A free tool", "Can we remove our address from the quotation header?" + LONG, False),
+    ("Re: A free tool", "Could you remove my name from the invoice template?" + LONG, False),
+    # Round 2's table: opt-outs in other words, which go to triage now.
+    ("Re: A free tool", "Hi,\n\nThanks!\n\nStop.", False),
+    ("Re: A free tool", "Do not email again." + LONG, False),
+    ("Re: A free tool", "Please remove from mailing list." + LONG, False),
+    ("Re: A free tool", "Please stop." + SIGNATURE, False),
+    # Ordinary mail.
+    ("Re: A free tool", "Thanks, this is useful. Can we talk on Thursday?", False),
+    ("Re: A free tool", "We would like to stop retyping invoices by hand every evening, so could we talk this week?", False),
+    ("Re: A free tool", "Yes, tell me more.\n\nIf you are not the intended recipient, please notify the sender and "
+                        "remove this email from your system.", False),
+    ("Re: A free tool", "unstoppable removed", False),
+    ("Re: A free tool", "Hi Levi,", False),
+    ("Re: A free tool", "", False),
+    ("Stop retyping invoices", "Tell me more", False),
+]
 
 
-@pytest.mark.parametrize(
-    "subject, words",
-    [
-        ("Re: A free tool", "How do we stop retyping invoices?"),
-        ("Re: A free tool", "Could you remove the second page?"),
-        ("Re: A free tool", "We would like to stop retyping invoices by hand every evening, so could we talk this week?"),
-        ("Re: A free tool", "Thanks, this is useful. Can we talk on Thursday?"),
-        ("How do we stop retyping invoices?", "Tell me more"),
-        ("Re: A free tool", ""),
-        ("Re: A free tool", "unstoppable removed"),
-    ],
-)
-def test_iw_f1_these_do_not(subject, words):
-    """IW-F1: the functional table's real question must not suppress anyone, however short."""
-    assert replies.opt_out_reason(subject, words) is None
+@pytest.mark.parametrize("subject, words, suppressed", OPT_OUT_TABLE)
+def test_iw_f1_the_one_closed_opt_out_rule(subject, words, suppressed):
+    """IW-F1, IW-E2: the closed rule, by the conductor's decision in code review 01, round 3."""
+    assert bool(replies.opt_out_reason(subject, words)) is suppressed
+
+
+def test_iw_f1_a_reason_is_fixed_words_and_quotes_nothing_they_wrote():
+    """IW-F1, IW-N7: it names the rule, and it sits in the report's frame, outside the quote."""
+    assert replies.opt_out_reason("Re: hi", "Please remove me [x](https://evil.test)") == 'they wrote "remove me"'
+    assert replies.opt_out_reason("Please stop", "") == 'the subject says "please stop"'
 
 
 def test_iw_f1_a_real_question_cancels_follow_ups_and_suppresses_nothing_at_16_45(conn, monkeypatch):

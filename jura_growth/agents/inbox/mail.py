@@ -417,8 +417,8 @@ def _signed_by_jura(headers: Message) -> bool:
 
 
 def _contact_of(check: _Check, sender: str, headers: Message, received: datetime | None, subject: str) -> dict | None:
-    """The lead this message answers (W6, F2), or None. Outreach mail keeps no Message-ID (see
-    `store.remember_outgoing`), so for it the domain match is what finds a colleague."""
+    """The lead this message answers (W6, F2), or None. Until ticket 03 outreach mail keeps no
+    Message-ID (see `store.remember_outgoing`), so for it the domain match is what finds a colleague."""
     if received is None or replies.is_automatic(headers, subject):
         return None
     contact = check.known.match(sender, headers) if sender else None

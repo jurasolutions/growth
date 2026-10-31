@@ -11,7 +11,7 @@ import pytest
 import sweep
 from sweep import d2_secrets  # noqa: F401
 from discord_double import discord_double  # noqa: F401
-from inbox_world import NOW, enquiry_mail, mailbox_env, raw_mail
+from inbox_world import NOW, enquiry_mail, mailbox_env, raw_mail, trust_servers
 from jura_growth import config, db, digest, discord, paths, privacy, runner, timeutil
 from jura_growth.agents import inbox
 from jura_growth.agents.inbox import mail, report, store
@@ -20,6 +20,11 @@ from test_outreach_sync import live_sends
 from test_scout_support import at, outbox, scout_env  # noqa: F401
 
 CHANNEL = "mission-control"
+
+
+@pytest.fixture(autouse=True)
+def servers_trusted(scout_env, monkeypatch):  # noqa: F811
+    trust_servers(monkeypatch)
 
 
 def check(conn):
@@ -121,7 +126,7 @@ def test_iw_f1_an_opt_out_report_names_the_word_and_what_was_done(conn, monkeypa
     check(conn)
 
     [post] = discord_double.contents(CHANNEL)
-    assert "an explicit ask, with the word remove" in post
+    assert 'they wrote "remove me"' in post
     assert "suppressed" in post and "no reply will be drafted" in post
 
 

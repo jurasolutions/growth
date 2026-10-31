@@ -223,12 +223,12 @@ def remember_outgoing(conn: sqlite3.Connection, message_id: str, *, lead_id: int
     """Keep the `Message-ID` of a message Jura sent, so its copy is recognised (F4) and an answer
     naming it finds its lead (F2).
 
-    Nothing calls this yet: ticket 03's `inbox-send` sets a `Message-ID` on each inbox reply and
-    records it here. Outreach sends carry none (`outreach/send.py` leaves it to Resend, which
-    doesn't report the one it sets), so outreach mail has nothing to look up. F2's domain match
-    is what covers it (`replies.Contacts.match`): a colleague on the lead's domain still counts, and
-    someone elsewhere answering outreach is reported as a stranger. Copies of outreach mail are
-    dropped by sender domain, so F4 holds for them too."""
+    Nothing calls this yet: ticket 03 sets and keeps a `Message-ID` on inbox replies and on outreach
+    sends, with UAT confirming Resend keeps it. Until then outreach mail has nothing to look up, and
+    F2's domain match is what covers it (`replies.Contacts.match`): a colleague on the lead's domain
+    counts, and someone elsewhere answering outreach is reported as a stranger. Copies of outreach
+    mail are dropped by sender domain, so F4 holds for them.
+    """
     conn.execute(
         "INSERT OR IGNORE INTO inbox_outgoing (message_key, lead_id, recorded_at) VALUES (?, ?, ?)",
         (text_key(message_id.strip()), lead_id, timeutil.stamp()),

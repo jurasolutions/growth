@@ -23,12 +23,18 @@ from inbox_world import (
     enquiry_mail,
     mailbox_env,
     raw_mail,
+    trust_servers,
 )
 from jura_growth import config, db, pause, runner, suppression
 from jura_growth.agents.inbox import mail, store
 from jura_growth.agents.outreach import replies, sync
 from test_outreach_sync import live_sends
 from test_scout_support import at, outbox, scout_env  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def servers_trusted(scout_env, monkeypatch):  # noqa: F811
+    trust_servers(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
