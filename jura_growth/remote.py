@@ -236,8 +236,8 @@ def match(words: list[str]) -> tuple[str, Entry, list[str]]:
     raise Refusal(f"`{_short(typed)}` isn't a control command. Send one of: {', '.join(ALLOWLIST)}")
 
 
-def _short(text: str) -> str:
-    return discord.shortened(text, 60)
+def _short(text: str, limit: int = 60) -> str:
+    return discord.shortened(text, limit)
 
 
 # --- the answer ---------------------------------------------------------------------------------

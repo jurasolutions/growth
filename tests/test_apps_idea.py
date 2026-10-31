@@ -34,7 +34,7 @@ from jura_growth.agents.apps import backlog, ideas
 from jura_growth.cli import cli
 from jura_growth.origin import Origin
 
-PICKS = "the app factory picks it at its next run (06:30 SGT)"
+PICKS = "the app factory picks it at its next run (07:00 SGT)"
 
 
 @pytest.fixture(autouse=True)
