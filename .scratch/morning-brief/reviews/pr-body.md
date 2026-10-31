@@ -89,7 +89,7 @@ If this merges before approvals-first, M1 to M4 pass to that branch's merge, and
 - **The pause trade under an exclusive lock.** While an `EXCLUSIVE` lock is held, the pause flag can't be read, so a paused `digest` still posts to your own channel. That covers `pause digest` and the auto-pause after three failures. The PAUSE file is checked before any lock and still stops it. An ordinary write lock no longer has this problem.
 - **G1, a Fix line that can drop out.** Under a real lock with four or more other Fix lines, the lock's own line, "Send `/growth status` to clear it", falls under "and N more". The picture still says it under Decide.
 - **A wording exception at the gate.** Two comment lines in `tests/test_mission_health.py` are outside the letter of criterion 6, which allows only time values. They change no assertion.
-- **Two commits with no reviewer's approval.** The last approval was at `00b0ab4`. `b953955` (the pause read and wording fixes) was read in full at the gate, and `4b926fc` (the two merge fixes) has only the test suite behind it.
+- **Two commits with no reviewer's approval.** The last approval was at `00b0ab4`. `b953955` (the pause read and wording fixes) was read in full at the gate, and `4b926fc` (the two merge fixes) was read by the conductor, with the test suite behind it.
 
 Smaller open items, for after release: two tests weaker than their names (T1), and a misaligned row in `jura-growth status` (N1).
 

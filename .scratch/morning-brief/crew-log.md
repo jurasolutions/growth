@@ -147,3 +147,13 @@ decisions: origin/main merged in; the suite is rerun on it by the release manage
 decisions: G4 stays with Ting Yu. The PR is opened under the standing instruction and not merged
 questions: -
 evidence:  gate: full pytest -> 4388 passed, 0 skipped; --live-fonts -> problems [] on 5 fixtures; conductor viewed today's render from live data, read-only -> 1200x1338, readable
+
+## 2026-10-31T23:15+0800 release-manager, conductor
+status:    done
+persona:   release-manager, conductor
+ticket:    -
+artifacts: reviews/release.md; reviews/pr-body.md; merges of main up to 68a1911; 4b926fc
+decisions: main's apps idea command (#17) merged cleanly and still broke; 4b926fc restores _short's limit and moves its wording to 07:00. Conductor read it
+decisions: PR opened under the standing instruction, not merged. G4 is Ting Yu's: merging is his acceptance
+questions: -
+evidence:  pytest at 4b926fc -> 4481 passed, 0 skipped, on Python 3.14 and 3.12; rev-list HEAD..origin/main -> 0
