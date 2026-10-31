@@ -53,3 +53,14 @@ decisions: B1, S1 and N2 (min(since, now)) back to the developer; SC3 comment ni
 decisions: S3 (glossary clause) and the grid wording in discord.md and settings.yaml go to ticket 01's merge; S4 goes to the rebase
 questions: -
 evidence:  ls and stat on ~/Library/LaunchAgents -> plists still dated Oct 29; launchctl list -> 11 jobs
+
+## 2026-10-31T20:50+0800 developer
+status:    done
+persona:   developer
+ticket:    01
+artifacts: branch crew/morning-brief-01-the-picture: c580ad4, 137a774, 77f6206, 0e58ed0, 7ba3e5b; jura_growth/picture.py; tests/test_picture*.py, picture_world.py, picture_chrome.py
+decisions: reply detection off counts 0 in the verdict, else no all-clear ever; the tile shows a dash
+decisions: an unknown count says "Nothing to decide or fix, but some figures couldn't be read."
+decisions: "Didn't run" also skipped when not installed; message Fix lines cut at 360 characters
+questions: -
+evidence:  pytest -> 4181 passed, 0 skipped; 22 mutants, 21 caught; real fonts worst 1548 px, before the last edits, QA re-records
