@@ -269,5 +269,6 @@ _Avoid_: "needs you", which is the health strip
 
 **Noise**:
 Mail with evidence in its headers that no person wrote it: a mailing list, a no-reply sender, a
-platform's notice. It gets no message of its own, and the one-pager counts and lists it.
+platform's notice, and anything in the Junk folder. It gets no message of its own, and the digest
+counts it.
 _Avoid_: spam, which is a class a model gives a person's comment

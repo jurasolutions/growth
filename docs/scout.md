@@ -394,11 +394,14 @@ candidates:
   set): read-only IMAP (EXAMINE, BODY.PEEK) over the last 45 days. Replies from addresses
   we emailed count, and from colleagues on that lead's own domain (free mail excluded).
   Stored here: lead, contact, received time and a hash of the Message-ID. A reply's own text
-  (quoted text removed) is read in memory for an opt-out, which suppresses the sender:
-  "unsubscribe" anywhere, or "remove" or "stop" in the subject or in a message of 12 words or
-  fewer. A question counts only when it names the person or the mail, so "How do we stop
-  retyping invoices?" suppresses nobody. Auto-replies are ignored. Replies cancel any follow-up,
-  and post to `#outreach-replies` only when `inbox-check` hasn't already reported them.
+  (quoted text and signature removed) is read in memory for an opt-out, which suppresses the
+  sender. An explicit ask ("unsubscribe", "stop emailing", "remove me", "take me off") counts at
+  any length, as does a sentence that is only the word ("Please stop."). A bare "remove" or "stop"
+  counts in the subject or in a message of 12 words or fewer, unless it is a question and the word
+  plainly has another object, so "How do we stop this happening?" suppresses nobody. A subject Jura
+  wrote isn't their words. Mail from a colleague counts only if it isn't bulk mail and the receiving
+  server doesn't say it failed authentication. Auto-replies are ignored. Replies cancel any
+  follow-up, and post to `#outreach-replies` only when `inbox-check` hasn't already reported them.
 - **Follow-ups**: only with reply detection on. One per company, at least 5 business days
   after a live first email with no reply. `outreach follow-ups-due` lists them; the 09:00
   session writes and queues them; the reply check runs again just before each follow-up goes.
