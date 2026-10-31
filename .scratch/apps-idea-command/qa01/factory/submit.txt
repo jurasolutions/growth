@@ -1,0 +1,74 @@
+#### S1 head, own name, --idea
+$ jura-growth apps submit-prd --dry-run --idea site-visit-report /private/tmp/claude-501/-Users-tingy-OneDrive-Desktop-projects-jurasolutions-repos-growth/d6daf64b-57e5-467e-9f34-aee2699f7f0f/scratchpad/feat-apps-idea/qa01/factory/prds/site-visit-report.md
+dry run: APP-006 Site visit report passes every check; submit it without --dry-run
+exit 0
+backlog: unchanged
+
+#### S2 head, renamed, --idea
+$ jura-growth apps submit-prd --dry-run --idea site-visit-report /private/tmp/claude-501/-Users-tingy-OneDrive-Desktop-projects-jurasolutions-repos-growth/d6daf64b-57e5-467e-9f34-aee2699f7f0f/scratchpad/feat-apps-idea/qa01/factory/prds/site-visit-writer.md
+dry run: APP-006 Site visit writer passes every check; submit it without --dry-run
+exit 0
+backlog: unchanged
+
+#### S3 head, own name, no --idea
+$ jura-growth apps submit-prd --dry-run /private/tmp/claude-501/-Users-tingy-OneDrive-Desktop-projects-jurasolutions-repos-growth/d6daf64b-57e5-467e-9f34-aee2699f7f0f/scratchpad/feat-apps-idea/qa01/factory/prds/site-visit-report.md
+dry run: APP-006 Site visit report passes every check; submit it without --dry-run
+exit 0
+backlog: unchanged
+
+#### S4 head, renamed, no --idea
+$ jura-growth apps submit-prd --dry-run /private/tmp/claude-501/-Users-tingy-OneDrive-Desktop-projects-jurasolutions-repos-growth/d6daf64b-57e5-467e-9f34-aee2699f7f0f/scratchpad/feat-apps-idea/qa01/factory/prds/site-visit-writer.md
+rejected: 1 problem with the PRD (the brand check has not run yet)
+  - idea: Ting Yu's idea site-visit-report comes first. File its PRD with `--idea site-visit-report`, or hold it with `apps hold-idea site-visit-report --reason <why>` if it fails a check, before filing another
+exit 1
+backlog: unchanged
+
+#### S5 --idea a non-head idea of his
+$ jura-growth apps submit-prd --dry-run --idea van-check-sheet /private/tmp/claude-501/-Users-tingy-OneDrive-Desktop-projects-jurasolutions-repos-growth/d6daf64b-57e5-467e-9f34-aee2699f7f0f/scratchpad/feat-apps-idea/qa01/factory/prds/van-check-sheet.md
+rejected: 1 problem with the PRD (the brand check has not run yet)
+  - idea: Ting Yu's ideas are filed oldest first, and site-visit-report comes first
+exit 1
+backlog: unchanged
+
+#### S6 --idea a seed row (payslip-maker)
+$ jura-growth apps submit-prd --dry-run --idea payslip-maker /private/tmp/claude-501/-Users-tingy-OneDrive-Desktop-projects-jurasolutions-repos-growth/d6daf64b-57e5-467e-9f34-aee2699f7f0f/scratchpad/feat-apps-idea/qa01/factory/prds/payslip-maker.md
+rejected: 1 problem with the PRD (the brand check has not run yet)
+  - idea: 'payslip-maker' isn't an open idea of Ting Yu's, so the PRD can't be filed against it
+exit 1
+backlog: unchanged
+
+#### S7 --idea a seed row, renaming it (delivery order)
+$ jura-growth apps submit-prd --dry-run --idea delivery-order-maker /private/tmp/claude-501/-Users-tingy-OneDrive-Desktop-projects-jurasolutions-repos-growth/d6daf64b-57e5-467e-9f34-aee2699f7f0f/scratchpad/feat-apps-idea/qa01/factory/prds/site-visit-writer.md
+rejected: 1 problem with the PRD (the brand check has not run yet)
+  - idea: 'delivery-order-maker' isn't an open idea of Ting Yu's, so the PRD can't be filed against it
+exit 1
+backlog: unchanged
+
+#### S8 seed PRD while his idea waits
+$ jura-growth apps submit-prd --dry-run /private/tmp/claude-501/-Users-tingy-OneDrive-Desktop-projects-jurasolutions-repos-growth/d6daf64b-57e5-467e-9f34-aee2699f7f0f/scratchpad/feat-apps-idea/qa01/factory/prds/delivery-order-maker.md
+rejected: 1 problem with the PRD (the brand check has not run yet)
+  - idea: Ting Yu's idea site-visit-report comes first. File its PRD with `--idea site-visit-report`, or hold it with `apps hold-idea site-visit-report --reason <why>` if it fails a check, before filing another
+exit 1
+backlog: unchanged
+
+#### S9 --idea head, renamed onto a seed row's name
+$ jura-growth apps submit-prd --dry-run --idea site-visit-report /private/tmp/claude-501/-Users-tingy-OneDrive-Desktop-projects-jurasolutions-repos-growth/d6daf64b-57e5-467e-9f34-aee2699f7f0f/scratchpad/feat-apps-idea/qa01/factory/prds/payslip-maker.md
+rejected: 1 problem with the PRD (the brand check has not run yet)
+  - duplicate: 'Payslip maker' (payslip-maker) is already a backlog row (Payslip maker, idea); choose another name for Ting Yu's idea
+exit 1
+backlog: unchanged
+
+#### S10 --idea unknown slug
+$ jura-growth apps submit-prd --dry-run --idea no-such-idea /private/tmp/claude-501/-Users-tingy-OneDrive-Desktop-projects-jurasolutions-repos-growth/d6daf64b-57e5-467e-9f34-aee2699f7f0f/scratchpad/feat-apps-idea/qa01/factory/prds/site-visit-report.md
+rejected: 1 problem with the PRD (the brand check has not run yet)
+  - idea: 'no-such-idea' isn't an open idea of Ting Yu's, so the PRD can't be filed against it
+exit 1
+backlog: unchanged
+
+#### S11 --idea a prd-pending seed row (invoice-builder)
+$ jura-growth apps submit-prd --dry-run --idea invoice-builder /private/tmp/claude-501/-Users-tingy-OneDrive-Desktop-projects-jurasolutions-repos-growth/d6daf64b-57e5-467e-9f34-aee2699f7f0f/scratchpad/feat-apps-idea/qa01/factory/prds/site-visit-report.md
+rejected: 1 problem with the PRD (the brand check has not run yet)
+  - idea: 'invoice-builder' isn't an open idea of Ting Yu's, so the PRD can't be filed against it
+exit 1
+backlog: unchanged
+

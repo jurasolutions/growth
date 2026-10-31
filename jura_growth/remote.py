@@ -136,6 +136,21 @@ def _publish_resolve(words: list[str], ref: str | None) -> list[str]:
     return ["publish", "resolve", f"--url={url}", "--", approval, outcome]
 
 
+_OPTION = re.compile(r"--?[A-Za-z]")
+
+
+def _idea(words: list[str], ref: str | None) -> list[str]:
+    """Ting Yu's idea in his own words, as one argument after `--`. A word that reads as an option
+    (`--source`, `-x`) is refused, so nothing typed can set the row's source or status; a hyphen
+    or a dash inside the text is fine. The command checks the length and duplicates."""
+    if not words:
+        raise Refusal("say the idea: `apps idea <text>`")
+    option = next((word for word in words if _OPTION.match(word)), None)
+    if option:
+        raise Refusal(f"`apps idea` takes no options (found {_short(option, 20)}); send the idea as plain words")
+    return ["apps", "idea", "--", " ".join(words)]
+
+
 def _requeue_shadow(words: list[str], ref: str | None) -> list[str]:
     argv = ["outreach", "requeue-shadow"]
     rest = list(words)
@@ -194,6 +209,7 @@ ALLOWLIST: dict[str, Entry] = {
     "approve": Entry("approve <A-nnnn> [key=value …] [note]", _decision("approve"), decision=True),
     "apps built": _with_options("apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>"),
     "apps handoffs": Entry("apps handoffs", _none("apps handoffs")),
+    "apps idea": Entry("apps idea <text>", _idea),
     "apps release-plan": Entry("apps release-plan <APP-NNN>", _positional("apps release-plan", 1, 1)),
     "apps released": _with_options("apps released <APP-NNN> --task <T-nnnn>"),
     "community removed": Entry("community removed <group-id>", _positional("community removed", 1, 1)),
