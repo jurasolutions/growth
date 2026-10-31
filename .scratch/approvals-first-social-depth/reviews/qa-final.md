@@ -431,3 +431,28 @@ Ticket 06's case 2 and ticket 07 are covered at their seams in the same test fil
 - **X5 and X6** read as QA reported, so the gate still has to rule on the wording of both.
 - **CLAUDE.md's numbers rule (ST-S2).** It still says "Only the phrases in `config/approved_claims.yaml`", and the email's "30-minute call" is the one allowance beside them. The allowance is now written in `config/approved_claims.yaml`. CLAUDE.md is Ting Yu's to change, so it isn't changed here. Suggested words: "Only the phrases in `config/approved_claims.yaml`, and the allowance it names."
 - **A wording cost to check at the gate.** A refused card's short line on the picture and in the message says "Let A-nnnn lapse ...: it has no card, so nothing goes out." The reason itself is in the note in #social-drafts and in the long text.
+
+### After ticket 11
+
+*Developer, ticket 11, on the same branch, which now also holds `origin/main` at `019133d` (PR #20). Rerun because that merge and this ticket moved code these criteria rely on. As above, this is the developer's own run for the reviewer and the gate.*
+
+| # | Verdict | Result |
+|---|---|---|
+| X1 | **Met** | Run 1, real clock: 5952 passed in 371 s. Run 2, clock starting Tue 10 Nov 23:57 and crossing midnight: 5952 passed in 397 s. No failure, error or `SKIPPED` line in either. Run 2 keeps a subprocess on the real clock, as above |
+| X2 | **Met** | 122 names read from the "Trace" and "Classes" tables, against run 1's junit. The same two non-matches as above, and neither is a miss |
+| X3 | **Met, two changes listed** | `same` 22 times. `CHANGED test_hashtag_limits_and_position` (technical N9) and `CHANGED test_digest_figures` (AF5, A13), both as listed above |
+| X4 | **Met** | All unchanged since `f0db1e5`. The script's one `CHANGED` line is its own artefact: it reads the abbreviated `test_submit_raises_exactly_one`, and that file has no diff since `f0db1e5` |
+| X5 | **Not met as worded, no rule lowered: the gate rules, as before** | The same 5 parametrize lines named `words`. The skip and xfail grep counts 0 |
+| X6 | **Not met as worded, no behaviour changed: the gate rules, as before** | The same three files as QA listed, unchanged by this ticket. `claim.py`, `origin.py`, `approvals_cli.py` and the ADRs show no diff. `gate_adapter_*` gained and lost nothing here: the refusal is in each kind's `on_approve`, and the card comes from the shared helper the adapters already call |
+| X7 | **Met for this branch, with one file to confirm** | `git diff --name-only origin/main...HEAD` holds nothing under `data/`, `inputs/` or `design-system/`. The `find` prints one file: `inputs/icp.md`, 2,527 bytes, dated 2026-11-01 01:38, and the find printed nothing at ticket 10. Nothing in this branch's commands names that file, the suite's guard refuses writes there, and its size differs from the 2,855-byte draft in `outputs/growth/setup/`, so it isn't a plain copy. I did not read it and can't say who wrote it. X7 allows files Ting Yu changed himself, so the gate should confirm that this is his PRD step |
+| X8 | **Met** | The PC3 file passed with no skip in both runs. The matrix below the first section, rerun on this tree, is identical line by line: 34 of 34 pass |
+
+**X9 isn't rerun:** `git diff 27efa99 HEAD` shows no change to the card's templates, `visuals.py` or `render.py`. The record above stands.
+
+**St3, by mutation.** With `privacy.learn(conn)` removed from `card_problem`, `tests/test_qa_final_defects.py` and `tests/test_approvals_first.py` give exactly one failure: `test_a_learned_name_refuses_a_typed_approval_in_a_new_process_with_no_sweep_first`. Restored, both files pass. With B1 in, the decision is refused either way, so `learn` now decides what the answer says: "can't show the exact text" and not "its card hasn't gone out yet". `card_problem` in `on_approve` can still be reached, by any request with no card and no sweep refusal, so it stays.
+
+**B1, walked.** Real commands, each its own process, with a recorder on `127.0.0.1` and a planted live env file. With the webhook answering 500: `decide` answers "Its card hasn't gone out yet, so it can't be approved", `publish next` says "A-0001 is waiting for a decision", and `pending` adds "no card yet, so it can't be approved". After the heartbeat posts the cards, `decide` answers "A-0001 approved." Outreach has the same rule. It is tested at `tests/test_outreach_cards.py` and wasn't walked.
+
+**The live `.env`.** A session guard now fails any test that opens it, and `seed.LIVE_ENV_FILES` is planted for every test. Every seed run that gets past its folder check goes through a planted file. A subprocess is outside the guard. I read each subprocess call in the suite: they inherit the temp `JURA_GROWTH_ENV_FILE`, except `tests/test_uat_seed.py`'s, which the seed refuses at its folder check, before it reads any env file.
+
+**Not checked:** a real SSH call, how Discord renders any of this, and whether Discord accepts every webhook spelling the seed now refuses.
