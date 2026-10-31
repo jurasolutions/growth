@@ -66,6 +66,7 @@ class Entry:
     usage: str
     argv: Callable[[list[str], str | None], list[str]]
     decision: bool = False
+    logged_words: int | None = None  # words after the name its event keeps; None keeps them all
 
 
 # --- the builders: the words after the command's name -> the real command's arguments ----------
@@ -112,6 +113,7 @@ def _pause(words: list[str], ref: str | None) -> list[str]:
 
 
 _A_ID = re.compile(r"A-[0-9]+")
+_I_ID = re.compile(r"I-[0-9]+")
 _RESOLVE = "say `publish resolve A-nnnn posted --url <url>` or `publish resolve A-nnnn not-posted`"
 
 
@@ -134,6 +136,20 @@ def _publish_resolve(words: list[str], ref: str | None) -> list[str]:
     if not url or url.startswith("-"):
         raise Refusal(_RESOLVE)
     return ["publish", "resolve", f"--url={url}", "--", approval, outcome]
+
+
+def _inbox(usage: str, shape: re.Pattern, *, words_after: tuple[int, int | None]) -> Entry:
+    """`inbox <verb> <id> [words …]`, with the id checked here. What he types after an id can be a draft
+    naming the person, so its event keeps only the name and the id: `events` is never pruned (N6)."""
+    name = " ".join(usage.split()[:2])
+    low, high = words_after
+
+    def build(words: list[str], ref: str | None) -> list[str]:
+        if not words or not shape.fullmatch(words[0]) or len(words) - 1 < low or (high is not None and len(words) - 1 > high):
+            raise Refusal(f"say it as `{usage}`")
+        return [*name.split(), "--", *words]
+
+    return Entry(usage, build, logged_words=1)
 
 
 def _requeue_shadow(words: list[str], ref: str | None) -> list[str]:
@@ -197,6 +213,12 @@ ALLOWLIST: dict[str, Entry] = {
     "apps release-plan": Entry("apps release-plan <APP-NNN>", _positional("apps release-plan", 1, 1)),
     "apps released": _with_options("apps released <APP-NNN> --task <T-nnnn>"),
     "community removed": Entry("community removed <group-id>", _positional("community removed", 1, 1)),
+    "inbox done": _inbox("inbox done <I-nnnn>", _I_ID, words_after=(0, 0)),
+    "inbox draft": _inbox("inbox draft <I-nnnn> [guidance]", _I_ID, words_after=(0, None)),
+    "inbox list": Entry("inbox list", _none("inbox list")),
+    "inbox redraft": _inbox("inbox redraft <A-nnnn> <guidance>", _A_ID, words_after=(1, None)),
+    "inbox reword": _inbox("inbox reword <A-nnnn> <your words>", _A_ID, words_after=(1, None)),
+    "inbox unsuppress": _inbox("inbox unsuppress <I-nnnn>", _I_ID, words_after=(0, 0)),
     "one-pager": Entry("one-pager", _none("one-pager")),
     "outreach requeue-shadow": Entry("outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]", _requeue_shadow),
     "pause": Entry("pause <agent|all> [reason]", _pause),
@@ -427,11 +449,20 @@ def payload(reply: Reply) -> str:
     return handoff_fit.encode(body)
 
 
+def _logged(words: list[str]) -> list[str]:
+    """The words a `remote.command` event keeps: all of them, unless the command says otherwise."""
+    try:
+        name, entry, rest = match(words)
+    except Refusal:
+        return list(words)
+    return list(words) if entry.logged_words is None else [*name.split(), *rest[: entry.logged_words]]
+
+
 def _record(words: list[str], actor: str | None, ref: str | None, reply: Reply) -> None:
     """One `remote.command` event: who, what, and the answer. Never the output."""
     try:
         with db.session() as conn:
-            log.event(conn, "remote.command", {"actor": actor, "words": list(words), "ref": ref, "origin": reply.origin,
+            log.event(conn, "remote.command", {"actor": actor, "words": _logged(words), "ref": ref, "origin": reply.origin,
                                                "answer": reply.answer, "exit_code": reply.exit_code},
                       level="info" if reply.exit_code == OK else "warning")
     except Exception:  # noqa: BLE001 - the answer still goes back; the mirror line may be all there is

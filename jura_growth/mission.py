@@ -109,6 +109,7 @@ class Snapshot:
     outbox: int = 0  # outbox messages saved since the last one-pager
     gaps: tuple[health.Gap, ...] = ()
     plugin_lines: tuple[str, ...] = ()  # plug-ins' own "Needs you" lines (their health(conn) hook)
+    plugin_sections: tuple[tuple[str, tuple[str, ...]], ...] = ()  # (name, lines) from their one_pager_section hook
     broken: tuple[str, ...] = ()  # plug-ins that failed to load
     yesterday: Yesterday | None = None
     spend_today: float = 0.0
@@ -305,6 +306,7 @@ def _from_db(
     if "approvals" in tables:
         facts["approvals"] = _requests(conn, now, last_one_pager=last)
     facts["plugin_lines"] = _plugin_lines(conn)
+    facts["plugin_sections"] = _plugin_sections(conn, since)
     return facts
 
 
@@ -348,6 +350,25 @@ def _plugin_lines(conn: sqlite3.Connection) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def _plugin_sections(conn: sqlite3.Connection, since: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Each plug-in's own section of the one-pager (`one_pager_section(conn, since) -> (name, lines)
+    | None`), given the read-only connection and when the last one-pager went out. Its error's name
+    only: an exception's words could hold what the section was reading."""
+    sections: list[tuple[str, tuple[str, ...]]] = []
+    for module in agents.plugins():
+        hook = getattr(module, "one_pager_section", None)
+        if not callable(hook):
+            continue
+        try:
+            found: Any = hook(conn, since)
+            if found:
+                sections.append((_clean(str(found[0])), tuple(_clean(str(line)) for line in found[1])))
+        except Exception as error:  # noqa: BLE001 - one plug-in never breaks the one-pager
+            name = _clean(str(getattr(module, "NAME", "a plug-in")))
+            sections.append((f"From {name}", (f"This section couldn't be read ({type(error).__name__}).",)))
+    return tuple(sections)
+
+
 def one_pager_times(now: datetime, jobs: Mapping[str, Mapping[str, Any]]) -> tuple[datetime, datetime]:
     """From the schedule alone: the one-pager this one reports since, and the
     next scheduled one.
@@ -362,6 +383,11 @@ def one_pager_times(now: datetime, jobs: Mapping[str, Mapping[str, Any]]) -> tup
     before = [at for at in times if at <= now - ONE_PAGER_GRACE]
     after = [at for at in times if at > now]
     return (before[-1] if before else now - timedelta(days=1)), (after[0] if after else now + timedelta(days=1))
+
+
+def last_one_pager(conn: sqlite3.Connection, jobs: Mapping[str, Mapping[str, Any]], now: datetime) -> datetime:
+    """When the last one-pager went out, for a read that isn't the one-pager (`/growth inbox list`)."""
+    return _last_one_pager(conn, now, one_pager_times(now, jobs)[0])
 
 
 def _last_one_pager(conn: sqlite3.Connection, now: datetime, scheduled: datetime) -> datetime:

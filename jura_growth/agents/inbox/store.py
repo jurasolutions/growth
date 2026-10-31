@@ -21,9 +21,13 @@ from jura_growth import db, timeutil
 from jura_growth.agents.inbox import settings
 
 SOURCES = ("email", "enquiry", "facebook-comment", "facebook-dm", "instagram-comment", "instagram-dm", "post-stats",
-           "app-usage")
+           "app-usage", "email-signal", "engine-note")
 SOCIAL_SOURCES = ("facebook-comment", "facebook-dm", "instagram-comment", "instagram-dm")
 RUN_MESSAGE = "post-stats"  # counts and notes from a watch run: fixed words and validated numbers, no one's text
+APP_USAGE = "app-usage"  # W4: a day's opens per app, from the website's D1
+EMAIL_SIGNAL = "email-signal"  # S12: what a mail service told us about an address, such as a spam complaint
+ENGINE_NOTE = "engine-note"  # what the engine has to tell him about a request of his own, such as a redraft that failed
+NO_PERSON_SOURCES = (RUN_MESSAGE, APP_USAGE, EMAIL_SIGNAL, ENGINE_NOTE)  # fixed words and numbers: no quote block
 STATES = ("new", "triaged", "reported", "waiting", "sending", "sent", "skipped", "lapsed", "superseded", "unknown", "failed",
           "needs-you", "noise", "unverified", "answered-by-hand", "closed", "done", "observed", "baseline", "own")
 NOISE = "noise"
@@ -46,6 +50,7 @@ LAPSED = "lapsed"
 FAILED = "failed"
 UNKNOWN = "unknown"  # it may have gone out, so it is never sent again
 SUPERSEDED = "superseded"
+DONE = "done"  # he cleared it (`/growth inbox done`)
 # The sources a person writes through, and so what triage reads. `MAIL_SOURCES` answer by email.
 MAIL_SOURCES = ("email", "enquiry")
 PEOPLE_SOURCES = (*MAIL_SOURCES, *SOCIAL_SOURCES)
@@ -53,6 +58,7 @@ PEOPLE_SOURCES = (*MAIL_SOURCES, *SOCIAL_SOURCES)
 # item's words aren't proved to be anyone's, a baseline is old enough to be left alone, and the Page's own
 # aren't a person's (code review 05).
 NOT_HISTORY = (NOISE, OBSERVED, UNVERIFIED, BASELINE, OWN)
+JUNK_NOTE = "it was in the junk folder"  # noise's evidence for a Junk message, which R2 lists with its subject (S16)
 
 NAME_CHARS = 120
 SUBJECT_CHARS = 300
@@ -104,6 +110,7 @@ class Reaction:
     stale: bool = False  # too old at intake for a draft (F12)
     received_at: str | None = None
     reported: bool = False  # already told, so no report is due
+    priority: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,7 +136,7 @@ def record(conn: sqlite3.Connection, reaction: Reaction) -> Recorded | Duplicate
     inserted = conn.execute(
         "INSERT OR IGNORE INTO inbox_items (key, source, conversation, sender_name, sender_address, sender_domain, "
         "subject, text, text_cut, target, thread_json, attachments_json, lead_id, state, note, stale, received_at, "
-        "recorded_at, reported_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        "recorded_at, reported_at, updated_at, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         (
             reaction.key, reaction.source, reaction.conversation,
             clean_line(reaction.sender_name)[:NAME_CHARS],
@@ -141,7 +148,7 @@ def record(conn: sqlite3.Connection, reaction: Reaction) -> Recorded | Duplicate
             json.dumps(dict(reaction.thread), ensure_ascii=False),
             json.dumps([clean_line(name) for name in reaction.attachments], ensure_ascii=False),
             reaction.lead_id, reaction.state, reaction.note, int(reaction.stale), reaction.received_at,
-            now, now if reaction.reported else None, now,
+            now, now if reaction.reported else None, now, reaction.priority,
         ),
     ).fetchall()
     if inserted:
@@ -166,6 +173,16 @@ def thread_of(item: dict) -> dict:
 def label(item_id: int) -> str:
     """An inbox item's id, which Ting Yu sees on its report and types to act on it."""
     return f"I-{item_id:04d}"
+
+
+def approval_subject(item_id: int) -> str:
+    """The subject of the requests about this inbox item."""
+    return f"inbox_item:{int(item_id)}"
+
+
+def number_of(text: str) -> int:
+    """The row id in `I-0012`. `remote` has checked its shape; anything else names no row."""
+    return int(text.removeprefix("I-")) if text.removeprefix("I-").isdigit() else 0
 
 
 def has_state(conn: sqlite3.Connection, state: str) -> bool:
@@ -219,12 +236,25 @@ def noise_since(conn: sqlite3.Connection, since: str) -> list[dict]:
     )
 
 
+def reactions_since(conn: sqlite3.Connection, since: str) -> int:
+    """What people did since `since`, as R4 counts it: never noise, a baseline, the Page's own or what
+    a run's checks haven't read yet."""
+    places = ", ".join("?" for _ in PEOPLE_SOURCES)
+    return db.scalar(
+        conn,
+        f"SELECT count(*) FROM inbox_items WHERE recorded_at >= ? AND source IN ({places}) AND state NOT IN (?, ?, ?, ?)",
+        (since, *PEOPLE_SOURCES, NOISE, BASELINE, OWN, OBSERVED),
+    ) or 0
+
+
 def day_counts(conn: sqlite3.Connection, day: str) -> dict[str, int]:
     """One day's figures: counts only, for the digest and the morning brief (R5)."""
+    places = ", ".join("?" for _ in PEOPLE_SOURCES)
     row = db.one(
         conn,
-        "SELECT sum(state NOT IN (?, ?, ?)) AS reactions, sum(state = ?) AS noise FROM inbox_items WHERE substr(recorded_at, 1, 10) = ?",
-        (NOISE, BASELINE, OWN, NOISE, day),
+        f"SELECT sum(state NOT IN (?, ?, ?, ?) AND source IN ({places})) AS reactions, sum(state = ?) AS noise FROM inbox_items "
+        "WHERE substr(recorded_at, 1, 10) = ?",
+        (NOISE, BASELINE, OWN, OBSERVED, *PEOPLE_SOURCES, NOISE, day),
     ) or {}
     return {"reactions": row.get("reactions") or 0, "noise": row.get("noise") or 0}
 
@@ -234,6 +264,7 @@ def open_counts(conn: sqlite3.Connection) -> dict[str, int]:
     return {
         "unreported": db.scalar(conn, f"SELECT count(*) FROM inbox_items WHERE {_OWED}") or 0,
         "hand_replies": db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE state = ?", (NEEDS_HAND_REPLY,)) or 0,
+        "waiting": db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE state = ?", (WAITING,)) or 0,
     }
 
 
@@ -273,13 +304,67 @@ def set_brand_failures(conn: sqlite3.Connection, item_ids: list[int], failures: 
 
 def update_triage(conn: sqlite3.Connection, item_id: int, *, state: str, note: str, kind: str | None, priority: str | None,
                   language: str | None, draft: str | None, promised: bool) -> None:
-    """What triage decided about one message. Its text and everything else read at intake stay."""
+    """What triage decided about one message. Its text and everything else read at intake stay. Any
+    draft or redraft Ting Yu asked for has now been answered, whatever became of it."""
     if state not in STATES:
         raise ValueError(f"unknown state {state!r}")
     conn.execute(
-        "UPDATE inbox_items SET state = ?, note = ?, class = ?, priority = ?, language = ?, draft = ?, promised = ?, updated_at = ? WHERE id = ?",
+        "UPDATE inbox_items SET state = ?, note = ?, class = ?, priority = ?, language = ?, draft = ?, promised = ?, asked_at = NULL, "
+        "updated_at = ? WHERE id = ?",
         (state, note, kind, priority, language, draft, int(promised), timeutil.stamp(), item_id),
     )
+
+
+# --- what Ting Yu asks for ------------------------------------------------------
+
+
+def asked_redrafts(conn: sqlite3.Connection) -> list[dict]:
+    """Cards he asked to have redrafted that triage hasn't answered, oldest first."""
+    return db.rows(conn, "SELECT * FROM inbox_items WHERE state = ? AND asked_at IS NOT NULL ORDER BY id", (WAITING,))
+
+
+def ask_for_draft(conn: sqlite3.Connection, item_id: int, guidance: str) -> None:
+    """A redraft: its card stays open, and triage starts with a clean count."""
+    now = timeutil.stamp()
+    conn.execute("UPDATE inbox_items SET asked_at = ?, guidance = ?, triage_attempts = 0, brand_failures = 0, updated_at = ? WHERE id = ?",
+                 (now, guidance or None, now, item_id))
+
+
+def clear_ask(conn: sqlite3.Connection, item_id: int) -> None:
+    conn.execute("UPDATE inbox_items SET asked_at = NULL, guidance = NULL, updated_at = ? WHERE id = ?", (timeutil.stamp(), item_id))
+
+
+def reopen_for_draft(conn: sqlite3.Connection, item_id: int, guidance: str, *, note: str) -> None:
+    """Back to triage, where the model said no reply was needed. It reports again, so he hears what became
+    of it, even if triage can't do it."""
+    now = timeutil.stamp()
+    conn.execute(
+        "UPDATE inbox_items SET state = ?, asked_at = ?, guidance = ?, note = ?, class = NULL, draft = NULL, triage_attempts = 0, "
+        "brand_failures = 0, reported_at = NULL, closed_at = NULL, updated_at = ? WHERE id = ?",
+        (NEW, now, guidance or None, note, now, item_id),
+    )
+
+
+def update_draft(conn: sqlite3.Connection, item_id: int, draft: str, *, promised: bool, kind: str | None = None, priority: str | None = None,
+                 language: str | None = None) -> None:
+    """A new draft on an open card, whose request is raised in the same transaction."""
+    conn.execute(
+        "UPDATE inbox_items SET draft = ?, promised = ?, class = COALESCE(?, class), priority = COALESCE(?, priority), "
+        "language = COALESCE(?, language), asked_at = NULL, brand_failures = 0, updated_at = ? WHERE id = ?",
+        (draft, int(promised), kind, priority, language, timeutil.stamp(), item_id),
+    )
+
+
+def mark_done(conn: sqlite3.Connection, item_ids: list[int]) -> None:
+    now = timeutil.stamp()
+    for item_id in item_ids:
+        conn.execute("UPDATE inbox_items SET state = ?, closed_at = ?, updated_at = ? WHERE id = ?", (DONE, now, now, item_id))
+
+
+def engine_note(conn: sqlite3.Connection, what: str, text: str) -> None:
+    """One line he is owed in #mission-control, retried until Discord takes it (B7). Fixed words only."""
+    key = text_key("note", what, timeutil.stamp())
+    record(conn, Reaction(source=ENGINE_NOTE, key=key, conversation=key, state=REPORTED, note=text))
 
 
 # --- replies going out --------------------------------------------------------
@@ -297,6 +382,35 @@ def with_state(conn: sqlite3.Connection, state: str) -> list[dict]:
 
 def sent_on(conn: sqlite3.Connection, day: str) -> int:
     return db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE substr(sent_at, 1, 10) = ?", (day,)) or 0
+
+
+# Told once to #alerts as soon as triage has made it high, whatever it became. Not while a run's checks hold it.
+_HIGH_TOLD_STATES = (TRIAGED, WAITING, NEEDS_HAND_REPLY, REPORTED)
+
+
+def high_not_yet_alerted(conn: sqlite3.Connection) -> list[dict]:
+    places = ", ".join("?" for _ in _HIGH_TOLD_STATES)
+    return db.rows(conn, f"SELECT * FROM inbox_items WHERE priority = 'high' AND alerted_at IS NULL AND sent_at IS NULL AND state IN ({places}) ORDER BY id",
+                   _HIGH_TOLD_STATES)
+
+
+def high_alerted_before(conn: sqlite3.Connection, cutoff: str) -> list[dict]:
+    """High items told before `cutoff`, not told again, and still his to decide."""
+    return db.rows(
+        conn,
+        "SELECT * FROM inbox_items WHERE priority = 'high' AND alert_repeated_at IS NULL AND alerted_at IS NOT NULL AND alerted_at <= ? "
+        "AND sent_at IS NULL AND state IN (?, ?, ?) ORDER BY id",
+        (cutoff, TRIAGED, WAITING, NEEDS_HAND_REPLY),
+    )
+
+
+def mark_alerted(conn: sqlite3.Connection, item_ids: list[int], *, repeat: bool = False) -> None:
+    """`updated_at` stays: R4 and retention read it as when the item reached its state."""
+    column = "alert_repeated_at" if repeat else "alerted_at"
+    now = timeutil.stamp()
+    with db.atomic(conn):
+        for item_id in item_ids:
+            conn.execute(f"UPDATE inbox_items SET {column} = ? WHERE id = ?", (now, item_id))
 
 
 def outcomes_owed(conn: sqlite3.Connection) -> list[dict]:

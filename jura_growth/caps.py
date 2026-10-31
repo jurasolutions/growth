@@ -88,6 +88,10 @@ INBOX_EMAIL_DRAFT_CHARS = 1200
 INBOX_EMAIL_DRAFT_LINES = 30  # each line takes a quote mark on the card
 INBOX_REPLY_SUBJECT_CHARS = 120  # longer and a reply goes under a safe subject: the card shows all of what goes out
 INBOX_SOCIAL_DRAFT_CHARS = 600
+INBOX_GUIDANCE_CHARS = 1000  # what he types to steer a draft: he is on a phone, and triage reads it
+INBOX_HIGH_REPEAT_HOURS = 24  # S7: a high item still undecided goes to #alerts once more
+INBOX_USAGE_DAYS = 7  # S14: unreported days of app usage on one message
+INBOX_USAGE_COUNT_MAX = 100_000_000  # a count past this from the website isn't a count
 # SGT, both ends inclusive. Launchd can fire early until the Mac restarts, so the code checks too.
 INBOX_CHECK_WINDOW = ("07:00", "23:59")
 INBOX_SEND_WINDOW = ("08:00", "22:00")  # D3: an email reply approved outside it goes at 08:00

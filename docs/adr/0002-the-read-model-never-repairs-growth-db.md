@@ -14,6 +14,6 @@ read model runs. Don't "fix" this by switching the read model to `db.connect()` 
 In code: `jura_growth/mission.py` probes the connection with one query before anything else uses
 it, so a hot journal or a lock (`database is locked` after two seconds) becomes the "unfinished
 write" state, and a missing `growth.db` or migration a line, before any plug-in hook sees the
-connection. The plug-ins' `health(conn)` hooks get that read-only connection, so a write in one
-raises. The suite proves it on dataset D4, a journal copied mid-transaction that a throwaway copy
+connection. The plug-ins' `health(conn)` and `one_pager_section(conn, since)` hooks get that read-only
+connection, so a write in one raises. The suite proves it on dataset D4, a journal copied mid-transaction that a throwaway copy
 shows to be hot (`tests/mission_world.py`).

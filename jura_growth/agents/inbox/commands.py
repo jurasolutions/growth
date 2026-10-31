@@ -9,8 +9,8 @@ from pathlib import Path
 
 import click
 
-from jura_growth import caps, db, log, timeutil
-from jura_growth.agents.inbox import send, store, triage, watch
+from jura_growth import approvals_cli, caps, config, db, log, mission, origin, privacy, timeutil
+from jura_growth.agents.inbox import one_pager, send, steer, store, triage, watch
 
 
 
@@ -110,3 +110,69 @@ def send_due() -> str:
         summary = send.send_due(conn)
     click.echo(summary or "nothing to send")
     return summary
+
+
+@inbox_group.command("list")
+def listed() -> None:
+    """Replies waiting, as the one-pager shows it (R4), with every open item rather than the first ten."""
+    with db.session() as conn:
+        privacy.load_for_masking(conn)
+        since = mission.last_one_pager(conn, config.settings()["jobs"], timeutil.now_sgt()).isoformat(timespec="seconds")
+        click.echo("\n".join(one_pager.lines(conn, since, limit=None)))
+
+
+def _from_dispatch(ctx: click.Context, what: str, work) -> None:
+    """Only Ting Yu steers: a run is refused whatever it declared, and without the origin only `remote`
+    puts in the click context, typed in Terminal, it does nothing (ADR 0004)."""
+    approvals_cli.refuse_in_a_run(what)
+    found = ctx.obj.get("origin") if isinstance(ctx.obj, dict) else None
+    if not isinstance(found, origin.Origin) or not found.human:
+        click.echo(f"refused: this comes only from Discord: `/growth inbox {ctx.info_name} ...`.")
+        ctx.exit(2)
+    with db.session() as conn:
+        answer = work(conn)
+    click.echo(answer.text)
+    ctx.exit(answer.exit_code)
+
+
+@inbox_group.command("reword")
+@click.argument("approval_id")
+@click.argument("words", nargs=-1, required=True)
+@click.pass_context
+def reword(ctx: click.Context, approval_id: str, words: tuple[str, ...]) -> None:
+    """His exact words become A-nnnn's draft, after the brand check. A word `//` is a paragraph break."""
+    _from_dispatch(ctx, "change a draft", lambda conn: steer.reword(conn, approval_id, words))
+
+
+@inbox_group.command("redraft")
+@click.argument("approval_id")
+@click.argument("words", nargs=-1, required=True)
+@click.pass_context
+def redraft(ctx: click.Context, approval_id: str, words: tuple[str, ...]) -> None:
+    """The next triage redrafts A-nnnn with his guidance. The card stays open until the new one is up."""
+    _from_dispatch(ctx, "change a draft", lambda conn: steer.redraft(conn, approval_id, words))
+
+
+@inbox_group.command("draft")
+@click.argument("label")
+@click.argument("words", nargs=-1)
+@click.pass_context
+def draft(ctx: click.Context, label: str, words: tuple[str, ...]) -> None:
+    """Ask triage for a draft on I-nnnn, where the model said no reply was needed."""
+    _from_dispatch(ctx, "ask for a draft", lambda conn: steer.draft(conn, label, words))
+
+
+@inbox_group.command("done")
+@click.argument("label")
+@click.pass_context
+def done(ctx: click.Context, label: str) -> None:
+    """Clear I-nnnn's conversation from Replies waiting: a hand reply he has given, or a lapsed line."""
+    _from_dispatch(ctx, "clear an inbox item", lambda conn: steer.done(conn, label))
+
+
+@inbox_group.command("unsuppress")
+@click.argument("label")
+@click.pass_context
+def unsuppress(ctx: click.Context, label: str) -> None:
+    """Lift a suppression that came from I-nnnn's reply, and restore its lead. Nothing else is lifted."""
+    _from_dispatch(ctx, "lift a suppression", lambda conn: steer.unsuppress(conn, label))

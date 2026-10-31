@@ -1,8 +1,8 @@
 """The one-pager's text (MC SC1, §5.4).
 
 Built from a `mission.Snapshot`, never from the database, in this order: the
-header, Needs you (the health strip), Approvals waiting, Today, Yesterday and
-Ask me. `post()` sends `text()` to #mission-control through `discord.post()`,
+header, Needs you (the health strip), each plug-in's own section, Approvals
+waiting, Today, Yesterday and Ask me. `post()` sends `text()` to #mission-control through `discord.post()`,
 which masks it and splits it only past 2,000 characters, with the 14-day grid
 as a PNG on the last piece (`grid_html`, drawn by the core Chrome helper in
 `images.py`). The 08:00 `one-pager` job and `/growth one-pager` both run
@@ -22,16 +22,19 @@ from pathlib import Path
 
 from jura_growth import discord, health, images, log, mission, paths, privacy, slots, timeutil
 
-ASK_ME = ("`/growth status`", "`/growth approvals`", "`/growth one-pager`", "`/growth pause <agent|all>`", "`/growth resume <agent|all>`")
+ASK_ME = ("`/growth status`", "`/growth approvals`", "`/growth inbox list`", "`/growth one-pager`", "`/growth pause <agent|all>`",
+          "`/growth resume <agent|all>`")
 # Today shows these jobs as counts per status, whatever their slot count,
 # and lists every other job slot by slot (MC §5.4.4; code review 08 S-4).
-COUNTED_JOBS = frozenset({"scout-send", "publish", "inbox-check", "inbox-send", "inbox-watch"})
+COUNTED_JOBS = frozenset({"scout-send", "publish", "inbox-check", "inbox-send", "inbox-watch", "inbox-reply"})
 
 
 def text(snapshot: mission.Snapshot) -> str:
     now = snapshot.now
     parts = [f"**{health.day_label(now)}, as of {now:%H:%M} SGT**"]
     parts += _section("Needs you", _needs_you(snapshot))
+    for name, lines in snapshot.plugin_sections:
+        parts += _section(name, list(lines))
     parts += _section("Approvals waiting", _approvals(snapshot))
     parts += _section("Today", _today(snapshot))
     parts += _section("Yesterday", _yesterday(snapshot))

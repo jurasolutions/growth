@@ -192,6 +192,13 @@ def _table(conn, world):
         (["apps", "released", "APP-999", "--task", "T-0031"], 1, "APP-999"),
         (["community", "removed", str(group_id)], 0, "is now skip, permanently"),
         (["community", "removed", "999"], 1, "999"),
+        # Inbox watch ticket 04. Their happy paths are in test_inbox_steer.py.
+        (["inbox", "done", "I-9999"], 1, "there is no inbox item I-9999"),
+        (["inbox", "draft", "I-9999"], 1, "there is no inbox item I-9999"),
+        (["inbox", "list"], 0, "Nothing waiting"),
+        (["inbox", "redraft", "A-9999", "shorter"], 1, "there is no approval request A-9999"),
+        (["inbox", "reword", "A-9999", "Plain", "words."], 1, "there is no approval request A-9999"),
+        (["inbox", "unsuppress", "I-9999"], 1, "there is no inbox item I-9999"),
         # MC-09. Discord is off here, so the one-pager waits in the outbox; AC-M1.6's
         # "posted to #mission-control" through the Discord double is in test_one_pager_post.py.
         (["one-pager"], 0, "not posted to #mission-control: DISCORD_WEBHOOK_MISSION_CONTROL not set; saved to outbox"),

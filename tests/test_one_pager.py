@@ -267,7 +267,7 @@ def _day_of(job: str, *times: tuple[int, int, str]) -> dict:
 
 def test_today_counts_scout_send_publish_and_the_inbox_jobs_by_job_and_lists_every_other_job_slot_by_slot():
     """Code review 08 S-4, PRD §5.4.4: the rule is the job, not how many slots it has today."""
-    assert one_pager.COUNTED_JOBS == frozenset({"scout-send", "publish", "inbox-check", "inbox-send", "inbox-watch"})
+    assert one_pager.COUNTED_JOBS == frozenset({"scout-send", "publish", "inbox-check", "inbox-send", "inbox-watch", "inbox-reply"})
     short_publish = _day_of("publish", (9, 0, "ok"), (9, 20, "upcoming"))
     busy_other = _day_of("backup", *[(h, 0, "ok") for h in range(1, 6)])
     lines = section(one_pager.text(snap(slots={**short_publish, **busy_other}, approvals=())), "Today")

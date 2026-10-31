@@ -4,7 +4,9 @@ domain, by any agent.
 Rows come from four places: an unsubscribe link or one-click POST on the
 website, a Resend bounce or complaint webhook (both land in the website's D1
 first and are synced here), a reply saying "unsubscribe", and manual entries.
-Entries are kept indefinitely.
+Entries are kept indefinitely. The one exception is an entry that came from a
+reply, which a phrase match or a model may have got wrong: Ting Yu can lift
+that, and only that (`lift_reply`).
 """
 
 from __future__ import annotations
@@ -14,6 +16,9 @@ import sqlite3
 from collections.abc import Callable
 
 from jura_growth import cloudflare, db, log, timeutil
+
+
+FROM_A_REPLY = "reply"  # the `source` of an entry a person's own reply caused
 
 
 def email_hash(email: str) -> str:
@@ -74,6 +79,19 @@ def add(
         conn.execute("UPDATE suppression SET email = ? WHERE email_hash = ? AND email IS NULL", (email, hashed))
     if cursor.rowcount:
         log.event(conn, "suppression.add", {"reason": reason, "source": source, "domain": domain_of(email or domain or "") or None})
+    return bool(cursor.rowcount)
+
+
+def source_of(conn: sqlite3.Connection, email: str) -> str | None:
+    """Where the address's own entry came from. None when only its domain, or nothing, holds it."""
+    return db.scalar(conn, "SELECT source FROM suppression WHERE email_hash = ?", (email_hash(email),))
+
+
+def lift_reply(conn: sqlite3.Connection, email: str) -> bool:
+    """Remove an address's entry if a reply caused it, and no other kind. True if one went."""
+    cursor = conn.execute("DELETE FROM suppression WHERE email_hash = ? AND source = ?", (email_hash(email), FROM_A_REPLY))
+    if cursor.rowcount:
+        log.event(conn, "suppression.lifted", {"source": FROM_A_REPLY, "domain": domain_of(email)})
     return bool(cursor.rowcount)
 
 

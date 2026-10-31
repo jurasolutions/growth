@@ -35,7 +35,7 @@ import shutil
 import sqlite3
 from dataclasses import dataclass, field
 
-from jura_growth import brand_check, caps, cards, db, discord, gate, log, paths, privacy, timeutil
+from jura_growth import approvals, brand_check, caps, cards, db, discord, gate, log, paths, privacy, timeutil
 from jura_growth.agents.inbox import checks, kinds, mail, report, settings, store
 from jura_growth.agents.outreach import replies
 
@@ -72,7 +72,7 @@ _NOTE = {
     "spam": "It looks like spam or abuse, so nothing is drafted. The engine never hides, deletes or blocks anything: do that by hand if you agree.",
     "noise": "Triage took this for noise, but nothing in its headers says so, so it is reported. No draft: answer by hand if it needs one.",
 }
-_OPTED_OUT = "Triage read this as an opt-out, and the address is suppressed. No reply will be drafted."
+_OPTED_OUT = "Triage read this as an opt-out, and the address is suppressed. No reply will be drafted. If that's wrong, `/growth inbox unsuppress {label}` lifts it."
 _OPTED_OUT_SOCIAL = "They asked not to hear from Jura, so nothing is drafted."
 _OPTED_OUT_UNPROVEN = ("Triage read this as an opt-out, but nothing shows this address is theirs to speak for, so it isn't suppressed. "
                        "No reply will be drafted. Suppress it by hand if it's right.")
@@ -89,6 +89,7 @@ _WROTE_AGAIN = "They wrote again, so this draft is replaced."
 def settle(conn: sqlite3.Connection) -> int:
     """Everything waiting that needs no model: F14, a message with no words, and a conversation out
     of attempts. Returns how many were closed. Each ends needing a hand reply, and reports."""
+    _settle_redrafts(conn)
     limit = caps.INBOX_TRIAGE_ATTEMPTS
     closed = 0
     for item in store.waiting_for_triage(conn):
@@ -110,15 +111,49 @@ def settle(conn: sqlite3.Connection) -> int:
 
 
 def waiting(conn: sqlite3.Connection) -> bool:
-    return bool(store.waiting_for_triage(conn))
+    return bool(_conversations(conn))
+
+
+def note_without_its_verdict(note: str) -> str:
+    """A note with triage's own last word taken out, when Ting Yu sends it back: the intake's warning stays."""
+    for verdict in (*_NOTE.values(), _GAVE_UP, _DROPPED, _NO_WORDS, _DRAFT_READY, _OPTED_OUT_SOCIAL, _OPTED_OUT_UNPROVEN):
+        note = note.replace(verdict, "")
+    return " ".join(note.split())
+
+
+def _redraft_note(conn: sqlite3.Connection, item: dict, what_happened: str) -> None:
+    """His redraft came to nothing: the card stands as it was, and he hears so, once. Inside a transaction."""
+    record = approvals.latest(conn, kinds.KIND, kinds.subject_of(item["id"]))
+    number = record.id if record else store.label(item["id"])
+    store.clear_ask(conn, item["id"])
+    store.set_brand_failures(conn, [item["id"]], 0)
+    store.engine_note(conn, f"redraft-{item['id']}", f"The redraft of {number} {what_happened}, so that card stays open as it was. "
+                                                     f"Approve it, skip it, or `/growth inbox reword {number} <your words>`.")
+
+
+def _settle_redrafts(conn: sqlite3.Connection) -> None:
+    """A redraft he has since decided past, or that has used its attempts. Neither touches the card."""
+    limit = caps.INBOX_TRIAGE_ATTEMPTS
+    for item in store.asked_redrafts(conn):
+        record = approvals.latest(conn, kinds.KIND, kinds.subject_of(item["id"]))
+        with db.transaction(conn):
+            if record is None or record.status != approvals.PENDING:
+                store.clear_ask(conn, item["id"])
+                log.event(conn, "inbox.redraft_dropped", {"item": item["id"]}, agent=AGENT)
+            elif item["triage_attempts"] >= limit:
+                _redraft_note(conn, item, "couldn't be finished")
 
 
 # --- the hand-out -----------------------------------------------------------------------
 
 
 def _conversations(conn: sqlite3.Connection) -> dict[str, list[dict]]:
-    """Every conversation waiting, oldest first, with its waiting messages."""
-    return store.by_conversation(store.waiting_for_triage(conn))
+    """Every conversation waiting, oldest first, with its waiting messages. A redraft he asked for counts
+    as one, unless they have written since: the new message's draft answers that too, under his guidance."""
+    new = store.waiting_for_triage(conn)
+    written = {item["conversation"] for item in new}
+    asked = [item for item in store.asked_redrafts(conn) if item["conversation"] not in written]
+    return store.by_conversation(sorted([*new, *asked], key=lambda item: item["id"]))
 
 
 def _chosen(conn: sqlite3.Connection) -> list[list[dict]]:
@@ -159,7 +194,7 @@ def _platform(item: dict) -> str | None:
 def _message(item: dict) -> dict:
     return {
         "id": store.label(item["id"]),
-        "new": item["state"] == store.NEW,
+        "new": item["state"] == store.NEW or bool(item["asked_at"]),
         "received": item["received_at"] or item["recorded_at"],
         "subject": item["subject"],
         "text": item["text"],
@@ -171,7 +206,8 @@ def _message(item: dict) -> dict:
 def _shown(conn: sqlite3.Connection, items: list[dict]) -> dict:
     newest = items[-1]
     every = store.history(conn, newest["conversation"])
-    earlier = _open_draft(conn, newest["conversation"], {item["id"] for item in items})
+    earlier = _open_draft(conn, newest["conversation"], {item["id"] for item in items if item["state"] == store.NEW})
+    asked_of = [item for item in [*store.in_conversation(conn, newest["conversation"])] if item["asked_at"]]
     return {
         "id": store.label(newest["id"]),
         "channel": _channel(newest),
@@ -181,8 +217,8 @@ def _shown(conn: sqlite3.Connection, items: list[dict]) -> dict:
         "sender_name": newest["sender_name"],
         "sender_domain": newest["sender_domain"],
         "answers_our_outreach": newest["lead_id"] is not None,
-        "guidance": next((item["guidance"] for item in reversed(items) if item["guidance"]), None),
-        "must_draft": earlier is not None,
+        "guidance": next((item["guidance"] for item in reversed([*asked_of, *items]) if item["guidance"]), None),
+        "must_draft": earlier is not None or bool(asked_of),
         "earlier_draft": earlier["draft"] if earlier else None,
         "brand_failures": max(item["brand_failures"] for item in items),
         "messages": [_message(item) for item in every[-MESSAGES_SHOWN:]],
@@ -281,7 +317,8 @@ def submit(conn: sqlite3.Connection, payload) -> Submitted:
     if problems:
         return _refused(*problems)
     found = store.get(conn, int(payload["id"].removeprefix("I-")))
-    items = [i for i in store.in_conversation(conn, found["conversation"]) if i["state"] == store.NEW] if found else []
+    conversation = store.in_conversation(conn, found["conversation"]) if found else []
+    items = [i for i in conversation if i["state"] == store.NEW] or [i for i in conversation if i["state"] == store.WAITING and i["asked_at"]]
     if not found or not items:
         return _refused(f"{payload['id']} has nothing waiting: `inbox pending --json` lists what does")
     run_id = log.current_run_id()
@@ -295,7 +332,9 @@ def submit(conn: sqlite3.Connection, payload) -> Submitted:
         return _refused(f"class {kind} carries no draft (E1): remove it, or choose a class that does")
     if kind in WITH_DRAFT and not draft:
         return _refused(f"class {kind} needs a draft (E1)")
-    earlier = _open_draft(conn, found["conversation"], {item["id"] for item in items})
+    if items[-1]["asked_at"] and kind in NO_DRAFT:
+        return _refused(f"Ting Yu asked for a draft on {payload['id']}: class it for what they need, with one, not {kind}")
+    earlier = _open_draft(conn, found["conversation"], {item["id"] for item in items if item["state"] == store.NEW})
     if earlier and kind in NO_DRAFT - NOT_ANSWERED_WHATEVER_CAME_BEFORE:
         return _refused(f"an earlier message in this conversation still needs an answer (F8): class it for that, "
                         f"with a draft that answers all of it, not {kind}")
@@ -329,7 +368,7 @@ def _without_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], k
         if kind == "opt-out":
             if store.thread_of(newest).get("own_sender"):
                 replies.honour_opt_out(conn, newest["sender_address"], newest["lead_id"], newest["key"])
-                note = _OPTED_OUT
+                note = _OPTED_OUT.format(label=store.label(newest["id"]))
             else:
                 note = _OPTED_OUT_UNPROVEN if newest["sender_address"] else _OPTED_OUT_SOCIAL
         else:
@@ -340,9 +379,9 @@ def _without_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], k
         log.event(conn, "inbox.triaged", {"item": newest["id"], "class": kind}, agent=AGENT)
 
 
-def _with_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], kind: str, draft: str) -> Submitted:
-    newest = items[-1]
-    high = payload.get("priority") == "high" or kind in ALWAYS_HIGH
+def draft_problems(conn: sqlite3.Connection, newest: dict, draft: str, *, high: bool) -> list[brand_check.Issue]:
+    """Everything that stops `draft` going on `newest`'s card: the brand channel, and anything masking
+    would change, whoever wrote it."""
     every = store.history(conn, newest["conversation"])
     their_words = "\n".join(part for item in every for part in (item["subject"], item["text"]) if part)
     context = {"sender_name": newest["sender_name"], "their_words": their_words, "public": _is_public(newest),
@@ -351,8 +390,33 @@ def _with_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], kind
     privacy.load_for_masking(conn)
     if privacy.for_discord(draft, conversation=[draft]) != draft:  # B3: the card must show the exact bytes
         issues.append(brand_check.Issue("channel", "It holds a phone number, a person's address or a secret, which would be masked on the card"))
+    return issues
+
+
+def _redrafted(conn: sqlite3.Connection, payload: dict, item: dict, kind: str, draft: str, high: bool) -> Submitted:
+    """The redraft he asked for. In one transaction the new request is raised and the old card closes
+    (S1), so a failure anywhere leaves the card he has."""
+    candidate = {**item, "draft": draft, "class": kind, "priority": "high" if high else item["priority"]}
+    reply = kinds.reply_of(candidate)
+    if reply is None or not kinds.card_fits(conn, candidate, reply):
+        return _brand_failed(conn, payload, [item], [brand_check.Issue("channel", "It won't fit on one card with what they said")])
+    with db.transaction(conn):
+        store.update_draft(conn, item["id"], draft, promised=high or checks.promises_a_reply(draft), kind=kind,
+                           priority="high" if high else None, language=payload.get("language"))
+        kinds.raise_request(conn, kinds.subject_of(item["id"]), reason=kinds.reason_of(candidate))
+        log.event(conn, "inbox.triaged", {"item": item["id"], "class": kind}, agent=AGENT)
+    cards.sweep_safely(conn)
+    return Submitted(0, [f"OK: {payload['id']} redrafted"])
+
+
+def _with_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], kind: str, draft: str) -> Submitted:
+    newest = items[-1]
+    high = payload.get("priority") == "high" or kind in ALWAYS_HIGH or (newest["state"] == store.WAITING and newest["priority"] == "high")
+    issues = draft_problems(conn, newest, draft, high=high)
     if issues:
         return _brand_failed(conn, payload, items, issues)
+    if newest["state"] == store.WAITING:
+        return _redrafted(conn, payload, newest, kind, draft, high)
 
     language = payload.get("language", "English")
     parts = ["High priority." if high else "", kinds.language_line(language), _DRAFT_READY]
@@ -384,14 +448,19 @@ def _brand_failed(conn: sqlite3.Connection, payload: dict, items: list[dict], is
     label = payload["id"]
     tries = max(item["brand_failures"] for item in items) + 1
     rules = sorted({issue.rule for issue in issues})
+    redraft = items[-1]["state"] == store.WAITING
     with db.transaction(conn):
         store.set_brand_failures(conn, [item["id"] for item in items], tries)
         log.event(conn, "inbox.draft_refused", {"item": items[-1]["id"], "try": tries, "rules": rules}, agent=AGENT)
-        if tries >= gate.MAX_ATTEMPTS:
+        if tries >= gate.MAX_ATTEMPTS and redraft:
+            _redraft_note(conn, items[-1], "failed the brand check twice")
+        elif tries >= gate.MAX_ATTEMPTS:
             _close(conn, items, store.NEEDS_HAND_REPLY, note=_DROPPED, kind=payload["class"])
     listed = [f"  - {issue}" for issue in issues]
     if tries < gate.MAX_ATTEMPTS:
         return Submitted(1, [f"{label}: the brand check refused this draft. Fix every reason in one regeneration:", *listed])
+    if redraft:
+        return Submitted(1, [f"{label}: the brand check refused this draft again, so it is dropped. Don't try again.", *listed])
     discord.alert(conn, f"{store.label(items[-1]['id'])}: two drafts failed the brand check, so it needs a hand reply.", agent=AGENT)
     return Submitted(1, [f"{label}: the brand check refused this draft again, so it is dropped. Don't try again.", *listed])
 
@@ -451,6 +520,7 @@ def after_run(conn: sqlite3.Connection, run_id: int | None, outcome):
     never_asked = _attempt_for_a_run_that_never_asked(conn, run_id)
     settle(conn)
     report.report_due(conn)
+    report.alert_high(conn)
     _clear_scratch()
     done = db.scalar(conn, "SELECT count(*) FROM events WHERE kind = 'inbox.triaged' AND run_id = ?", (run_id,)) or 0
     left = len(_conversations(conn))

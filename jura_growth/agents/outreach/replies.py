@@ -520,7 +520,7 @@ def counted(conn: sqlite3.Connection, key: str) -> bool:
 def honour_opt_out(conn: sqlite3.Connection, sender: str, lead_id: int | None, key: str | None = None) -> None:
     """Suppress `sender`, and mark their lead as having unsubscribed if they have one. `key` is the
     counted reply to mark, when triage classes as an opt-out what the words alone didn't."""
-    suppression.add(conn, email=sender, reason="unsubscribe", source="reply")
+    suppression.add(conn, email=sender, reason="unsubscribe", source=suppression.FROM_A_REPLY)
     if lead_id is not None:
         store.set_lead_status(conn, [lead_id], "unsubscribed")
     if key is not None:

@@ -93,6 +93,12 @@ brackets are required; words in square brackets are optional.
 | `apps release-plan <APP-NNN>` | `apps release-plan` | Claims the approved `app-release` request, then answers with the merge of exactly the approved SHA into `main`, for Ting Yu to run on the Mac. The claim is spent once it runs. A retry while the build is still the claimed commit and preview answers with the same merge and makes no new claim, so a lost answer can be fetched again; the merge names a fixed SHA, so it releases nothing new. Exit 1, with nothing to run, when no approved release is waiting, or when the build moved on from the claimed commit |
 | `apps released <APP-NNN> --task <T-nnnn>` | `apps released` | Records the release once `main` of the landing-page repository holds the claimed SHA, and moves the PRD to `prd/done/apps/`. Exit 1 while the release isn't claimed or `main` lacks the SHA |
 | `community removed <group-id>` | `community removed` | |
+| `inbox done <I-nnnn>` | `inbox done` | Clears that conversation's hand replies and its lapsed or uncertain lines from Replies waiting. Exit 0 with "nothing open" if there are none. Exit 1 while it has a card waiting: `skip` is the way to close that. Sends nothing, and an `unknown` item is never sent again either way |
+| `inbox draft <I-nnnn> [guidance]` | `inbox draft` | Asks the next triage for a draft where the model said no reply was needed, on the conversation's newest message. Exit 1, with the reason, for what can't have one: a suppressed address, a reply that already went, a message with no words kept, one with a card already |
+| `inbox list` | `inbox list` | Replies waiting, as on the one-pager, with every open line rather than the first ten. Excerpts are plain-masked |
+| `inbox redraft <A-nnnn> <guidance>` | `inbox redraft` | The next triage redrafts it, within about 15 minutes. The old card stays open until the new one is up. Exit 1 for a card that was decided, lapsed, superseded or claimed, or while `inbox` is paused |
+| `inbox reword <A-nnnn> <your words>` | `inbox reword` | His words become the draft after the brand check, and the old card closes as the new one is raised. A word `//` or `\n\n` is a paragraph break, because Dispatch splits on whitespace. Exit 1 with the reasons on a refusal, and the card stays open. Exit 1 likewise as `inbox redraft`. Its `remote.command` event keeps only the name and the id |
+| `inbox unsuppress <I-nnnn>` | `inbox unsuppress` | Lifts a suppression that came from that person's reply, and restores their lead. Exit 1, with nothing lifted, for an unsubscribe click, a bounce, a complaint, a manual entry or a whole domain, or when the website's list holds them too or can't be read |
 | `one-pager` | `one-pager` | Posts the one-pager to `#mission-control` with the 14-day grid, dedupe off: asked twice, it posts twice. Exit 0 and `recorded` either way, like `heartbeat`: the text says "posted to #mission-control", or "not posted to #mission-control: <why>" when Discord didn't take it and it waits in the outbox, which the next one-pager lists under Needs you. Read the text, not the exit code, to tell them apart |
 | `outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]` | `outreach requeue-shadow` | Live mode only; each requeued email raises its own approval request. Exit 1 in shadow mode |
 | `pause <agent\|all> [reason]` | `pause` | The rest of the words are the reason; "paused from Discord" without one |
@@ -104,7 +110,9 @@ brackets are required; words in square brackets are optional.
 | `status` | `status` | |
 
 Ticket 09 added `one-pager` and ticket 12 the four `apps` commands. Browser publishing's ticket 03
-adds `publish queue` and `publish resolve`, as rows of their own in this order.
+adds `publish queue` and `publish resolve`, as rows of their own in this order. The inbox watch's
+ticket 04 adds the six `inbox` commands. Fields and answers don't change, so the version stays 1. Every
+one of them is in `headless.NEVER`, and all but `inbox list` refuse without the Dispatch origin.
 
 ## Answers and exit codes
 

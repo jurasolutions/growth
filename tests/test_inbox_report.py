@@ -335,9 +335,10 @@ def test_iw_a5_forged_card_text_stays_inside_the_quote(conn, monkeypatch, discor
 
     [post] = discord_double.contents(CHANNEL)
     unquoted = [line for line in post.splitlines() if not line.startswith(">")]
-    assert len(unquoted) == 2
+    assert len(unquoted) == 3
     assert unquoted[0].startswith("**I-0001 · Email** · clinic.example")
     assert unquoted[1].startswith("No reply needed")
+    assert unquoted[2] == "Want a reply anyway? `/growth inbox draft I-0001 [guidance]`"  # S2
 
 
 def test_iw_n5_a_report_suppresses_link_previews(conn, monkeypatch, discord_double):  # noqa: F811

@@ -42,8 +42,12 @@ from jura_growth import agents, config, log, paths, timeutil
 # approval or sending a control command, which only a human may do, and
 # settling a publish item whose outcome is unknown (browser publishing §5.7).
 # Not `one-pager`: that is a scheduled job's own command. An entry of several
-# words matches a command that starts with those words.
-NEVER = ("run", "resume", "schedule", "discord", "approve", "skip", "approvals", "remote", "publish resolve")
+# words matches a command that starts with those words. The `inbox` ones are
+# how Ting Yu steers a reply (inbox watch D6, S2): a person's words reach a
+# model, so no run may read that list or change a draft, a suppression or an
+# item's state.
+NEVER = ("run", "resume", "schedule", "discord", "approve", "skip", "approvals", "remote", "publish resolve",
+         "inbox done", "inbox draft", "inbox list", "inbox redraft", "inbox reword", "inbox unsuppress")
 
 
 def never(command: str) -> bool:
