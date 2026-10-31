@@ -77,6 +77,7 @@ class Source:
     jobs: Mapping[str, Mapping[str, Any]]
     installed: Callable[[str], bool] = schedule.installed
     days: int = 14  # the grid's width, ending today
+    installed_at: Callable[[str], datetime | None] = lambda job: None  # only `here()` reads the real plists
 
     @classmethod
     def here(cls, *, installed: Callable[[str], bool] = schedule.installed) -> Source:
@@ -91,6 +92,7 @@ class Source:
             now=timeutil.now_sgt(),
             jobs=config.settings()["jobs"],
             installed=installed,
+            installed_at=schedule.installed_at,
         )
 
 
@@ -313,7 +315,7 @@ def _from_db(
     if "runs" in tables:
         records = _records(conn, tables, Path(source.data) / "runs", set(source.jobs), days[0])
         loaded = {job for job, state in installs.items() if state != health.NOT_INSTALLED}
-        found = slots.classify(source.jobs, records, now, days, installed=loaded)
+        found = slots.classify(source.jobs, records, now, days, installed=loaded, installed_at=source.installed_at)
         facts["slots"] = {key: [_clean_slot(slot) for slot in statuses] for key, statuses in found.items()}
         facts["failures"] = _failures(conn, now)
         facts["yesterday"], facts["spend_today"] = _yesterday(conn, now)

@@ -1,6 +1,6 @@
 """The community scout (prd-jura-community-scout-2026-10-24.md, blocks 1 and 2).
 
-Every Monday at 07:30 SGT a headless run researches Singapore SME groups by
+Every Monday at 08:00 SGT a headless run researches Singapore SME groups by
 web search (never fetching facebook.com), records them with
 `community add-group`, and, once Ting Yu has joined some good-fit groups,
 drafts a weekly plan of value-first posts and reply ideas that he posts

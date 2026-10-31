@@ -66,7 +66,8 @@ The draft fails 13 of 3,982 today, all in `test_mission_read.py` (7), `test_one_
 - **Time values only:** those 7, and the one in `test_one_pager.py`, move from 08:00 to 09:00, because `ONE_PAGER_DEFAULT` moved.
 - **Behaviour:** in `test_one_pager_post.py`, the 0800 job, 2,000-character split, can't-draw, one-file-a-day and split-pieces sweep tests now describe the picture and fallback. The settings test moves to 09:00, the backup test gains `brief-*`, and `stub_grid` also stubs `brief.render`.
 - **Small:** the import guard in `test_one_pager_grid.py` adds `brief.py`. `test_mission_setup_guides.py` and its guide move to 09:00.
-- **Stay as they are:** the rest of `test_one_pager.py` (the long form is MB11's fallback) and of `test_one_pager_grid.py`, the existing tests in `test_outreach_cards.py`, `mission_world.py`, `sweep.py`, `test_mission_slots.py`, `test_mission_health.py`, and `fortnight.py` (D1 is frozen history on the old times; new times get new data).
+- **Time values only, added by code review 02:** `STATUS_GOLDEN` in `test_mission_health.py`, because `status` prints the live schedule.
+- **Stay as they are:** the rest of `test_one_pager.py` (the long form is MB11's fallback) and of `test_one_pager_grid.py`, the existing tests in `test_outreach_cards.py`, `mission_world.py`, `sweep.py`, `test_mission_slots.py`, and `fortnight.py` (D1 is frozen history on the old times; new times get new data).
 
 ## Not tested, and why
 
@@ -88,7 +89,7 @@ On `crew/morning-brief` with the worktree exports:
 3. P passes on all fixtures offline, and QA's `--live-fonts` JSON passes with DM Sans, Outfit and IBM Plex Mono loaded.
 4. QA's record holds W, Q and B at 550 px, every word read.
 5. The risk 1 tests exist and pass, and name the `.html` file and the spy page.
-6. `git diff main` is empty for `tests/sweep.py tests/fortnight.py tests/mission_world.py tests/test_mission_slots.py tests/test_mission_health.py pyproject.toml uv.lock`. In `tests/test_mission_read.py` and `tests/test_one_pager.py`, every changed line differs only in a time value or clock argument.
+6. `git diff main` is empty for `tests/sweep.py tests/fortnight.py tests/mission_world.py tests/test_mission_slots.py pyproject.toml uv.lock`. In `tests/test_mission_read.py`, `tests/test_one_pager.py` and `tests/test_mission_health.py`, every changed line differs only in a time value or clock argument.
 7. `git diff main --name-only` has nothing under `inputs/` or `design-system/`; `brief.html` has no `<script`.
 8. Zero open critical or major defects. Critical: an unmasked value in any output, an email sent, or a card lost. Major: a criterion failing, a false verdict, or anything cut off on any fixture. Minor ones are listed with an owner.
 9. No unresolved blocking finding in any `reviews/code-review-*.md`; `pyright` adds no error in a touched file.
