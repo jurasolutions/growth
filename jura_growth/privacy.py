@@ -89,6 +89,7 @@ NOT_NAMES = role_addresses.words() | frozenset(
     ai automation automate automated automates automating tool tools toolbox software app apps
     business businesses small team teams work workflow workflows invoice invoices data
     this week from finding findings fun fact facts good read reading worth news tip tips
+    jura solutions finance design digital manager managers purchasing asia facebook instagram linkedin
     """.split()
 )
 MIN_NAME_PART = 2

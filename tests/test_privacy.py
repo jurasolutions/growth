@@ -341,7 +341,10 @@ ROLE_WORDS = sorted({word for role in (*role_addresses.ENQUIRY_ROLES, *role_addr
                      for word in re.split(r"[^a-z]+", role) if len(word) >= privacy.MIN_NAME_PART})
 # What this feed says every day, and every word of a theme's label as it ships.
 EVERYDAY_WORDS = ["ai", "automation", "automate", "automated", "tool", "tools", "software", "app", "apps", "business",
-                  "businesses", "small", "team", "teams", "work", "workflow", "workflows", "invoice", "invoices", "data"]
+                  "businesses", "small", "team", "teams", "work", "workflow", "workflows", "invoice", "invoices", "data",
+                  # Jura's own name, and what the scout stores as "named" from a company's own addresses.
+                  "jura", "solutions", "finance", "design", "digital", "manager", "managers", "purchasing", "asia",
+                  "facebook", "instagram", "linkedin"]
 THEME_WORDS = sorted({word.lower() for theme in config.agent_config("social")["themes"].values()
                       for word in re.findall(r"[A-Za-z]+", theme["label"]) if len(word) >= privacy.MIN_NAME_PART})
 
@@ -360,6 +363,12 @@ def test_a_real_sentence_survives_addresses_built_from_its_words(text):
     for address in ("ai.ling@x.sg", "ai@x.sg", "sales.singapore@x.sg", "marketing.team@x.sg", "automation.tools@x.sg", "info.team@x.sg"):
         privacy.remember_address(address)
     assert privacy.for_discord(text) == text
+
+
+def test_jura_s_own_name_survives_a_lead_with_that_address():
+    for address in ("solutions@acme.sg", "jura@acme.sg", "finance@acme.sg", "asia@acme.sg"):
+        privacy.remember_address(address)
+    assert privacy.for_discord("Jura Solutions helps finance teams across Asia.") == "Jura Solutions helps finance teams across Asia."
 
 
 def test_the_person_in_such_an_address_is_still_masked():
