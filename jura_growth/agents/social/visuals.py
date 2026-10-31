@@ -33,6 +33,7 @@ POINTS = (2, 3)
 _PERCENT = re.compile(r"^(\d{1,3}(?:\.\d+)?)%$")
 _STROKE = re.compile(r'stroke-width="[^"]*"')
 RING_RADIUS = 42  # in the ring's own 100-unit box
+RING_CHARS = 5  # the longest value that still fits inside the ring: "99.5%"
 
 
 def icon_names() -> list[str]:
@@ -197,9 +198,9 @@ def _column(column: Column, *, solid: bool) -> str:
 
 
 def _ring(value: str) -> str:
-    """A ring for a percentage up to 100; anything else stands on its own."""
+    """A ring for a short percentage up to 100; anything else stands on its own."""
     match = _PERCENT.match(value)
-    if not match or float(match.group(1)) > 100:
+    if not match or len(value) > RING_CHARS or float(match.group(1)) > 100:
         return ""
     circumference = 2 * 3.14159 * RING_RADIUS
     filled = circumference * float(match.group(1)) / 100
@@ -213,7 +214,8 @@ def _ring(value: str) -> str:
 
 def _figure(visual: Visual) -> str:
     ring = _ring(visual.value)
-    value = f'<span class="figure-value">{_text(visual.value)}</span>'
+    tight = " figure-value-tight" if ring and len(visual.value) == RING_CHARS else ""
+    value = f'<span class="figure-value{tight}">{_text(visual.value)}</span>'
     shown = f'<span class="figure-ring">{ring}{value}</span>' if ring else value
     return (
         f'<div class="figure{" figure-with-ring" if ring else ""}">{shown}<div class="figure-text">'
