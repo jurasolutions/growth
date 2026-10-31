@@ -1,10 +1,20 @@
-"""Building an outreach email and the `email` brand channel (scout PRD §5.6).
+"""Building an outreach email and the `email` brand channel (scout PRD §5.6,
+amended by §5.6a on 2026-10-31).
 
 The model writes the subject and the body. The code adds everything the law
-and the PRD require, so those parts are certain:
+and the PRD require, so those parts are certain: the call button, Levi's
+signature and the footer.
 
-    Ting Yu
-    Jura Solutions · jurasolutions.sg
+    Book a 30-minute call: https://jurasolutions.sg/?from=outreach#contact
+
+    Levi Ting
+    Principal Consultant
+    Jura Solutions
+    AUTOMATION CONSULTANCY
+    levi@jurasolutions.sg
+    jurasolutions.sg
+
+    We automate the repetitive parts of running a business. Book a discovery session → <call page>
 
     You're receiving this because <Company> lists this address for business
     enquiries on <their site>. Not interested? Unsubscribe here: <link>, or
@@ -17,9 +27,11 @@ The unsubscribe token must match the website's Pages Function exactly:
     token      = f"{email_hash}.{sig}"
     url        = https://jurasolutions.sg/unsubscribe?t=<token>
 
-HTML is built from the text: paragraphs, jurasolutions.sg links with UTM
-parameters (never on the unsubscribe link, never on anyone else's link), no
-images and no tracking pixel.
+The HTML part (`design.py`) carries the same words: the body's paragraphs,
+the call as a button, the signature with the mark, and the footer.
+jurasolutions.sg links get UTM parameters there (never the unsubscribe link,
+never anyone else's link). The one image is the mark; there is no tracking
+pixel.
 """
 
 from __future__ import annotations
@@ -28,14 +40,25 @@ import base64
 import hashlib
 import hmac
 import html
+import json
 import re
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from jura_growth import brand_check, caps, config, suppression
+from jura_growth.agents.outreach import design
 from jura_growth.agents.scout import registry, settings
 
-SIGNATURE = f"{settings.SIGNATURE_NAME}\nJura Solutions · {settings.SITE}"
+# Levi's signature, exactly as Ting Yu gave it (§5.6a point 4). No phone number.
+SIGNATURE = (
+    f"{settings.SIGNATURE_NAME}\n{settings.SIGNATURE_TITLE}\nJura Solutions\n{design.WORDMARK_TAGLINE}\n"
+    f"{settings.SIGNATURE_EMAIL}\n{settings.SITE}\n\n"
+    f"{design.TAGLINE} {design.SESSION_LABEL} {settings.CALL_URL}"
+)
+# The call button, as the plain-text part writes it (§5.6a point 3).
+CALL_LINE = f"{design.CALL_LABEL}: {settings.CALL_URL}"
+# The body's call ask: a 30-minute call (or a half-hour one), in the model's words.
+CALL_ASK_RE = re.compile(r"\b(?:30|thirty)[-\s]minutes?\s+(?:\w+\s+)?(?:call|chat)\b|\bhalf[-\s]hour\s+(?:call|chat)\b", re.I)
 RECEIVING = "You're receiving this because {company} lists this address for business enquiries on {site}."
 UNSUBSCRIBE_LINE = 'Not interested? Unsubscribe here: {link}, or reply "unsubscribe".'
 # Scout PRD §5.9: the privacy notice is linked from every email.
@@ -106,13 +129,19 @@ class Email:
     to: str = ""  # the recipient address, lower-cased
 
 
+# Sign-off lines the model may add anyway; the code adds the real signature.
+SIGN_OFF_LINES = frozenset({
+    "levi", "levi ting", "levi ting, jura solutions", "principal consultant", "automation consultancy",
+    settings.SIGNATURE_EMAIL, "ting yu", "ting yu, jura solutions", "jura solutions", settings.SITE,
+})
+
+
 def tidy_draft(body: str) -> str:
     """Normalise line endings and drop a signature the model added anyway."""
     lines = body.replace("\r\n", "\n").replace("\r", "\n").strip().split("\n")
     while lines and (
         not lines[-1].strip()
-        or lines[-1].strip().lower() in {"ting yu", "jura solutions", "ting yu, jura solutions"}
-        or "jurasolutions.sg" == lines[-1].strip().lower()
+        or lines[-1].strip().lower() in SIGN_OFF_LINES
         or lines[-1].strip().lower().startswith("jura solutions ·")
     ):
         lines.pop()
@@ -128,9 +157,38 @@ def compose(*, subject: str, body: str, company: str, site: str, email: str, sec
     subject = re.sub(r"\s+", " ", subject or "").strip()
     draft = tidy_draft(body or "")
     link = unsubscribe_url(email, secret)
-    text = f"{draft}\n\n{SIGNATURE}\n\n{footer(company, site, link)}\n"
-    check_text = f"{draft}\n\n{SIGNATURE}\n\n{footer(company, SITE_PLACEHOLDER, link)}\n"
-    return Email(subject, draft, text, to_html(draft, company, site, link), check_text, link, site, (email or "").strip().lower())
+    text = f"{draft}\n\n{CALL_LINE}\n\n{SIGNATURE}\n\n{footer(company, site, link)}\n"
+    check_text = f"{draft}\n\n{CALL_LINE}\n\n{SIGNATURE}\n\n{footer(company, SITE_PLACEHOLDER, link)}\n"
+    html_part = to_html(draft, company, site, link, subject=subject)
+    return Email(subject, draft, text, html_part, check_text, link, site, (email or "").strip().lower())
+
+
+# The frame's fixed stand-ins: what fills the slots the draft and the lead fill.
+_FRAME_SLOTS = {"subject": "", "body": "", "company": "<company>", "site": "<site>",
+                "email": "recipient@example.invalid", "secret": "frame"}
+
+
+def frame_fingerprint() -> str:
+    """SHA-256 of everything the code puts around a draft: the email rendered
+    with empty body slots (text and HTML), the sender name and From address,
+    Reply-To, the unsubscribe headers and the template version. An `outreach-email` approval
+    covers it, so a template or sender change after approval supersedes the
+    request instead of riding on an old yes (code review S13-4, ADR 0003).
+    Computed fresh on every call, from the code that would send now."""
+    slots = dict(_FRAME_SLOTS)
+    frame = compose(subject=slots["subject"], body=slots["body"], company=slots["company"], site=slots["site"],
+                    email=slots["email"], secret=slots["secret"])
+    parts = {
+        "template": design.TEMPLATE_VERSION,
+        "sender": settings.SENDER_NAME,
+        "from": f"{settings.get().get('from_local_part') or ''}@{settings.get().get('sending_domain') or ''}",
+        "reply_to": settings.REPLY_TO,
+        "headers": list_unsubscribe_headers(frame.unsubscribe_url),
+        "text": frame.text,
+        "html": frame.html,
+    }
+    canonical = json.dumps(parts, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def with_utm(url: str) -> str:
@@ -154,34 +212,28 @@ def _linkify(escaped: str) -> str:
             trail = raw[-1] + trail
             raw = raw[:-1]
         href = html.escape(with_utm(raw), quote=True)
-        return f'<a href="{href}" style="color:#0f5132;">{html.escape(raw)}</a>{html.escape(trail)}'
+        return f'<a href="{href}" class="jm-link" style="{design.LINK}">{html.escape(raw)}</a>{html.escape(trail)}'
 
     return JURA_LINK_RE.sub(anchor, escaped)
 
 
-def to_html(draft: str, company: str, site: str, link: str) -> str:
+def to_html(draft: str, company: str, site: str, link: str, *, subject: str = "") -> str:
+    """The designed HTML part (§5.6a), with the same words as the text part."""
     paragraphs = [p for p in re.split(r"\n\s*\n", draft) if p.strip()]
-    body = "\n".join(
-        f"<p style=\"margin:0 0 16px;\">{_linkify(html.escape(p.strip())).replace(chr(10), '<br>')}</p>"
-        for p in paragraphs
+    body = "\n".join(design.paragraph(_linkify(html.escape(p.strip())).replace("\n", "<br>")) for p in paragraphs)
+    footer_html = (
+        html.escape(RECEIVING.format(company=company, site=site))
+        + f' Not interested? <a href="{html.escape(link, quote=True)}" class="jm-link" style="{design.LINK}">Unsubscribe here</a>, '
+        + "or reply &quot;unsubscribe&quot;. How we handle your details: "
+        + f'<a href="{html.escape(PRIVACY_URL, quote=True)}" class="jm-link" style="{design.LINK}">jurasolutions.sg/privacy</a>.'
     )
-    home = html.escape(with_utm(f"https://{settings.SITE}"), quote=True)
-    signature = (
-        f'<p style="margin:0 0 24px;">{html.escape(settings.SIGNATURE_NAME)}<br>'
-        f'Jura Solutions · <a href="{home}" style="color:#0f5132;">{settings.SITE}</a></p>'
-    )
-    notice = (
-        '<p style="margin:0;font-size:13px;color:#4e5852;">'
-        + html.escape(RECEIVING.format(company=company, site=site))
-        + f' Not interested? <a href="{html.escape(link, quote=True)}" style="color:#0f5132;">Unsubscribe here</a>, '
-        + "or reply &quot;unsubscribe&quot;. "
-        + f'How we handle your details: <a href="{html.escape(PRIVACY_URL, quote=True)}" style="color:#0f5132;">jurasolutions.sg/privacy</a>.</p>'
-    )
-    return (
-        '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"></head>\n'
-        '<body style="margin:0;padding:24px;background:#ffffff;color:#363e39;'
-        'font-family:\'DM Sans\',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;">\n'
-        f'<div style="max-width:560px;">\n{body}\n{signature}\n{notice}\n</div>\n</body></html>\n'
+    return design.page(
+        subject=subject,
+        body_html=body,
+        call_href=with_utm(settings.CALL_URL),
+        home_href=with_utm(f"https://{settings.SITE}"),
+        mark_url=settings.MARK_URL,
+        footer_html=footer_html,
     )
 
 
@@ -237,7 +289,10 @@ def _observation_keywords(observations: list[str]) -> set[str]:
 
 
 def check_email(text: str, ctx: dict) -> list[brand_check.Issue]:
-    """Rule 10 for the `email` channel: the PRD §5.6 parts and shape."""
+    """Rule 10 for the `email` channel: the PRD §5.6 and §5.6a parts and shape.
+    The body must mention the website, the toolbox (with one tool in a first
+    email) and a 30-minute call; the code adds the button, the signature and
+    the footer, and this checks they are there."""
     Issue = brand_check.Issue
     issues: list[Issue] = []
     kind = ctx.get("kind") or "first"
@@ -253,9 +308,14 @@ def check_email(text: str, ctx: dict) -> list[brand_check.Issue]:
 
     parts = _split(text)
     if parts is None:
-        issues.append(Issue("channel", "Missing the signature: “Ting Yu” and “Jura Solutions · jurasolutions.sg”"))
+        issues.append(Issue("channel", "Missing the signature: Levi Ting, Principal Consultant, Jura Solutions"))
         return issues
     draft, tail = parts
+    # The call button sits between the body and the signature; the code adds it.
+    if draft.endswith(CALL_LINE):
+        draft = draft[: -len(CALL_LINE)].strip()
+    else:
+        issues.append(Issue("channel", "Missing the call button: “Book a 30-minute call” to the enquiry page"))
 
     # Required parts in the footer.
     if company:
@@ -283,17 +343,23 @@ def check_email(text: str, ctx: dict) -> list[brand_check.Issue]:
         tools = registry.live_slugs()
     tools = set(tools)
     chosen = ctx.get("tool")
-    tool_links, index_links, other = [], [], []
+    tool_links, index_links, home_links, other = [], [], [], []
     for link in brand_check.find_links(draft):
         host, path = _path_of(link)
         if host != settings.SITE:
             continue  # core rule 9 reports it
-        if path == "/apps":
+        if path == "":
+            home_links.append(link)
+        elif path == "/apps":
             index_links.append(link)
         elif path.startswith("/apps/"):
             tool_links.append((link, path.removeprefix("/apps/").split("/")[0]))
         else:
             other.append(link)
+    if not home_links:
+        issues.append(Issue("channel", "Mention the website, jurasolutions.sg, on its own (not only in the tool links)"))
+    if not CALL_ASK_RE.search(draft):
+        issues.append(Issue("channel", "Ask for a 30-minute call in the body; the code adds the button below it"))
     if len(index_links) != 1:
         issues.append(Issue("channel", f"Link to jurasolutions.sg/apps exactly once (found {len(index_links)})"))
     if kind == "first" and len(tool_links) != 1:
@@ -306,7 +372,7 @@ def check_email(text: str, ctx: dict) -> list[brand_check.Issue]:
         elif chosen and slug != chosen:
             issues.append(Issue("channel", f"The tool link should be the chosen tool /apps/{chosen}", link))
     for link in other:
-        issues.append(Issue("channel", "Only the tool link and jurasolutions.sg/apps in the body", link))
+        issues.append(Issue("channel", "Only jurasolutions.sg, the tool link and jurasolutions.sg/apps in the body", link))
 
     # Emails greet the company, never a person (MC §4.4), so a card shows the
     # draft exactly as it goes out.
@@ -373,5 +439,5 @@ def channel() -> brand_check.Channel:
         "email",
         allow_sources=False,
         check=check_email,
-        description="Outreach email: jurasolutions.sg links only, PRD §5.6 parts",
+        description="Outreach email: jurasolutions.sg links only, PRD §5.6 and §5.6a parts",
     )

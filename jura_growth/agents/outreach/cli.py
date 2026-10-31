@@ -204,6 +204,97 @@ def preview(message_id, show_html) -> None:
     click.echo(html if show_html else text)
 
 
+SAMPLE = {
+    # A made-up company on a reserved test domain: nothing here is anyone's real business.
+    "company": "Kallang Breeze Aircon",
+    "site": "kallangbreeze.example",
+    "email": "info@kallangbreeze.example",
+    "subject": "A free quote builder for Kallang Breeze Aircon",
+    "tool": "quote-builder",
+    "body": (
+        "Hi there,\n\n"
+        "I was looking at Kallang Breeze Aircon's servicing packages and saw that customers ask for a quote "
+        "through a form, then wait for someone to write one up. We've made a free quote builder that turns a "
+        "job into a clean PDF quote in a few minutes: jurasolutions.sg/apps/quote-builder\n\n"
+        "It's one of a growing set of small tools at jurasolutions.sg/apps. No sign-up, and what you type "
+        "stays in your browser.\n\n"
+        "We're Jura Solutions, a small automation consultancy (jurasolutions.sg). If copying the same "
+        "details between systems takes up part of your week, I'd be glad to hear how it works on a "
+        "30-minute call."
+    ),
+}
+# The views `--screenshots` draws: (file, window width, height, Chrome flags,
+# whether to show the --mark file). Chrome lays out no narrower than about
+# 500 px, so the phone view shows the email in a 375 px frame.
+LIGHT = "--blink-settings=preferredColorScheme=1"
+DARK = "--blink-settings=preferredColorScheme=0"
+SAMPLE_VIEWS = (
+    ("desktop.png", 760, 1240, [LIGHT], True),
+    ("phone.png", 500, 1600, [LIGHT], True),
+    ("dark.png", 760, 1240, [DARK, "--force-dark-mode"], True),
+    ("images-blocked.png", 760, 1240, [LIGHT], False),
+)
+PHONE_FRAME = (
+    '<!doctype html><html><body style="margin:0;background:#f5f7f5;">'
+    '<iframe src="{src}" title="Phone width" style="display:block;width:375px;height:1600px;border:0;'
+    'border-right:1px solid #dfe3e0;background:#ffffff;"></iframe></body></html>'
+)
+
+
+@outreach_group.command("sample")
+@click.option("--out", "out_dir", type=click.Path(file_okay=False, path_type=Path),
+              help="Folder for the files (default: a new temporary folder).")
+@click.option("--screenshots", is_flag=True, help="Also draw desktop, phone and dark-mode PNGs with headless Chrome.")
+@click.option("--mark", "mark_file", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="A local PNG of the mark to show in the screenshots, until the website serves it.")
+def sample(out_dir, screenshots, mark_file) -> None:
+    """Render a sample outreach email for a made-up company to sample.html and sample.txt.
+
+    Nothing is queued or sent. The screenshots run offline, so without --mark
+    they also show how the email reads with images blocked.
+    """
+    import tempfile
+
+    from jura_growth import brand_check, images
+
+    out = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="jura-outreach-sample-"))
+    out.mkdir(parents=True, exist_ok=True)
+    email = compose.compose(subject=SAMPLE["subject"], body=SAMPLE["body"], company=SAMPLE["company"],
+                            site=SAMPLE["site"], email=SAMPLE["email"], secret="sample-not-a-real-secret")
+    (out / "sample.html").write_text(email.html, encoding="utf-8")
+    (out / "sample.txt").write_text(f"Subject: {email.subject}\n\n{email.text}", encoding="utf-8")
+    result = brand_check.check(
+        email.check_text, subject=email.subject, channel_name="email", proper_nouns=[SAMPLE["company"]],
+        context={"company": SAMPLE["company"], "tools": {SAMPLE["tool"]}, "tool": SAMPLE["tool"], "kind": "first"},
+    )
+    click.echo(f"wrote {out / 'sample.html'} ({len(email.html.encode('utf-8'))} bytes)")
+    click.echo(f"wrote {out / 'sample.txt'}")
+    click.echo("brand check: pass" if result.passed else "brand check: FAIL\n  " + "\n  ".join(result.reasons()))
+    if not screenshots:
+        return
+    chrome = images.Chrome(path=images.DEFAULT_CHROME)
+    marked = out / "screenshot-source.html"
+    marked.write_text(email.html.replace(settings.MARK_URL, Path(mark_file).resolve().as_uri()) if mark_file else email.html,
+                      encoding="utf-8")
+    blocked = out / "screenshot-blocked.html"
+    blocked.write_text(email.html, encoding="utf-8")  # offline, so the hosted mark can't load
+    for name, width, height, flags, show_mark in SAMPLE_VIEWS:
+        source = marked if show_mark else blocked
+        if name == "phone.png":
+            frame = out / "screenshot-phone.html"
+            frame.write_text(PHONE_FRAME.format(src=source.name), encoding="utf-8")
+            source = frame
+        target = out / name
+        try:
+            images.run_chrome([*flags, f"--window-size={width},{height}", f"--screenshot={target}", source.as_uri()],
+                              chrome, offline=True)
+        except images.RenderError as error:
+            raise click.ClickException(f"no screenshots: {error}") from None
+        if not target.exists():
+            raise click.ClickException(f"Chrome wrote no {name}")
+        click.echo(f"wrote {target}")
+
+
 @outreach_group.command("suppress")
 @click.argument("email_or_domain")
 @click.option("--reason", type=click.Choice(["unsubscribe", "bounce", "complaint", "manual"]), default="manual", show_default=True)

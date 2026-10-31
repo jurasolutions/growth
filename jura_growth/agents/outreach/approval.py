@@ -4,8 +4,13 @@ Every live email, first or follow-up, goes out only on an approval claimed
 first. The subject is one queued message, `outreach_message:<id>`.
 
 - **Content** is the recipient address of the contact row the send will use
-  (`queue.recipient()`), the subject and `draft_body`: never the footer, which
-  is recomposed at send time with the current unsubscribe token. A message that
+  (`queue.recipient()`), the subject, `draft_body` and the frame: the
+  fingerprint of everything the code adds around the draft
+  (`compose.frame_fingerprint()`: the button, the signature, the footer, the
+  HTML template, the sender and Reply-To), so a template change after approval
+  supersedes the request (code review S13-4). The footer's unsubscribe token is
+  never in it: the frame is rendered for a stand-in recipient, so a new token
+  still matches. A message that
   won't go out any more (cancelled, skipped, dropped, sent) is gone, so its
   request is superseded at the next read or claim; no cancellation call site
   needs to know about approvals. A shadow-sent message keeps its content, so an
@@ -55,9 +60,16 @@ def _canonical(value: dict) -> bytes:
     return json.dumps({k: str(v) for k, v in value.items()}, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
 
+def _content(to: str, subject: str, body: str) -> dict:
+    from jura_growth.agents.outreach import compose
+
+    return {"to": to, "subject": subject, "body": body, "frame": compose.frame_fingerprint()}
+
+
 def content_hash_of(to: str, subject: str, body: str) -> str:
-    """The hash an `outreach-email` request carries, for these exact values."""
-    return approvals.content_hash(_canonical({"to": to, "subject": subject, "body": body}))
+    """The hash an `outreach-email` request carries, for these exact values and
+    the frame the code would put around them now."""
+    return approvals.content_hash(_canonical(_content(to, subject, body)))
 
 
 def _at_cutoff(day: date) -> datetime:
@@ -80,16 +92,19 @@ class OutreachEmail:
             _, row = queue.recipient(conn, message["lead_id"])
         except queue.QueueError:
             return None
-        return _canonical({"to": row["email"], "subject": message["subject"], "body": message["draft_body"]})
+        return _canonical(_content(row["email"], message["subject"], message["draft_body"]))
 
     def preview(self, conn: sqlite3.Connection, subject: str) -> approvals.Preview:
-        """The card (MC §5.6): who it goes to, why, and the draft as it will go
-        out. Emails greet the company, never a person (the `email` brand
-        channel drops one that names someone), so the draft is shown exactly.
+        """The card (MC §5.6): who it goes to, why, the subject, the whole draft
+        as it will go out, the call link and the template line naming what the
+        code adds (code review S13-5). Emails greet the company, never a person
+        (the `email` brand channel drops one that names someone), so the draft
+        is shown exactly.
         A named-person address is masked beside its source page; the hash
         still covers the full address."""
         from jura_growth import privacy
-        from jura_growth.agents.outreach import queue
+        from jura_growth.agents.outreach import compose, design, queue
+        from jura_growth.agents.scout import settings
 
         message = _message(conn, subject)
         if message is None:
@@ -98,10 +113,17 @@ class OutreachEmail:
         found_by = db.one(conn, "SELECT id, job FROM runs WHERE id = ?", (lead["run_id"],)) if lead["run_id"] else None
         origin = f" from {found_by['job']} run {found_by['id']}" if found_by else ""
         draft = "\n".join(f"> {line}" if line else ">" for line in message["draft_body"].split("\n"))
+        # No address on these lines: privacy removes Ting Yu's own from Discord.
+        button = f"Button: {design.CALL_LABEL} → {settings.CALL_URL}"
+        template = (
+            f"Template: {design.TEMPLATE_VERSION}, frame {compose.frame_fingerprint()[:8]}: sent as "
+            f"{settings.SENDER_NAME}, with the button, his signature and the footer. See all of it with "
+            f"`jura-growth outreach preview {message['id']} --html`."
+        )
         return approvals.Preview(
             title=f"To: {privacy.masked_address(row['email'])} ({lead['company']}, {lead['industry']}, score {lead['score']})",
             reason=f"lead {lead['id']}{origin}; address listed on {row['source_url']}",
-            text=f"Subject: {message['subject']}\n{draft}",
+            text=f"Subject: {message['subject']}\n{draft}\n{button}\n{template}",
         )
 
     def deadlines(self, conn: sqlite3.Connection | None, subject: str, now: datetime) -> approvals.Deadlines:

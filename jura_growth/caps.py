@@ -27,7 +27,7 @@ OUTREACH_MINUTES_BETWEEN_LIVE_SENDS = 10
 OUTREACH_RETRY_WINDOW_HOURS = 23
 # Warm-up by days since the first live send: (until day, daily cap).
 OUTREACH_WARMUP = ((7, 5), (14, 10))
-OUTREACH_WORDS_MAX = 120
+OUTREACH_WORDS_MAX = 150  # scout PRD §5.6a: under 150, without the signature and footer
 
 # Social and community
 SOCIAL_POSTS_PER_PLATFORM_PER_DAY = 1

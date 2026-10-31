@@ -5,6 +5,8 @@
     Why: lead 233 from scout-research run 1290; address listed on https://example.com.sg/contact
     Subject: Quotes that write themselves
     > (the draft body, as it will go out)
+    Button: Book a 30-minute call → https://jurasolutions.sg/?from=outreach#contact
+    Template: <design.TEMPLATE_VERSION>, frame <8 hex>: sent as Levi Ting, Jura Solutions, with ...
     Answer: Approve / Skip, or /growth approve A-0412
 
 A named-person recipient is masked (`j***@`) beside its source page; the hash still covers the
@@ -15,8 +17,8 @@ The sweep over email drafts and cards finds nothing planted (AC-M11.1, AC-M12.1)
 import pytest
 
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, cards, config, db, suppression, timeutil
-from jura_growth.agents.outreach import approval, queue as queue_mod, requeue, send, store
+from jura_growth import approvals, cards, config, db, discord, suppression, timeutil
+from jura_growth.agents.outreach import approval, compose, design, queue as queue_mod, requeue, send, store
 from sweep import MASKED_ADDRESS, NAMED_ADDRESS, PERSON, SOURCE_PAGE, assert_clean, d2_secrets, outbox_dir, planted  # noqa: F401
 
 from test_scout_support import at, body_for, decide, fake_resend, live_ready, outreach_requests, scout_env, seed  # noqa: F401
@@ -69,16 +71,39 @@ def test_the_card_for_lead_233_says_what_why_and_when(conn, lead_233):
         "Why: lead 233 from scout-research run 1290; address listed on https://example.com.sg/contact\n"
         f"Subject: {SUBJECT}\n"
         f"{quoted}\n"
+        "Button: Book a 30-minute call → https://jurasolutions.sg/?from=outreach#contact\n"
+        f"Template: {design.TEMPLATE_VERSION}, frame {compose.frame_fingerprint()[:8]}: sent as Levi Ting, Jura Solutions, "
+        "with the button, his signature and the footer. See all of it with "
+        f"`jura-growth outreach preview {lead_233.message_id} --html`.\n"
         f"Answer: Approve / Skip, or /growth approve {request.id}"
     )
     assert files == []
+
+
+def test_a_full_length_email_fits_on_one_card_with_nothing_cut(conn, monkeypatch):
+    """The card shows the subject, the whole body, the call link and the template line
+    (code review S13-5) inside Discord's 2000 characters."""
+    live_ready(monkeypatch)
+    at(monkeypatch, FRIDAY_0912)
+    lead(conn, 240, "info@example.com.sg", "https://example.com.sg/contact")
+    long_body = body_for("Example") + "\n\n" + " ".join(["We map the process first and keep the documentation with you."] * 4)
+    words = compose.word_count(long_body)
+    assert 140 <= words < 150, words
+    result = queue_mod.queue(conn, 240, {"subject": SUBJECT, "body": long_body, "tool": "delivery-order-maker"})
+    assert result.status == "queued", result.reasons
+    text, _ = cards.build(conn, approvals.get(conn, result.approval), approvals.kinds()["outreach-email"].kind)
+    assert len(text) <= discord.MAX_CONTENT, len(text)
+    for line in long_body.split("\n"):
+        assert line in text
+    assert "Book a 30-minute call → https://jurasolutions.sg/?from=outreach#contact" in text and "\nTemplate: " in text
 
 
 def test_the_body_on_the_card_is_the_draft_that_goes_out(conn, lead_233):
     request = approvals.get(conn, lead_233.approval)
     preview = approvals.kinds()["outreach-email"].kind.preview(conn, request.subject)
     draft = db.scalar(conn, "SELECT draft_body FROM outreach_messages WHERE id = ?", (lead_233.message_id,))
-    assert "\n".join(line.removeprefix(">").removeprefix(" ") for line in preview.text.split("\n")[1:]) == draft
+    quoted = [line for line in preview.text.split("\n") if line.startswith(">")]
+    assert "\n".join(line.removeprefix(">").removeprefix(" ") for line in quoted) == draft
 
 
 def test_a_lead_added_by_hand_has_no_run_on_its_why_line(conn, monkeypatch):
