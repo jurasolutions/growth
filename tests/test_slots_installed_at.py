@@ -131,6 +131,13 @@ def test_the_rule_is_per_job():
     assert missed(classify(TIMES[0], the_move(), installed_at=rule)) == FALSE_MISSES[TIMES[0]] - {("one-pager", "Sat 31 Oct")}
 
 
+def test_a_plist_time_in_the_future_doesnt_hide_an_upcoming_slot():
+    """A wrong clock at install can't make today's later slots read as not installed."""
+    now = datetime(2026, 11, 3, 6, 0, tzinfo=SGT)
+    found = classify(now, the_move(), installed_at=lambda job: now + timedelta(days=2))
+    assert [slot.status for slot in found[("one-pager", now.date())]] == ["upcoming"]
+
+
 def test_a_job_with_no_plist_is_judged_as_before():
     now = TIMES[1]
     assert missed(classify(now, the_move(), installed_at=lambda job: None)) == FALSE_MISSES[now]

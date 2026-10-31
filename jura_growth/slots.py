@@ -173,6 +173,7 @@ def classify(
     result: dict[tuple[str, date], list[SlotStatus]] = {}
     for job, spec in jobs.items():
         since = installed_at(job) if installed_at else None
+        since = min(since, now) if since else None  # a wrong clock at install can't hide an upcoming slot
         judge = _Job(job, spec["schedule"], by_job.get(job, {}).values(), now, installed is None or job in installed, business_day, since)
         for day in days:
             result[(job, day)] = judge.day(day)
