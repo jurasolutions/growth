@@ -4,7 +4,7 @@ import pytest
 import yaml
 
 from jura_growth import paths
-from jura_growth.brand_check import check, find_links, sentence_case_problem
+from jura_growth.brand_check import check, figures_in, find_links, sentence_case_problem
 
 
 def rules(result):
@@ -418,3 +418,106 @@ def test_input_hints_pass(text):
 
 def test_input_hint_does_not_excuse_a_claim():
     assert "numbers" in rules(check("Use our tool, like 300 clients do."))
+
+
+# Figures that used to read as a date, a compound or a year (code review of ticket 01, B1).
+@pytest.mark.parametrize(
+    "text",
+    [
+        "We helped 62 marketing teams.",  # "marketing" read as a month
+        "Jura served 40 junior staff.",
+        "We handled 30 decisions a day.",
+        "Our 12 mayors renewed.",
+        "We cut errors by 62-percent.",  # read as a compound, like "2-step"
+        "We are 10-times faster.",
+        "We made a 5-million dollar saving.",
+        "We are 10x-faster.",
+        "We cut errors by sixty-percent.",
+        "We cut errors by two-thirds.",
+        "Jura has 2000 shops on its books.",  # read as a year
+        "In May 5 firms joined us.",
+        "Nine in ten of our clients renew.",  # a ratio in words
+        "One out of five of our clients renews.",
+    ],
+)
+def test_a_figure_about_jura_cannot_pass_as_a_date_a_compound_or_a_year(text):
+    assert "numbers" in rules(check(text)), check(text).reasons()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "62 marketing teams use it.",
+        "Marketing 62% faster.",
+        "A 62-percent drop in errors.",
+        "10-times faster than before.",
+        "A 5-million dollar saving.",
+        "2000 shops use it.",
+        "1900 owners use it.",
+        "Nine in ten firms tried it.",
+        "Nine in ten owners agree.",
+        "9 in 10 owners agree.",
+        "Two-thirds of owners agree.",
+        "A third of owners agree.",
+        "5 million shops use it.",
+        "5-million shops use it.",
+    ],
+)
+def test_a_figure_with_no_source_cannot_pass_as_a_date_a_compound_or_a_year(text):
+    assert "numbers" in rules(check(text)), check(text).reasons()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Posted on 5 March 2026.",
+        "Posted on 5 Mar.",
+        "Posted on March 5, 2026.",
+        "Posted on Sept 3.",
+        "Posted on 3rd September.",
+        "Filed on 31 December 2025.",
+        "Filed in Oct 2026.",
+        "It opens on 1 May.",
+        "It opens in May 2026.",
+        "It opened on Jan. 9.",
+        "In 2026 this changed.",
+        "In 2026 the rules changed.",
+        "2026 brings new rules.",
+        "2026 was a long year.",
+        "The 2026 budget is out.",
+        "It began in 1950.",
+    ],
+)
+def test_real_dates_and_years_still_pass(text):
+    assert "numbers" not in rules(check(text)), check(text).reasons()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Book a 30-minute call.",
+        "We use a 2-step handover.",
+        "We buy 3rd-party tools.",
+        "It is a 3-way match.",
+        "We offer a 30-day trial.",
+        "Our 45-minute call maps one process.",
+        "Pick 3, then test them.",
+        "A 2 in 1 laptop works.",
+        "Ask a third party to check it.",
+        "We check in once a quarter.",
+        "We take on one third-party tool at a time.",
+    ],
+)
+def test_honest_compounds_and_small_counts_still_pass(text):
+    assert "numbers" not in rules(check(text)), check(text).reasons()
+
+
+def test_a_trailing_comma_is_not_part_of_a_figure():
+    assert figures_in("Pick 3, then test them. Over 1,000, mostly small firms.") == ["3", "1,000"]
+
+
+def test_a_statutory_rate_with_a_source_still_passes_with_a_compound_beside_it():
+    source = "https://www.iras.gov.sg/taxes/gst"
+    text = f"GST is charged at 9% on a 30-day invoice (source: {source})."
+    result = check(text, channel_name="news", sources=[source])
+    assert result.passed, result.reasons()

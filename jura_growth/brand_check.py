@@ -367,31 +367,51 @@ def _rhythm(text: str) -> list[Issue]:
 #
 # The visitor's own inputs are never brand-checked, so they never reach here.
 
-MONTHS = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
+# Real month names only: "62 marketing teams" and "40 junior staff" are figures. "May" needs its
+# capital, since "30 may apply" is a figure too. A day is 1 to 31, so "62 March" isn't a date.
+MONTHS = (
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|(?-i:May|MAY)|june?|july?|aug(?:ust)?"
+    r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b\.?"
+)
+_DAY = r"(?:0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?"
+# Words a quantity is fused to. "62-percent" and "10-times" are figures, where "2-step" is a word.
+_FUSED_QUANTITY = r"percent|per-?cent|pct|times|fold|hundred|thousand|million|billion|dozen"
+# Lower-case words ending in s that don't name what a number counts: "In 2026 this changed."
+_NOT_A_PLURAL = (
+    r"this|is|was|has|as|its|his|hers|ours|yours|theirs|us|does|thus|plus|across|always|perhaps|besides|"
+    r"news|less|unless|whereas|towards|sometimes|brings|looks|marks|means|sees|gets|starts|shows|feels|begins|ends"
+)
+# A number before a plural noun counts it, whatever else it looks like: "2000 shops", "May 5 firms".
+_COUNTS_A_PLURAL = rf"\s+(?-i:(?!(?:{_NOT_A_PLURAL})\b)[a-z]+s)\b"
 EXEMPT_PATTERNS = [
     re.compile(r"\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:[+-]\d{2}:?\d{2}|Z)?)?\b"),
     re.compile(r"\b\d{4}-W\d{2}\b"),
     re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b"),
-    re.compile(rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s+{MONTHS}(?:\s+\d{{4}})?\b", re.I),
-    re.compile(rf"\b{MONTHS}\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?\s+\d{{4}})?\b", re.I),
+    re.compile(rf"\b{_DAY}\s+{MONTHS}(?:\s+\d{{4}})?(?!\w)", re.I),
+    re.compile(rf"\b{MONTHS}\s+{_DAY}(?:,?\s+\d{{4}})?\b(?!{_COUNTS_A_PLURAL})", re.I),
     re.compile(rf"\b{MONTHS}\s+\d{{4}}\b", re.I),
     re.compile(r"\b\d{1,2}:\d{2}\s?(?:am|pm|sgt)?\b", re.I),
     re.compile(r"\b\d{1,2}\.\d{2}\s?(?:am|pm)\b", re.I),
     re.compile(r"\b\d{1,2}\s?(?:am|pm)\b", re.I),
-    # a year, unless it counts something ("2000 businesses" is a claim)
+    # a year, unless it counts something ("2000 businesses" and "2000 shops" are claims). Known
+    # limit: an adjective before a noun off this list ("2000 small shops"), because "2026 tax rates"
+    # reads the same way.
     re.compile(
         r"\b(?:19|20)\d{2}\b(?!\s*[%+]|\s+(?:[a-z]+\s+)?(?:businesses|clients|companies|customers|"
         r"users|people|teams|firms|smes|hours|jobs|invoices|receipts|documents|emails|leads|"
-        r"projects|automations|staff|employees|members|downloads|visitors|orders)\b)",
+        rf"projects|automations|staff|employees|members|downloads|visitors|orders)\b|{_COUNTS_A_PLURAL})",
         re.I,
     ),
     re.compile(r"\b(?:Q[1-4]|H[12]|FY\d{2,4})\b"),
     # identifiers: letters fused to digits (APP-001, A4, GPT-5, B2B, T-0042)
     re.compile(r"\b[A-Za-z]{1,10}-?\d+(?:[-.]\d+)*[A-Za-z]*\b"),
-    re.compile(r"\b\d+[A-Za-z]*-[A-Za-z]+\b"),  # 2-step, 3-way
+    # 2-step, 3-way, 3rd-party, 30-minute, but not a figure with a suffix or a fused quantity
+    re.compile(rf"\b\d+(?!(?:[xXkKmM]|[bB][nN])-)[A-Za-z]*-(?!(?i:{_FUSED_QUANTITY})\b)[A-Za-z]+\b"),
 ]
 FIGURE_RE = re.compile(
-    r"(?:S\$|US\$|\$|SGD\s?|USD\s?)?\d[\d,]*(?:\.\d+)?(?:\s?(?:%|percent|per\s?cent)|x\b|k\b|m\b|bn\b)?\+?",
+    r"(?:S\$|US\$|\$|SGD\s?|USD\s?)?\d(?:[\d,]*\d)?(?:\.\d+)?"
+    rf"(?:\s?%|[\s-]?(?:percent|per[\s-]?cent)\b|[\s-](?:hundred|thousand|million|billion)\b|-(?:{_FUSED_QUANTITY})\b"
+    r"|x\b|k\b|m\b|bn\b)?\+?",
     re.I,
 )
 # A count this small ("5 tips", "five tips") needs no source outside a claim.
@@ -423,6 +443,15 @@ _CARDINAL = (
     rf"|{_BELOW_1000})"
 )
 CARDINAL_WORDS_RE = re.compile(rf"\b{_CARDINAL}\b", re.I | re.A)
+# A share in words or digits ("nine in ten", "1 out of 5") and a fraction ("two-thirds", "a third
+# of"). "A third party" and "once a quarter" claim nothing.
+_PARTS = r"(?:thirds?|quarters?|fifths?|tenths?)"
+RATIO_RE = re.compile(rf"\b({_BELOW_100}|\d+)\s+(?:in|out\s+of)\s+(an?\s+hundred|{_BELOW_100}|\d+)\b", re.I | re.A)
+FRACTION_RE = re.compile(
+    rf"\b(?:(?:an?|one|two|three|four|nine)\s+{_PARTS}\s+of\b|(?:one|two|three|four|nine)-{_PARTS}\b(?!-))", re.I | re.A
+)
+FUSED_AFTER_A_NUMBER_RE = re.compile(rf"-(?:{_FUSED_QUANTITY}|{_PARTS})\b", re.I)
+PERCENT_AFTER_RE = re.compile(r"[\s-]*(?:percent|per[\s-]?cent)\b", re.I)
 # Whether a number word counts a noun ("twelve businesses", "twelve of our
 # clients", "forty per cent") is read from the words after it:
 #   - a hedge is skipped to reach the noun ("twelve or more businesses",
@@ -516,9 +545,39 @@ def _without_exempt(text: str) -> str:
 
 
 def figures_in(text: str) -> list[str]:
-    """The figures in `text` written in digits, as `_numbers` reads them: no dates, years, clock
-    times, approved claims or names with a number in them."""
-    return [m.group(0).strip() for m in FIGURE_RE.finditer(_without_exempt(text)) if re.search(r"\d", m.group(0))]
+    """What `text` claims as a figure: digits, as `_numbers` reads them, with no dates, years, clock
+    times, links, hashtags, approved claims or names with a number in them; and in words, anything
+    past a small count ("forty firms", "ten percent", "nine in ten", "two-thirds", "twice").
+    "Two AI updates" is no claim. Compare two readings with `figure_key`."""
+    cleaned = _without_exempt(re.sub(r"(?<![\w&/#])#\w+", " ", text))
+    found = [m.group(0).strip() for m in FIGURE_RE.finditer(cleaned) if re.search(r"\d", m.group(0))]
+    for sentence in sentences(cleaned):
+        found += _shares(sentence)
+        for m in CARDINAL_WORDS_RE.finditer(sentence):
+            value = _number_value(m.group(0))
+            percent = PERCENT_AFTER_RE.match(sentence, m.end())
+            if percent:
+                found.append(m.group(0) + percent.group(0))
+            elif value > SMALL_COUNT_MAX and _counts_a_noun(sentence, m, value):
+                found.append(m.group(0))
+        found += [m.group(0) for m in VAGUE_FIGURE_RE.finditer(sentence)]
+    return found
+
+
+def figure_key(figure: str) -> str:
+    """The same figure, however it is spaced or hyphenated: "62-percent" and "62 per cent"."""
+    return re.sub(r"[\s-]+", " ", figure.casefold()).replace("per cent", "percent").strip()
+
+
+def _shares(sentence: str) -> list[str]:
+    """The ratios and fractions in a sentence. "3 in 1" names a product, so a ratio's first number
+    is the smaller, and "one in one" is nothing."""
+    found = [m.group(0) for m in FRACTION_RE.finditer(sentence)]
+    for m in RATIO_RE.finditer(sentence):
+        first, second = (int(side) if side.isdigit() else _number_value(side) for side in m.groups())
+        if first < second:
+            found.append(m.group(0))
+    return found
 
 
 def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
@@ -540,6 +599,7 @@ def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
             for m in CARDINAL_WORDS_RE.finditer(sentence)
             if (value := _number_value(m.group(0))) >= 2 and _counts_a_noun(sentence, m, value)
         ]
+        figures += [_Figure(None, share, False) for share in _shares(sentence)]
         words = list(VAGUE_FIGURE_RE.finditer(sentence))
         if not figures and not words:
             continue
@@ -568,12 +628,12 @@ def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
     return _dedupe(issues)
 
 
-def _is_interface_quantity(sentence: str, match: re.Match) -> bool:
-    return bool(INTERFACE_UNIT_RE.match(sentence[match.end():]))
+def _is_interface_quantity(sentence: str, match: re.Match | None) -> bool:
+    return bool(match and INTERFACE_UNIT_RE.match(sentence[match.end():]))
 
 
 class _Figure(NamedTuple):
-    match: re.Match
+    match: re.Match | None  # None for a share, which reads across several words
     text: str
     small: bool
 
@@ -598,8 +658,10 @@ def _counts_a_noun(sentence: str, match: re.Match, value: int) -> bool:
     before, start = sentence[: match.start()], match.end()
     # Fused by a hyphen ("two-step", "nine-to-five"), it is part of a word,
     # as "2-step" and "9-to-5" are for digits.
-    if before.endswith("-") or sentence[start : start + 1] == "-":
+    if before.endswith("-"):
         return False
+    if sentence[start : start + 1] == "-":
+        return bool(FUSED_AFTER_A_NUMBER_RE.match(sentence, start))  # "sixty-percent", not "two-step"
     if value == 2 and ONE_OR_BEFORE_RE.search(before):
         return False
     hedge = HEDGE_RE.match(sentence, start)
