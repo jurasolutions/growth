@@ -87,3 +87,14 @@ decisions: S3: "to post by hand" counts today's drafts only, because a daily pos
 decisions: the fix round starts by merging crew/morning-brief, so B1's install rule, the glossary, the ICP plant and test_morning_order.py are done on one tree
 questions: -
 evidence:  full pytest at 7ba3e5b -> 4181 passed, 0 skipped; reviewer's throwaway probes reproduced B1-B6
+
+## 2026-10-31T22:10+0800 developer
+status:    done
+persona:   developer
+ticket:    01
+artifacts: crew/morning-brief-01-the-picture up to b0b7619, merged into crew/morning-brief; tests/test_morning_order.py
+decisions: B1 stays picture-side, with Snapshot.installed_at telling a pre-install slot apart
+decisions: B4: a plug-in line's first line goes on the picture; its detail stays in the message and long text
+decisions: test_morning_order has two mornings, because queue tops up leftovers at 06:40, so the 08:30 job raises only when research queues nothing
+questions: -
+evidence:  pytest -> 4342 passed, 0 skipped; pyright 13 touched modules -> 0 errors; real fonts worst 1548 px; merge-tree with approvals-first -> conflicts only in health.py, mission.py
