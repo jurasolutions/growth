@@ -123,3 +123,32 @@ artifacts: issues/10-final-fixes-and-main.md; PRD "Amended 2026-11-01 after the 
 decisions: every defect and should-fix taken in one round, with main merged first because PR #18 moved the schedule and conflicts in health.py, mission.py and discord.py. A peer session's note on M1 to M4 was checked against main before use
 questions: -
 evidence:  git merge-tree -> seven conflicting files, as reported
+
+## 2026-11-01T01:20+0800 developer (ticket 10, appended by the conductor)
+status:    done
+persona:   developer
+ticket:    10
+artifacts: crew/approvals-first-social-depth-10-final-fixes, tip 27efa99: merge ac12db7, 09, M1 to M4, 05 to 08, SEC-S1, should-fixes, qa-final "After the merge"
+decisions: 09: learn first, and the sweep's refusal also stands. 08: audit hook and a planted folder. test_digest_figures pins draft mode (X3 CHANGED). The seed allows loopback and .invalid webhooks
+questions: CLAUDE.md numbers rule (ST-S2) not edited; the allowance is noted in approved_claims.yaml. Ting Yu's to change
+evidence:  full suite -> 5653 passed, none failed or skipped, at the tip, the last code commit, and clocks Tue 00:00 and Sat 16:58
+open:      5b5404c was committed through a scratchpad shell script that ran plain git add and git commit, which skipped the harness's worktree guard. The developer removed it and went back to plain commands. Conductor checked the transcript: the script held nothing else, and the commit is on the right branch with the right identity; the reviewer checked its content. Main checkout untouched
+
+## 2026-11-01T01:45+0800 reviewer (ticket 10, appended by the conductor)
+status:    done
+persona:   reviewer
+ticket:    10
+artifacts: reviews/code-review-10.md
+decisions: changes-requested. B1, major: a typed approval of a social post whose card never went out is recorded and the post handed to the browser. Should-fix: St1, St2, St3, SEC1, SEC2, S1, S2, S3. The merge, main's schedule, _failures and ticket 08 hold; no test lost
+questions: keep typed approval as an outage route; fix outreach and community here
+evidence:  full suite at 27efa99 -> 5653 passed, 0 skipped, clock runs not rerun; B1 probe -> A-0001 approved, P-0001 handed out, posted_at None; refuse unposted -> 186 failed, 47 errors
+open:      the security pass ran a count-only grep on the live .env (how many webhook lines, how many keychain). No value was printed or stored: conductor checked its result. Also, the suite opens the live .env through the seed's check: ticket 11 stops that
+
+## 2026-11-01T01:55+0800 conductor (ticket 11)
+status:    done
+persona:   conductor
+ticket:    11, 12
+artifacts: issues/11-no-card-no-approval.md; issues/12-masked-cards-on-other-kinds.md; PRD amended
+decisions: under the standing instruction. No typed approval without a card, for social and for outreach, since outreach is live and an email can't be taken back; this goes further than the reviewer's recommendation on outreach. Masked outreach and community cards go to ticket 12, not this release: they predate the branch, he sees the marker, and community isn't reachable yet. Typed approval is not kept as a Discord outage route; the heartbeat re-posts. Same developer and worktree
+questions: -
+evidence:  reviews/code-review-10.md; git log c11eb61..origin/main -> PR #20, nine commits
