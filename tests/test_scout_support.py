@@ -57,6 +57,7 @@ def prepare_scout(tmp, monkeypatch):
     for name in (
         "RESEND_API_KEY_OUTREACH", "UNSUBSCRIBE_SECRET", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID",
         "D1_DATABASE_ID", "OUTREACH_IMAP_HOST", "OUTREACH_IMAP_USER", "OUTREACH_IMAP_PASSWORD", "OUTREACH_IMAP_PORT",
+        "ENQUIRY_IMAP_HOST", "ENQUIRY_IMAP_USER", "ENQUIRY_IMAP_PASSWORD", "ENQUIRY_IMAP_PORT",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(contact, "http_client", blocked_client)

@@ -1,0 +1,27 @@
+# Inbox watch settings (jurasolutions/prd/pending/prd-jura-inbox-watch-2026-10-31.md).
+#
+# Hard limits live in jura_growth/caps.py. A value here may lower a limit, never raise it; raising
+# one is a code change. Anything left out reads as the hard limit.
+
+# How far back the first check looks. After that each check looks back to its last good check, less
+# one day, and never further than look_back_days.
+first_run_days: 7
+look_back_days: 45
+
+# Mail older than this at intake is reported with no draft (F12).
+old_after_hours: 48
+
+# A check reads at most this many message bodies and spends at most this long. The rest wait for
+# the next check, and the last-good-check stamp moves only once a check has finished.
+bodies_per_check: 50
+check_seconds: 120
+
+# Mail from these domains counts as a platform notice (R2), on top of the list in
+# jura_growth/agents/inbox/settings.py. Each one also covers its subdomains.
+extra_platform_domains: []
+
+# The mail servers whose Authentication-Results header counts, by the id that opens it. A sender can
+# write that header too, so any other reads as no verdict: an enquiry reads as unsigned, and a
+# colleague is taken at their word. Empty until UAT Part B reads the id from one real enquiry's raw
+# headers, because a guess here would be trusted.
+auth_servers: []

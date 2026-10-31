@@ -7,7 +7,7 @@ approved posts, and write app PRDs for Jura Solutions, and the shared plumbing t
 
 **Agent**:
 A named worker with its own pause flag and digest section (scout, outreach, social, community,
-app-factory, publish), plus the system agents heartbeat, digest and backup.
+app-factory, publish, inbox, inbox-browser), plus the system agents heartbeat, digest and backup.
 _Avoid_: bot, worker
 
 **Job**:
@@ -50,8 +50,8 @@ draft, a community post or reply idea, an app PRD, a digest, a Discord post, a t
 _Avoid_: output, deliverable
 
 **Transcript**:
-The full record of a headless Claude run, kept for 30 days (7 days for publish runs, which hold
-third-party page text).
+The full record of a headless Claude run, kept for 30 days (7 days for browser and triage runs,
+which hold third-party text).
 _Avoid_: log
 
 ## Scout research
@@ -115,9 +115,10 @@ _Avoid_: bare "channel"
 
 **Approval request**:
 A record in the `approvals` table, and its card in `#approvals`, asking Ting Yu to approve or skip
-one outward-facing action. Its id (`A-nnnn`) is the only id he ever types. It carries what and why,
-a preview, a decide-by, a use-by and the content the kind computed. Its status is pending, approved,
-skipped, expired or superseded; an approved one is claimed at most once.
+one outward-facing action. Its id (`A-nnnn`) is the id he types to decide; an inbox item's `I-nnnn`
+is the only other id he types. It carries what and why, a preview, a decide-by, a use-by and the
+content the kind computed. Its status is pending, approved, skipped, expired or superseded; an
+approved one is claimed at most once.
 _Avoid_: ticket, confirmation, sign-off (a PRD sign-off is a different thing), `P-nnnn` in commands
 
 **Request reading**:
@@ -130,7 +131,8 @@ _Avoid_: state, status (that is the stored one)
 **Approval kind**:
 The type of action an approval request covers, declared by the plug-in that owns it, with its own
 content, preview, deadlines and skip, expiry and lapse actions: `outreach-email`, `app-build`,
-`app-release`, `group-rules`, and browser publishing's `social-post`, `community-post`, `group-join`.
+`app-release`, `group-rules`, browser publishing's `social-post`, `community-post`, `group-join`,
+and the inbox's `email-reply` and `social-reply`.
 
 **Decision**:
 Ting Yu's approve or skip on one approval request, recorded with the actor, the human origin it came
@@ -162,13 +164,14 @@ _Avoid_: use (in prose), consume
 Where a decision or control command may come from: `jura-growth remote`, reached through the SSH
 forced command from Dispatch, carrying Ting Yu's Discord decision from `#approvals`. Never Terminal
 (off since 2026-10-26, until a Touch ID ticket; ADR 0004), never a process with a `claude` ancestor
-or Claude Code's environment markers, and never a headless run.
+or Claude Code's environment markers, and never a headless run. Redrafting or rewording an inbox
+reply comes through the same origin.
 _Avoid_: authenticated user (the Discord user id is attribution, not authentication)
 
 **Gated action**:
 An action that claims a matching approval before it runs and refuses without one: sending an
 outreach email, writing a build handoff, handing out a release merge, confirming a group's rules,
-publishing a post, joining a group.
+publishing a post, joining a group, sending an inbox reply.
 _Avoid_: protected action
 
 **Build handoff**:
@@ -210,8 +213,62 @@ use-by are the end of the posting window on its day.
 _Avoid_: "publish window", alongside the outreach "send window"
 
 **Stop signal**:
-Anything on a page that makes a publish run stop at once without clicking further: a login wall, a
-CAPTCHA, a checkpoint, a warning, a restriction or removal notice, the wrong posting identity, or
-anything it can't identify on a step that would post. It pauses publishing until Ting Yu resumes it.
-Membership questions and a group that doesn't allow Pages are outcomes, not stop signals.
+Anything on a page that makes a browser run stop at once without clicking further: a login wall, a
+CAPTCHA, a checkpoint, a warning, a restriction, the wrong posting identity, or anything it can't
+identify on a step that would post. It pauses publishing and the inbox's browser jobs until Ting Yu
+resumes them. Membership questions, a group that doesn't allow Pages, a deleted post or comment and
+a closed reply box are outcomes, not stop signals.
 _Avoid_: error
+
+## Inbox watch
+
+**Reaction**:
+Anything a person or a platform did in response to Jura: a message, a comment, a rise in a post's
+counts, an app opened.
+_Avoid_: "reply" for anything inbound. A reply already means an inbound answer in outreach and an
+outbound one here, so say **inbound message** and **inbox reply**.
+
+**Inbound message**:
+What a person wrote to Jura: an email, a website enquiry, a comment or a direct message.
+
+**Inbox reply**:
+What Jura sends back to an inbound message, only ever after Ting Yu approves it. It goes out as
+**Levi**, the sender name on Ting Yu's email.
+
+**Inbox item**:
+One recorded reaction, with its id `I-nnnn`.
+_Avoid_: "item" alone
+
+**Conversation**:
+Every message from one person in one thread. It is the unit of triage, and it has at most one open
+card.
+_Avoid_: thread, when it means the person's messages rather than the place
+
+**Triage**:
+The step that classes each new conversation and drafts an inbox reply where one is merited. The
+model only proposes: it can hide nobody and send nothing.
+
+**Watch run**:
+One read of the social platforms in the browser. It can read and record, and it can't act.
+
+**Surface**:
+One place a watch run reads, such as Instagram Requests or a Page's notifications. A surface with
+no record of a good read has failed, which is different from a quiet day.
+
+**Replies waiting**:
+The one-pager's section for open inbox items, between Needs you and Approvals waiting.
+
+**Promised**:
+An inbox reply that says Levi will come back personally. The item stays open after it goes, until
+Ting Yu clears it.
+
+**Needs a hand reply**:
+An inbox item the engine won't answer: no single address to reply to, a draft that failed the brand
+gate twice, a person who opted out and wrote again. Its state in the code is `needs-you`.
+_Avoid_: "needs you", which is the health strip
+
+**Noise**:
+Mail with evidence in its headers that no person wrote it: a mailing list, a no-reply sender, a
+platform's notice, and anything in the Junk folder. It gets no message of its own, and the digest
+counts it.
+_Avoid_: spam, which is a class a model gives a person's comment

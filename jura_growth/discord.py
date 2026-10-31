@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -32,6 +33,7 @@ from jura_growth import config, images, log, paths, privacy, timeutil
 
 MAX_CONTENT = 2000
 MAX_FILES = 10
+_ZERO_WIDTH_SPACE = chr(0x200b)
 
 
 @dataclass
@@ -63,6 +65,13 @@ def webhook(channel: str) -> str | None:
 def webhook_set(channel: str) -> bool:
     """Whether the channel has a webhook, without reading it (setup gaps)."""
     return os.environ.get("JURA_GROWTH_DISCORD") != "off" and config.is_set(env_name(channel))
+
+
+def defuse_mentions(text: str) -> str:
+    """No mention in `text` can ping anyone, whatever the payload says: a zero-width space goes
+    after each `@everyone`, `@here`, `<@` and `<#`."""
+    text = re.sub(r"@(everyone|here)", "@" + _ZERO_WIDTH_SPACE + r"\1", text)
+    return text.replace("<@", "<@" + _ZERO_WIDTH_SPACE).replace("<#", "<#" + _ZERO_WIDTH_SPACE)
 
 
 def content_hash(content: str, files: list[tuple[str, bytes]]) -> str:
@@ -156,6 +165,7 @@ def post(
     own_copy: list[str] | tuple[str, ...] = (),
     wait: bool = False,
     components: list[dict] | None = None,
+    conversation: list[str] | tuple[str, ...] = (),
 ) -> PostResult:
     """Post `content` (and `files`) to a channel, or save it to the outbox.
 
@@ -173,7 +183,8 @@ def post(
     has read the named contacts from the database. Nothing here asks the
     Keychain; builders whose text comes from another process call
     `privacy.load_for_masking()` first. `own_copy` names the parts of
-    `content` that are Jura's own outgoing text, kept as written.
+    `content` that are Jura's own outgoing text, kept as written, and
+    `conversation` the parts a person wrote to Jura (`privacy.py`).
 
     The dedupe hash covers the content with secrets masked but personal data
     as written, so posts to two different people never dedupe as one.
@@ -191,7 +202,7 @@ def post(
         log.event(conn, "discord.attachment_refused", {"channel": channel, "files": held_back}, level="warning")
         content = content + "\n" + "\n".join(f"({reason})" for reason in held_back)
     digest = content_hash(config.redact(content), [a.hashed for a in attached])
-    content = privacy.for_discord(content, own_copy=own_copy)
+    content = privacy.for_discord(content, own_copy=own_copy, conversation=conversation)
     username = privacy.for_discord(username) if username else username
     uploads = [a.sent for a in attached]
     saved = [privacy.for_discord(str(a.path)) for a in attached]  # where each file is, for the outbox
@@ -236,6 +247,7 @@ def edit(
     *,
     client: httpx.Client | None = None,
     components: list[dict] | None = None,
+    conversation: list[str] | tuple[str, ...] = (),
 ) -> PostResult:
     """Replace the text of a message this channel's webhook posted.
     `components` replaces its buttons too (`[]` removes them); None leaves
@@ -247,7 +259,7 @@ def edit(
     post instead. Edits don't notify (MC §5.1, decided cards)."""
     _require(channel)
     privacy.learn(conn)
-    content = privacy.for_discord(content)[:MAX_CONTENT]
+    content = privacy.for_discord(content, conversation=conversation)[:MAX_CONTENT]
     url = webhook(channel)
     if not url:
         return PostResult(channel, delivered=False, reason=f"{env_name(channel)} not set")

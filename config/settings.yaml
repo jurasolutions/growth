@@ -139,6 +139,15 @@ jobs:
     schedule: {daily_every: {start: "09:00", end: "17:40", minutes: 20}}
     run_update: claimed-only # one message per run that claimed an item
 
+  # Inbox watch (prd-jura-inbox-watch). The precheck reads the mailbox read-only and reports what
+  # is new, with no model, so a quiet check starts no Claude. Its hours are checked in code too.
+  inbox-check:
+    agent: inbox
+    kind: claude
+    prompt: inbox-check.md
+    quiet: true
+    schedule: {daily_every: {start: "07:00", end: "23:45", minutes: 15}}
+
   backup:
     agent: backup
     kind: command

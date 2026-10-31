@@ -35,3 +35,21 @@ decisions: opt-outs end in one closed phrase list. Any reply already cancels fol
 decisions: Message-ID on outreach sends goes in ticket 03, UAT confirming Resend keeps it
 questions: -
 evidence:  developer: 4330 passed at 92c6157; reviewer round 2: 3 blocking
+
+## 2026-10-31 developer (ticket 01, as reported)
+status:    done
+persona:   developer
+ticket:    01
+artifacts: crew/inbox-watch-01-see-mail, merged; jura_growth/agents/inbox/; config/inbox.yaml; tests/test_inbox_*.py
+decisions: closed opt-out phrase list; `auth_servers` ships empty, so an enquiry reads as an unsigned stranger with a note until UAT pins the server id (it is still reported and answered, nothing is hidden)
+questions: -
+evidence:  uv run pytest -> 4380 passed, no skips
+
+## 2026-10-31 conductor (ticket 01 merged)
+status:    done
+persona:   conductor
+ticket:    01
+artifacts: crew/inbox-watch
+decisions: merged after two review rounds; round 3's narrow fixes (closed rule, R-4, R-5) are checked by the final review, not a third round
+questions: -
+evidence:  conductor read mail.py's unsigned path: reported with a note, not noise

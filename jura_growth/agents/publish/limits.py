@@ -73,6 +73,4 @@ def community_joins_per_week() -> int:
 
 
 def minutes_between_actions() -> int:
-    configured = _settings().get("minutes_between_actions")
-    hard = caps.PUBLISH_MINUTES_BETWEEN_ACTIONS
-    return hard if configured is None else max(hard, int(configured))
+    return caps.at_least(caps.PUBLISH_MINUTES_BETWEEN_ACTIONS, _settings().get("minutes_between_actions"))
