@@ -37,7 +37,9 @@ build step).
 | `jura-growth apps status` | Waiting count, next APP number, today's PRD or the limit, live tools from the site registry, pending and built PRDs, the backlog |
 | `jura-growth apps context --json` | Everything the prompt needs in one call: the above plus usage (D1 `app_usage`, last 7 days, or "not configured") and the last 30 days of scout insights |
 | `jura-growth apps backlog [--json]` | The backlog with the status worked out from the PRD folders and the registry |
-| `jura-growth apps submit-prd <file> [--dry-run]` | The gate. `--dry-run` runs every check, brand check included, without filing, raising a request or using an attempt |
+| `jura-growth apps idea <text>` | Ting Yu's own idea: adds a backlog row with `source: ting-yu`, the text verbatim in `does`, a name from the text before a first `:` (else its first few words), the date and the actor. Refuses no text, more than 500 characters, and a name or slug that clashes with anything live, pending, built or in the backlog. Sent from Discord as `/growth apps idea <text>`; no scheduled run can send it (`headless.NEVER`) |
+| `jura-growth apps hold-idea <slug> --reason <text>` | The factory's: today's pick of Ting Yu's idea failed a check. Records the reason in the row's notes (`held`, `held_reason`) and in the digest; the idea stops coming first and stays an ordinary candidate |
+| `jura-growth apps submit-prd <file> [--dry-run] [--idea <slug>]` | The gate. `--dry-run` runs every check, brand check included, without filing, raising a request or using an attempt. `--idea` marks that backlog idea's row, for one of Ting Yu's ideas renamed to meet the name rules |
 | `jura-growth apps handoffs [--json]` | Build handoffs waiting for a builder, oldest first. `--json` is what Dispatch polls: each with `handoff: {repo, base, prd_text, prd_sha256, approval}`, within 64 KB |
 | `jura-growth apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>` | Reports a handed-off build and raises its `app-release` request, bound to the full head commit. Called by Dispatch (D6), or by Ting Yu after a hand build |
 | `jura-growth apps release-plan <APP-NNN>` | Claims the approved release, then prints the merge of exactly its commit into `main` |
@@ -115,6 +117,10 @@ button.
 - **The waiting pile counts PRDs waiting for an `app-build` decision** (MC §5.9 step 6). A
   handed-off build no longer waits for Ting Yu, and his own PRDs (APP-001, APP-002) have no
   request, so neither counts.
+- **Ting Yu's ideas come first.** `apps context --json` lists his open ideas as `ting_yu_ideas`,
+  oldest first, and the prompt takes the first before weighing anything else. It still needs a
+  confirmed official rule, no near-duplicate and none of the excluded kinds; one that fails is
+  held with its reason. They count against the one PRD a day like any other.
 - **A backlog idea is the expected pick, not a duplicate.** Duplicates are slugs and names that
   already have a PRD or are live.
 - **PayNow** is run by the Association of Banks in Singapore, so `abs.org.sg` counts as official

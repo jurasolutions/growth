@@ -12,8 +12,11 @@ Each filed PRD waits for an `app-build` decision in #approvals; approving it
 writes a build handoff (`builds.py`, MC §5.9). The finished build waits for a
 second, `app-release` decision bound to its commit (`releases.py`).
 
-Commands: `jura-growth apps status | context | backlog | submit-prd | handoffs
-| built | release-plan | released`.
+Ting Yu adds his own ideas from Discord with `apps idea <text>` (`ideas.py`); the factory picks
+them first, oldest first, and holds one that fails a check with `apps hold-idea`.
+
+Commands: `jura-growth apps status | context | backlog | idea | hold-idea | submit-prd |
+handoffs | built | release-plan | released`.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from pathlib import Path
 import click
 
 from jura_growth import approval_settings, brand_check, cards, db, handoff_fit, log, timeutil
-from jura_growth.agents.apps import backlog, builds, catalog, factory, inputs, releases
+from jura_growth.agents.apps import backlog, builds, catalog, factory, ideas, inputs, releases
 
 NAME = catalog.NAME
 MIGRATIONS = Path(__file__).parent / "migrations"
@@ -48,12 +51,13 @@ def channels() -> dict[str, brand_check.Channel]:
 
 def permissions(job: str):
     """The `jura-growth` commands `prompts/app-factory.md` uses, plus
-    `scout insights`, which `apps context` reads in-process."""
+    `scout insights`, which `apps context` reads in-process. Never `apps idea`: only Ting Yu adds
+    an idea of his (`headless.NEVER`)."""
     if job != JOB:
         return None
     from jura_growth.headless import Permissions
 
-    return Permissions(commands=("apps context", "apps submit-prd", "check", "scout insights"))
+    return Permissions(commands=("apps context", "apps hold-idea", "apps submit-prd", "check", "scout insights"))
 
 
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
@@ -79,6 +83,16 @@ def health(conn: sqlite3.Connection) -> list[str]:
 
 
 def digest(conn: sqlite3.Connection, day: str) -> dict:
+    """The factory's day, after a line for each idea of Ting Yu's it held that day: the reason it
+    gave reaches him even when it then filed another PRD."""
+    found = _digest(conn, day)
+    held = [f"App factory: your idea {row['name']} wasn't picked first: {row.get('held_reason') or 'no reason given'}."
+            for row in ideas.held_on(day)]
+    found["lines"] = held + found["lines"]
+    return found
+
+
+def _digest(conn: sqlite3.Connection, day: str) -> dict:
     written = catalog.factory_prd_on(conn, day)
     waiting = len(catalog.waiting(conn))
     figures = {"app_prd_today": None, "app_prds_waiting": waiting, "app_factory_note": None}
@@ -153,6 +167,7 @@ def _overview(conn: sqlite3.Connection) -> dict:
         "pending": [f.as_dict() for f in files if f.state == "pending"],
         "done": [f.as_dict() for f in files if f.state == "done"],
         "backlog": rows,
+        "ting_yu_ideas": ideas.queue(rows),
     }
 
 
@@ -231,16 +246,52 @@ def context_cmd(as_json) -> None:
         click.echo(f"{key}: {json.dumps(value, ensure_ascii=False, default=str)[:400]}")
 
 
+@apps.command("idea")
+@click.argument("text", nargs=-1)
+@click.pass_context
+def idea_cmd(ctx, text) -> str:
+    """Add Ting Yu's own toolbox idea to the backlog; the factory picks it first. No PRD, no build."""
+    obj = ctx.obj if isinstance(ctx.obj, dict) else {}
+    actor = obj.get("actor") or "local"
+    with db.session() as conn:
+        try:
+            added = ideas.add(conn, " ".join(text), actor=actor)
+        except ideas.Refused as refused:
+            click.echo(refused.text)
+            sys.exit(refused.code)
+        log.event(conn, "apps.idea.added", {"slug": added.row["slug"], "name": added.row["name"], "actor": actor},
+                  agent=NAME)
+    click.echo(ideas.reply(added))
+    return f"idea {added.row['slug']} added"
+
+
+@apps.command("hold-idea")
+@click.argument("slug")
+@click.option("--reason", required=True, help="Why today's pick of Ting Yu's idea failed a check.")
+def hold_idea_cmd(slug, reason) -> str:
+    """Record why Ting Yu's idea wasn't picked first today; it stays an ordinary candidate."""
+    try:
+        row = ideas.hold(slug=slug, reason=reason)
+    except ideas.Refused as refused:
+        click.echo(refused.text)
+        sys.exit(refused.code)
+    with db.session() as conn:
+        log.event(conn, "apps.idea.held", {"slug": slug, "reason": row["held_reason"]}, agent=NAME)
+    click.echo(f"held: {row['name']} ({slug}) on {row['held']}: {row['held_reason']}")
+    return f"idea {slug} held"
+
+
 @apps.command("submit-prd")
 @click.argument("file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--dry-run", is_flag=True, help="Run every check, brand check included, without filing, posting or using a brand-gate attempt.")
-def submit_prd_cmd(file, dry_run) -> str:
+@click.option("--idea", "idea_slug", help="The backlog idea this PRD is for, by slug, when its name changed.")
+def submit_prd_cmd(file, dry_run, idea_slug) -> str:
     """Check an app PRD written by the factory and file it in prd/pending/apps/."""
     text = file.read_text(encoding="utf-8")
     with db.session() as conn:
         if not dry_run:
             builds.raise_waiting(conn, run_id=log.current_run_id())
-        result = factory.submit(conn, text, dry_run=dry_run)
+        result = factory.submit(conn, text, dry_run=dry_run, idea=idea_slug)
         if not dry_run:
             cards.sweep_safely(conn)  # the cards go out once the requests are committed (A12)
     for line in result.lines:

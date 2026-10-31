@@ -188,6 +188,10 @@ def _table(conn, world):
           "--preview", "https://x.jura-site.pages.dev"], 1, "bare preview link of the landing-page-eq7 Pages project"),
         (["apps", "built", "APP-999", "--task", "T-0031"], 2, "refused:"),
         (["apps", "handoffs"], 0, "No build handoffs are waiting."),
+        # Ting Yu's own idea; the rest of its paths are in test_apps_idea.py.
+        (["apps", "idea", "Site", "visit", "report:", "write", "up", "a", "visit"], 0, "Added to the app backlog"),
+        (["apps", "idea", "Site", "visit", "report:", "again"], 1, "not added:"),
+        (["apps", "idea"], 2, "refused:"),
         (["apps", "release-plan", "APP-999"], 1, "There is no merge to run."),
         (["apps", "released", "APP-999", "--task", "T-0031"], 1, "APP-999"),
         (["community", "removed", str(group_id)], 0, "is now skip, permanently"),

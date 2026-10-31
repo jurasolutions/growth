@@ -34,6 +34,9 @@ HEADER = """\
 #   (`jura-growth apps backlog` also shows the status worked out from the PRD
 #   folders and the site registry, which wins if this file is behind.)
 # tier: browser | ai. Category: Sales, Finance, Admin, HR, Marketing, Documents.
+# source: ting-yu marks an idea Ting Yu sent with `apps idea`; the factory picks
+#   those first, oldest first (`added`). One it couldn't take has `held` and
+#   `held_reason`, and is an ordinary candidate from then on.
 
 """
 
@@ -72,9 +75,13 @@ def find(rows: list[dict], *, slug: str, name: str) -> dict | None:
     return None
 
 
-def mark_written(*, name: str, slug: str, app_id: str, prd_path: str, tier: str, category: str, does: str) -> dict:
+def mark_written(*, name: str, slug: str, app_id: str, prd_path: str, tier: str, category: str, does: str,
+                 idea: str | None = None) -> dict:
+    """`idea` names the row by its slug when the PRD's name and slug differ from it (an idea of
+    Ting Yu's, renamed to meet the factory's name rules)."""
     rows = load()
-    row = find(rows, slug=slug, name=name)
+    row = next((r for r in rows if r.get("slug") == idea), None) if idea else None
+    row = row or find(rows, slug=slug, name=name)
     if row is None:
         row = {"name": name, "slug": slug, "tier": tier, "category": category, "does": does, "status": "idea",
                "notes": f"New idea from the app factory, {timeutil.today_str()}."}
