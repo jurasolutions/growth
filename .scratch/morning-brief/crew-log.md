@@ -74,3 +74,16 @@ decisions: conductor read the fix-round diff in place of a second review round: 
 decisions: S3 (glossary clause) and morning-brief.md:8 wait for ticket 01's merge; S4 waits for the rebase
 questions: -
 evidence:  full pytest -> 13 failed (ticket 01's), 4054 passed; pyright on slots.py, outreach/cli.py -> 0 errors
+
+## 2026-10-31T21:25+0800 reviewer, then conductor
+status:    done
+persona:   reviewer, conductor
+ticket:    01
+artifacts: reviews/code-review-01.md
+decisions: changes-requested, 6 blocking; all blockers go back to the developer, with S1-S7, S9 and the masked-link nit
+decisions: conductor rulings: reply detection off with a count of 0 reads as 0 in the verdict, or he never gets an all-clear; the tile shows a dash. MB1 reads that way
+decisions: MB10's "in full" allows the 360-character cut, which protects the 2,000-character limit; no real wording reaches it
+decisions: S3: "to post by hand" counts today's drafts only, because a daily post from an earlier day shouldn't go out; match requests by date; say so in the docstring
+decisions: the fix round starts by merging crew/morning-brief, so B1's install rule, the glossary, the ICP plant and test_morning_order.py are done on one tree
+questions: -
+evidence:  full pytest at 7ba3e5b -> 4181 passed, 0 skipped; reviewer's throwaway probes reproduced B1-B6
