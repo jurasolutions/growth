@@ -59,6 +59,16 @@ def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     return None
 
 
+def health(conn: sqlite3.Connection) -> list[str]:
+    """The missing ICP, on any day, in plain words and with the action first. Not
+    `icp.missing_reason()`: that holds absolute paths, and Fix clamps a line at three rows."""
+    from jura_growth.agents.scout import icp
+
+    if icp.path().exists():
+        return []
+    return ["Put the ICP in inputs/icp.md, from the draft in outputs/growth/setup/. Scout research waits until it's there."]
+
+
 def digest(conn: sqlite3.Connection, day: str) -> dict:
     rows = db.rows(conn, "SELECT company, domain, channel, form_url FROM leads WHERE substr(created_at, 1, 10) = ?", (day,))
     added = len(rows)
