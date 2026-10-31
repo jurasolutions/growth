@@ -104,3 +104,22 @@ decisions: H1 to H7 built, test code only; uat.md corrected for the 17:00 decide
 questions: -
 evidence:  uv run pytest -> 5074 passed, none skipped; Parts P to C dry-run with Discord off and a stand-in claude
 open:      for the final review: a missing config folder silently disables the buzzword check; expired drafts read "2 social drafts waiting" in the digest
+
+## 2026-11-01T01:50+0800 reviewer and qa (final, appended by the conductor)
+status:    done
+persona:   reviewer, qa
+ticket:    final
+artifacts: reviews/code-review-final.md; reviews/qa-final.md; issues/05-09; issues/test_qa_final_defects.py
+decisions: changes-requested; two blockers: the digest calls a closed card waiting (SP-B1, ticket 05), a typed approval of a refused card goes through (SP-B2, ticket 09, major)
+decisions: the intermittent failure is named: test_every_scenario_refuses_the_live_folders_and_changes_nothing stats the live data folder, and a live job wrote there at 00:00 (ticket 08). A test problem, not a product one
+questions: -
+evidence:  suite, 9 runs -> 8 clean at 5167 passed, 1 with that failure; X9 real fonts 34 of 34
+
+## 2026-11-01T01:51+0800 conductor (ticket 10)
+status:    done
+persona:   conductor
+ticket:    10
+artifacts: issues/10-final-fixes-and-main.md; PRD "Amended 2026-11-01 after the code reviews"
+decisions: every defect and should-fix taken in one round, with main merged first because PR #18 moved the schedule and conflicts in health.py, mission.py and discord.py. A peer session's note on M1 to M4 was checked against main before use
+questions: -
+evidence:  git merge-tree -> seven conflicting files, as reported
