@@ -252,6 +252,20 @@ def test_iw_f15_s2_a_run_that_pressed_keys_and_says_not_sent_is_unknown(conn, fa
     assert store.get(conn, item_id)["state"] == store.UNKNOWN and pause.is_paused(conn, "inbox-browser")
 
 
+def test_iw_b1_s2_a_refused_reply_done_ends_nothing(tmp_path):
+    """Only a done word that was taken ends the typing phase: a refused one settles nothing, either way."""
+    claim = t.bash("jura-growth inbox reply-next", json.dumps({"due": True}))
+    refused = {**t.bash("jura-growth inbox reply-done A-0001 --url x", "refused"), "error": True}
+    typed = t.page("computer", {"action": "type", "text": DRAFT}, "ok", url=THREAD)
+    send = t.page("computer", {"action": "key", "text": "Return"}, "ok", url=THREAD)
+    found = audit.audit(_transcript(tmp_path, [claim, t.created(), t.opened(THREAD), typed, refused, send, t.closed()]), hosts=scope.hosts(), approved=[DRAFT], images=[],
+                        places=[THREAD], rules=scope.REPLY_RULES)
+    assert found.ok, found.failures
+    second = audit.audit(_transcript(tmp_path, [claim, t.created(), t.opened(THREAD), typed, send, refused, send, t.closed()]), hosts=scope.hosts(), approved=[DRAFT], images=[],
+                         places=[THREAD], rules=scope.REPLY_RULES)
+    assert any("after the reply was sent" in failure for failure in second.failures)
+
+
 def test_iw_f5_sec4_a_request_gets_its_one_extra_click_and_an_ordinary_thread_doesnt():
     assert scope.reply_rules(is_dm=True, accept_request=True).clicks_before_typing == 2
     assert scope.reply_rules(is_dm=True, accept_request=False).clicks_before_typing == 1
@@ -445,9 +459,10 @@ def test_iw_f9_p2_a_second_read_cant_undo_the_first_judgement(conn, fake, monkey
 
 
 def test_iw_f9_p2_asking_for_the_next_reply_again_gives_the_same_one(conn, fake, monkeypatch, discord_double):
-    first, first_record, second, _ = _two(conn, monkeypatch)
+    first, first_record = approved(conn, monkeypatch)
     run_id = log.start_run(conn, "inbox-browser", "inbox-reply")
     assert reply_run.hand_out(conn, run_id=run_id)["approval"] == first_record.id
+    approved(conn, monkeypatch, key="k2", conversation="c2", target=OTHER, author="Mei Ling", priority="high")  # now first in the queue
     assert reply_run.hand_out(conn, run_id=run_id)["approval"] == first_record.id
 
 
@@ -461,6 +476,15 @@ def test_iw_f9_s5_a_sticker_the_page_never_showed_fails_the_run(conn, fake, monk
                    *read_back(), *w.browser(t.closed())])
     run()
     assert audit_failed(conn) and store.get(conn, item_id)["state"] == store.UNKNOWN
+
+
+def test_iw_f9_s5_a_thread_not_showing_the_message_it_answers_fails_the_run(conn, fake, monkeypatch, discord_double):
+    """A sticker on the page, and the right names, on a thread that isn't the one this answers."""
+    approved(conn, monkeypatch)
+    fake.scenario([*opening(shows=f"jura_solutions\n{NAME}\nSticker"), *claim_steps(newest_from_them="", newest_attachment="sticker"), click(), typing(), press("Return"),
+                   *read_back(), *w.browser(t.closed())])
+    run()
+    assert audit_failed(conn)
 
 
 def test_iw_s2_s8_a_models_words_in_an_address_reach_no_discord_line(conn, fake, monkeypatch, discord_double):

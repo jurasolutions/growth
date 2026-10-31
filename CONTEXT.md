@@ -254,7 +254,8 @@ One read of the social platforms in the browser. It can read and record, and it 
 **Reply run**:
 One `inbox-reply` run, which posts at most one approved social reply. It reads the target before its
 claim and the code decides from what it reports. It types only the approved text, whole, once, and reads
-it back. A claim it leaves open is `unknown` and is never sent again.
+it back. Its word proves nothing: only what Chrome showed it makes a reply `sent`, or closes an item. A
+claim without that proof is `unknown` and is never sent again.
 
 **Surface**:
 One place a watch run reads, such as Instagram Requests or a Page's notifications. A surface with

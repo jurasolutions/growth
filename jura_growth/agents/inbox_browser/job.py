@@ -196,8 +196,6 @@ def _read_shown(transcript: transcripts.Transcript | None, claimed: dict | None)
     said = store.thread_of(claimed).get("claim_read") or {}
     claim = audit.claim_index(transcript, scope.REPLY_RULES)
     before = [text for index, text in audit.reads_at(transcript, claimed["target"], scope.REPLY_RULES.place_check) if claim is None or index < claim]
-    if not before:
-        return ["the run claimed without reading its target"]
     found = []
     for name, shown in (("a message", said.get("newest")), ("an author", said.get("author")), ("an identity", said.get("acting_as"))):
         if shown and not watch.words_on_page(shown, before):
