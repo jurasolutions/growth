@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+import publish_fake
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
 from jura_growth import approvals, cards, db, pause, paths, runner
@@ -312,11 +313,13 @@ def test_a_platform_in_draft_mode_still_runs_late(conn, env, monkeypatch):
     assert social.precheck("social", conn) is None
 
 
-def test_a_late_run_skips_before_claude_starts_and_says_why(conn, env, monkeypatch, discord_double):
+def test_a_late_run_skips_before_claude_starts_and_says_why(conn, env, monkeypatch, discord_double, tmp_path):
+    fake = publish_fake.install(tmp_path, monkeypatch)  # a stand-in, so a broken precheck can't start the real one
     pw.at(monkeypatch, LATE)
     pw.social_config(monkeypatch, browser=BOTH)
     outcome = runner.run("social")
     assert outcome.status == "skipped" and "17:00" in outcome.summary
+    assert not fake.started
     assert any("17:00" in message for message in discord_double.contents("social-drafts"))
 
 
