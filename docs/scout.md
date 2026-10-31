@@ -13,19 +13,23 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
 
 ## How a day runs (SGT, business days)
 
-1. **09:00 `scout-research`** (headless Claude, no spending ceiling). Refuses to start when
+1. **06:30 `scout-research`** (headless Claude, no spending ceiling). Refuses to start when
    `inputs/icp.md` is missing, today's candidates are already ranked, today's shortlist is
    already kept, or `max_queue` emails are already waiting. The session asks
    `jura-growth scout today` for its industries, researches about 20 candidates with web search
    and fetch (job boards are a key source, see "Shortlist research" below), submits them all
    with `jura-growth scout shortlist`, and queues an email for each kept lead with
    `jura-growth outreach queue`. Kept leads post to `#scout-leads`. WebSearch and WebFetch are
-   allowed for this job with no domain restriction, so job boards are reachable.
-2. **09:30–16:30 `scout-send`** every 10 minutes (quiet: no run row when nothing happens).
+   allowed for this job with no domain restriction, so job boards are reachable. In live mode,
+   each email's card reaches `#approvals` as it is queued.
+2. **08:30 `outreach-requests`** (quiet). `jura-growth outreach raise-due` raises requests for
+   emails queued on an earlier day, up to today's room, and posts their cards, so they are in
+   `#approvals` before the one-pager. It sends nothing. In shadow mode or paused, it does nothing.
+3. **09:30–16:30 `scout-send`** every 10 minutes (quiet: no run row when nothing happens).
    `jura-growth outreach send-due` sends at most one email per run.
-3. **16:45 `scout-sync`**. `jura-growth outreach sync`: D1 suppression sync, bounces and
+4. **16:45 `scout-sync`**. `jura-growth outreach sync`: D1 suppression sync, bounces and
    complaints, reply detection (optional), follow-ups due, retention.
-4. **18:05 digest** includes the scout and outreach figures.
+5. **18:05 digest** includes the scout and outreach figures.
 
 ## Commands
 
@@ -41,6 +45,7 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
 | `scout tools [--json]` | Live tools from the site registry, with D1 usage counts when configured |
 | `outreach queue --lead <id> --file <json> [--kind follow_up]` | Brand-gate and queue an email (exit 1 = fail or dropped) |
 | `outreach follow-ups-due [--json]` | Leads due their one follow-up |
+| `outreach raise-due` | Raise requests for emails due today, up to today's room, and post their cards; sends nothing (what `outreach-requests` calls) |
 | `outreach send-due` | The send run (what `scout-send` calls) |
 | `outreach sync` | The sync run (what `scout-sync` calls) |
 | `outreach queue-list [--all] [--json]` | The queue, or every message |
@@ -397,7 +402,7 @@ candidates:
   read in memory for "unsubscribe", "remove" or "stop", which suppresses the address.
   Auto-replies are ignored. Replies post to `#outreach-replies` and cancel any follow-up.
 - **Follow-ups**: only with reply detection on. One per company, at least 5 business days
-  after a live first email with no reply. `outreach follow-ups-due` lists them; the 09:00
+  after a live first email with no reply. `outreach follow-ups-due` lists them; the 06:30
   session writes and queues them; the reply check runs again just before each follow-up goes.
 - **Retention**: leads that never replied are deleted 24 months after they were found (their
   contacts and messages go too); the domain stays in `contacted_domains`. Suppression is kept

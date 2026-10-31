@@ -180,13 +180,14 @@ def test_the_answer_and_the_one_pager_say_how_it_gets_built(tmp_path, conn, monk
     build_it = BUILD_IT.format(path=PATH, id=request.id)
     snapshot = mission.read(mw.source(now=f"{TODAY}T08:00:00+08:00"))
     [line] = [line for line in snapshot.plugin_lines if "APP-003" in line]
-    assert "Build handoff waiting for a builder: APP-003 Delivery order maker" in line
     assert line in one_pager.text(snapshot)
     if on:
         assert answer.text == f"{request.id} approved. Handed to Dispatch: it builds APP-003 on its own branch from main."
+        assert "Build handoff waiting for a builder: APP-003 Delivery order maker" in line
         assert "Build it" not in line and request.id in line
     else:
         assert answer.text == f"{request.id} approved. {build_it}"
+        assert line.startswith("Build APP-003 Delivery order maker by hand")
         assert build_it in line
 
 

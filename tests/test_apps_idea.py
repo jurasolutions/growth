@@ -34,7 +34,7 @@ from jura_growth.agents.apps import backlog, ideas
 from jura_growth.cli import cli
 from jura_growth.origin import Origin
 
-PICKS = "the app factory picks it at its next run (06:30 SGT)"
+PICKS = "the app factory picks it at its next run (07:00 SGT)"
 
 
 @pytest.fixture(autouse=True)
@@ -157,16 +157,64 @@ def test_non_latin_text_after_a_latin_name_is_kept_word_for_word(conn):
     assert row("leave-form-maker")["does"] == text
 
 
-def test_an_idea_over_500_characters_is_refused_and_one_of_500_is_taken(conn):
-    long = "Long idea: " + "x" * 490
-    assert len(long) == 501
+def test_an_idea_over_2000_characters_is_refused_and_one_of_2000_is_taken(conn):
+    """A Discord message holds 2,000 characters, `apps idea ` included, so this is Discord's own
+    limit; the /growth slash option takes more, so the cap still holds."""
+    long = "Long idea: " + "x" * 1990
+    assert len(long) == 2001
     body = answer(remote(idea_words(long)))
     assert body["exit_code"] == 2 and body["answer"] == "refused"
-    assert body["text"].startswith("refused:") and "500" in body["text"]
+    assert body["text"].startswith("refused:") and "2,001" in body["text"] and "2,000" in body["text"]
     assert not backlog.path().exists()
     fits = long[:-1]
     assert answer(remote(idea_words(fits)))["exit_code"] == 0
     assert row("long-idea")["does"] == fits
+
+
+def brief(length: int) -> str:
+    """A detailed brief like Ting Yu's first real idea, at exactly `length` characters, with the
+    marks YAML treats specially: colons, both quotes, a hash, a dash, a pipe, braces, a `>`."""
+    base = ("Property shortlist: an agent pastes a buyer's brief (\"3-room HDB, near MRT: Tampines or "
+            "Bedok, budget S$550k-600k, no west-facing\") and gets a shortlist. Each unit shows: block, "
+            "floor, size in sqft & price psf; #notes for the viewing; - a checklist | {renovation, "
+            "lease left: 60+ years} > key: value pairs, 'single' quotes and a trailing colon:")
+    filler = " Then the agent sends the shortlist to the buyer as a PDF with the agency's name on it."
+    return (base + filler * (length // len(filler) + 1))[: length - 1] + "."
+
+
+def test_a_2000_character_idea_round_trips_through_the_backlog_and_the_context(conn):
+    text = brief(2000)
+    assert len(text) == 2000 and text == " ".join(text.split())
+    assert remote(idea_words(text)).exit_code == 0
+    assert text not in backlog.path().read_text(encoding="utf-8")  # folded in the file
+    assert row("property-shortlist")["does"] == text
+    view = json.loads(invoke("apps", "context", "--json").output)
+    assert next(r for r in view["backlog"] if r["slug"] == "property-shortlist")["does"] == text
+    assert [r["does"] for r in view["ting_yu_ideas"]] == [text]
+
+
+def test_the_answer_to_a_2000_character_idea_fits_discord_and_keeps_its_last_lines(conn):
+    """The reply echoes the start of a long text, so remote never cuts the lines after it."""
+    text = brief(2000)
+    body = answer(remote(idea_words(text)))
+    assert body["exit_code"] == 0
+    assert len(body["text"]) <= remote_mod.TEXT_LIMIT
+    assert "(cut" not in body["text"]
+    assert text[:200] in body["text"] and text not in body["text"]
+    assert "2,000 characters" in body["text"]
+    assert PICKS.lower() in body["text"].lower()
+    assert body["text"].rstrip().endswith("nothing is built before you approve it.")
+
+
+@pytest.mark.parametrize("text, shown", [
+    (brief(ideas.ECHO_MAX), brief(ideas.ECHO_MAX)),  # whole, with no note
+    ("Long idea: " + "x" * 1989, "Long idea: " + "x" * (ideas.ECHO_MAX - 11) + " … (2,000 characters"),  # one run-on word
+])
+def test_the_reply_shows_an_idea_whole_up_to_the_echo_limit_and_its_start_after(text, shown):
+    echoed = ideas.reply(ideas.Added({"name": "N", "slug": "n", "status": "idea", "source": "ting-yu",
+                                      "added": TODAY, "actor": "local", "does": text}, 0))
+    assert f"  does    {shown}" in echoed
+    assert ("characters in all" in echoed) is (len(text) > ideas.ECHO_MAX)
 
 
 @pytest.mark.parametrize("text, clash", [

@@ -44,7 +44,7 @@ from typing import Callable
 
 import click
 
-from jura_growth import approvals, approvals_cli, config, db, handoff_fit, log, origin, pause, privacy
+from jura_growth import approvals, approvals_cli, config, db, discord, handoff_fit, log, origin, pause, privacy
 
 CONTRACT = 1
 TEXT_LIMIT = 1900  # Dispatch adds its own words; Discord takes 2,000
@@ -237,7 +237,7 @@ def match(words: list[str]) -> tuple[str, Entry, list[str]]:
 
 
 def _short(text: str, limit: int = 60) -> str:
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+    return discord.shortened(text, limit)
 
 
 # --- the answer ---------------------------------------------------------------------------------
@@ -399,7 +399,7 @@ def _listed(kind: str | None) -> list[dict]:
 # --- the command -------------------------------------------------------------------------------------
 
 
-def _masked(reply: Reply) -> Reply:
+def _masked(reply: Reply, wait: float | None = None) -> Reply:
     """The text and the listing as they may reach Discord.
 
     If the named contacts or the Keychain values can't be loaded, masking
@@ -407,7 +407,7 @@ def _masked(reply: Reply) -> Reply:
     `remote.masking_degraded` event says so: in growth.db, or only in the
     JSONL mirror when the database can't be opened (code review 11)."""
     try:
-        with db.session() as conn:
+        with db.session(wait=wait) as conn:
             try:
                 privacy.load_for_masking(conn)
             except Exception as error:  # noqa: BLE001 - the answer still goes back, masked
@@ -444,15 +444,18 @@ def payload(reply: Reply) -> str:
     return handoff_fit.encode(body)
 
 
-def _record(words: list[str], actor: str | None, ref: str | None, reply: Reply) -> None:
+def _record(words: list[str], actor: str | None, ref: str | None, reply: Reply, wait: float | None = None) -> None:
     """One `remote.command` event: who, what, and the answer. Never the output."""
+    payload = {"actor": actor, "words": list(words), "ref": ref, "origin": reply.origin, "answer": reply.answer, "exit_code": reply.exit_code}
+    level = "info" if reply.exit_code == OK else "warning"
     try:
-        with db.session() as conn:
-            log.event(conn, "remote.command", {"actor": actor, "words": list(words), "ref": ref, "origin": reply.origin,
-                                               "answer": reply.answer, "exit_code": reply.exit_code},
-                      level="info" if reply.exit_code == OK else "warning")
+        with db.session(wait=wait) as conn:
+            log.event(conn, "remote.command", payload, level=level)
     except Exception:  # noqa: BLE001 - the answer still goes back; the mirror line may be all there is
-        pass
+        try:
+            log.event(None, "remote.command", payload, level=level)
+        except OSError:
+            pass
 
 
 def register(cli: click.Group) -> None:
@@ -465,7 +468,10 @@ def register(cli: click.Group) -> None:
     def remote_command(ctx, actor, ref, as_json, words) -> None:
         """A control command from Discord, through Dispatch's SSH forced command only."""
         words = list(words)
-        reply = _masked(handle(ctx, words, actor=actor, ref=ref))
-        _record(words, actor, ref, reply)
+        # The one-pager's post path has Dispatch's 60 seconds for everything, and has used most of
+        # them if growth.db is locked: its answer can't wait another 30 on each of these.
+        wait = db.SHORT_WAIT if words[:1] == ["one-pager"] else None
+        reply = _masked(handle(ctx, words, actor=actor, ref=ref), wait)
+        _record(words, actor, ref, reply, wait)
         click.echo(payload(reply) if as_json else reply.text)
         ctx.exit(reply.exit_code)

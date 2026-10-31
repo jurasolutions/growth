@@ -161,7 +161,8 @@ def test_control_discord_user_id_is_a_core_gap(tmp_path, monkeypatch):
 
 # --- jura-growth status ------------------------------------------------------
 
-# `jura-growth status` on crew/mission-control at 8e3d9b4, before the gap lines.
+# `jura-growth status` on crew/mission-control at 8e3d9b4, before the gap lines, with its
+# times following the morning brief PRD.
 # TMP is the test's temp folder; {channels} is however many Discord channels
 # settings.yaml lists, which parallel tickets add to.
 STATUS_GOLDEN = """\
@@ -170,13 +171,13 @@ paused     nothing
 
 job              schedule                                 installed  last run
 heartbeat        daily 12:00                              no         never
-app-factory      daily 06:30                              no         never
-social           daily 07:00                              no         never
-scout-research   business days 09:00                      no         never
+app-factory      daily 07:00                              no         never
+social           daily 07:30                              no         never
+scout-research   business days 06:30                      no         never
 scout-send       business days 09:30–16:30, every 10 min  no         never
 scout-sync       business days 16:45                      no         never
 digest           daily 18:05                              no         never
-community        Mon 07:30                                no         never
+community        Mon 08:00                                no         never
 backup           daily 23:30                              yes        never
 
 discord    0 of {channels} channel webhooks set

@@ -1,6 +1,6 @@
 """The social content agent (jurasolutions/prd/pending/prd-jura-social-content-2026-10-24.md).
 
-Every morning at 07:00 SGT a headless Claude run (`prompts/social.md`) writes
+Every morning at 07:30 SGT a headless Claude run (`prompts/social.md`) writes
 one post for the day's theme, adapted for each platform switched on in
 `config/social.yaml` (the Facebook Page and Instagram; LinkedIn was switched off
 on 2026-10-29), and hands it to `jura-growth social submit`. The submit command
@@ -46,7 +46,9 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
 
     # Only the platforms switched on count: a draft left for one switched off since (LinkedIn,
     # 2026-10-29) is never going out, so it isn't waiting.
-    on = {p.name for p in load().enabled_platforms()}
+    platforms = load().enabled_platforms()
+    on = {p.name for p in platforms}
+    by_hand = {p.name for p in platforms if not p.browser}  # a `browser` platform's draft goes through its card
     rows = [r for r in db.rows(conn, "SELECT platform, status, published_at FROM social_posts WHERE date = ?", (day,))
             if r["platform"] in on]
     waiting = sorted(r["platform"] for r in rows if r["status"] == "draft")
@@ -69,6 +71,7 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
 
     figures = {
         "social_drafts_waiting": len(waiting),
+        "social_drafts_by_hand": sum(1 for platform in waiting if platform in by_hand),
         "social_skipped": skipped,
         "social_published": published,
     }

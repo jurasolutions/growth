@@ -146,34 +146,39 @@ def previous_business_day_start(now: datetime) -> datetime:
     return timeutil.midnight(day)
 
 
-def strip(snapshot) -> list[str]:
+def strip(snapshot, *, short: bool = False) -> list[str]:
     """The "Needs you" items, in the order of MC §5.4. Empty means nothing
     needs Ting Yu. `snapshot` is a `mission.Snapshot`; its strings are
-    already masked."""
+    already masked. `short` is the morning picture's Fix wording: each item
+    with the action first, on one line apart from a failed run's own words in
+    a quote, and a job's missed slots as a count without the times."""
     from jura_growth import mission  # mission imports this module
     from jura_growth.run_update import untrusted_line
 
+    def worded(long: str, brief: str) -> str:
+        return brief if short else long
+
     items: list[str] = []
     if snapshot.pause_file:
-        items.append(f"The PAUSE file is in place, so every job is paused ({snapshot.pause_file}). Delete it on the Mac to resume.")
+        items.append(worded(f"The PAUSE file is in place, so every job is paused ({snapshot.pause_file}). Delete it on the Mac to resume.",
+                            f"Delete the PAUSE file on the Mac to resume. Every job is paused: {snapshot.pause_file}."))
     for agent, reason in snapshot.paused:
-        items.append(f"`{agent}` is paused: {reason}. Send `/growth resume {agent}`.")
+        items.append(worded(f"`{agent}` is paused: {reason}. Send `/growth resume {agent}`.",
+                            f"Send `/growth resume {agent}` to resume. Paused: {reason}."))
     for failure in snapshot.failures:
-        item = f"`{failure.job}` failed on {timeutil.when(failure.at)}."
-        if failure.error:
-            # A claude job's error is the model's own `FAIL:` line: untrusted (MC §4.3, final review Sp2).
-            item += "\n> " + untrusted_line(failure.error)
-        items.append(item)
+        # A claude job's error is the model's own `FAIL:` line: untrusted (MC §4.3, final review Sp2).
+        error = untrusted_line(failure.error) if failure.error else ""
+        item = f"`{failure.job}` failed on {timeutil.when(failure.at)}." + (f"\n> {error}" if error else "")
+        items.append(worded(item, f"Check `{failure.job}`: it failed on {timeutil.when(failure.at)}." + (f"\n> {error}" if error else "")))
     if snapshot.drift is not None:
         items.append(snapshot.drift.line)
-    items += _missed(snapshot)
+    items += _missed_counts(snapshot) if short else _missed(snapshot)
     waiting_in_outbox = max(snapshot.undelivered, snapshot.outbox)
     if waiting_in_outbox:
         verb = "waits" if waiting_in_outbox == 1 else "wait"
-        items.append(
-            f"{_plural(waiting_in_outbox, 'Discord message')} since the last one-pager {verb} in the outbox. "
-            "Check the webhooks with `jura-growth discord test`."
-        )
+        count = _plural(waiting_in_outbox, "Discord message")
+        items.append(worded(f"{count} since the last one-pager {verb} in the outbox. Check the webhooks with `jura-growth discord test`.",
+                            f"Run `jura-growth discord test`: {count} {verb} in the outbox."))
     requests = snapshot.approvals or ()
     waiting = [r for r in requests if not r.posted and r.reading in (mission.Reading.WAITING, mission.Reading.APPROVED)]
     items += [f"{r.id} ({r.kind}) has no card: {r.refused}. Nothing goes out, and it lapses {timeutil.when(r.decide_by)}."
@@ -184,13 +189,17 @@ def strip(snapshot) -> list[str]:
     for r in requests:
         if r.reading == mission.Reading.LAPSED_UNUSED:
             items.append(f"{r.id} ({r.kind}) was approved but not used before its use-by" + (f", {timeutil.when(r.use_by)}." if r.use_by else "."))
-    for state, text in ((NOT_INSTALLED, "Jobs not installed: {}. Run `jura-growth schedule install` on the Mac."),
-                        (OUT_OF_DATE, "Jobs installed but out of date: {}. Run `jura-growth schedule install` again.")):
+    for state, text, brief in (
+        (NOT_INSTALLED, "Jobs not installed: {}. Run `jura-growth schedule install` on the Mac.",
+         "Run `jura-growth schedule install` on the Mac. Not installed: {}."),
+        (OUT_OF_DATE, "Jobs installed but out of date: {}. Run `jura-growth schedule install` again.",
+         "Run `jura-growth schedule install` again. Out of date: {}."),
+    ):
         jobs = [job for job, found in snapshot.installs.items() if found == state]
         if jobs:
-            items.append(text.format(", ".join(jobs)))
-    items += [gap.line for gap in snapshot.gaps]
-    items += _database(snapshot, mission)
+            items.append((brief if short else text).format(", ".join(jobs)))
+    items += _gap_lines(snapshot.gaps) if short else [gap.line for gap in snapshot.gaps]
+    items += _database_action_first(snapshot, mission) if short else _database(snapshot, mission)
     items += list(snapshot.plugin_lines)
     items += [f"A plug-in failed to load: {broken}" for broken in snapshot.broken]
     return items
@@ -317,3 +326,40 @@ def _missed(snapshot) -> list[str]:
 def _database(snapshot, mission) -> list[str]:
     problem = mission.db_problem(snapshot)
     return [problem.strip] if problem else []
+
+
+# --- the short wording (the morning picture's Fix) --------------------------------------
+
+
+def _missed_counts(snapshot) -> list[str]:
+    """Each job's missed slots as a count, with no times."""
+    since = previous_business_day_start(snapshot.now)
+    counts: dict[str, int] = {}
+    for (job, _), statuses in snapshot.slots.items():
+        counts[job] = counts.get(job, 0) + sum(1 for slot in statuses if slot.status == "missed" and slot.at >= since)
+    return [f"Check `{job}`: it missed {_plural(n, 'slot')} since {day_label(since)}." for job, n in counts.items() if n]
+
+
+def _gap_lines(gaps) -> list[str]:
+    """The setup gaps, action first, with every setting that is simply unset on one line. Up to
+    three names fit the picture's row; past that its first line says where they are listed."""
+    unset, lines = [], []
+    for gap in gaps:
+        if gap.of is not None:
+            lines.append(f"Set the {DISCORD} webhooks: {gap.have} of {gap.of} are set.")
+        elif gap.must_be_unset:
+            lines.append(f"Unset `{gap.name}`: it must not be set.")
+        else:
+            unset.append(f"`{gap.name}`")
+    if len(unset) > 3:
+        return lines + [f"Run `jura-growth status` for the {len(unset)} settings to set.\nNot set: {', '.join(unset)}."]
+    return lines + ([f"Set {', '.join(unset)}."] if unset else [])
+
+
+def _database_action_first(snapshot, mission) -> list[str]:
+    """The database line with what to send first, so a long list of migrations can't cut it."""
+    problem = mission.db_problem(snapshot)
+    if not problem:
+        return []
+    what, _, action = problem.strip.partition(". ")
+    return [f"{action.rstrip('.')}: {what}." if action else problem.strip]

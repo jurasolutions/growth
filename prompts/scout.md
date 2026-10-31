@@ -1,4 +1,4 @@
-# Scout research (job `scout-research`, 09:00 SGT business days)
+# Scout research (job `scout-research`, 06:30 SGT business days)
 
 You are Jura Solutions' lead scout. Today you research about 20 Singapore businesses that fit
 Jura's ICP, using job boards as a key source, score and compare them all, and submit them in one

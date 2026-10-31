@@ -500,7 +500,7 @@ def test_a_release_not_taken_stays_on_its_preview_and_the_one_pager_lists_it(con
     assert row["status"] == "built" and row["head_sha"] == sha  # still on its preview
     assert pending_prd(app_id) is not None and site_repo.main_head() != sha
     [line] = one_pager_lines(app_id, now)
-    assert line.startswith(f"App on its preview: {app_id} ") and PREVIEW in line and request.id in line
+    assert line.startswith(f"Run `jura-growth apps built {app_id} …` to ask again") and PREVIEW in line and request.id in line
     assert {"skipped": "skipped", "expired": "expired unanswered", "lapsed": "approved, but its merge was never printed"}[ending] in line
     assert f"jura-growth apps built {app_id}" in line  # how to ask again
     again = built(app_id, sha)
@@ -511,10 +511,10 @@ def test_a_release_not_taken_stays_on_its_preview_and_the_one_pager_lists_it(con
 def test_the_one_pager_says_what_an_approved_or_claimed_release_waits_for(conn):
     app_id, sha, request = approved_release(conn)
     [line] = one_pager_lines(app_id, aw.NOW)
-    assert line.startswith(f"App release approved: {app_id} ") and f"jura-growth apps release-plan {app_id}" in line
+    assert line.startswith(f"Run `jura-growth apps release-plan {app_id}` for the merge")
     assert invoke("apps", "release-plan", app_id).exit_code == 0
     [line] = one_pager_lines(app_id, aw.NOW)
-    assert line.startswith(f"App release waiting for main: {app_id} ") and sha[:7] in line
+    assert line.startswith(f"Once main holds {sha[:7]}, run")
     assert f"jura-growth apps released {app_id} --task {TASK}" in line
     site_repo.merge(sha)
     assert invoke("apps", "released", app_id, "--task", TASK).exit_code == 0
@@ -528,10 +528,10 @@ def test_the_one_pager_judges_deadlines_by_the_clock_before_the_lapse_is_written
     use_by = aw.get(conn, request.id).use_by
     aw.at(monkeypatch, aw.later(use_by, seconds=-1))
     [line] = one_pager_lines(app_id, aw.later(use_by, seconds=-1))
-    assert line.startswith("App release approved:")
+    assert "for the merge" in line
     aw.at(monkeypatch, use_by)
     [line] = one_pager_lines(app_id, use_by)
-    assert line.startswith("App on its preview:") and "approved, but its merge was never printed" in line
+    assert "is on its preview" in line and "approved, but its merge was never printed" in line
     assert aw.get(conn, request.id).status == "approved"  # nothing was written
 
     other, _ = handed_off(conn, 102)
@@ -541,7 +541,7 @@ def test_the_one_pager_judges_deadlines_by_the_clock_before_the_lapse_is_written
     assert one_pager_lines(other, use_by) == []  # still waiting: the approvals list has it
     aw.at(monkeypatch, pending.decide_by)
     [line] = one_pager_lines(other, pending.decide_by)
-    assert line.startswith("App on its preview:") and "expired unanswered" in line
+    assert "is on its preview" in line and "expired unanswered" in line
 
 
 # --- AC-M4.7 and the sweep ------------------------------------------------------------------------------

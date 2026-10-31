@@ -145,6 +145,21 @@ def test_queue_posts_the_card_when_it_ends(conn, discord_double, lead_233):
     assert approvals.get(conn, lead_233.approval).posted_at
 
 
+def test_an_email_queued_by_the_morning_run_gets_its_card_ahead_of_the_send_window(conn, monkeypatch, discord_double):
+    """Morning brief SC3: no new code, the 06:30 research run's queue already raises and posts."""
+    live_ready(monkeypatch)
+    sent = fake_resend(monkeypatch)
+    at(monkeypatch, "2026-11-06T06:40:00+08:00")
+    lead(conn, 233, "info@example.com.sg", "https://example.com.sg/contact")
+    queued = queue(conn, 233)
+    [post] = card_posts(discord_double)
+    assert post.content.startswith(f"**{queued.approval} · outreach email** · decide by Tue 10 Nov, 16:30 SGT")
+    assert queued.send_after == "2026-11-06"
+    send.send_due(conn)
+    assert sent == []
+    assert db.scalar(conn, "SELECT status FROM outreach_messages WHERE id = ?", (queued.message_id,)) == "queued"
+
+
 def test_send_due_edits_the_card_to_claimed_after_the_send(conn, monkeypatch, discord_double, lead_233):
     request = approvals.get(conn, lead_233.approval)
     at(monkeypatch, "2026-11-10T10:00:00+08:00")

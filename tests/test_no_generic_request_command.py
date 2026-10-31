@@ -27,9 +27,12 @@ SYNC = ("jura_growth.agents.publish.items", "sync")
 
 # A11's commands, as the leaves `headless.leaves(cli)` names them. `publish done` raises only for
 # `--outcome questions`, and `community set` only for `rules=` and `rules_confirmed=yes`.
+# The morning brief PRD (2026-10-31) amends A11 with `outreach raise-due`: it raises what
+# `send-due` would raise at 09:30, ahead of the 09:00 picture, and takes no kind or subject.
 A11_COMMANDS = {
     "outreach queue",
     "outreach send-due",
+    "outreach raise-due",
     "outreach requeue-shadow",
     "apps submit-prd",
     "apps built",
@@ -43,7 +46,7 @@ A11_COMMANDS = {
 
 # Every function whose body calls `approvals.request(`, and the A11 commands behind it.
 RAISERS = {
-    ("jura_growth.agents.outreach.approval", "raise_due"): "outreach queue, send-due, requeue-shadow",
+    ("jura_growth.agents.outreach.approval", "raise_due"): "outreach queue, send-due, raise-due, requeue-shadow",
     ("jura_growth.agents.apps.builds", "request"): "apps submit-prd (through the app factory)",
     ("jura_growth.agents.apps.releases", "report_built"): "apps built",
     ("jura_growth.agents.publish.items", "raise_request"):

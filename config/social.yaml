@@ -5,7 +5,7 @@
 # limits in jura_growth/caps.py, not settings.
 
 # PRD open question 2. The rhythm includes Saturday and Sunday, so weekend
-# posts are on until Ting Yu says otherwise. `false` makes the 07:00 job skip
+# posts are on until Ting Yu says otherwise. `false` makes the 07:30 job skip
 # Saturdays and Sundays.
 weekends: true
 
@@ -40,7 +40,7 @@ themes:
     news: true
     min_sources: 2
     max_sources: 3
-    # The 48 hours before 07:00 on a Monday are a weekend, so "this week"
+    # The 48 hours before 07:30 on a Monday are a weekend, so "this week"
     # accepts developments from the last 7 days, newest first.
     max_source_age_days: 7
     words: {facebook: [160, 280], instagram: [130, 240]}

@@ -1,4 +1,4 @@
-"""`jura-growth scout ...`: what the 09:00 research session calls."""
+"""`jura-growth scout ...`: what the 06:30 research session calls."""
 
 from __future__ import annotations
 

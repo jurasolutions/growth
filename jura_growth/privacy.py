@@ -216,9 +216,11 @@ def remember_owner(email: str) -> None:
         _owner.add(email.strip().lower())
 
 
-def learn(conn: sqlite3.Connection | None) -> None:
+def learn(conn: sqlite3.Connection | None, *, reraise: Callable[[Exception], bool] | None = None) -> None:
     """What the plug-ins know: named contacts, companies and Ting Yu's addresses.
-    The database only, never the Keychain. A plug-in error leaves what is known.
+    The database only, never the Keychain. A plug-in error leaves what is known,
+    unless `reraise` says the caller would rather know: the read model draws a
+    picture nothing can re-mask, so a lock must not leave it with names unlearned.
 
     Without a connection (a lock-skip run update posts with none), it opens
     `growth.db` read-only for the plug-ins, and does without when it can't."""
@@ -230,7 +232,7 @@ def learn(conn: sqlite3.Connection | None) -> None:
             finally:
                 ro.close()
             return
-    _learn(conn)
+    _learn(conn, reraise)
 
 
 def _read_only() -> sqlite3.Connection | None:
@@ -251,14 +253,16 @@ def _read_only() -> sqlite3.Connection | None:
     return conn
 
 
-def _learn(conn: sqlite3.Connection | None) -> None:
+def _learn(conn: sqlite3.Connection | None, reraise: Callable[[Exception], bool] | None = None) -> None:
     for module in agents.plugins():
         hook = getattr(module, "privacy_terms", None)
         if not hook:
             continue
         try:
             terms = hook(conn) or {}
-        except Exception:  # noqa: BLE001 - one plug-in never stops a message, as in the digest
+        except Exception as error:  # noqa: BLE001 - one plug-in never stops a message, as in the digest
+            if reraise and reraise(error):
+                raise
             continue
         for address in terms.get("named_addresses", ()):
             remember_address(address)
@@ -270,10 +274,10 @@ def _learn(conn: sqlite3.Connection | None) -> None:
             remember_name(name)
 
 
-def load_for_masking(conn: sqlite3.Connection | None) -> None:
+def load_for_masking(conn: sqlite3.Connection | None, *, reraise: Callable[[Exception], bool] | None = None) -> None:
     """For a builder whose text was written by another process."""
     config.load_secrets_for_masking()
-    learn(conn)
+    learn(conn, reraise=reraise)
 
 
 def reset() -> None:

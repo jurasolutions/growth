@@ -292,6 +292,11 @@ def handoffs_json(conn: sqlite3.Connection) -> dict:
                                              limit=handoff_fit.HANDOFF_LIMIT)}
 
 
+# Fix lines. The morning picture stops at the first line; the message and the long text carry the rest.
+DISPATCH_LINE = "Build handoff waiting for a builder: {label} (handed to Dispatch, approval {request})."
+HAND_BUILD_LINE = "Build {label} by hand, from its approved PRD ({request}).\n{build_it}."
+
+
 def health_lines(conn: sqlite3.Connection) -> list[str]:
     """The one-pager's "build handoffs waiting for a builder" lines (MC §5.4). `conn` is the read
     model's read-only connection."""
@@ -302,9 +307,9 @@ def health_lines(conn: sqlite3.Connection) -> list[str]:
     for build in open_handoffs(conn):
         label = f"{build['app_id']} {build['name']}".strip()
         if dispatch:
-            lines.append(f"Build handoff waiting for a builder: {label} (handed to Dispatch, approval {build['approval_id']}).")
+            lines.append(DISPATCH_LINE.format(label=label, request=build["approval_id"]))
         else:
-            lines.append(f"Build handoff waiting for a builder: {label}. {build_it(build['prd_path'], build['approval_id'])}.")
+            lines.append(HAND_BUILD_LINE.format(label=label, request=build["approval_id"], build_it=build_it(build["prd_path"], build["approval_id"])))
     return lines
 
 
