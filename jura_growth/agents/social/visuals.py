@@ -21,6 +21,7 @@ Three kinds, set under `"visual"` in `card.json`:
 
 from __future__ import annotations
 
+import math
 import html
 import re
 from dataclasses import dataclass, field
@@ -203,7 +204,7 @@ def _ring(value: str) -> str:
     match = _PERCENT.match(value)
     if not match or len(value) > RING_CHARS or float(match.group(1)) > 100:
         return ""
-    circumference = 2 * 3.14159 * RING_RADIUS
+    circumference = math.tau * RING_RADIUS
     filled = circumference * float(match.group(1)) / 100
     return (
         '<svg class="ring" viewBox="0 0 100 100" aria-hidden="true">'

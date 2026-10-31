@@ -514,10 +514,12 @@ def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: dateti
         " ORDER BY requested_at, id",
         (since, since),
     ).fetchall()
-    # `cards.REFUSED_EVENT`: a card the sweep refused, which the heartbeat won't post.
+    from jura_growth import cards  # imported here so the read model loads without the card sweep
+
+    # A card the sweep refused, which the heartbeat won't post.
     refused = dict(conn.execute(
-        "SELECT json_extract(payload_json, '$.approval'), json_extract(payload_json, '$.why') FROM events "
-        "WHERE kind = 'approval.card_refused'"
+        "SELECT json_extract(payload_json, '$.approval'), json_extract(payload_json, '$.why') FROM events WHERE kind = ?",
+        (cards.REFUSED_EVENT,),
     ).fetchall()) if events else {}
     return tuple(dataclasses.replace(request, refused=_clean_or_none(refused.get(request.id)))
                  for request in (_request(row, now) for row in rows))

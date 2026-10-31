@@ -103,7 +103,9 @@ _Avoid_: morning brief (that is the AI OS brief, a different thing at 08:00), br
 The "Needs you" section at the top of the long text, and "Fix" on the morning picture, which words
 each item on one line with the action first and adds any growth agent whose slot passed with no
 trace. It holds: the PAUSE file, paused agents, recent
-failures, missed slots, undelivered Discord posts, unposted approval requests, approved emails that
+failures, schedule drift (daily jobs firing at a steady wrong time, with the advice to restart the
+Mac once), missed slots, undelivered Discord posts, unposted approval requests, refused cards (a request
+whose card can't show the exact text, so nothing goes out and it lapses), approved emails that
 lapsed unsent, jobs not installed or out of date, setup gaps, build handoffs waiting for a builder,
 built apps not yet released (left on their preview, approved and waiting for `release-plan`, or
 claimed and waiting for `main`), and a growth.db with an unfinished write.

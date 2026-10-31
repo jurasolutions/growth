@@ -109,7 +109,7 @@ PRODUCT_WORDS = frozenset({"excel", "word", "teams", "office", "outlook", "power
 REMOVED = "[removed]"
 FINANCE = "[removed: personal finance]"
 # What masking leaves behind, to find where it acted. Secrets go first, through `config.redact()`.
-MASK_RE = re.compile("|".join([*(re.escape(mark) for mark in (NAME, PHONE, ADDRESS, REMOVED, FINANCE, "[redacted]")), r"\S\*\*\*@\S+"]))
+MASK_RE = re.compile("|".join([*(re.escape(mark) for mark in (NAME, PHONE, ADDRESS, REMOVED, FINANCE, config.REDACTED)), r"\S\*\*\*@\S+"]))
 
 _never: set[str] = set()
 _name_groups: set[frozenset[str]] = set()  # the name parts of each named address learned

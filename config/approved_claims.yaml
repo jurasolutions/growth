@@ -6,6 +6,10 @@
 # are what keep the claim honest.
 #
 # Add a claim only when there is evidence for it, and say where the evidence is.
+#
+# One figure about Jura passes without a claim here: the outreach email's own ask, "a 30-minute call"
+# (`allowance` on the channel, `CALL_ASK_RE` in agents/outreach/compose.py). It is an offer, not a
+# result, and it holds on that channel only.
 
 claims:
   - id: automate-80-plus

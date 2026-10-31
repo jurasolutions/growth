@@ -45,6 +45,9 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         return yaml.safe_load(handle) or {}
 
 
+REDACTED = "[redacted]"  # what a secret reads as, everywhere
+
+
 def read_lines(name: str) -> list[str]:
     """A config text file as a list, without blank lines or # comments."""
     path = paths.config_dir() / name
@@ -245,7 +248,7 @@ def redact(value: Any) -> Any:
     secret-looking values masked."""
     if isinstance(value, dict):
         return {
-            k: ("[redacted]" if _SECRET_KEYS.search(str(k)) and v else redact(v))
+            k: (REDACTED if _SECRET_KEYS.search(str(k)) and v else redact(v))
             for k, v in value.items()
         }
     if isinstance(value, (list, tuple)):
@@ -253,9 +256,9 @@ def redact(value: Any) -> Any:
     if isinstance(value, str):
         known = secret_values()
         for form in _encoded_forms(known):
-            value = value.replace(form, "[redacted]")
+            value = value.replace(form, REDACTED)
         for pattern in _SECRET_VALUES:
-            value = pattern.sub("[redacted]", value)
+            value = pattern.sub(REDACTED, value)
         return _mask_pieces(value, known)
     return value
 
@@ -301,7 +304,7 @@ def _mask_pieces(text: str, values: tuple[str, ...]) -> str:
             start = spans.pop()[0]
         spans.append((start, end))
     for start, end in reversed(spans):
-        text = text[:start] + "[redacted]" + text[end:]
+        text = text[:start] + REDACTED + text[end:]
     return text
 
 

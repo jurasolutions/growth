@@ -99,7 +99,9 @@ All times SGT, from `config/settings.yaml`:
 
 `jura-growth schedule install` loads them into launchd (`~/Library/LaunchAgents/sg.jurasolutions.growth.*`).
 Nothing is installed until you run it. launchd runs a job missed during sleep when the Mac wakes;
-a Mac that is switched off misses that run. Business-day jobs skip weekends and the dates in
+a Mac that is switched off misses that run. If the daily jobs fire at a steady wrong time, the
+one-pager says so under Needs you and asks you to restart the Mac (`health.schedule_drift`). A Mac that
+merely woke late doesn't trip it, and runs from before a job's last install don't count. Business-day jobs skip weekends and the dates in
 `config/sg-public-holidays.yaml` (refresh it from the MOM page each December; the digest
 reminds you).
 
@@ -191,6 +193,7 @@ imports it by name. The module may define:
 | `permissions(job)` | For a `claude` job the agent runs: `headless.Permissions` with the `jura-growth` commands its prompt uses, any extra Claude Code deny rules (`disallowed_tools`) and any extra allow rules that aren't Bash (`allowed_tools`, such as the publish job's Chrome tab tools and `ClaudeInChromeDomain` rules), or `None`. A job with no declaration may run no commands |
 | `after_run(conn, job, run_id, outcome)` | Called after the job body of a run that started, before its run row is finished. Return a `runner.Outcome` to replace the outcome (the row, `#alerts` and auto-pause all see it), or `None` to keep it. An `Outcome` with `alerted=True` has already posted its failure to `#alerts` itself, so the runner doesn't post it again. An exception is logged as `run.after_run_error` and the outcome stands |
 | `RUN_UPDATE_DISCORD_CHANNEL` | The Discord channel the agent's run updates go to, for example `social-drafts` |
+| `FEED_CHANNEL` | The Discord channel that hears about its approvals when it isn't the run updates' channel, for example `outreach-sent`. A kind's own `feed_channel` comes first |
 | `run_update_channel(conn, run)` | Another channel for this run's update, or `None` for `RUN_UPDATE_DISCORD_CHANNEL` (the publish job sends a group item's update to `community`) |
 | `run_update(conn, run)` | The "Produced:" items of the agent's run update (`["3 drafts", "3 images"]`; `[]` reads "nothing"), or `None` to post no update for this run. `run` is a `run_update.Run`. Asked only when there is a database connection; an exception is logged as `run.after_run_error` and the update posts without the line |
 | `approval_kinds()` | `{name: approvals.ApprovalKind}`, the approval kinds the agent owns (below). A kind that two plug-ins declare, or whose plug-in failed to load, fails closed |
@@ -246,6 +249,10 @@ A kind is an object with:
 | `args_help` | Optional. The refusal text when one of them is missing |
 | `on_approve(conn, subject, args)` | Optional. Applies the change inside the decision's transaction, after `approved` is written. Raise `approvals.BadArgs(text)` to refuse with that text; a `NotApproved` from a claim inside it also refuses. A returned string is appended to the answer |
 | `switched_off(conn, subject)` | Optional. The kind's own switch (outreach in shadow mode, a platform in draft or switched off): a reason makes `use()` refuse without claiming |
+| `feed_channel` | Optional. The channel this kind's feed lines go to, ahead of the plug-in's `FEED_CHANNEL` and `RUN_UPDATE_DISCORD_CHANNEL` |
+| `feed_approved` | Optional. A string, or `(conn, subject)` returning one: the next step on an approved feed line, in one short sentence. Keep it true: say so when nothing can act on the approval |
+| `card_problem(conn, subject)` | Optional. Why the card can't show what it asks about, or `None`. A reason means no card and one note in the feed, and the request lapses unless a card goes out. The kind's `on_approve` refuses a typed approval of such a request. Learn the names first (`privacy.learn`), since each process starts knowing none |
+| `own_copy(conn, subject)` | Optional. The parts of the card that are Jura's own outgoing text, kept as written by the masking. A hook that fails leaves the card fully masked |
 | `on_skip`, `on_expire`, `on_lapse` | Optional, `(conn, subject)`. What a skip, an unanswered decide-by and an unclaimed use-by do to the item |
 | `superseded_note(conn, subject)` | Optional. Why the item changed or went away, in Ting Yu's words ("lead unsubscribed"), for the card's edited first line; `None` keeps the core's reason |
 | `used_word` | Optional. How the answer to a decision on a used request names the use ("already sent at 10:40"); "used" by default |
