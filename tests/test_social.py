@@ -417,9 +417,10 @@ def test_hashtag_limits_and_position():
     too_many = LI.replace("#SmallBusiness #Automation #Invoicing", "#SmallBusiness #Automation #Invoicing #Xero")
     assert any("at most 3 hashtags" in m for m in channel_messages(check(too_many, "linkedin")))
     assert any("at most 2 hashtags" in m for m in channel_messages(check(FB.replace("#Automation", "#Automation #Xero"), "facebook")))
-    nine = IG.replace("#Singapore", "#Singapore #A #B #C")
-    assert any("at most 8 hashtags" in m for m in channel_messages(check(nine, "instagram")))
-    assert check(IG.replace("#Singapore", "#Singapore #Admin #Finance"), "instagram").passed  # exactly 8
+    # Instagram's cap fell from 8 to 5 (reviews/technical.md N9).
+    too_many_tags = IG.replace("#Singapore", "#Singapore #A #B")
+    assert any("at most 5 hashtags" in m for m in channel_messages(check(too_many_tags, "instagram")))
+    assert check(IG.replace("#Singapore", "#Singapore #Admin"), "instagram").passed  # exactly 5
     middle = LI.replace("This week, try", "This week #Automation, try")
     assert any("last line" in m for m in channel_messages(check(middle, "linkedin")))
 

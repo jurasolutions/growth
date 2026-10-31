@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from jura_growth.agents.social import render
+from jura_growth.agents.social import history, render
 from jura_growth.agents.social.settings import Theme
 
 # Same stopping characters as brand_check.find_links, so a source and the link
@@ -117,6 +117,10 @@ def _card_depth(card: render.CardSpec | None, theme: Theme) -> list[str]:
     if card is None:
         return []
     problems = []
+    if theme.needs_visual and card.layout != theme.layout:
+        problems.append(f"{theme.label} uses the {theme.layout} layout, not {card.layout}")
+    if theme.carousel and card.carousel is False:
+        problems.append(f"{theme.label} goes out as a carousel on Instagram: take `\"carousel\": false` out of card.json")
     with_detail = [item for item in card.items if item.detail]
     if len(with_detail) < theme.min_items:
         problems.append(
@@ -142,6 +146,12 @@ def theme_problems(sub: Submission, theme: Theme, today: date) -> list[str]:
         problems.append(
             f"{theme.label} takes at most {theme.max_sources} sources; found {count} "
             "(list only what the post relies on, and link each one)"
+        )
+    hosts = {history.normalise_url(source.url).split("/")[0] for source in sub.sources}
+    if count >= theme.min_sources and len(hosts) < theme.min_hosts:
+        problems.append(
+            f"{theme.label} needs sources on {theme.min_hosts} different sites (the company's own announcement and "
+            f"one independent report); found {len(hosts)}"
         )
     if theme.news:
         for source in sub.sources:

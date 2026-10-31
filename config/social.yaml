@@ -89,6 +89,7 @@ themes:
     # The company's own announcement and one independent report: enough to say something
     # the headline doesn't (Ting Yu, 2026-10-31: "more detailed insights").
     min_sources: 2
+    min_hosts: 2
     max_sources: 3
     max_source_age_days: 3
     words: {facebook: [160, 280], instagram: [130, 240]}
@@ -157,7 +158,10 @@ platforms:
     label: Instagram
     enabled: true
     words: [80, 160] # a theme's own `words` win
-    hashtags_max: 8
+    # Neither limit is confirmed from Meta. Lowering them costs nothing, and a caption the
+    # composer cuts short would read back as a mismatch and pause publishing.
+    hashtags_max: 5
+    chars_max: 2200
     links: bio # captions don't make links clickable: write "Link in bio", no URL
     image: {width: 1080, height: 1350}
     carousel: {days: [mon, thu], max_slides: 5} # plus any theme with `carousel: true`

@@ -32,6 +32,7 @@ def build(conn: sqlite3.Connection, day: date, settings: Settings | None = None)
             "carousel": t.carousel,
             "min_items": t.min_items,
             "needs_visual": t.needs_visual,
+            "min_hosts": t.min_hosts,
         }
         if t.needs_tool and not tools["eligible"]:
             info["unavailable"] = tools["note"] or f"every live tool was featured in the last {caps.NO_REPEAT_DAYS} days"
@@ -62,6 +63,7 @@ def build(conn: sqlite3.Connection, day: date, settings: Settings | None = None)
                 "label": p.label,
                 "words": list(p.words),
                 "hashtags_max": p.hashtags_max,
+                "chars_max": p.chars_max,
                 "links": p.links,
                 "image": p.size,
                 "carousel_today": p.carousel_on(day) or theme.carousel,
@@ -89,6 +91,18 @@ def build(conn: sqlite3.Connection, day: date, settings: Settings | None = None)
     }
 
 
+def _needs(theme: dict) -> list[str]:
+    """What this theme needs beyond its words, or `submit` refuses it."""
+    found = []
+    if theme["min_items"]:
+        found.append(f"Card items with a detail and an icon: at least {theme['min_items']}, one Instagram slide each.")
+    if theme["needs_visual"] and theme["layout"] == "headline":
+        found.append("Picture: a `visual` is required: a flow, a compare or a figure.")
+    if theme["min_hosts"]:
+        found.append(f"Sources on {theme['min_hosts']} different sites: the company's own announcement and one independent report.")
+    return found
+
+
 def render_text(plan: dict) -> str:
     out = [f"Social plan for {plan['weekday']} {plan['date']} (SGT)", ""]
     if plan["stop"]:
@@ -99,10 +113,7 @@ def render_text(plan: dict) -> str:
     out.append(f"  Card layout: {theme['layout']}")
     words = ", ".join(f"{name} {pair[0]}–{pair[1]}" for name, pair in theme["words"].items())
     out.append(f"  Words: {words}")
-    if theme["min_items"]:
-        out.append(f"  Card items with a detail: at least {theme['min_items']}, one Instagram slide each")
-    if theme["needs_visual"]:
-        out.append("  Picture: required. A `visual` on a headline card, an `icon` on every item")
+    out += [f"  {line}" for line in _needs(theme)]
     src = theme["sources"]
     if theme["news"]:
         out.append(
@@ -121,7 +132,8 @@ def render_text(plan: dict) -> str:
     for t in plan["fallbacks"]:
         flag = f" (unavailable: {t['unavailable']})" if t.get("unavailable") else ""
         fits = ", ".join(f"{name} {pair[0]}–{pair[1]}" for name, pair in t["words"].items())
-        out.append(f"    {t['id']}: {t['brief']} Words: {fits}.{flag}")
+        needs = " ".join(_needs(t))
+        out.append(f"    {t['id']}: {t['brief']} Layout: {t['layout']}. Words: {fits}.{' ' + needs if needs else ''}{flag}")
     out.append("  Pass `--theme <id>` to submit when you use one of these.")
 
     out += ["", "Platforms (word ranges here are the platform's own; the theme's above win):"]
@@ -129,8 +141,9 @@ def render_text(plan: dict) -> str:
         links = "links in the post" if p["links"] == "post" else "write “Link in bio”, no URL"
         tags = f"up to {p['hashtags_max']} hashtags on the last line"
         carousel = f", carousel of up to {p['carousel_max']} today" if p["carousel_today"] else ""
+        chars = f", at most {p['chars_max']} characters" if p["chars_max"] else ""
         todo = "" if p["to_draft"] else "  [not drafting today]"
-        out.append(f"  {name:10} {p['words'][0]}–{p['words'][1]} words, {tags}, {links}, image {p['image']}{carousel}{todo}")
+        out.append(f"  {name:10} {p['words'][0]}–{p['words'][1]} words, {tags}{chars}, {links}, image {p['image']}{carousel}{todo}")
     for note in plan["notes"]:
         out.append(f"  note: {note}")
 
