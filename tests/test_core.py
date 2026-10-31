@@ -355,7 +355,7 @@ def test_plist_is_valid(isolated):
     assert data["Label"] == "sg.jurasolutions.growth.community"
     assert data["ProgramArguments"][-2:] == ["run", "community"]
     if schedule.local_offset().total_seconds() == 8 * 3600:
-        assert data["StartCalendarInterval"] == [{"Hour": 7, "Minute": 30, "Weekday": 1}]
+        assert data["StartCalendarInterval"] == [{"Hour": 8, "Minute": 0, "Weekday": 1}]
 
 
 def test_timezone_conversion(monkeypatch):

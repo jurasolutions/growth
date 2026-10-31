@@ -12,3 +12,7 @@ by trigger, so these rows are permanent; changing the shape later means reading 
 A plug-in precheck that returns `agents.NothingToDo` instead of a plain string gets the same
 treatment, whatever the job's `quiet` flag: one `run.quiet` event with `"reason"` added and no run
 row, while any other precheck string stays a skip that Ting Yu sees.
+
+One more writer, from 2026-10-31: the one-pager, which isn't quiet, writes `run.quiet` when growth.db
+stayed locked and it posted with no run row, because that is the event that makes a slot read as run. The
+JSONL mirror's `run.database_locked` beside it says what happened.

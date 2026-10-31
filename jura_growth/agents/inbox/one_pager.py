@@ -1,4 +1,8 @@
-"""R4: Replies waiting, the section of the one-pager Ting Yu reads on his phone at 08:00.
+"""R4: Replies waiting, the section of the one-pager's long text, and what `/growth pending` lists.
+
+Since the morning picture, the 09:00 post is the picture and a short message, which carry only counts:
+this section is in the text `--no-post` prints and in the post when the picture can't be drawn, and
+`/growth inbox list` prints it on request.
 
 One line per open conversation: who wrote, where, how long ago, a short excerpt and what he must do. A
 promised reply is first (F10), then anything `high` (D9), then what only he can move, oldest first.
@@ -20,12 +24,15 @@ from __future__ import annotations
 import sqlite3
 from collections import Counter
 from datetime import datetime, timedelta
+from typing import NamedTuple
 
 from jura_growth import approvals, caps, health, privacy, timeutil
+from jura_growth.agents import GROWTH, LISTED, NEXT_STEP, YOU, PendingItem
 from jura_growth.agents.inbox import report, store, watch
 
 SECTION = "Replies waiting"
 LINES_SHOWN = 10  # functional review, Edges: then "and N more"
+PENDING_SHOWN = 5  # `/growth pending` has one message for everything growth holds
 EXCERPT_CHARS = 70
 NAME_CHARS = 40
 DOMAIN_CHARS = 40
@@ -35,6 +42,8 @@ JUNK_SUBJECT_CHARS = 60
 _MAILBOX = "Levi's mailbox"
 _OPEN = (store.NEW, store.TRIAGED, store.WAITING, store.SENDING)
 _DECIDE, _HAND, _NOTHING_TO_DO = 0, 1, 2  # what a line asks of him, in the order they sort
+# What `inbox done` clears and a line doesn't already say so: a hand reply's own line names the command.
+_CLEARED_BY_DONE = tuple(state for state in store.LISTED_STATES if state != store.NEEDS_HAND_REPLY)
 
 
 def _shown(text: str, limit: int) -> str:
@@ -122,8 +131,16 @@ def _excerpt(item: dict) -> str:
     return f"({report.no_text(item)})" if item["source"] in store.SOCIAL_SOURCES else "(no text)"
 
 
-def _line(conn: sqlite3.Connection, items: list[dict], now: datetime) -> tuple[tuple, str]:
-    """One conversation: how it sorts, and what it reads."""
+class _Line(NamedTuple):
+    """One conversation: how it sorts, what it reads, what it asks of him, and what to send once he has."""
+
+    key: tuple
+    text: str
+    tier: int
+    then: str
+
+
+def _line(conn: sqlite3.Connection, items: list[dict], now: datetime) -> _Line:
     newest = items[-1]
     record = approvals.latest_for_subject(conn, store.approval_subject(newest["id"]))
     tier, action = _what_to_do(newest, record, now)
@@ -133,7 +150,8 @@ def _line(conn: sqlite3.Connection, items: list[dict], now: datetime) -> tuple[t
     stamp = newest["received_at"] or newest["recorded_at"]
     count = f", {len(items)} messages" if len(items) > 1 else ""
     text = f"- {tag} · {_who(newest)} · {report.heading(newest)}{count} · {_age(stamp, now)} · {_excerpt(newest)} {action}"
-    return (not promised, not high, tier, stamp), text
+    then = f" Then `/growth inbox done {store.label(newest['id'])}`." if newest["state"] in _CLEARED_BY_DONE else ""
+    return _Line((not promised, not high, tier, stamp), text, tier, then)
 
 
 def _open_conversations(conn: sqlite3.Connection, now: datetime) -> list[list[dict]]:
@@ -224,11 +242,38 @@ def _unread_line(conn: sqlite3.Connection, now: datetime) -> str | None:
     return f"{health.plural(unread, 'comment')} the watch couldn't read: check by hand"
 
 
+def _conversations(conn: sqlite3.Connection, now: datetime) -> list[_Line]:
+    """Every open conversation's line, most pressing first."""
+    return sorted((_line(conn, items, now) for items in _open_conversations(conn, now)), key=lambda line: line.key)
+
+
+def to_answer(conn: sqlite3.Connection) -> int:
+    """How many conversations only he can move, for the morning picture. A count, and the same selection
+    as the section's lines, so the two can't disagree."""
+    return sum(1 for line in _conversations(conn, timeutil.now_sgt()) if line.tier == _HAND)
+
+
+def _capped(holder: str, found: list[str], order: int) -> list[PendingItem]:
+    more = [f"and {len(found) - PENDING_SHOWN} more: send `/growth inbox list`"] if len(found) > PENDING_SHOWN else []
+    return [PendingItem(holder, text, order) for text in [*found[:PENDING_SHOWN], *more]]
+
+
+def pending_items(conn: sqlite3.Connection) -> list[PendingItem]:
+    """`/growth pending`'s lines, on the read model's read-only connection. The section's own lines, so
+    they are plain-masked and only ever read (technical review B3, ADR 0002). A promised reply or anything
+    needing his hand waits for him, with what to send. A card still to decide is listed by the core with
+    its A-id and the commands, so it isn't listed twice. What is being read or sent is growth's."""
+    found = _conversations(conn, timeutil.now_sgt())
+    yours = [line.text.removeprefix("- ") + line.then for line in found if line.tier == _HAND]
+    growths = [line.text.removeprefix("- ") for line in found if line.tier == _NOTHING_TO_DO]
+    return [*_capped(YOU, yours, NEXT_STEP), *_capped(GROWTH, growths, LISTED)]
+
+
 def lines(conn: sqlite3.Connection, since: str, *, limit: int | None = LINES_SHOWN) -> list[str]:
     """Every line of the section, most pressing first. It raises if the database does."""
     now = timeutil.now_sgt()
-    found = sorted((_line(conn, items, now) for items in _open_conversations(conn, now)), key=lambda pair: pair[0])
-    shown = [text for _, text in (found if limit is None else found[:limit])]
+    found = _conversations(conn, now)
+    shown = [line.text for line in (found if limit is None else found[:limit])]
     if limit is not None and len(found) > limit:
         shown.append(f"and {len(found) - limit} more: `/growth inbox list`")
     counted = _counted(conn, since)

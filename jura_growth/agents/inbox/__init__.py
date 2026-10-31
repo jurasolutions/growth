@@ -14,7 +14,8 @@ This agent sees mail, triages it, reports it, and sends the replies Ting Yu appr
 - `steer`: `redraft`, `reword`, `draft`, `done` and `unsuppress`, which come only from Discord through `remote`.
 - `signals`: reactions with no person writing: app usage and spam complaints.
 - `text_retention`: what "closes" means for each state, and removing a person's words 90 days after.
-- `one_pager`: R4's section, Replies waiting, which `/growth inbox list` shows on request.
+- `one_pager`: R4's section, Replies waiting, which `/growth inbox list` shows on request, the lines
+  `/growth pending` lists and the morning picture's count.
 - `watch`: what a watch run may record, and what its records come to. The jobs that drive the browser
   belong to the `inbox_browser` plug-in, which has its own pause flag. Its commands are here, because
   a second `inbox` click group would silently replace this one.
@@ -138,11 +139,19 @@ def one_pager_section(conn: sqlite3.Connection, since: str):
     return one_pager.section(conn, since)
 
 
-def digest(conn: sqlite3.Connection, day: str) -> dict:
-    """R5: counts only, never a name, an address or a word anyone wrote."""
-    from jura_growth.agents.inbox import store
+def pending(conn: sqlite3.Connection) -> list:
+    """`jura-growth pending`: reads only, and calls no kind's `content()` (`one_pager.pending_items`)."""
+    from jura_growth.agents.inbox import one_pager
 
-    counts = {**store.day_counts(conn, day), **store.open_counts(conn)}
+    return one_pager.pending_items(conn)
+
+
+def digest(conn: sqlite3.Connection, day: str) -> dict:
+    """R5: counts only, never a name, an address or a word anyone wrote. `inbox_to_answer` is the morning
+    picture's count of what only he can move."""
+    from jura_growth.agents.inbox import one_pager, store
+
+    counts = {**store.day_counts(conn, day), **store.open_counts(conn), "to_answer": one_pager.to_answer(conn)}
     if not any(counts.values()):
         return {"figures": {}, "lines": [], "brief": []}
     reactions = counts["reactions"]

@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import Callable
 
 from jura_growth import agents, db, discord, holidays, log, pause, paths, privacy, timeutil
+
+FIGURES_UNAVAILABLE = "digest figures unavailable"
 
 
 def spend(conn: sqlite3.Connection, day: str) -> float:
@@ -24,7 +27,9 @@ def spend(conn: sqlite3.Connection, day: str) -> float:
     return db.scalar(conn, "SELECT round(sum(cost_usd), 2) FROM runs WHERE substr(started_at, 1, 10) = ?", (day,)) or 0.0
 
 
-def build(conn: sqlite3.Connection, day: str | None = None) -> dict:
+def build(conn: sqlite3.Connection, day: str | None = None, *, reraise: Callable[[Exception], bool] | None = None) -> dict:
+    """The day's figures. One plug-in's error never breaks the digest, unless `reraise` says the
+    caller would rather know: the read model retries a lock instead of losing figures to it."""
     day = day or timeutil.today_str()
     runs = db.rows(
         conn,
@@ -55,7 +60,9 @@ def build(conn: sqlite3.Connection, day: str | None = None) -> dict:
         try:
             part = part_of(conn, day) or {}
         except Exception as error:  # noqa: BLE001 - one agent never breaks the digest
-            lines.append(f"{module.NAME}: digest figures unavailable ({type(error).__name__})")
+            if reraise and reraise(error):
+                raise
+            lines.append(f"{module.NAME}: {FIGURES_UNAVAILABLE} ({type(error).__name__})")
             continue
         figures.update(part.get("figures", {}))
         lines += part.get("lines", [])

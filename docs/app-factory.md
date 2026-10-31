@@ -11,7 +11,7 @@ build step).
 
 ## How a day goes
 
-1. **06:30 SGT**, launchd runs `jura-growth run app-factory`.
+1. **07:00 SGT**, launchd runs `jura-growth run app-factory`.
 2. `precheck` first raises an `app-build` request for any factory PRD in `prd/pending/apps/`
    that has never had one (the catch-up pass, which `submit-prd` also runs: it gives each PRD
    filed before requests existed exactly one request, and does nothing once each has one). Then it skips the run before Claude starts when:
@@ -37,7 +37,9 @@ build step).
 | `jura-growth apps status` | Waiting count, next APP number, today's PRD or the limit, live tools from the site registry, pending and built PRDs, the backlog |
 | `jura-growth apps context --json` | Everything the prompt needs in one call: the above plus usage (D1 `app_usage`, last 7 days, or "not configured") and the last 30 days of scout insights |
 | `jura-growth apps backlog [--json]` | The backlog with the status worked out from the PRD folders and the registry |
-| `jura-growth apps submit-prd <file> [--dry-run]` | The gate. `--dry-run` runs every check, brand check included, without filing, raising a request or using an attempt |
+| `jura-growth apps idea <text>` | Ting Yu's own idea: adds a backlog row with `source: ting-yu`, the text verbatim in `does`, a name from the text before a first `: ` (else its first few words), at most 60 characters, the date and the actor. Refuses no text, more than 2,000 characters (a Discord message's own limit), and a name or slug that clashes with anything live, pending, built or in the backlog. Its answer shows the text, or the first 1,000 characters and the length of a longer one. Sent from Discord as `/growth apps idea <text>`; no scheduled run can send it (`headless.NEVER`) |
+| `jura-growth apps hold-idea <slug> --reason <text>` | The factory's: Ting Yu's oldest idea failed a check, or its PRD couldn't be filed. Records the reason (at most 300 characters) in the row's notes (`held`, `held_reason`) and in the digest; the idea stops coming first and stays an ordinary candidate. Only the oldest can be held, and there is no undo but editing the file |
+| `jura-growth apps submit-prd <file> [--dry-run] [--idea <slug>]` | The gate. `--dry-run` runs every check, brand check included, without filing, raising a request or using an attempt. `--idea` marks that backlog row, for Ting Yu's oldest open idea renamed to meet the name rules; any other row is refused. While his oldest idea waits unheld, any other PRD is refused, unless one of his ideas was held that day, and one with that idea's own name is marked against it without `--idea`. "Oldest open" is judged on the status `apps context` shows, so a row whose PRD is already filed is never first. A real run takes the backlog lock before it writes anything and holds it until the row is marked; if another writer holds it for 30 seconds, it answers `refused: the backlog is busy, try submit-prd again` with nothing filed and no attempt used |
 | `jura-growth apps handoffs [--json]` | Build handoffs waiting for a builder, oldest first. `--json` is what Dispatch polls: each with `handoff: {repo, base, prd_text, prd_sha256, approval}`, within 64 KB |
 | `jura-growth apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>` | Reports a handed-off build and raises its `app-release` request, bound to the full head commit. Called by Dispatch (D6), or by Ting Yu after a hand build |
 | `jura-growth apps release-plan <APP-NNN>` | Claims the approved release, then prints the merge of exactly its commit into `main` |
@@ -115,6 +117,10 @@ button.
 - **The waiting pile counts PRDs waiting for an `app-build` decision** (MC §5.9 step 6). A
   handed-off build no longer waits for Ting Yu, and his own PRDs (APP-001, APP-002) have no
   request, so neither counts.
+- **Ting Yu's ideas come first.** `apps context --json` lists his open ideas as `ting_yu_ideas`,
+  oldest first, and the prompt takes the first before weighing anything else. It still needs a
+  confirmed official rule, no near-duplicate and none of the excluded kinds; one that fails is
+  held with its reason. They count against the one PRD a day like any other.
 - **A backlog idea is the expected pick, not a duplicate.** Duplicates are slugs and names that
   already have a PRD or are live.
 - **PayNow** is run by the Association of Banks in Singapore, so `abs.org.sg` counts as official
@@ -154,16 +160,18 @@ Going to production is a second approval, bound to the exact commit (`agents/app
 MC §5.7 `app-release` row, §5.9 steps 3 and 4).
 
 1. **Built.** The builder pushes the task branch, based on `main`, and Cloudflare Pages gives it a
-   preview. Protecting previews with Cloudflare Access is still to do: it is Ting Yu's setup step
-   (Dispatch D8, ticket 16), and until then a preview link works for anyone who has it. `apps
+   preview. Previews are public, by Ting Yu's decision on 2026-10-31: anyone with the link can open
+   one with no sign-in, before the release is approved. That goes for every branch of the landing
+   page, not only app builds, and a preview runs the real Functions with the project's Preview
+   settings. Cloudflare asks search engines not to index previews, but that doesn't hide them. `apps
    built` records the task, the branch, its full head SHA and the preview on the build's
    `app_builds` row, and raises an `app-release` request over the app id, task id, branch, SHA and
    preview link. The card shows the preview link as plain text, the short SHA, and a reminder that
    the preview follows the branch's latest push while the release is that one commit. Refused: a
    build that was never handed off, a short SHA, a SHA `main` already contains, and any preview
    other than a bare `https://<branch>.<pages_project>.pages.dev` link, where `pages_project` in
-   `config/apps.yaml` names the landing page's Pages project, `landing-page` (unset, every preview
-   is refused). A
+   `config/apps.yaml` is the `pages.dev` name of the landing page's Pages project,
+   `landing-page-eq7` (unset, every preview is refused). A
    commit pushed later, or another preview link, needs its own request: reporting it supersedes the
    old one.
 2. **Approve.** Nothing happens yet. The approval has 14 days to be used.

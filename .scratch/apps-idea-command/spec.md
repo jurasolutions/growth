@@ -1,0 +1,1 @@
+Spec: ticket 01 below (route S). The app factory PRD is `jurasolutions/prd/pending/prd-jura-app-factory-2026-10-24.md`; this feature adds a dated amendment to it, and the remote command allowlist lives in `docs/dispatch-contract.md`.

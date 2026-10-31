@@ -2,31 +2,38 @@
 
 Built from a `mission.Snapshot`, never from the database, in this order: the
 header, Needs you (the health strip), each plug-in's own section, Approvals
-waiting, Today, Yesterday and Ask me. `post()` sends `text()` to #mission-control through `discord.post()`,
-which masks it and splits it only past 2,000 characters, with the 14-day grid
-as a PNG on the last piece (`grid_html`, drawn by the core Chrome helper in
-`images.py`). The 08:00 `one-pager` job and `/growth one-pager` both run
-`jura-growth one-pager`; `--no-post` prints `messages()`, the same text masked
-and split the same way.
+waiting, Today, Yesterday and Ask me. `post()` sends `text()` to #mission-control
+through `discord.post()`, which masks it and splits it only past 2,000 characters.
+
+Amended 2026-10-31: what goes to #mission-control is the morning picture
+(`picture.py`) with a short message (`summary()`). `text()` is the long form:
+`--no-post` prints it, and it goes out instead when the picture can't be drawn.
+The 14-day grid (`grid_html`) is no longer posted, because it can't be read at
+the size Discord shows it; `jura-growth one-pager --grid` draws it to a file.
+The 09:00 `one-pager` job and `/growth one-pager` both run `jura-growth one-pager`.
 
 The one-pager is for Ting Yu only and shows only figures the engine recorded.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 from collections import Counter
 from datetime import timedelta
 from html import escape
 from pathlib import Path
 
-from jura_growth import discord, health, images, log, mission, paths, privacy, slots, timeutil
+from jura_growth import cards, discord, health, images, log, mission, paths, picture, privacy, run_update, slots, timeutil
 
 ASK_ME = ("`/growth status`", "`/growth approvals`", "`/growth inbox list`", "`/growth one-pager`", "`/growth pause <agent|all>`",
           "`/growth resume <agent|all>`")
 # Today shows these jobs as counts per status, whatever their slot count,
 # and lists every other job slot by slot (MC §5.4.4; code review 08 S-4).
 COUNTED_JOBS = frozenset({"scout-send", "publish", "inbox-check", "inbox-send", "inbox-watch", "inbox-reply"})
+# A Fix line in the message: long enough for any real wording, and short enough that
+# four of them and the rest fit one message, which is what carries the picture.
+SUMMARY_FIX_LIMIT = 360
 
 
 def text(snapshot: mission.Snapshot) -> str:
@@ -40,6 +47,41 @@ def text(snapshot: mission.Snapshot) -> str:
     parts += _section("Yesterday", _yesterday(snapshot))
     parts += _section("Ask me", [" · ".join(ASK_ME)])
     return "\n".join(parts)
+
+
+def summary(snapshot: mission.Snapshot) -> str:
+    """The message that carries the picture: enough to act on from a notification."""
+    now = snapshot.now
+    lines = [f"**{health.day_label(now)}, as of {now:%H:%M} SGT**", picture.verdict(snapshot)]
+    found = picture.waiting(snapshot)
+    if found:
+        counts = Counter(cards.label(r.kind) for r in found)
+        soonest = found[0]
+        lines.append(
+            "Decide in #approvals: " + ", ".join(f"{kind} {counts[kind]}" for kind in sorted(counts))
+            + f". Soonest: {soonest.id}, by {picture.by_when(soonest.decide_by, now)}."
+        )
+    if answer := picture.to_answer_by_hand(snapshot):
+        lines.append(f"Answer by hand: {answer}. Send `/growth inbox list`.")
+    fixes = picture.fixes(_markdown_safe(snapshot))
+    lines += [f"- {discord.shortened(item, SUMMARY_FIX_LIMIT)}" for item in fixes[:picture.FIX_SHOWN]]
+    if len(fixes) > picture.FIX_SHOWN:
+        lines.append(f"- and {len(fixes) - picture.FIX_SHOWN} more: run `jura-growth one-pager --no-post` on the Mac")
+    lines.append(" · ".join(ASK_ME[:2]))
+    return "\n".join(lines)
+
+
+def _markdown_safe(snapshot: mission.Snapshot) -> mission.Snapshot:
+    """The snapshot with the text others wrote made safe for Discord markdown: `[Approve
+    here](https://…)` would otherwise be a live link, which suppressing embeds doesn't stop.
+    Only for the message: the page has no links, and its text is escaped."""
+    safe = run_update.untrusted_line
+    return dataclasses.replace(
+        snapshot,
+        pause_file=safe(snapshot.pause_file) if snapshot.pause_file else None,
+        paused=tuple((agent, safe(reason)) for agent, reason in snapshot.paused),
+        plugin_lines=tuple(safe(line) for line in snapshot.plugin_lines),
+    )
 
 
 def messages(snapshot: mission.Snapshot) -> list[str]:
@@ -62,15 +104,9 @@ def _needs_you(snapshot: mission.Snapshot) -> list[str]:
     return lines
 
 
-def _unavailable(snapshot: mission.Snapshot) -> str:
-    # A section is missing with nothing else wrong only when its table is.
-    problem = mission.db_problem(snapshot)
-    return (problem or mission.NOT_MIGRATED).unavailable
-
-
 def _approvals(snapshot: mission.Snapshot) -> list[str]:
     if snapshot.approvals is None:
-        return [_unavailable(snapshot)]
+        return [mission.unavailable(snapshot)]
     waiting = [r for r in snapshot.approvals if r.reading == mission.Reading.WAITING]
     if not waiting:
         return ["Nothing waiting"]
@@ -92,7 +128,7 @@ def _approvals(snapshot: mission.Snapshot) -> list[str]:
 
 def _today(snapshot: mission.Snapshot) -> list[str]:
     if not snapshot.slots:
-        return [_unavailable(snapshot)]
+        return [mission.unavailable(snapshot)]
     today = snapshot.now.date()
     lines = []
     for (job, day), statuses in snapshot.slots.items():
@@ -115,7 +151,7 @@ def _slot(slot: slots.SlotStatus) -> str:
 
 def _yesterday(snapshot: mission.Snapshot) -> list[str]:
     if snapshot.yesterday is None:
-        return [_unavailable(snapshot)]
+        return [mission.unavailable(snapshot)]
     lines = [f"- {line}" for line in snapshot.yesterday.lines] or ["- No agent figures recorded."]
     lines.append(f"Claude spend: US${snapshot.yesterday.spend:.2f} yesterday, US${snapshot.spend_today:.2f} so far today")
     return lines
@@ -198,7 +234,7 @@ def grid_html(snapshot: mission.Snapshot) -> str:
     body = (
         f'<table><thead><tr><th class="job">Job</th>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
         if jobs
-        else f'<p class="note">{escape(_unavailable(snapshot))}</p>'
+        else f'<p class="note">{escape(mission.unavailable(snapshot))}</p>'
     )
     keys = [(status.replace(" ", "-"), *GRID_LABELS[status]) for status in slots.WORST_FIRST]
     keys.append(("none", GRID_NO_SLOT, "no slot that day"))
@@ -245,25 +281,43 @@ OFFLINE = False
 
 def grid_png(snapshot: mission.Snapshot) -> tuple[Path | None, str | None]:
     """The grid drawn to `data/growth/one-pager/grid-<day>.png` (one file a
-    day, replaced by a later one-pager that day), or None and why not."""
+    day, replaced by a later one that day), or None and why not."""
     out = paths.one_pager_dir() / f"grid-{snapshot.now:%Y-%m-%d}.png"
+    return _drawn(lambda: render_grid(snapshot, out, chrome=images.Chrome(images.DEFAULT_CHROME), offline=OFFLINE))
+
+
+def picture_png(snapshot: mission.Snapshot) -> tuple[Path | None, str | None]:
+    """The morning picture drawn to `data/growth/one-pager/picture-<day>.png`, with
+    its page beside it as `.html` to open on the Mac; or None and why not."""
+    folder = paths.one_pager_dir()
+    day = f"{snapshot.now:%Y-%m-%d}"
+
+    def draw() -> Path:
+        png = picture.render(snapshot, folder / f"picture-{day}.png", chrome=images.Chrome(images.DEFAULT_CHROME), offline=OFFLINE)
+        paths.writable(folder / f"picture-{day}.html").write_text(picture.html(snapshot), encoding="utf-8")
+        return png
+
+    return _drawn(draw)
+
+
+def _drawn(draw) -> tuple[Path | None, str | None]:
     try:
-        return render_grid(snapshot, out, chrome=images.Chrome(images.DEFAULT_CHROME), offline=OFFLINE), None
+        return draw(), None
     except images.RenderError as error:
         return None, str(error)
     except Exception as error:  # noqa: BLE001 - the text goes out without the picture
         return None, f"{type(error).__name__}: {error}"
 
 
-def post(conn: sqlite3.Connection, snapshot: mission.Snapshot) -> discord.PostResult:
-    """The one-pager to #mission-control: the text, split only past 2,000
-    characters, and the grid on the last piece (`discord.post` attaches files
-    there). Never deduplicated: asked for twice, it posts twice (MC §5.10).
-    When the grid can't be drawn, the text still goes and says why."""
-    content = text(snapshot)
-    png, problem = grid_png(snapshot)
-    if problem:
-        log.event(conn, "one_pager.grid_failed", {"error": problem}, level="warning")
-        content += f"\n\n(The 14-day grid couldn't be drawn: {problem})"
+def post(conn: sqlite3.Connection | None, snapshot: mission.Snapshot) -> discord.PostResult:
+    """The morning picture to #mission-control with its short message. Never
+    deduplicated: asked for twice, it posts twice (MC §5.10). When the picture
+    can't be drawn, the long text goes instead and says why."""
+    png, problem = picture_png(snapshot)
+    if png:
+        content = summary(snapshot)
+    else:
+        log.event(conn, "one_pager.picture_failed", {"error": problem}, level="warning")
+        content = f"{text(snapshot)}\n\n(The picture couldn't be drawn: {problem})"
     return discord.post(conn, CHANNEL, content, files=[png] if png else [], username=USERNAME, dedupe=False,
                         suppress_embeds=True)

@@ -262,17 +262,17 @@ def test_a_request_reading_has_its_own_names_apart_from_the_stored_statuses():
 
 
 def test_only_live_requests_and_those_closed_since_the_last_one_pager_are_read(conn):
-    world.approval(conn, 1, "fake", status="expired", closed_at="2026-11-09T07:59:00+08:00", close_reason="not approved in time")
-    world.approval(conn, 2, "fake", status="skipped", decided_at="2026-11-09T07:00:00+08:00")
-    world.approval(conn, 3, "fake", status="skipped", decided_at="2026-11-09T08:00:01+08:00")
-    snapshot = mission.read(world.source())
-    assert snapshot.last_one_pager.isoformat() == "2026-11-09T08:00:00+08:00"
-    assert snapshot.next_one_pager.isoformat() == "2026-11-11T08:00:00+08:00"
+    world.approval(conn, 1, "fake", status="expired", closed_at="2026-11-09T08:59:00+08:00", close_reason="not approved in time")
+    world.approval(conn, 2, "fake", status="skipped", decided_at="2026-11-09T08:00:00+08:00")
+    world.approval(conn, 3, "fake", status="skipped", decided_at="2026-11-09T09:00:01+08:00")
+    snapshot = mission.read(world.source("2026-11-10T09:00:00+08:00"))
+    assert snapshot.last_one_pager.isoformat() == "2026-11-09T09:00:00+08:00"
+    assert snapshot.next_one_pager.isoformat() == "2026-11-11T09:00:00+08:00"
     assert list(requests(snapshot)) == ["A-0003"]
 
 
 def window_world(conn) -> None:
-    """Things that happened on Mon 9 Nov after its 08:00 one-pager."""
+    """Things that happened on Mon 9 Nov after its 09:00 one-pager."""
     world.approval(conn, 160, "outreach-email", status="expired", decided_at="2026-11-09T10:00:00+08:00", decided_origin="ssh",
                    use_by="2026-11-09T16:30:00+08:00", closed_at="2026-11-09T16:31:00+08:00", close_reason="approved but not used in time")
     conn.execute("INSERT INTO discord_posts (channel, ts, content_hash, delivered) VALUES ('alerts', '2026-11-09T12:00:00+08:00', 'h', 0)")
@@ -285,30 +285,30 @@ def one_pager_run(conn, started_at: str, status: str = "ok") -> None:
     conn.execute("INSERT INTO runs (agent, job, started_at, status) VALUES ('digest', 'one-pager', ?, ?)", (started_at, status))
 
 
-@pytest.mark.parametrize("now", ["2026-11-10T08:00:05+08:00", "2026-11-10T08:04:00+08:00"])
+@pytest.mark.parametrize("now", ["2026-11-10T09:00:05+08:00", "2026-11-10T09:04:00+08:00"])
 def test_the_scheduled_one_pager_running_late_still_reports_since_the_one_before(conn, now):
     window_world(conn)
-    one_pager_run(conn, "2026-11-09T08:00:03+08:00")
-    one_pager_run(conn, "2026-11-10T08:00:02+08:00", status="running")  # this run itself
+    one_pager_run(conn, "2026-11-09T09:00:03+08:00")
+    one_pager_run(conn, "2026-11-10T09:00:02+08:00", status="running")  # this run itself
     snapshot = mission.read(world.source(now))
-    assert snapshot.last_one_pager.isoformat() == "2026-11-09T08:00:03+08:00"
-    assert snapshot.next_one_pager.isoformat() == "2026-11-11T08:00:00+08:00"
+    assert snapshot.last_one_pager.isoformat() == "2026-11-09T09:00:03+08:00"
+    assert snapshot.next_one_pager.isoformat() == "2026-11-11T09:00:00+08:00"
     assert requests(snapshot)["A-0160"].reading == mission.Reading.LAPSED_UNUSED
     assert (snapshot.undelivered, snapshot.outbox) == (1, 1)
 
 
 def test_without_a_recorded_one_pager_the_window_starts_at_the_slot_before_this_one(conn):
     window_world(conn)
-    snapshot = mission.read(world.source("2026-11-10T08:00:05+08:00"))
-    assert snapshot.last_one_pager.isoformat() == "2026-11-09T08:00:00+08:00"
+    snapshot = mission.read(world.source("2026-11-10T09:00:05+08:00"))
+    assert snapshot.last_one_pager.isoformat() == "2026-11-09T09:00:00+08:00"
     assert "A-0160" in requests(snapshot)
     assert (snapshot.undelivered, snapshot.outbox) == (1, 1)
 
 
 def test_an_on_request_one_pager_reports_since_this_mornings(conn):
-    assert mission.read(world.source("2026-11-10T11:05:00+08:00")).last_one_pager.isoformat() == "2026-11-10T08:00:00+08:00"
-    one_pager_run(conn, "2026-11-10T08:00:02+08:00")
-    assert mission.read(world.source("2026-11-10T11:05:00+08:00")).last_one_pager.isoformat() == "2026-11-10T08:00:02+08:00"
+    assert mission.read(world.source("2026-11-10T11:05:00+08:00")).last_one_pager.isoformat() == "2026-11-10T09:00:00+08:00"
+    one_pager_run(conn, "2026-11-10T09:00:02+08:00")
+    assert mission.read(world.source("2026-11-10T11:05:00+08:00")).last_one_pager.isoformat() == "2026-11-10T09:00:02+08:00"
 
 
 def test_after_a_missed_day_the_window_starts_at_the_last_one_pager_that_ran(conn):
@@ -321,8 +321,8 @@ def test_after_a_missed_day_the_window_starts_at_the_last_one_pager_that_ran(con
 
 
 def test_a_one_pager_run_from_long_ago_does_not_stretch_the_window_past_a_week(conn):
-    one_pager_run(conn, "2026-10-01T08:00:03+08:00")
-    assert mission.read(world.source("2026-11-10T08:00:05+08:00")).last_one_pager.isoformat() == "2026-11-09T08:00:00+08:00"
+    one_pager_run(conn, "2026-10-01T09:00:03+08:00")
+    assert mission.read(world.source("2026-11-10T09:00:05+08:00")).last_one_pager.isoformat() == "2026-11-09T09:00:00+08:00"
 
 
 def test_an_unposted_card_is_read_as_unposted(conn):
@@ -366,15 +366,15 @@ def test_failures_are_each_jobs_latest_run_and_any_in_the_last_24_hours(conn):
 
 
 def test_undelivered_posts_and_outbox_lines_since_the_last_one_pager_are_counted(conn):
-    for ts, delivered in (("2026-11-09T07:00:00+08:00", 0), ("2026-11-09T09:00:00+08:00", 0), ("2026-11-10T07:00:00+08:00", 1)):
+    for ts, delivered in (("2026-11-09T08:00:00+08:00", 0), ("2026-11-09T10:00:00+08:00", 0), ("2026-11-10T08:00:00+08:00", 1)):
         conn.execute("INSERT INTO discord_posts (channel, ts, content_hash, delivered) VALUES ('alerts', ?, 'h', ?)", (ts, delivered))
     outbox = paths.data_dir() / "discord-outbox"
     outbox.mkdir(parents=True)
     (outbox / "2026-11-09.jsonl").write_text(
-        '{"ts": "2026-11-09T07:59:00+08:00", "content": "old"}\n{"ts": "2026-11-09T12:00:00+08:00", "content": "x"}\n'
+        '{"ts": "2026-11-09T08:59:00+08:00", "content": "old"}\n{"ts": "2026-11-09T12:00:00+08:00", "content": "x"}\n'
     )
     (outbox / "2026-11-10.jsonl").write_text('{"ts": "2026-11-10T06:00:00+08:00", "content": "y"}\n{"ts": "2026-11')
-    snapshot = mission.read(world.source())
+    snapshot = mission.read(world.source("2026-11-10T09:00:00+08:00"))
     assert (snapshot.undelivered, snapshot.outbox) == (1, 2)
 
 

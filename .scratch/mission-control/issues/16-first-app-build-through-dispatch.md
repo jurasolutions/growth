@@ -4,6 +4,7 @@ Status: ready-for-human
 Blocked by: 12, 14; and, outside this repo, Dispatch D6 and D8, and the `toolbox` branch of `repos/landing-page` merged into its `main`
 PRD source: MC SC9, §4.8 (D6, D8, the landing page), §6 Q4 (accepted at G2: Cloudflare Access on previews before the first app build); not a §5.12 ticket, because only Ting Yu can do it
 Covers: test strategy v3 §7 U8
+Amended 2026-10-31: Ting Yu reversed MC §6 Q4, so previews open for anyone with no sign-in. Step 2 and the private-window check below no longer apply. See `.scratch/public-app-previews/`.
 
 ## What to do
 

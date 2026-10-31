@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from jura_growth import approval_settings, approvals, config, db, handoff_fit, log, paths, timeutil
+from jura_growth.agents import GROWTH, YOU, PendingItem
 from jura_growth.agents.apps import backlog, catalog
 from jura_growth.agents.apps import prd as prd_mod
 
@@ -287,6 +288,11 @@ def handoffs_json(conn: sqlite3.Connection) -> dict:
                                              limit=handoff_fit.HANDOFF_LIMIT)}
 
 
+# Fix lines. The morning picture stops at the first line; the message and the long text carry the rest.
+DISPATCH_LINE = "Build handoff waiting for a builder: {label} (handed to Dispatch, approval {request})."
+HAND_BUILD_LINE = "Build {label} by hand, from its approved PRD ({request}).\n{build_it}."
+
+
 def health_lines(conn: sqlite3.Connection) -> list[str]:
     """The one-pager's "build handoffs waiting for a builder" lines (MC §5.4). `conn` is the read
     model's read-only connection."""
@@ -297,10 +303,25 @@ def health_lines(conn: sqlite3.Connection) -> list[str]:
     for build in open_handoffs(conn):
         label = f"{build['app_id']} {build['name']}".strip()
         if dispatch:
-            lines.append(f"Build handoff waiting for a builder: {label} (handed to Dispatch, approval {build['approval_id']}).")
+            lines.append(DISPATCH_LINE.format(label=label, request=build["approval_id"]))
         else:
-            lines.append(f"Build handoff waiting for a builder: {label}. {build_it(build['prd_path'], build['approval_id'])}.")
+            lines.append(HAND_BUILD_LINE.format(label=label, request=build["approval_id"], build_it=build_it(build["prd_path"], build["approval_id"])))
     return lines
+
+
+def pending_items(conn: sqlite3.Connection) -> list[PendingItem]:
+    """`pending`'s lines for the open handoffs: Dispatch holds them when `dispatch_builds` is on, and
+    otherwise Ting Yu does. `conn` is the read model's read-only connection."""
+    dispatch = approval_settings.switch("dispatch_builds")
+    items = []
+    for build in open_handoffs(conn):
+        label, request = f"{build['app_id']} {build['name']}".strip(), build["approval_id"]
+        if dispatch:
+            items.append(PendingItem(GROWTH, f"{label} (approval {request}) was handed to Dispatch {timeutil.ago(build['handed_off_at'])}, "
+                                             "and isn't reported built yet."))
+        else:
+            items.append(PendingItem(YOU, HAND_BUILD_LINE.format(label=label, request=request, build_it=build_it(build["prd_path"], request))))
+    return items
 
 
 # --- skip and expiry ----------------------------------------------------------------

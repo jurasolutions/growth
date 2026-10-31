@@ -19,7 +19,7 @@ If Jura HQ already has the eight channels from the first setup, you only need th
    reaches your phone.
 4. Run the test (step 5).
 
-From then on the one-pager arrives in `#mission-control` at 08:00 SGT every day, and approval
+From then on the one-pager arrives in `#mission-control` at 09:00 SGT every day, and approval
 requests arrive in `#approvals`.
 
 ## 1. Create the server
@@ -43,7 +43,7 @@ Create these ten text channels with exactly these names (Discord lower-cases the
 | `community` | Weekly group posting plan and drafts |
 | `alerts` | Failures, auto-pauses, brand-check rejections, cap hits |
 | `approvals` | One card per approval request: what would go out, why, and when it lapses. Answer it in Discord |
-| `mission-control` | The one-pager at 08:00 SGT and whenever you send `/growth one-pager`: what needs you, approvals waiting, today, yesterday, and the 14-day grid as an image |
+| `mission-control` | The one-pager at 09:00 SGT and whenever you send `/growth one-pager`: a short message with the morning picture, which shows what to decide, what to fix, this morning, yesterday and later today |
 
 You can delete the default `#general`.
 
@@ -111,7 +111,7 @@ uv sync                       # first time only
 one. A channel that says `NOT POSTED (… not set; saved to outbox)` is missing its line in `.env`.
 
 `one-pager` should answer `posted to #mission-control`, and the one-pager should appear there with
-the 14-day grid attached. Then reinstall the schedule so the 08:00 job is loaded:
+the morning picture attached. Then reinstall the schedule so the 09:00 job is loaded:
 `.venv/bin/jura-growth schedule install`.
 
 Until the webhooks exist, every agent message is kept in `data/growth/discord-outbox/` instead,
