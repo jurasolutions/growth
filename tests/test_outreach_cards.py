@@ -14,10 +14,18 @@ full address. `queue`, `send-due` and `requeue-shadow` post and edit cards as th
 The sweep over email drafts and cards finds nothing planted (AC-M11.1, AC-M12.1).
 """
 
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
+import yaml
 
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, cards, config, db, discord, suppression, timeutil
+from jura_growth import approvals, cards, config, db, discord, paths, suppression, timeutil
 from jura_growth.agents.outreach import approval, compose, design, queue as queue_mod, requeue, send, store
 from sweep import MASKED_ADDRESS, NAMED_ADDRESS, PERSON, SOURCE_PAGE, assert_clean, d2_secrets, outbox_dir, planted  # noqa: F401
 
@@ -204,6 +212,30 @@ def test_an_email_whose_card_went_out_can_be_approved_and_sends(conn, monkeypatc
     at(monkeypatch, "2026-11-10T10:10:00+08:00")
     send.send_due(conn)
     assert len(sent) == 1
+
+
+def test_over_remote_an_email_with_no_card_is_refused_and_says_to_read_it_in_approvals(conn, monkeypatch, tmp_path, lead_233):
+    """In a new process. An email is the action least able to be taken back, so the reason matters."""
+    request = approvals.get(conn, lead_233.approval)
+    conn.commit()
+    env_file = tmp_path / "remote.env"
+    env_file.write_text(f"CONTROL_DISCORD_USER_ID={CONTROL_ID}\n", encoding="utf-8")
+    env_file.chmod(0o600)  # as a real one is: a permissions warning would lead the captured answer
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(env_file))
+    monkeypatch.delenv("CONTROL_DISCORD_USER_ID", raising=False)
+    # The fixture's settings are a patch in this process, and the new one reads files, so it gets
+    # them as files: the same frame, so the same hash, and it isn't superseded.
+    shutil.copytree(paths.REPO_ROOT / "config", tmp_path / "config")
+    (tmp_path / "config" / "scout.yaml").write_text(yaml.safe_dump(config.agent_config("scout")), encoding="utf-8")
+    child = str(Path(__file__).parent / "remote_child.py")
+    env = {**os.environ, "JURA_GROWTH_CONFIG_DIR": str(tmp_path / "config"), "JURA_GROWTH_NOW": "2026-11-10T10:00:00+08:00"}
+    ran = subprocess.run([sys.executable, child, "remote", "--actor", f"discord:{CONTROL_ID}", "--json", "--", "approve", request.id],
+                         capture_output=True, text=True, env=env, timeout=120)
+    body = json.loads(ran.stdout)
+    assert body["exit_code"] == 2 and body["answer"] == approvals.REFUSED, body
+    assert body["text"].startswith("refused: ") and "not understood" not in body["text"]
+    assert "card hasn't gone out" in body["text"] and "read it in #approvals and decide there" in body["text"]
+    assert approvals.get(conn, request.id).status == approvals.PENDING
 
 
 def test_pending_says_an_email_with_no_card_can_t_be_approved_yet(conn, lead_233):

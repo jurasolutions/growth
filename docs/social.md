@@ -323,8 +323,9 @@ per-platform weekend switch.
    would still show masked text, from a name learned since the gate or a row changed past it, isn't
    posted. One note in `#social-drafts` says why, the digest and the one-pager say it has no card, and
    it lapses. No card, no approval: a typed approval of any post whose card hasn't gone out is refused,
-   since the card is the only place to read it. A skip still works. If Discord didn't take the card,
-   the heartbeat posts it, and the post can wait for that. Drafts written before a platform moved to `browser` mode get no item. A
+   since the card is the only place to read it. The answer says the card may be posting now, because
+   the decision's own sweep runs after it: read it in `#approvals` and decide there. A skip still works.
+   If Discord didn't take the card, the heartbeat posts it, and the post can wait for that. Drafts written before a platform moved to `browser` mode get no item. A
    platform in `browser` mode with no `page_url`, a submit after the decide-by, and a post with no
    images each get a note in `#social-drafts` saying why, and no card. Nothing in `browser` mode
    asks Ting Yu to post by hand. The social job's precheck skips before Claude starts once the

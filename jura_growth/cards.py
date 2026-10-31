@@ -49,6 +49,7 @@ functions (`unposted`, `mark_posted`, `successor`); this module keeps only
 from __future__ import annotations
 
 import sqlite3
+from typing import NoReturn
 
 from jura_growth import approval_settings, approvals, db, discord, feed, locks, log, privacy, timeutil
 
@@ -226,6 +227,19 @@ def _post_unposted(conn: sqlite3.Connection) -> int:
             )
         posted += 1
     return posted
+
+
+def refuse_with_no_card(approval: approvals.Approval, why: str | None = None) -> NoReturn:
+    """No card, no approval, for a kind that needs its card out first (`needs_card`). It starts
+    `refused: `, or `remote` reads it as a usage error and loses the reason. The decision's own sweep
+    runs after this, so a card that wasn't out may be out by the time he reads it: he is sent to read
+    it, because an identical retry would otherwise approve a card he hasn't seen. `why` is a reason
+    the card won't come at all."""
+    if why:
+        raise approvals.BadArgs(f"refused: {why}. {approval.id} can't be approved. Nothing goes out, and it lapses "
+                                f"{timeutil.when(approval.decide_by)}. You can still skip it.")
+    raise approvals.BadArgs(f"refused: {approval.id}'s card hasn't gone out yet, so it can't be approved. "
+                            "It may be posting now: read it in #approvals and decide there.")
 
 
 def refusal(conn: sqlite3.Connection, approval_id: str) -> str | None:

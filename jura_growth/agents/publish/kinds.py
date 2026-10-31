@@ -260,10 +260,7 @@ class SocialPost:
         latest = items.latest_request(conn, _item(conn, subject))
         if latest is None or latest.posted_at is not None:
             return
-        problem = cards.refusal(conn, latest.id) or self.card_problem(conn, subject)
-        if problem:
-            raise approvals.BadArgs(f"{problem}. It can't be approved")
-        raise approvals.BadArgs("Its card hasn't gone out yet, so it can't be approved. The heartbeat posts it, and you can decide then")
+        cards.refuse_with_no_card(latest, cards.refusal(conn, latest.id) or self.card_problem(conn, subject))
 
     def own_copy(self, conn: sqlite3.Connection, subject: str) -> tuple[str, ...]:
         """The post's text, as Jura's own copy on its card (`privacy`). A draft past the brand gate only."""

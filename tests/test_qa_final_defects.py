@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -318,7 +319,7 @@ def test_a_typed_approval_of_a_post_whose_card_has_not_gone_out_is_refused(conn,
     assert approvals.get(conn, first.id).used_at is None
 
 
-def test_once_the_heartbeat_posts_the_card_the_same_post_can_be_approved(conn, social_day, monkeypatch):
+def test_once_a_sweep_posts_the_card_the_same_post_can_be_approved(conn, social_day, monkeypatch):
     social_day.mode = "500"
     submit_tip(conn)
     first, _ = approvals.pending(conn)
@@ -433,3 +434,92 @@ def test_the_digest_and_the_read_model_read_a_request_s_clock_the_same_way(conn,
                                             decided_at=r["decided_at"], used_at=r["used_at"], now=timeutil.now_sgt())
                 for r in db.rows(conn, "SELECT * FROM approvals")}
     assert readings == {first.number: mission.Reading.LAPSED_UNUSED, second.number: mission.Reading.LAPSED}
+
+
+# --- review 11, B2: a refusal over `remote` says why, in a new process ---------------------------------
+
+
+def remote_in_a_new_process(env, *words) -> dict:
+    ran = subprocess.run([sys.executable, str(Path(__file__).parent / "remote_child.py"), "remote", "--actor", f"discord:{pw.CONTROL_ID}", "--json", "--", *words],
+                         capture_output=True, text=True, env=env, timeout=120)
+    assert ran.stdout, ran.stderr
+    return json.loads(ran.stdout)
+
+
+@pytest.fixture
+def remote_env(tmp_path, monkeypatch) -> dict[str, str]:
+    """The control user in a temp env file, as a real process reads it."""
+    env_file = tmp_path / "remote.env"
+    env_file.write_text(f"CONTROL_DISCORD_USER_ID={pw.CONTROL_ID}\n", encoding="utf-8")
+    env_file.chmod(0o600)  # as a real one is: a permissions warning would lead the captured answer
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(env_file))
+    monkeypatch.delenv("CONTROL_DISCORD_USER_ID", raising=False)
+    return dict(os.environ)
+
+
+def assert_refused_with_its_reason(conn, request, body: dict, *reason: str) -> None:
+    assert body["exit_code"] == 2 and body["answer"] == approvals.REFUSED, body
+    assert body["text"].startswith("refused: "), body["text"]
+    assert "not understood" not in body["text"]
+    for words in reason:
+        assert words in body["text"], body["text"]
+    conn.rollback()
+    assert approvals.get(conn, request.id).status == approvals.PENDING
+
+
+def test_over_remote_a_post_with_no_card_is_refused_and_says_to_read_it_in_approvals(conn, env, monkeypatch, remote_env):
+    pw.at(monkeypatch, pw.MORNING)
+    _, request = pw.item(conn, "facebook", text=PICTURE)
+    conn.commit()
+    body = remote_in_a_new_process({**remote_env, "JURA_GROWTH_NOW": pw.TEN}, "approve", request.id)
+    assert_refused_with_its_reason(conn, request, body, "card hasn't gone out", "may be posting now", "read it in #approvals and decide there")
+
+
+def test_over_remote_a_card_the_sweep_refused_is_refused_and_says_why(conn, env, monkeypatch, discord_double, remote_env):
+    request = refused_card(conn, monkeypatch)
+    conn.commit()
+    body = remote_in_a_new_process({**remote_env, "JURA_GROWTH_NOW": pw.TEN}, "approve", request.id)
+    assert_refused_with_its_reason(conn, request, body, "can't show the exact text", "Nothing goes out", "it lapses Tue 10 Nov, 17:00 SGT", "skip")
+    assert "may be posting" not in body["text"]  # that card isn't coming
+
+
+def test_over_remote_a_post_with_no_card_can_still_be_skipped(conn, env, monkeypatch, remote_env):
+    pw.at(monkeypatch, pw.MORNING)
+    _, request = pw.item(conn, "facebook", text=PICTURE)
+    conn.commit()
+    body = remote_in_a_new_process({**remote_env, "JURA_GROWTH_NOW": pw.TEN}, "skip", request.id)
+    assert body["exit_code"] == 0 and body["answer"] == approvals.RECORDED, body
+    conn.rollback()
+    assert approvals.get(conn, request.id).status == approvals.SKIPPED
+
+
+# --- review 11, S3: `pending`, in browser mode ---------------------------------------------------------
+
+
+def test_pending_tells_approved_claimed_and_refused_apart_in_browser_mode(conn, social_day, monkeypatch):
+    refuse_facebook(monkeypatch)
+    submit_tip(conn)
+    conn.commit()
+    refused, carded = approvals.pending(conn)
+
+    answer = pending_text()
+    line = next(line for line in answer.splitlines() if line.startswith(f"- {refused.id}"))
+    assert "no card yet" not in line
+    assert line.endswith("Nothing goes out, and it lapses Tue 10 Nov, 17:00 SGT")
+    assert "no card: " in line
+    assert "1 social draft for today onward" in answer  # Instagram's; a refused card is going nowhere
+
+    pw.at(monkeypatch, pw.TEN)
+    pw.decide(conn, carded, monkeypatch=monkeypatch)
+    conn.commit()
+    answer = pending_text()
+    assert not any(line.startswith(f"- {carded.id}") for line in answer.splitlines())  # no longer his to decide
+    assert "P-0002, instagram, 2026-11-10: ready (request approved)" in answer
+    assert "1 social draft for today onward" in answer
+
+    run = pw.run(conn, monkeypatch=monkeypatch)
+    assert pw.next_item(conn, run).item is not None
+    conn.commit()
+    answer = pending_text()
+    assert "P-0002, instagram, 2026-11-10: claimed" in answer
+    assert "social draft" not in answer

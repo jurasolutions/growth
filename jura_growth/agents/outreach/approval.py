@@ -137,15 +137,17 @@ class OutreachEmail:
             use_by=_at_cutoff(store.add_business_days(today, use)),
         )
 
-    # The kind's own switch: `use()` refuses without claiming while it shows.
     def on_approve(self, conn: sqlite3.Connection, subject: str, args: dict) -> None:
         """No card, no approval: a typed approval of an email whose card hasn't gone out would send
         words he hasn't read, to a real prospect. The heartbeat posts the card, and it stays open
         for a skip. The refusal rolls the decision back."""
+        from jura_growth import cards  # cards reaches the kinds through the approvals registry
+
         latest = approvals.latest(conn, self.name, subject)
         if latest is not None and latest.posted_at is None:
-            raise approvals.BadArgs("Its card hasn't gone out yet, so it can't be approved. The heartbeat posts it, and you can decide then")
+            cards.refuse_with_no_card(latest, cards.refusal(conn, latest.id))
 
+    # The kind's own switch: `use()` refuses without claiming while it shows.
     def switched_off(self, conn: sqlite3.Connection, subject: str) -> str | None:
         from jura_growth.agents.outreach import send
         from jura_growth.agents.scout import settings

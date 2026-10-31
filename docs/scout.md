@@ -279,7 +279,8 @@ conditional comment. Long links wrap (`overflow-wrap:anywhere`), and the signatu
 
 **No card, no approval.** A typed approval of an email whose card hasn't gone out is refused, and a
 skip still works. The email is the action least able to be taken back, and the card is where its
-words are read. If Discord didn't take the card, the heartbeat posts it.
+words are read. The answer says the card may be posting now: read it in `#approvals` and decide there.
+If Discord didn't take the card, the heartbeat posts it.
 
 **The approval covers the frame.** An `outreach-email` request hashes the recipient, the
 subject, the draft and `compose.frame_fingerprint()`: everything the code adds around the draft,
