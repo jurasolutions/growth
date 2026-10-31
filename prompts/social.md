@@ -268,6 +268,9 @@ runs the brand checker on every variant and the card (the same checks as `jura-g
   different sites, a missing `visual` or `icon`, a figure the post doesn't state, a repeated story,
   tool or theme, or a source link that doesn't work. Fix it and submit again. This doesn't use up
   your regeneration.
+- **"Discord would hide this on the approval card"**: Ting Yu can't approve words he can't read.
+  So write no phone numbers, no email addresses, no digit range such as 3000-4000 (write 3,000 to
+  4,000), and use no source link with a long run of digits. Each masked place gets its own reason.
 - **"Brand check: attempt 1 of 2"**: this covers word ranges too. Fix every reason listed, in every file, in one pass, then
   submit again. The second submission is final: anything that fails then is dropped. Don't try a
   third time.

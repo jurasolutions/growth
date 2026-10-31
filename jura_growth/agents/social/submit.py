@@ -21,8 +21,8 @@ In order:
    approval card in #approvals (browser publishing PRD §5.4). The card carries
    the post, its images and its sources; #social-drafts hears only what became
    of it (Ting Yu, 2026-10-31: `feed.py`, and the publish run's update). A
-   platform in browser mode that can't get an item (no page_url set, or its
-   posting window has closed) gets a note in #social-drafts saying why, and
+   platform in browser mode that can't get an item (no page_url set, too late
+   to be decided, or no images) gets a note in #social-drafts saying why, and
    never a request to post by hand.
 8. A platform in `draft` mode gets one #social-drafts message with its images,
    to post by hand.
@@ -226,7 +226,7 @@ def submit(
     dropped = [p for p in active if results[p].status != "pass"]
     status = "partial" if dropped or card_result.status != "pass" else "delivered"
     _write_outputs(out, sub, card, theme, passing, results, card_result, images, attempt, fonts, link_notes, notes_for_ting)
-    _log_rows(conn, day, theme.id, passing, sub, results, images, tool.slug if tool else None, attempt, theme.id != today_theme.id, fonts)
+    _log_rows(conn, day, theme.id, passing, sub, results, images, tool.slug if tool else None, attempt, theme.id != today_theme.id, fonts, card)
     requests = _raise_publish_items(conn, day, passing, settings, notes_for_ting)
     history.record_submission(conn, day, attempt=attempt, status=status, theme=theme.id, issues=issues)
     log.event(
@@ -242,9 +242,11 @@ def submit(
     if dropped:
         discord.alert(conn, _alert_text(day, {p: results[p] for p in dropped}, "dropped"), agent="social")
 
-    lines = [f"Delivered to #{'approvals' if len(requests) == len(passing) else CHANNEL}: "
-             f"{', '.join(passing)} ({theme.label}) in {out}"]
-    lines += [f"Approval requested: {platform} as {approval.id} in #approvals" for platform, approval in requests.items()]
+    card_lines, carded = _card_lines(conn, requests)
+    missing = [p for p in passing if settings.platforms[p].browser and p not in carded]
+    place = f"with no card for {', '.join(missing)}" if missing else f"to #{'approvals' if len(carded) == len(passing) else CHANNEL}"
+    lines = [f"Delivered{',' if missing else ''} {place}: {', '.join(passing)} ({theme.label}) in {out}"]
+    lines += card_lines
     if dropped:
         lines.append(f"Dropped after the brand check: {', '.join(dropped)}")
     lines += _verdict_lines(every)
@@ -263,6 +265,24 @@ def post_no_draft(conn: sqlite3.Connection, day: date, reason: str, *, record: b
 
 
 # --- helpers -----------------------------------------------------------------
+
+
+def _card_lines(conn, requests) -> tuple[list[str], list[str]]:
+    """What became of each request's card, read after the sweep, and the platforms that have one."""
+    from jura_growth import approvals, cards
+
+    lines, carded = [], []
+    for platform, approval in requests.items():
+        current = approvals.get(conn, approval.id)
+        why = cards.refusal(conn, approval.id)
+        if current is not None and current.posted_at:
+            carded.append(platform)
+            lines.append(f"Approval requested: {platform} as {approval.id} in #approvals")
+        elif why:
+            lines.append(f"No approval card for {platform} ({approval.id}): {why}")
+        else:
+            lines.append(f"Approval requested: {platform} as {approval.id}: its card goes to #approvals once Discord takes it")
+    return lines, carded
 
 
 def _verdict_lines(every: dict[str, VariantResult]) -> list[str]:
@@ -306,13 +326,14 @@ def _write_outputs(out, sub, card, theme, passing, results, card_result, images,
     qa_path.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _log_rows(conn, day, theme_id, passing, sub, results, images, tool_slug, attempt, fallback, fonts) -> None:
+def _log_rows(conn, day, theme_id, passing, sub, results, images, tool_slug, attempt, fallback, fonts, card) -> None:
     now = timeutil.stamp()
     with db.transaction(conn):
         for platform in passing:
             result = results[platform]
             qa = {"passed": True, "attempt": attempt, "issues": [], "words": result.words,
-                  "hashtags": result.hashtags, "theme_fallback": fallback, "fonts_loaded": fonts}
+                  "hashtags": result.hashtags, "theme_fallback": fallback, "fonts_loaded": fonts,
+                  "headline": card.headline}
             conn.execute(
                 "INSERT INTO social_posts (date, theme, platform, text, image_paths, source_urls, qa_json, status, "
                 "tool_slug, run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)",

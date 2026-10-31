@@ -32,6 +32,9 @@ from jura_growth import config, images, log, paths, privacy, timeutil
 
 MAX_CONTENT = 2000
 MAX_FILES = 10
+_FENCE = "```"
+_REOPEN = _FENCE + "\n"
+_CLOSE = "\n" + _FENCE
 
 
 @dataclass
@@ -41,7 +44,8 @@ class PostResult:
     reason: str = ""
     messages: int = 0
     # With `wait=True`: each message's id, and the text each piece carried
-    # as sent (masked), in order. A card keeps the first of each.
+    # as sent (masked), in order. A card keeps the first of each. A post that
+    # failed part way lists the ids of the pieces that did go out.
     message_ids: list[str | None] = field(default_factory=list)
     pieces: list[str] = field(default_factory=list)
 
@@ -122,25 +126,57 @@ def _engine_file(path: Path) -> bool:
     return False
 
 
-def split(content: str, limit: int = MAX_CONTENT) -> list[str]:
-    """Break a long message at line boundaries into Discord-sized pieces."""
-    if len(content) <= limit:
+def no_fence(text: str) -> str:
+    """`text` with any code fence broken, to show inside or before a card's own fence, so what the
+    text says can't close it. It reads the same: only invisible characters are added."""
+    return text.replace(_FENCE, "`\u200b`\u200b`")
+
+
+def split(content: str, limit: int = MAX_CONTENT, *, first_room: int = 0) -> list[str]:
+    """Break a long message at line boundaries into Discord-sized pieces.
+
+    A code fence stays balanced: a piece that ends inside one closes it, and the next opens it
+    again, with room kept for both, so what's in the fence reads the same whichever piece holds
+    it. A fence line never ends a piece on its own. `first_room` keeps that many characters free
+    in the first piece, for a message whose first line grows when it is edited later (a card)."""
+    room = limit - first_room
+    if len(content) <= room:
         return [content]
-    pieces, current = [], ""
+    pieces: list[str] = []
+    current, fenced = "", False
+
+    def flush() -> None:
+        nonlocal current, room
+        body = current.rstrip("\n")
+        last = body.rsplit("\n", 1)[-1]
+        if fenced and last.strip() == _FENCE:
+            body = body[: -len(last)].rstrip("\n")  # the opening line alone: it moves to the next piece
+        elif fenced:
+            body += _CLOSE
+        if body.strip():
+            pieces.append(body)
+        current, room = (_REOPEN if fenced else ""), limit
+
     for line in content.splitlines(keepends=True):
-        while len(line) > limit:
-            if current:
-                pieces.append(current)
-                current = ""
-            pieces.append(line[:limit])
-            line = line[limit:]
-        if len(current) + len(line) > limit:
-            pieces.append(current)
-            current = ""
+        while True:
+            toggles = line.count(_FENCE) % 2 == 1
+            free = room - len(current) - (len(_CLOSE) if fenced != toggles else 0)
+            if len(line) <= free:
+                break
+            if current not in ("", _REOPEN):
+                flush()
+                continue
+            # The line alone is longer than a piece: cut it.
+            chunk, line = line[:free], line[free:]
+            current += chunk
+            if chunk.count(_FENCE) % 2:
+                fenced = not fenced
+            flush()
         current += line
-    if current:
-        pieces.append(current)
-    return [piece.rstrip("\n") for piece in pieces if piece.strip()]
+        if toggles:
+            fenced = not fenced
+    flush()
+    return pieces
 
 
 def post(
@@ -156,6 +192,10 @@ def post(
     own_copy: list[str] | tuple[str, ...] = (),
     wait: bool = False,
     components: list[dict] | None = None,
+    first_piece_room: int = 0,
+    files_first: bool = False,
+    silent: bool = False,
+    patience: float | None = None,
 ) -> PostResult:
     """Post `content` (and `files`) to a channel, or save it to the outbox.
 
@@ -167,6 +207,13 @@ def post(
     piece only, the one a card edits, with `?with_components=true`: Discord
     takes them only through a webhook its application owns (Dispatch's).
     The approval cards decide when to send them (`approvals.post_buttons`).
+
+    A long message splits (`split`), with `first_piece_room` characters kept free in its first
+    piece. Files go on the last piece, or with `files_first` on the first, beside the buttons.
+
+    `silent` posts without a notification. `patience` is how many seconds each piece may take,
+    retries included, for a message that must not hold up its caller; past that it goes to the
+    outbox like any other that Discord didn't take.
 
     The last line of defence (MC §4.3, §4.4): the content, username, file names
     and text files go through `privacy.for_discord()`, after `privacy.learn()`
@@ -205,21 +252,21 @@ def post(
         log.event(conn, "discord.outbox", {"channel": channel, "chars": len(content)}, level="warning")
         return PostResult(channel, delivered=False, reason=f"{env_name(channel)} not set; saved to outbox")
 
-    pieces = split(content)
+    pieces = split(content, first_room=first_piece_room)
+    with_files = 0 if files_first else len(pieces) - 1
     message_ids: list[str | None] = []
     try:
         with _using(client) as http:
             for index, piece in enumerate(pieces):
-                last = index == len(pieces) - 1
-                response = _send(http, url, piece, uploads if last else [], username, suppress_embeds, wait=wait,
-                                 components=components if index == 0 else None)
+                response = _send(http, url, piece, uploads if index == with_files else [], username, suppress_embeds, wait=wait,
+                                 components=components if index == 0 else None, silent=silent, patience=patience)
                 if wait:
                     message_ids.append(_message_id(response))
     except DiscordError as error:
         _outbox(channel, content, saved, username)
         _record(conn, channel, digest, delivered=False)
         log.event(conn, "discord.error", {"channel": channel, "error": str(error)}, level="error")
-        return PostResult(channel, delivered=False, reason=f"{error}; saved to outbox")
+        return PostResult(channel, delivered=False, reason=f"{error}; saved to outbox", message_ids=message_ids)
 
     _record(conn, channel, digest, delivered=True)
     log.event(conn, "discord.post", {"channel": channel, "chars": len(content), "files": len(uploads)})
@@ -236,6 +283,7 @@ def edit(
     *,
     client: httpx.Client | None = None,
     components: list[dict] | None = None,
+    own_copy: list[str] | tuple[str, ...] = (),
 ) -> PostResult:
     """Replace the text of a message this channel's webhook posted.
     `components` replaces its buttons too (`[]` removes them); None leaves
@@ -247,7 +295,7 @@ def edit(
     post instead. Edits don't notify (MC §5.1, decided cards)."""
     _require(channel)
     privacy.learn(conn)
-    content = privacy.for_discord(content)[:MAX_CONTENT]
+    content = privacy.for_discord(content, own_copy=own_copy)[:MAX_CONTENT]
     url = webhook(channel)
     if not url:
         return PostResult(channel, delivered=False, reason=f"{env_name(channel)} not set")
@@ -262,6 +310,22 @@ def edit(
         log.event(conn, "discord.edit_failed", {"channel": channel, "error": str(error)}, level="warning")
         return PostResult(channel, delivered=False, reason=str(error))
     log.event(conn, "discord.edit", {"channel": channel, "chars": len(content)})
+    return PostResult(channel, delivered=True, messages=1)
+
+
+def delete(conn: sqlite3.Connection | None, channel: str, message_id: str, *, client: httpx.Client | None = None) -> PostResult:
+    """Delete a message this channel's webhook posted. A failure is reported, never raised."""
+    _require(channel)
+    url = webhook(channel)
+    if not url:
+        return PostResult(channel, delivered=False, reason=f"{env_name(channel)} not set")
+    try:
+        with _using(client) as http:
+            _deliver(http, "DELETE", f"{url.rstrip('/')}/messages/{message_id}", {}, [])
+    except DiscordError as error:
+        log.event(conn, "discord.delete_failed", {"channel": channel, "error": str(error)}, level="warning")
+        return PostResult(channel, delivered=False, reason=str(error))
+    log.event(conn, "discord.delete", {"channel": channel})
     return PostResult(channel, delivered=True, messages=1)
 
 
@@ -305,6 +369,7 @@ class DiscordError(RuntimeError):
 
 
 SUPPRESS_EMBEDS = 1 << 2  # Discord message flag: no link previews
+SUPPRESS_NOTIFICATIONS = 1 << 12  # Discord message flag: posted, with no notification
 
 
 def _send(
@@ -317,10 +382,13 @@ def _send(
     *,
     wait: bool = False,
     components: list[dict] | None = None,
+    silent: bool = False,
+    patience: float | None = None,
 ) -> httpx.Response:
     payload: dict = {"content": content, "allowed_mentions": {"parse": []}}
-    if suppress_embeds:
-        payload["flags"] = SUPPRESS_EMBEDS
+    flags = (SUPPRESS_EMBEDS if suppress_embeds else 0) | (SUPPRESS_NOTIFICATIONS if silent else 0)
+    if flags:
+        payload["flags"] = flags
     if username:
         payload["username"] = username[:80]
     params = {}
@@ -329,7 +397,7 @@ def _send(
     if components is not None:
         payload["components"] = components
         params["with_components"] = "true"
-    return _deliver(client, "POST", url, payload, files, params=params or None)
+    return _deliver(client, "POST", url, payload, files, params=params or None, patience=patience)
 
 
 def _deliver(
@@ -340,24 +408,25 @@ def _deliver(
     files: list[tuple[str, bytes]],
     *,
     params: dict | None = None,
+    patience: float | None = None,
 ) -> httpx.Response:
+    give_up = None if patience is None else time.monotonic() + patience
     for attempt in range(3):
+        allowed = httpx.USE_CLIENT_DEFAULT if give_up is None else max(give_up - time.monotonic(), 0.1)
         try:
             if files:
                 multipart: dict = {"payload_json": (None, json.dumps(payload), "application/json")}
                 for i, (name, body) in enumerate(files):
                     multipart[f"files[{i}]"] = (name, body)
-                response = client.request(method, url, files=multipart, params=params)
+                response = client.request(method, url, files=multipart, params=params, timeout=allowed)
             else:
-                response = client.request(method, url, json=payload, params=params)
+                response = client.request(method, url, json=payload, params=params, timeout=allowed)
         except (httpx.HTTPError, httpx.InvalidURL) as error:
             # Only the error's type: httpx messages can quote the URL, which is the secret.
             raise DiscordError(f"Discord could not be reached ({type(error).__name__})") from None
-        if response.status_code == 429 and attempt < 2:
-            time.sleep(_retry_after(response))
-            continue
-        if response.status_code >= 500 and attempt < 2:
-            time.sleep(2.0)
+        wait = _retry_after(response) if response.status_code == 429 else 2.0 if response.status_code >= 500 else None
+        if wait is not None and attempt < 2 and (give_up is None or time.monotonic() + wait < give_up):
+            time.sleep(wait)
             continue
         if response.status_code >= 300:
             # Never include the URL: it is the secret.

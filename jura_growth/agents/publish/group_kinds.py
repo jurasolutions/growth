@@ -38,7 +38,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from jura_growth import approvals, brand_check, db, timeutil
+from jura_growth import approvals, brand_check, db, discord, timeutil
 from jura_growth.agents.publish import hosts, items, limits
 
 ANSWERS_DAYS = 3  # BP §5.5: answers are decided by 18:00 on the third day after they are raised
@@ -239,9 +239,11 @@ def _item(conn: sqlite3.Connection, subject: str, kinds: tuple[str, ...]) -> ite
 class _GroupKind:
     name = ""
     feed_channel = "community"  # a group item's decision reports in #community, as its run update does
-    feed_approved = "It goes out on a publish run, inside the posting window."
     item_kinds: tuple[str, ...] = ()
     used_word = "claimed by a publish run"
+
+    def feed_approved(self, conn: sqlite3.Connection, subject: str) -> str:
+        return items.unless_paused(conn, "It goes out on a publish run, inside the posting window.")
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         from jura_growth.agents.publish import kinds
@@ -301,7 +303,7 @@ class CommunityPost(_GroupKind):
         group = _group(conn, content["group"]) or {}
         day = date.fromisoformat(content["day"])
         qa = json.loads(post.get("qa_json") or "{}")
-        lines = [f"```\n{content['text'].strip()}\n```"]
+        lines = [f"```\n{discord.no_fence(content['text'].strip())}\n```"]
         links = list(dict.fromkeys(brand_check.find_links(content["text"])))
         lines.append("Links in the text: " + (", ".join(links) if links else "none"))
         if qa.get("brand") == "pass":

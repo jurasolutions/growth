@@ -6,9 +6,10 @@ expired is read from `approvals`. The subject of an item's requests is `publish_
 Ting Yu only ever sees and types the request's `A-nnnn`, with `P-nnnn` as a label beside it.
 
 A social item is raised by `social submit` for each platform in `browser` mode whose variant
-passed the brand gate (`create_social`), and only while its decide-by, the end of the posting
-window on its day, is still ahead. Drafts written before a platform moved to `browser` never get
-one: items are made only at submit.
+passed the brand gate and has its images (`create_social`), and only while its decide-by, an hour
+before the end of the posting window on its day, is still ahead. No images means no card, on either
+platform: there is nothing Ting Yu would want to approve, and Instagram can't post without one.
+Drafts written before a platform moved to `browser` never get one: items are made only at submit.
 
 Community items (BP-02b), each only while `browser` is on in `config/community.yaml`:
 
@@ -33,7 +34,7 @@ import sqlite3
 from dataclasses import dataclass, fields
 from datetime import date, timedelta
 
-from jura_growth import approvals, db, log, timeutil
+from jura_growth import approvals, db, log, pause, timeutil
 from jura_growth.agents.publish import hosts, limits
 
 AGENT = "publish"
@@ -159,12 +160,14 @@ def create_social(conn: sqlite3.Connection, post_id: int, *, run_id: int | None,
     if wrong:
         return Made(why=f"{platform.name}'s page_url won't do: {wrong}")
     day = date.fromisoformat(post["date"])
-    _, closes = limits.window_on(day)
-    if timeutil.now_sgt() >= closes:
-        return Made(why=f"the posting window for {day} has closed ({closes:%H:%M} SGT)")
+    decide_by = limits.decide_by_on(day)
+    if timeutil.now_sgt() >= decide_by:
+        return Made(why=f"the posting window for {day} has no room left (a post is decided by {decide_by:%H:%M} SGT)")
     content = kinds.social_content(conn, post_id)
     if content is None:
         return Made(why=f"the {platform.name} draft for {day} can't be posted now (skipped, posted or missing an image)")
+    if not content["images"]:
+        return Made(why=f"the {platform.name} post has no image, so it isn't worth asking about")
     return _make(conn, SOCIAL_ITEM, platform.name, post_id, content, post["date"], run_id=run_id, request=request)
 
 
@@ -389,6 +392,21 @@ def raise_request(conn: sqlite3.Connection, item: Item, *, run_id: int | None) -
     return approvals.request(conn, APPROVAL_KINDS[item.kind], item.subject, reason=reason, run_id=run_id)
 
 
+def platforms_on_a_card(conn: sqlite3.Connection, day: str) -> set[str]:
+    """The platforms whose social post for `day` waits on a pending approval card that went out."""
+    rows = conn.execute("SELECT * FROM publish_items WHERE day = ? AND kind = ?", (day, SOCIAL_ITEM)).fetchall()
+    found = (Item.from_row(row) for row in rows)
+    return {item.platform for item in found
+            if (latest := latest_request(conn, item)) and latest.status == approvals.PENDING and latest.posted_at}
+
+
+def unless_paused(conn: sqlite3.Connection, promise: str) -> str:
+    """A kind's next step (`feed.py`), which says so if the publish agent is paused."""
+    if pause.is_paused(conn, AGENT):
+        return f"{promise} Publishing is paused, so nothing goes out until you resume it."
+    return promise
+
+
 def label_of(number: int) -> str:
     return f"P-{number:04d}"
 
@@ -454,7 +472,7 @@ def sync(conn: sqlite3.Connection, *, run_id: int | None = None) -> list[approva
         content = found.content if found is not None else None
         digest = approvals.content_hash(kinds.hashed(content)) if content is not None else None
         # A fresh answers request gets three days from when it is raised (SC3), so it is never late.
-        in_time = content is not None and (item.kind == ANSWERS_ITEM or timeutil.now_sgt() < kinds.closes(item, content))
+        in_time = content is not None and (item.kind == ANSWERS_ITEM or timeutil.now_sgt() < kinds.decide_closes(item, content))
         # While the kind is switched off (a platform in draft, community.browser off) no card is
         # raised: the old request is superseded or lapses as usual (A13; code review 02b, S4).
         switched_off = content is not None and kinds.switched_off(conn, item)

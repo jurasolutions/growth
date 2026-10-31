@@ -43,6 +43,30 @@ def test_a_clean_post_passes(tmp_path):
     assert not found.no_browser
 
 
+# --- a long post reads back whole (technical review B3) ------------------------------------------
+
+
+LONG = "\n\n".join(["Most small teams chase late invoices the same way, and it costs them a Friday afternoon."] * 16)
+
+
+def see_more(steps: list[dict]) -> list[dict]:
+    """`clean_post`, with one click on "See more" on the post's own page before the read-back."""
+    read_back = next(i for i, step in reversed(list(enumerate(steps))) if step["name"].endswith("get_page_text"))
+    click = t.page("computer", {"action": "left_click", "ref": "ref_40"}, "Clicked See more.", url=t.POST)
+    return [*steps[:read_back], click, *steps[read_back:]]
+
+
+def test_a_280_word_post_typed_in_one_go_passes_whole(tmp_path):
+    found = judged(tmp_path, [*t.browser_check(), t.claimed(text=LONG), *t.clean_post(LONG, IMAGE)], approved=(LONG,))
+    assert found.failures == []
+
+
+def test_clicking_see_more_to_read_a_long_post_back_passes(tmp_path):
+    steps = [*t.browser_check(), t.claimed(text=LONG), *see_more(t.clean_post(LONG, IMAGE))]
+    found = judged(tmp_path, steps, approved=(LONG,))
+    assert found.failures == [] and found.warnings == []
+
+
 # --- hosts (AC-P9.3; S-2) ----------------------------------------------------------------------------
 
 

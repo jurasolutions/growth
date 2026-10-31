@@ -33,7 +33,7 @@ def test_r1_a_new_day_raises_a_request_whose_deadlines_are_the_new_days(conn, wo
     assert next_json()["due"] is False
     assert approvals.get(conn, request.id).status == "superseded"
     [fresh] = [a for a in approvals.pending(conn) if a.subject == found.subject]
-    assert fresh.decide_by == "2026-11-11T18:00:00+08:00"
+    assert fresh.decide_by == "2026-11-11T17:00:00+08:00"
     assert pw.item_row(conn, found.id)["day"] == "2026-11-11" and state(conn, found) == "ready"
     pw.at(monkeypatch, "2026-11-11T10:00:00+08:00")
     assert pw.decide(conn, fresh).answer == "recorded"
@@ -73,7 +73,7 @@ def test_p8_a_post_moved_to_today_after_approval_gets_its_card_in_the_same_sync(
     assert next_json()["due"] is False
     assert approvals.get(conn, request.id).status == "superseded"
     [fresh] = [a for a in approvals.pending(conn) if a.subject == found.subject]
-    assert fresh.decide_by == "2026-11-10T18:00:00+08:00" and fresh.supersedes == request.number
+    assert fresh.decide_by == "2026-11-10T17:00:00+08:00" and fresh.supersedes == request.number
     assert pw.item_row(conn, found.id)["day"] == "2026-11-10" and state(conn, found) == "ready"
     assert [c for c in discord_double.contents("approvals") if fresh.id in c]
 

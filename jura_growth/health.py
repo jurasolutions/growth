@@ -175,7 +175,10 @@ def strip(snapshot) -> list[str]:
             "Check the webhooks with `jura-growth discord test`."
         )
     requests = snapshot.approvals or ()
-    unposted = [r.id for r in requests if not r.posted and r.reading in (mission.Reading.WAITING, mission.Reading.APPROVED)]
+    waiting = [r for r in requests if not r.posted and r.reading in (mission.Reading.WAITING, mission.Reading.APPROVED)]
+    items += [f"{r.id} ({r.kind}) has no card: {r.refused}. Nothing goes out, and it lapses {timeutil.when(r.decide_by)}."
+              for r in waiting if r.refused]
+    unposted = [r.id for r in waiting if not r.refused]
     if unposted:
         items.append(f"Not posted to #approvals yet: {', '.join(unposted)}. The heartbeat posts {'it' if len(unposted) == 1 else 'them'}.")
     for r in requests:

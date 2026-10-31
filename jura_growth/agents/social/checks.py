@@ -29,7 +29,7 @@ from __future__ import annotations
 import re
 from functools import partial
 
-from jura_growth import brand_check
+from jura_growth import brand_check, privacy
 from jura_growth.brand_check import Channel, Issue
 from jura_growth.agents.social import history
 from jura_growth.agents.social.settings import PLATFORMS, Settings, load
@@ -37,12 +37,15 @@ from jura_growth.agents.social.settings import PLATFORMS, Settings, load
 HASHTAG_RE = re.compile(r"(?<![\w&/#])#([A-Za-z][A-Za-z0-9_]*)")
 WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'’.\-]*")
 LINK_IN_BIO_RE = re.compile(r"\blink in (?:our |the )?bio\b", re.I)
+_MASK_WINDOW = 40  # characters quoted either side of a masked place
 MARKDOWN_RE = [
     (re.compile(r"\*\*[^*\n]+\*\*|__[^_\n]+__"), "bold markers"),
     (re.compile(r"^\s{0,3}#{1,6}\s+\S", re.M), "a markdown heading"),
     (re.compile(r"\[[^\]\n]+\]\([^)\s]+\)"), "a markdown link"),
     (re.compile(r"^\s*>\s", re.M), "a block quote"),
     (re.compile(r"`[^`\n]+`"), "code formatting"),
+    # Anywhere on a line, it would also close the fence the post sits in on its approval card.
+    (re.compile(r"```"), "a code fence"),
 ]
 QUOTE_RE = re.compile(r"“([^”]{1,600})”|\"([^\"\n]{1,600})\"")
 GRANT_RE = re.compile(
@@ -141,6 +144,7 @@ def check_post(platform: str, text: str, ctx: dict) -> list[Issue]:
         m = pattern.search(text)
         if m:
             issues.append(Issue("channel", f"Plain text only: {rules.label} doesn't render {what}", m.group(0)[:60]))
+    issues += _hidden_on_the_card(text)
 
     words = word_count(text)
     low, high = settings.words_for(platform, theme.get("id"))
@@ -217,6 +221,42 @@ def _grant_rules(text: str, link_mode: str, settings: Settings) -> list[Issue]:
     return issues
 
 
+def _hidden_on_the_card(text: str) -> list[Issue]:
+    """What the approval card can't show can't be approved. Discord masks a phone number, a named
+    address and a name learned from a lead, even in Jura's own copy, and Ting Yu must never approve
+    words he couldn't read. Judged by what the masking actually does, so a public figure's name
+    passes unless a lead's address taught it.
+
+    One reason per masked place, so the run can fix them all on its one regeneration, each quoting
+    the masked words around it, never the value."""
+    privacy.learn(None)
+    shown = privacy.own_copy_as_shown(text)
+    if shown == text:
+        return []
+    links = [m.span() for m in privacy.URL_RE.finditer(shown)]
+    places = {}
+    for mark in privacy.MASK_RE.finditer(shown):
+        line_start = shown.rfind("\n", 0, mark.start()) + 1
+        line_end = shown.find("\n", mark.end())
+        window = shown[max(line_start, mark.start() - _MASK_WINDOW):min(line_end if line_end >= 0 else len(shown), mark.end() + _MASK_WINDOW)]
+        places.setdefault(window.strip(), _what_was_masked(mark.group(0), any(a <= mark.start() < b for a, b in links)))
+    if not places:
+        return [Issue("channel", "Discord would hide part of this on the approval card, so rewrite it")]
+    return [Issue("channel", f"Discord would hide this on the approval card: {what}", window) for window, what in places.items()]
+
+
+def _what_was_masked(mark: str, in_link: bool) -> str:
+    if in_link:
+        return "this link holds a number shaped like a phone's, so use another link"
+    if mark == privacy.PHONE:
+        return "a phone number, or digits shaped like one, so leave it out, and write a range as 3,000 to 4,000"
+    if mark == privacy.NAME:
+        return "a name known from a lead, even where it is an ordinary word here, so use another word"
+    if "***@" in mark or mark == privacy.ADDRESS:
+        return "an email address, so leave it out or use a shared inbox such as hello@"
+    return "something Discord never shows, so leave it out"
+
+
 # --- the card channel --------------------------------------------------------
 
 
@@ -233,6 +273,7 @@ def check_card(text: str, ctx: dict) -> list[Issue]:
         m = pattern.search(every)
         if m:
             issues.append(Issue("channel", f"Image card text is plain: no {what}", m.group(0)[:60]))
+    issues += _hidden_on_the_card(every)
     for hit in blocked_topic_hits(every, settings.blocked_topics):
         issues.append(Issue("channel", "Off-limits topic for Jura's pages (politics, elections, tragedies)", hit))
     return issues

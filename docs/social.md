@@ -21,7 +21,8 @@ images) and 2 (schedule and history) are built. Block 3 is replaced by browser p
 (`prd-jura-browser-publishing-2026-10-25.md`, which supersedes the social PRD's §1 last sentence,
 §2 criterion 5, the "Later block", §5.6 block 3 and §6 question 3; see its §3.3): the Graph API,
 the Posts API, `publish_mode: auto` and the two-hour skip window are dropped. `publish_mode` is
-`draft` (the default, and every platform today) or `browser`.
+`browser` (Facebook and Instagram, since `prd-jura-approvals-first-social-depth-2026-10-31.md`) or
+`draft`, the way back.
 
 ## How a day runs
 
@@ -36,8 +37,10 @@ the Posts API, `publish_mode: auto` and the two-hour skip window are dropped. `p
 3. `submit` enforces the rules in code (below), renders the cards, writes
    `outputs/growth/social/YYYY-MM-DD/`, logs `social_posts` and delivers each platform's post by
    its `publish_mode`.
-4. For a platform in `draft` mode, Ting Yu copies the post, or skips it, and can record that it
-   went out. For a platform in `browser` mode, see "Publishing through the browser" below.
+4. For a platform in `browser` mode, each post waits on its own approval card in `#approvals`, and
+   an approval posts it: see "Publishing through the browser" below. What became of it goes to
+   `#social-drafts`, the agent's feed. For a platform in `draft` mode, Ting Yu copies the post from
+   `#social-drafts`, or skips it, and can record that it went out.
 
 ## Commands
 
@@ -95,9 +98,11 @@ In this order. Steps 1 to 4 refuse without using up the day's regeneration.
    submission of the day that fails anywhere delivers nothing, lists every reason and posts one
    alert. The second is final: what passes is delivered, what fails is dropped. There is no
    third. If nothing passes, "No draft today" goes to `#social-drafts` with the reasons.
-6. **Delivery:** images, the output folder, `social_posts` rows, one message per platform with
-   its images (Instagram's carousel as one message), then a message with the sources and the
-   folder. If Chrome fails, the text is still delivered and `#alerts` says why.
+6. **Delivery:** images, the output folder, `social_posts` rows, then for each platform in
+   `browser` mode one approval card with its text, images and sources. A post with no images gets
+   no card: a note in `#social-drafts` says why, and `#alerts` carries a render failure. For a
+   platform in `draft` mode, one message with its images (Instagram's carousel as one message),
+   then a message with the sources and the folder.
 
 `submit` runs the same checker as `jura-growth check --channel social-<platform>`; that is PRD
 §5.1 step 5.
@@ -116,6 +121,7 @@ allowance (the email's "30-minute call"). The social channels add:
 | `social-linkedin` | Not used while LinkedIn is switched off; kept for `jura-growth check` and for switching it back on. 120–220 words; up to 3 hashtags, all on the last line; links as Facebook |
 | `social-instagram` | The theme's word range (below); up to 5 hashtags on the last line; at most 2200 characters; no URL or domain at all; says "Link in bio" |
 | `social-card` | The card's words, every word on the picture included: no links, no hashtags, no markdown. Headline and item titles are checked as headings (sentence case, not a question) |
+| All of these | No code fence anywhere, and nothing Discord would mask (a phone number, a named address, a name known from a lead, a link holding a phone-shaped number). The approval card must show the exact words. A public figure's name passes unless a lead's address taught it |
 
 A word-range miss is a brand-gate failure, so it uses the regeneration. Instagram's hashtag and
 character limits are set low on purpose: neither is confirmed from Meta, lowering them costs
@@ -307,14 +313,29 @@ Saturday and Sunday, so no weekend draft, item or card is made for any platform.
 per-platform weekend switch.
 
 1. `social submit` makes a **publish item** for each platform in `browser` mode whose variant
-   passed the brand gate, and raises one `social-post` approval request for it. The card in
-   `#approvals` shows the A-id, the page and its URL, the day, the exact text, the image, the
-   links in the text, the brand-gate result and "decide by <day>, 18:00 SGT". Drafts written
-   before a platform moved to `browser` mode get no item. A platform in `browser` mode without
-   `page_url` set gets a note in `#social-drafts` saying why, and no card.
-2. Ting Yu approves or skips in `#approvals`. A skip, until the item is claimed, withdraws it and
-   records `social skip <date> <platform>`. Unanswered or unclaimed by the end of the posting
-   window (18:00 SGT on its day), the request expires and the draft stays as it is.
+   passed the brand gate and has its images, and raises one `social-post` approval request for it.
+   The card in `#approvals` shows the A-id, the page and its URL, the day, the headline, the exact
+   text, every image in order, the links in the text, the sources, the brand-gate result and
+   "decide by <day>, 17:00 SGT". A long card splits with its code fence balanced, and its images sit
+   on the first piece, beside the buttons. Discord masks a phone number, a named address and a name
+   known from a lead, even in Jura's own copy, so a post or a picture holding one fails the brand
+   gate, with one reason per masked place: he never approves words he couldn't read. A card that
+   would still show masked text, from a name learned since the gate or a row changed past it, isn't
+   posted. One note in `#social-drafts` says why, the digest and the one-pager say it has no card, a
+   typed approval is refused, and it lapses. Drafts written before a platform moved to `browser` mode get no item. A
+   platform in `browser` mode with no `page_url`, a submit after the decide-by, and a post with no
+   images each get a note in `#social-drafts` saying why, and no card. Nothing in `browser` mode
+   asks Ting Yu to post by hand. The social job's precheck skips before Claude starts once the
+   decide-by has passed, when every platform still to draft is in `browser` mode.
+2. Ting Yu approves or skips in `#approvals`, by 17:00 SGT on its day. That leaves publish slots at
+   17:00, 17:20 and 17:40, so two approvals made together both go out. A skip, until the item is
+   claimed, withdraws it and records `social skip <date> <platform>`, which drops that platform for
+   the day: a card can't be edited or regenerated. Unanswered by 17:00, or approved and unclaimed
+   by the end of the posting window at 18:00, the request expires and the draft stays as it is. One
+   exception to 17:00: a claim that finds the post changed raises its replacement at once, and that
+   card has until 18:00. Approved after the last run has started, its line says it will lapse. The
+   18:05 digest writes those lapses first, so an unanswered card closes that evening.
+   Each decision or lapse sends one quiet line to `#social-drafts` (`feed.py`), naming the post.
 3. `publish next` claims at most one approved item inside one `BEGIN IMMEDIATE` transaction. In
    that transaction it reads the text and every image once, refuses unless exactly those bytes
    hash to the approval, writes those bytes to `data/growth/work/publish/<A-id>/`, and prints
@@ -429,6 +450,8 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
 - **No model text goes out.** Every publish run's summary and error are written from the item's
   record: the A-id, the platform, what happened, the URL or the closed stop reason, and the run
   id. The model's own summary and `FAIL:` line stay in the transcript.
+- **Long posts read back whole.** The prompt clicks "See more" or "more" once before reading a
+  Facebook, Instagram or group post, so a long post doesn't read as a mismatch.
 - **Run updates** (`run_update: claimed-only`) post in `#social-drafts` only for a run that
   claimed an item. Stops, mismatches and unknown items also go to `#alerts`, once each: a stop's
   one alert comes from `publish stopped` and names the run, whose transcript keeps what the page
@@ -441,7 +464,10 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
 
 `social.digest(conn, day)` gives `social_drafts_waiting`, `social_skipped` and
 `social_published` (published by `published_at` day), a `#daily-digest` line, and a brief
-fragment such as "3 social drafts waiting" or "no social draft today".
+fragment such as "3 social drafts waiting" or "no social draft today". The line says where each
+draft is: waiting in `#approvals` on a pending card, waiting in `#social-drafts` in `draft` mode, or
+with no card (too late to ask, from before the platform moved to `browser` mode, or a card that has
+closed).
 
 `publish.digest(conn, day)` adds the day's publish items: `publish_posted`, `publish_skipped`,
 `publish_expired` and `publish_stopped`, and a "Publishing: …" line, on days that had items.

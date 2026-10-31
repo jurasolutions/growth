@@ -23,6 +23,12 @@ NOT_FOR_ENQUIRIES = ("careers", "career", "jobs", "job", "hr", "recruit", "recru
                      "hiring", "apply", "resume", "resumes", "cv", "privacy", "dpo", "abuse", "noreply", "no-reply", "donotreply", "postmaster", "webmaster")
 
 
+def words() -> frozenset[str]:
+    """Every word in the shared-inbox vocabulary: "sales.singapore@" names no person."""
+    roles = (*ENQUIRY_ROLES, *OTHER_ROLES, *NOT_FOR_ENQUIRIES)
+    return frozenset(word for role in roles for word in re.split(r"[^a-z]+", role) if word)
+
+
 def local_part(email: str) -> str:
     return email.split("@", 1)[0].lower()
 

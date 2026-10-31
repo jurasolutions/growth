@@ -6,7 +6,7 @@
   `claude` binary does in BP-03 (G21, AC-M4.3): the record must already be used and the item
   `claimed`.
 - An item is one `social_posts` draft and its publish item, in the next free platform and day
-  whose posting window is still open (one draft per platform per day). All three platforms are
+  whose decide-by is still ahead (one draft per platform per day). All three platforms are
   in `browser` mode.
 - `publish next` claims the oldest claimable item, not a named one, so `attempt` holds the other
   ready items back while it runs (their state, which the content doesn't cover), and puts them
@@ -23,7 +23,7 @@ from datetime import date, timedelta
 import approval_world as aw
 import publish_world as pw
 from jura_growth import approvals, db, timeutil
-from jura_growth.agents.publish import claim, items
+from jura_growth.agents.publish import claim, items, limits
 from jura_growth.agents.social import history
 
 PLATFORMS = ("facebook", "linkedin", "instagram")
@@ -50,8 +50,7 @@ class SocialPostAdapter:
         now = timeutil.now_sgt()
         day = now.date()
         while True:
-            _, closes = pw.limits_window(day)
-            if now < closes:
+            if now < limits.decide_by_on(day):
                 for platform in PLATFORMS:
                     taken = db.scalar(self.conn, "SELECT 1 FROM social_posts WHERE date = ? AND platform = ?",
                                       (day.isoformat(), platform))

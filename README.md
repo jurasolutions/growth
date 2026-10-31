@@ -91,7 +91,7 @@ All times SGT, from `config/settings.yaml`:
 | `scout-send` | 09:30–16:30 business days, every 10 minutes | command |
 | `heartbeat` | 12:00 daily | command |
 | `scout-sync` | 16:45 business days | command |
-| `digest` | 17:30 daily | command |
+| `digest` | 18:05 daily: writes the day's approval lapses first, so an unanswered card closes that evening | command |
 | `community` | Mondays 07:30 | headless Claude |
 | `backup` | 23:30 daily | command |
 

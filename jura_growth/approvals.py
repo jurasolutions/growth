@@ -38,6 +38,11 @@ RECORDED, ALREADY_DECIDED, ALREADY_USED, UNKNOWN_ID, REFUSED = (
     "unknown-id",
     "refused",
 )
+# What a card shows once its request is used (`cards`, `feed`).
+CLAIMED = "used"
+# Why a live request was superseded: its item went away, or what it would send changed.
+ITEM_GONE = "the item is gone"
+CONTENT_CHANGED = "the content changed"
 ANSWERS = (RECORDED, EXPIRED, SUPERSEDED, ALREADY_DECIDED, ALREADY_USED, UNKNOWN_ID, REFUSED)
 DECISIONS = ("approve", "skip")
 _DISCORD_ACTOR = re.compile(r"discord:\d+")
@@ -404,13 +409,13 @@ def request(conn: sqlite3.Connection, kind: str, subject: str, *, reason: str, r
             return lapsed
     if content is None:
         if live is not None:
-            _supersede(conn, registered, live, "the item is gone", now)
+            _supersede(conn, registered, live, ITEM_GONE, now)
         return None
     digest = content_hash(content)
     if live is not None:
         if live.content_hash == digest:
             return live
-        _supersede(conn, registered, live, "the content changed", now)
+        _supersede(conn, registered, live, CONTENT_CHANGED, now)
     return _insert(
         conn, registered, kind, subject, digest, reason=reason, run_id=run_id, supersedes=live.number if live else None, now=now
     )
@@ -553,11 +558,11 @@ def _refresh(conn, registered: _Registered, approval: Approval, now: datetime, *
         return lapsed
     content = registered.kind.content(conn, approval.subject)
     if content is None:
-        return _supersede(conn, registered, approval, "the item is gone", now)
+        return _supersede(conn, registered, approval, ITEM_GONE, now)
     digest = content_hash(content)
     if digest == approval.content_hash:
         return approval
-    closed = _supersede(conn, registered, approval, "the content changed", now)
+    closed = _supersede(conn, registered, approval, CONTENT_CHANGED, now)
     if raise_new:
         _insert(
             conn, registered, approval.kind, approval.subject, digest,

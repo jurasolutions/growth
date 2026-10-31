@@ -176,14 +176,17 @@ def test_an_approve_recorded_at_18_02_is_expired_whatever_discords_time(conn, wo
     assert approvals.get(conn, request.id).decided_at is None
 
 
-@pytest.mark.parametrize("window, deadline", [({"start": "10:00", "end": "16:00"}, "16:00"), ({"start": "08:00", "end": "20:00"}, "18:00")])
-def test_the_deadlines_are_the_end_of_the_configured_window(conn, world, monkeypatch, window, deadline):
+@pytest.mark.parametrize("window, decide_by, use_by", [({"start": "10:00", "end": "16:00"}, "15:00", "16:00"),
+                                                       ({"start": "08:00", "end": "20:00"}, "17:00", "18:00"),
+                                                       ({"start": "10:00", "end": "10:30"}, "10:00", "10:30")])
+def test_the_deadlines_follow_the_end_of_the_configured_window(conn, world, monkeypatch, window, decide_by, use_by):
+    """Use by the window's end, and decide by an hour before it, never before the window opens."""
     publish_config(monkeypatch, window=window)
     pw.at(monkeypatch, pw.MORNING)
     _, request = pw.item(conn)
-    assert request.decide_by == f"2026-11-10T{deadline}:00+08:00"
+    assert request.decide_by == f"2026-11-10T{decide_by}:00+08:00"
     pw.decide(conn, request)
-    assert approvals.get(conn, request.id).use_by == f"2026-11-10T{deadline}:00+08:00"
+    assert approvals.get(conn, request.id).use_by == f"2026-11-10T{use_by}:00+08:00"
 
 
 def publish_config(monkeypatch, **values):

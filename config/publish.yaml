@@ -5,8 +5,8 @@
 # value reads as the hard one. There is no approver setting here: the approver
 # is CONTROL_DISCORD_USER_ID in .env, as for every other approval.
 
-# The posting window, SGT. A post's decide-by and use-by are its end on the
-# post's day. Hard: 09:00 to 18:00.
+# The posting window, SGT. On the post's day, its use-by is the window's end and
+# its decide-by an hour earlier. Hard: 09:00 to 18:00.
 window: {start: "09:00", end: "18:00"}
 
 # Minutes between the start times of the runs that claim two items. Hard: 20.

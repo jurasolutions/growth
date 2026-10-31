@@ -82,7 +82,11 @@ class AppBuild:
     """`app-build`: content is the PRD file's bytes; applied on decide."""
 
     name = KIND
-    feed_approved = "The build handoff is written."
+
+    def feed_approved(self, conn: sqlite3.Connection, subject: str) -> str | None:
+        """Who builds it now, in the decision answer's own words (`answer_line`)."""
+        build = db.one(conn, "SELECT * FROM app_builds WHERE app_id = ? ORDER BY id DESC LIMIT 1", (app_id_of(subject),))
+        return answer_line(build) if build else None
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         found = pending_file(app_id_of(subject))

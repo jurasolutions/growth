@@ -77,11 +77,18 @@ PHONE_RE = re.compile(
 )
 FULL_WIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
 FINANCE_LINE_RE = re.compile(r"^.*personal(?:[-_ ]|%2d)?finance.*$", re.I | re.M)
-# Short words that a name part never masks.
-NOT_NAMES = frozenset(
+# Words an address never teaches as a name: short words, the shared-inbox vocabulary, and what
+# Jura's own posts say every day. The scout calls any address that isn't an exact role "named", so
+# `ai.ling@` or `sales.singapore@` would otherwise mask "AI" or "Singapore" in every post, and a
+# post that a card would mask is refused (`social/checks.py`). The other parts of the address are
+# still learned. A person's name that is one of these ("Ai" in Ai Ling) isn't masked on its own.
+NOT_NAMES = role_addresses.words() | frozenset(
     """
     an as at be by do go he hi if in is it me my no of oh on or ok so to up us we
     the and for you our not are was can has had all any new one two
+    ai automation automate automated automates automating tool tools toolbox software app apps
+    business businesses small team teams work workflow workflows invoice invoices data
+    this week from finding findings fun fact facts good read reading worth news tip tips
     """.split()
 )
 MIN_NAME_PART = 2
@@ -100,6 +107,8 @@ PRODUCT_WORDS = frozenset({"excel", "word", "teams", "office", "outlook", "power
                            "dynamics", "sharepoint", "onenote", "visio", "publisher", "forms", "365", "windows"})
 REMOVED = "[removed]"
 FINANCE = "[removed: personal finance]"
+# What masking leaves behind, to find where it acted. Secrets go first, through `config.redact()`.
+MASK_RE = re.compile("|".join([*(re.escape(mark) for mark in (NAME, PHONE, ADDRESS, REMOVED, FINANCE, "[redacted]")), r"\S\*\*\*@\S+"]))
 
 _never: set[str] = set()
 _name_groups: set[frozenset[str]] = set()  # the name parts of each named address learned
@@ -123,6 +132,12 @@ def for_discord(text: str, *, own_copy: Iterable[str] = ()) -> str:
                 groups.add(frozenset(parts))
     names = _NameMatcher(groups, _companies | _kept_names)
     return "".join(_mask(part, is_own, names) for part, is_own in _split(text, own))
+
+
+def own_copy_as_shown(text: str) -> str:
+    """`text`, Jura's own outgoing words, as Discord would show them. Where this differs, Ting Yu
+    couldn't read those words on an approval card, so they can't be approved (`social/checks.py`)."""
+    return for_discord(text, own_copy=[text])
 
 
 def _bare(value: str) -> str:

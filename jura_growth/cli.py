@@ -421,8 +421,12 @@ def one_pager_cmd(no_post) -> str | None:
 @click.option("--date", "day", help="SGT date, default today.")
 @click.option("--no-post", is_flag=True, help="Write the files without posting to Discord.")
 def digest(day, no_post) -> str:
-    """Write today's summary and post it to #daily-digest."""
+    """Write today's due approval lapses, then today's summary, and post it to #daily-digest."""
     with db.session() as conn:
+        # After 18:00, so a card nobody answered closes the same evening, its feed line goes
+        # out, and the digest counts it. Edits don't notify; new cards wait for the heartbeat.
+        if not no_post:
+            _approval_upkeep(conn, post=False)
         summary = digest_mod.run(conn, day, post=not no_post)
     click.echo(digest_mod.render(summary))
     click.echo("")

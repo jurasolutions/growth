@@ -51,8 +51,9 @@ PUBLISH_ITEMS_PER_RUN = 1
 # Between the start times of the runs that claimed two items. A floor: config
 # may lengthen it, never shorten it.
 PUBLISH_MINUTES_BETWEEN_ACTIONS = 20
-# SGT, start inclusive and end exclusive. A post's decide-by and use-by are the
-# end of the window on its day. Config may narrow it, never widen it.
+# SGT, start inclusive and end exclusive. A post's use-by is the end of the window
+# on its day, and its decide-by an hour earlier (`limits.decide_by_on`). Config may
+# narrow it, never widen it.
 PUBLISH_WINDOW = ("09:00", "18:00")
 
 # App factory

@@ -27,10 +27,17 @@ The rules:
 - No `DISCORD_WEBHOOK_APPROVALS` means nothing is posted or saved to the
   outbox: the record waits, and the one-pager lists it as unposted.
 - A preview with more than ten files is refused before anything is posted,
-  rather than dropping one (AC-M5.5).
+  rather than dropping one (AC-M5.5). So is a card a kind says can't show what
+  it asks about (`card_problem`). The request stays unposted and one note in
+  the kind's feed says why, and the one-pager and the digest say it has no card.
 - Cards mention nobody and go through `discord.post()`'s masking, with the
   Keychain values loaded first (`privacy.load_for_masking`), because a
   preview carries text another process wrote.
+- A long card splits with its code fence balanced (`discord.split`). Its images
+  go on the first piece, beside the buttons and the status line, so a picture
+  is in view when the decision is made, and that piece keeps `HEADER_ROOM` free
+  for its edits. If a later piece fails, the pieces already sent are deleted
+  and the next sweep posts the card whole.
 - One sweep at a time, through the `approval-cards` lock; a second sweep that
   finds it held does nothing, and the next one catches up.
 
@@ -46,11 +53,15 @@ import sqlite3
 from jura_growth import approval_settings, approvals, db, discord, feed, locks, log, privacy, timeutil
 
 CHANNEL = "approvals"
-USERNAME = "Jura growth · approvals"
+USERNAME = feed.USERNAME
 LOCK = "approval-cards"
+REFUSED_EVENT = "approval.card_refused"
+# Kept free in a card's first piece: its first line grows when it is edited ("Superseded: …"),
+# and an edit past Discord's limit would cut the end of the piece, closing fence and all.
+HEADER_ROOM = 120
 APPROVER = "Ting Yu"  # the one approver: CONTROL_DISCORD_USER_ID
 # What a card can show: a record's status, or CLAIMED once it is used.
-CLAIMED = "used"
+CLAIMED = approvals.CLAIMED
 _OPEN = (approvals.PENDING, approvals.APPROVED)  # cards that can still change
 
 
@@ -132,15 +143,21 @@ def button_row(approval: approvals.Approval, kind: approvals.ApprovalKind) -> li
 
 
 def build(conn: sqlite3.Connection, approval: approvals.Approval, kind: approvals.ApprovalKind) -> tuple[str, list]:
-    """The card's text and files. Raises `CardRefused` for more than ten files."""
+    """The card's text and files. Raises `CardRefused` for more than ten files, or when the kind
+    says the card can't show what it asks about (`card_problem`). A fence in the title or the
+    reason can't turn the card's own fence inside out (`discord.no_fence`)."""
     preview = kind.preview(conn, approval.subject)
     files = list(preview.files or ())
     if len(files) > discord.MAX_FILES:
         raise CardRefused(f"the preview has {len(files)} files and a card takes at most {discord.MAX_FILES}")
+    hook = getattr(kind, "card_problem", None)
+    problem = hook(conn, approval.subject) if hook is not None else None
+    if problem:
+        raise CardRefused(problem)
     lines = [header(conn, approval)]
     if preview.title:
-        lines.append(preview.title)
-    lines.append(f"Why: {preview.reason or approval.reason}")
+        lines.append(discord.no_fence(preview.title))
+    lines.append(f"Why: {discord.no_fence(preview.reason or approval.reason)}")
     if preview.text:
         lines.append(preview.text)
     lines.append(answer_line(approval, kind))
@@ -184,15 +201,21 @@ def _post_unposted(conn: sqlite3.Connection) -> int:
             continue  # its plug-in isn't loaded; the one-pager lists it as unposted
         try:
             content, files = build(conn, approval, registered.kind)
+        except CardRefused as error:
+            _say_refused(conn, approval, registered, str(error))
+            continue
         except Exception as error:  # noqa: BLE001 - one bad preview never holds up the rest
-            why = str(error) if isinstance(error, CardRefused) else f"{type(error).__name__}: {error}"
-            log.event(conn, "approval.card_refused", {"approval": approval.id, "kind": approval.kind, "why": why},
+            log.event(conn, "approval.card_error", {"approval": approval.id, "kind": approval.kind, "why": f"{type(error).__name__}: {error}"},
                       level="warning", agent=registered.agent)
             continue
         result = discord.post(conn, CHANNEL, content, files=files, username=USERNAME, dedupe=False,
-                              suppress_embeds=True, wait=True, components=button_row(approval, registered.kind))
+                              suppress_embeds=True, wait=True, components=button_row(approval, registered.kind),
+                              first_piece_room=HEADER_ROOM, files_first=True, own_copy=_own_copy(conn, approval, registered))
         if not result.delivered:
-            continue  # saved to the outbox by post(); the next sweep posts it again
+            # Saved to the outbox by post(); the next sweep posts it again, whole. A piece that
+            # did go out would be left with live buttons, so it goes first.
+            _delete_pieces(conn, result)
+            continue
         message_id = result.message_ids[0] if result.message_ids else None
         with db.transaction(conn):
             approvals.mark_posted(conn, approval, message_id)
@@ -203,6 +226,47 @@ def _post_unposted(conn: sqlite3.Connection) -> int:
             )
         posted += 1
     return posted
+
+
+def refusal(conn: sqlite3.Connection, approval_id: str) -> str | None:
+    """Why the sweep refused this request's card, or None if it hasn't."""
+    row = conn.execute(
+        "SELECT json_extract(payload_json, '$.why') FROM events WHERE kind = ? AND json_extract(payload_json, '$.approval') = ? LIMIT 1",
+        (REFUSED_EVENT, approval_id),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _say_refused(conn: sqlite3.Connection, approval: approvals.Approval, registered, why: str) -> None:
+    """A request with no card still waits, so say so, once: one event and one note in the kind's
+    feed. It's at most once, like a feed line: a note Discord doesn't take goes to the outbox."""
+    if refusal(conn, approval.id) is not None:
+        return
+    log.event(conn, REFUSED_EVENT, {"approval": approval.id, "kind": approval.kind, "why": why}, level="warning", agent=registered.agent)
+    channel = feed.channel_for(registered)
+    if channel:
+        note = f"**{approval.id} has no card** · {approval.reason}\n{why}. Nothing goes out, and it lapses {timeutil.when(approval.decide_by)}."
+        discord.post(conn, channel, note, username=USERNAME, dedupe=False, suppress_embeds=True)
+
+
+def _own_copy(conn: sqlite3.Connection, approval: approvals.Approval, registered) -> tuple[str, ...]:
+    """The parts of a card that are Jura's own outgoing text (`own_copy`, `privacy.py`), if the
+    kind names any. A failing hook keeps the card fully masked."""
+    hook = getattr(registered.kind, "own_copy", None)
+    if hook is None:
+        return ()
+    try:
+        return tuple(hook(conn, approval.subject))
+    except Exception as error:  # noqa: BLE001 - masked is the safe way to fail
+        log.event(conn, "approval.card_note_error", {"approval": approval.id, "error": f"{type(error).__name__}: {error}"},
+                  level="warning", agent=registered.agent)
+        return ()
+
+
+def _delete_pieces(conn: sqlite3.Connection, result: discord.PostResult) -> None:
+    for message_id in result.message_ids:
+        if message_id:
+            discord.delete(conn, CHANNEL, message_id)
 
 
 def _card_title(rest: list[str], approval: approvals.Approval) -> str:
@@ -229,7 +293,10 @@ def _edit_changed(conn: sqlite3.Connection) -> int:
             continue
         rest = row["first_piece"].split("\n", 1)
         content = header(conn, approval) + ("\n" + rest[1] if len(rest) > 1 else "")
-        done = row["message_id"] and discord.edit(conn, CHANNEL, row["message_id"], content, components=no_buttons).delivered
+        # What the piece already shows stands, so a kind's own copy isn't masked by the edit.
+        registered = approvals.kinds().get(approval.kind)
+        own = (rest[1],) if len(rest) > 1 and registered and getattr(registered.kind, "own_copy", None) else ()
+        done = row["message_id"] and discord.edit(conn, CHANNEL, row["message_id"], content, components=no_buttons, own_copy=own).delivered
         if not done:
             follow_up = f"{approval.id}: {status_line(conn, approval)} (the card couldn't be edited)."
             discord.post(conn, CHANNEL, follow_up, username=USERNAME, dedupe=False, suppress_embeds=True)
@@ -237,7 +304,7 @@ def _edit_changed(conn: sqlite3.Connection) -> int:
             "UPDATE approval_cards SET shows = ?, updated_at = ? WHERE approval_id = ?",
             (now_shows, timeutil.stamp(), approval.number),
         )
-        feed.announce(conn, approval, row["shows"], now_shows, _card_title(rest, approval),
-                      has_successor=approvals.successor(conn, approval) is not None)
+        note = _superseded_note(conn, approval) if now_shows == approvals.SUPERSEDED else None
+        feed.announce(conn, approval, row["shows"], now_shows, _card_title(rest, approval), note=note)
         edited += 1
     return edited

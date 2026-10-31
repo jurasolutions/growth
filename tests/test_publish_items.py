@@ -14,7 +14,7 @@ import pytest
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
 from jura_growth import approvals, cards, config, db, paths
-from jura_growth.agents.publish import items, kinds
+from jura_growth.agents.publish import hosts, items, kinds
 from jura_growth.agents.social import submit
 from jura_growth.agents.social.settings import SettingsError, load
 from sweep import PHONE, RESEND_KEY, assert_clean, d2_secrets, outbox_dir, planted  # noqa: F401
@@ -39,11 +39,18 @@ def social_posts(conn) -> list[dict]:
     return db.rows(conn, "SELECT * FROM approvals WHERE kind = 'social-post' ORDER BY id")
 
 
+SHIPPED = {
+    "facebook": {"publish_mode": "browser", "page_url": "https://www.facebook.com/jurasolutionssg", "enabled": True},
+    "instagram": {"publish_mode": "browser", "page_url": "https://www.instagram.com/jura_solutions/", "enabled": True},
+    "linkedin": {"publish_mode": "draft", "page_url": None, "enabled": False},
+}
+
+
 # --- settings: publish_mode is draft or browser (expand and contract) ------------------------
 
 
 def test_publish_mode_is_draft_or_browser_and_auto_is_gone(monkeypatch):
-    assert {p.publish_mode for p in load().platforms.values()} == {"draft"}
+    assert {p.name: p.publish_mode for p in load().platforms.values()} == {name: ships["publish_mode"] for name, ships in SHIPPED.items()}
     pw.social_config(monkeypatch, browser=("facebook",))
     settings = load()
     assert settings.platforms["facebook"].publish_mode == "browser"
@@ -62,9 +69,13 @@ def test_publish_mode_is_draft_or_browser_and_auto_is_gone(monkeypatch):
         load()
 
 
-def test_every_platform_ships_in_draft_mode():
+def test_each_platform_ships_exactly_as_decided():
+    """Facebook and Instagram post through the browser, each only once Ting Yu approves that exact
+    post. LinkedIn stays off. Merging this is what switches real posting on (PRD §7)."""
     raw = config.agent_config("social")["platforms"]
-    assert {spec["publish_mode"] for spec in raw.values()} == {"draft"}
+    assert {name: {key: spec[key] for key in ("publish_mode", "page_url", "enabled")} for name, spec in raw.items()} == SHIPPED
+    for name in ("facebook", "instagram"):
+        assert hosts.page_problem(name, SHIPPED[name]["page_url"]) is None
 
 
 # --- AC-P1.1 a request per item ------------------------------------------------------------
@@ -81,25 +92,23 @@ def test_submit_raises_one_social_post_request_for_facebook_only(conn, social):
 
     [card] = social.posts("approvals")
     lines = card.content.split("\n")
-    assert lines[0] == f"**{request.id} · social post** · decide by Tue 10 Nov, 18:00 SGT"
+    assert lines[0] == f"**{request.id} · social post** · decide by Tue 10 Nov, 17:00 SGT"
     assert "Facebook Page" in card.content and pw.PAGE_URL in card.content
     assert "Tue 10 Nov 2026" in card.content
     assert FB.strip() in card.content  # the exact text
-    assert "Links in the text: https://jurasolutions.sg" in card.content
+    assert "Links in the text: <https://jurasolutions.sg>" in card.content
     assert "Brand check: passed on attempt 1 of 2" in card.content
     assert [name for name, _ in card.files] == ["facebook-1200x630.png"]
 
 
-def test_the_social_drafts_message_for_facebook_points_at_the_card(conn, social):
+def test_a_browser_platform_stays_out_of_social_drafts_and_a_draft_platform_gets_its_hand_post(conn, social):
+    """AF1 and AF5: the post's text and images stay on its card, and draft mode keeps hand-posting."""
     submit_tip(conn)
-    [request] = approvals.pending(conn)
-    drafts = social.contents("social-drafts")
-    facebook = [m for m in drafts if m.startswith("**Facebook Page**")]
-    assert len(facebook) == 1
-    assert request.id in facebook[0] and "#approvals" in facebook[0]
-    assert FB.strip() not in facebook[0]
-    [message] = [p for p in social.posts("social-drafts") if (p.content or "").startswith("**Facebook Page**")]
-    assert message.files == []
+    assert len(approvals.pending(conn)) == 1
+    drafts = social.posts("social-drafts")
+    assert [p for p in drafts if (p.content or "").startswith("**Facebook Page**")] == []
+    assert not any(FB.strip() in (p.content or "") for p in drafts)
+    assert not any(name.startswith("facebook") for p in drafts for name, _ in p.files)
     instagram = [p for p in social.posts("social-drafts") if (p.content or "").startswith("**Instagram**")]
     assert len(instagram) == 1 and instagram[0].files and "post it by hand" in instagram[0].content
 
@@ -145,21 +154,22 @@ def test_a_saturday_draft_on_a_browser_platform_raises_a_request(conn, social, m
     folder = write(paths.work_dir("social") / "2026-11-14", TIP)
     assert submit.submit(conn, folder, offline=True, theme_id="automation-tip").status == "delivered"
     [request] = approvals.pending(conn)
-    assert request.decide_by == "2026-11-14T18:00:00+08:00"
+    assert request.decide_by == "2026-11-14T17:00:00+08:00"
 
 
 # --- browser mode with nothing to post to --------------------------------------------------
 
 
-def test_browser_mode_without_a_page_url_falls_back_to_posting_by_hand(conn, env, monkeypatch, discord_double):
+def test_browser_mode_without_a_page_url_gets_a_note_and_never_a_request_to_post(conn, env, monkeypatch, discord_double):
     pw.at(monkeypatch, pw.MORNING)
     pw.social_config(monkeypatch, urls={"facebook": None})
     outcome = submit_tip(conn)
     assert outcome.status == "delivered"
     assert db.rows(conn, "SELECT * FROM publish_items") == []
     assert any("page_url" in line for line in outcome.lines)
-    facebook = [m for m in discord_double.contents("social-drafts") if m.startswith("**Facebook Page**")]
-    assert "post it by hand" in facebook[0]
+    assert [m for m in discord_double.contents("social-drafts") if m.startswith("**Facebook Page**")] == []
+    assert any("facebook" in m and "page_url" in m for m in discord_double.contents("social-drafts"))
+    assert not any("by hand" in m and "Facebook" in m for r in discord_double.requests for m in [r.content or ""])
 
 
 def test_an_item_is_not_raised_once_its_posting_window_has_closed(conn, monkeypatch):
@@ -256,10 +266,10 @@ def test_a_draft_skipped_or_posted_by_hand_makes_the_item_gone(conn, monkeypatch
     assert cards.status_line(conn, approvals.get(conn, other.id)).startswith("Superseded: posted by hand")
 
 
-# --- the sweep (AC-M11.1, AC-M12.1) over social-post cards and the #social-drafts pointer -----
+# --- the sweep (AC-M11.1, AC-M12.1) over social-post cards and their feed lines ---------------
 
 
-def test_social_post_cards_and_the_pointer_carry_nothing_planted(conn, env, monkeypatch, discord_double, d2_secrets):
+def test_social_post_cards_and_their_feed_lines_carry_nothing_planted(conn, env, monkeypatch, discord_double, d2_secrets):
     pw.at(monkeypatch, pw.MORNING)
     label = f"Facebook Page {planted().marker} {RESEND_KEY} {PHONE}"
     pw.social_config(monkeypatch)
@@ -279,9 +289,15 @@ def test_social_post_cards_and_the_pointer_carry_nothing_planted(conn, env, monk
     # A draft row planted by raw SQL (past the gate), with its own item and card.
     pw.at(monkeypatch, pw.TEN)
     pw.social_config(monkeypatch, browser=("facebook", "linkedin"))
-    pw.item(conn, "linkedin", text=planted().text(), day=pw.DAY + timedelta(days=1))
+    _, unreadable = pw.item(conn, "linkedin", text=planted().text(), day=pw.DAY + timedelta(days=1))
     cards.sweep(conn)
-    pointer = [p for p in discord_double.posts("social-drafts") if planted().marker in (p.content or "")]
-    assert pointer and "#approvals" in pointer[0].content
-    assert len(discord_double.posts("approvals")) == 2
+    # Facebook's card only. The planted draft is past the gate, and its text would show masked, so
+    # it gets no card at all (code review 02, SP-B1).
+    assert len(discord_double.posts("approvals")) == 1
+    assert approvals.get(conn, unreadable.id).posted_at is None
+    [first, *_] = approvals.pending(conn)
+    pw.decide(conn, first, monkeypatch=monkeypatch)
+    cards.sweep(conn)  # the planted label reaches a feed line
+    line = [p for p in discord_double.posts("social-drafts") if planted().marker in (p.content or "")]
+    assert line and f"{first.id} approved" in line[0].content
     assert_clean(discord_double, outbox_dir(), planted())

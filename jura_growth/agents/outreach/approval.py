@@ -28,7 +28,7 @@ import re
 import sqlite3
 from datetime import date, datetime, time
 
-from jura_growth import approval_settings, approvals, caps, db, log, pause, timeutil
+from jura_growth import approval_settings, approvals, caps, db, discord, log, pause, timeutil
 from jura_growth.agents.outreach import store
 
 KIND = "outreach-email"
@@ -81,7 +81,7 @@ class OutreachEmail:
     """The kind `approvals` asks about every `outreach_message:<id>`."""
 
     name = KIND
-    feed_approved = "It goes out on the next send run, inside today's window and caps."
+    feed_approved = "It goes out on a send run, inside the send window and the day's caps."
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         from jura_growth.agents.outreach import queue
@@ -113,7 +113,7 @@ class OutreachEmail:
         lead, row = queue.recipient(conn, message["lead_id"])
         found_by = db.one(conn, "SELECT id, job FROM runs WHERE id = ?", (lead["run_id"],)) if lead["run_id"] else None
         origin = f" from {found_by['job']} run {found_by['id']}" if found_by else ""
-        draft = "\n".join(f"> {line}" if line else ">" for line in message["draft_body"].split("\n"))
+        draft = "\n".join(f"> {line}" if line else ">" for line in discord.no_fence(message["draft_body"]).split("\n"))
         # No address on these lines: privacy removes Ting Yu's own from Discord.
         button = f"Button: {design.CALL_LABEL} → {settings.CALL_URL}"
         template = (
