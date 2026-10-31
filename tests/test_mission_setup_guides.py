@@ -20,6 +20,12 @@ def test_the_morning_brief_guide_tells_ting_yu_to_remove_the_line():
     assert "#mission-control" in text and "09:00" in text
 
 
+def test_the_dispatch_contract_no_longer_says_the_one_pager_carries_the_grid():
+    contract = (paths.REPO_ROOT / "docs" / "dispatch-contract.md").read_text(encoding="utf-8")
+    assert "with the 14-day grid" not in contract
+    assert "morning picture" in contract
+
+
 def test_the_discord_guide_names_both_new_channels_and_approvals_notifies_on_all_messages():
     text = (SETUP / "discord.md").read_text(encoding="utf-8")
     for channel in ("mission-control", "approvals"):

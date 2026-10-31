@@ -25,7 +25,7 @@ One actual execution of a job, with a start, a finish, a status and a summary.
 _Avoid_: execution, invocation
 
 **Quiet run**:
-A run of a job marked quiet (scout-send, publish) that found nothing to do. It leaves a trace that
+A run of a job marked quiet (scout-send, publish, outreach-requests) that found nothing to do. It leaves a trace that
 it ran, but no Discord post.
 
 **Slot status**:
