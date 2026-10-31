@@ -13,7 +13,8 @@ Three kinds, set under `"visual"` in `card.json`:
     compare  two columns of 2 to 3 short points, each with an icon and a label.
              Before and after, or what changes and what doesn't.
     figure   one figure from a source, with what it counts and who says so. A percentage gets
-             a ring. The numbers rule still applies: it comes from a source the post links.
+             a ring. The numbers rule still applies: it comes from a source the post links,
+             and `drafts.theme_problems` holds its value and its source to the post.
 
 `words()` gives the brand checker every word a visual prints, so nothing on the picture skips it.
 """

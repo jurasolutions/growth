@@ -240,7 +240,7 @@ def test_a_list_of_five_items_gets_the_cover_and_four_slides(env, conn, monkeypa
 def test_from_the_toolbox_needs_no_items_and_one_image(env, conn, monkeypatch):
     monkeypatch.setenv("JURA_GROWTH_NOW", "2026-10-28T07:05:00+08:00")
     url = "https://jurasolutions.sg/apps/quote-builder"
-    facebook = NEWS["facebook.md"].replace(IMDA, url).replace(SHEETS, url).replace("this week.", "this week.", 1)
+    facebook = NEWS["facebook.md"].replace(IMDA, url).replace(SHEETS, url)
     files = {**NEWS, "facebook.md": facebook, "sources.md": "", "card.json": json.dumps({"layout": "tool", "tool": "quote-builder"})}
     # 163 words sits inside the toolbox's default range, and 130 inside Instagram's.
     outcome = run(conn, write(paths.work_dir("social") / "2026-10-28", files))

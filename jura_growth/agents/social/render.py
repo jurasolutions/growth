@@ -363,7 +363,7 @@ def render_spec(
     prefix: str = "",
 ) -> dict[str, list[Path]]:
     """Render `spec` at each (name, width, height). `carousel` maps a size name
-    to its slide count (Instagram on Mondays and Thursdays)."""
+    to its slide count (Instagram's, on a carousel theme or a carousel day)."""
     settings = settings or load()
     carousel = carousel or {}
     made: dict[str, list[Path]] = {}

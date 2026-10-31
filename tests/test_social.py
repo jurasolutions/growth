@@ -48,7 +48,7 @@ If chasing payments takes up more of your week than it should, we're happy to lo
 
 #SmallBusiness #Automation #Invoicing
 """,
-    "facebook.md": """Chasing late invoices by hand? Your accounting software can send the first reminder for you.
+    "facebook.md": """Chasing late invoices yourself? Your accounting software can send the first reminder for you.
 
 Xero and QuickBooks both let you set an automatic reminder a few days after the due date. Write the message once, include the invoice number and a payment link, and it goes out for every unpaid invoice. Your team still decides who follows up by phone.
 

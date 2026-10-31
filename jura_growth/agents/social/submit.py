@@ -5,8 +5,9 @@ In order:
 
 1. Which platforms still need a post today (weekend switch, skips, the one
    post per platform per day cap).
-2. The folder: three variants, sources.md, card.json, and what the theme
-   needs (sources and their dates, the tool).
+2. The folder: the variants, sources.md, card.json, and what the theme needs:
+   sources, their dates and sites, the tool, the layout, the card's items and
+   picture, and every figure on the card tied to the post (`drafts.theme_problems`).
 3. The 14-day no-repeat rule for story URLs and tools.
 4. Source links must work.
 5. The brand gate on each variant (`social-<platform>`) and on the card's
