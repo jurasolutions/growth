@@ -1,6 +1,6 @@
 # 13: A refusal over remote says why, and close review 11
 
-Status: ready-for-agent
+Status: done
 Blocked by: 11
 
 Work on the same branch and worktree. First merge `origin/crew/approvals-first-social-depth` for this ticket, then `origin/main` if it has moved. Read `reviews/code-review-11.md`; the finding ids below are its own.

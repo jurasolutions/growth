@@ -456,3 +456,60 @@ Ticket 06's case 2 and ticket 07 are covered at their seams in the same test fil
 **The live `.env`.** A session guard now fails any test that opens it, and `seed.LIVE_ENV_FILES` is planted for every test. Every seed run that gets past its folder check goes through a planted file. A subprocess is outside the guard. I read each subprocess call in the suite: they inherit the temp `JURA_GROWTH_ENV_FILE`, except `tests/test_uat_seed.py`'s, which the seed refuses at its folder check, before it reads any env file.
 
 **Not checked:** a real SSH call, how Discord renders any of this, and whether Discord accepts every webhook spelling the seed now refuses.
+
+### After ticket 13
+
+*Developer, ticket 13, on the same branch. `origin/main` hasn't moved since `019133d`. As above, this is the developer's own run for the reviewer and the gate.*
+
+| # | Verdict | Result |
+|---|---|---|
+| X1 | **Met** | Run 1, real clock: 5967 passed in 350 s. Run 2, clock starting Tue 10 Nov 23:57 and crossing midnight: 5967 passed in 390 s. No failure, error or `SKIPPED` line in either |
+| X2 | **Met** | 122 names read, against run 1's junit, with the same two non-matches as above |
+| X3 | **Met, two changes listed** | `same` 22 times. `CHANGED test_hashtag_limits_and_position` (technical N9) and `CHANGED test_digest_figures` (AF5, A13) |
+| X4 | **Met** | All unchanged since `f0db1e5`, with the same abbreviated-name artefact as above |
+| X5 | **Not met as worded, no rule lowered: the gate rules, as before** | The same 5 parametrize lines named `words`. The skip and xfail grep counts 0 |
+| X6 | **Not met as worded, no behaviour changed: the gate rules, as before** | The same three files as QA listed, unchanged by this ticket. `claim.py`, `origin.py`, `approvals_cli.py`, `remote.py`'s allowlist and the ADRs show no diff. The new helper is in `cards.py`, and each kind's `on_approve` calls it |
+| X7 | **Met for this branch; the gate rules on one file outside it** | `git diff --name-only origin/main...HEAD` holds nothing under `data/`, `inputs/` or `design-system/`. The `find` still prints `inputs/icp.md`, which isn't this branch's change. The conductor has checked it, and the gate rules on it |
+| X8 | **Met** | The PC3 file passed with no skip in both runs. The matrix, rerun on this tree, is identical line by line: 34 of 34 pass |
+
+**X9 isn't rerun:** `git diff 2e00e94 HEAD` shows no change to the card's templates, `visuals.py` or `render.py`.
+
+**The `remote` walk, real output.** Each call is a new process (`tests/remote_child.py`, `remote --json`), with a recorder on `127.0.0.1` for Discord and a planted live env file. The walk never ran `send-due`.
+
+```
+=== social-post: Discord down, then back up
+/growth approve A-0001 [10:05]   exit 2, refused, row pending, posted 0
+  refused: A-0001's card hasn't gone out yet, so it can't be approved. It may be posting now: read it in #approvals and decide there.
+Discord back: the refused call's own sweep posts the card
+/growth approve A-0001 [10:06]   exit 2, refused, row pending, posted 1
+  refused: A-0001's card hasn't gone out yet, so it can't be approved. It may be posting now: read it in #approvals and decide there.
+/growth approve A-0001 [10:07]   exit 0, recorded, row approved, posted 1
+  A-0001 approved.
+/growth skip A-0002 [10:08]      exit 0, recorded, row skipped, posted 1
+  A-0002 skipped.
+
+=== social-post: a card the sweep refused
+/growth approve A-0001 [10:31]   exit 2, refused, row pending, posted 0
+  refused: Discord would mask part of the post, so its card can't show the exact text. A-0001 can't be approved. Nothing goes out, and it lapses Tue 10 Nov, 17:00 SGT. You can still skip it.
+/growth pending [10:32]
+  - A-0001 · Facebook Page as ... · no card: Discord would mask part of the post, so its card can't show the exact text. Nothing goes out, and it lapses Tue 10 Nov, 17:00 SGT
+
+=== outreach-email: Discord down
+/growth approve A-0001 [10:05]   exit 2, refused, row pending, posted 0
+  refused: A-0001's card hasn't gone out yet, so it can't be approved. It may be posting now: read it in #approvals and decide there.
+/growth skip A-0001 [10:06]      exit 0, recorded, row skipped, posted 0
+  A-0001 skipped.
+```
+
+The third approve still records. The second answer now tells him to read the card first, but nothing stops a retry once the card is out: that is the rule as written, and it's why the words matter.
+
+**Whether `remote` can hide a kind's reason in general: yes, in two ways.** `remote.py` is unchanged, as the ticket asked.
+
+- **A `BadArgs` that doesn't start `refused:`.** With a kind stubbed on the double, `BadArgs("a plain reason from a kind")` reached the reply as "refused: the command was not understood", and `BadArgs("refused: a prefixed reason from a kind")` reached it whole. The kinds' other `BadArgs` all start `refused:` (`group_rules.py`, `approvals._args_problem`), and the README's plug-in table now says it must.
+- **A warning printed first.** `_run` captures stderr with stdout, and `handle` checks only the start of the buffer. If `JURA_GROWTH_ENV_FILE` is readable by other users, `config._env_file` prints its permissions warning on first read, ahead of the answer, so even a `refused: ` answer becomes "the command was not understood". This ticket's first tests met it with a 0644 temp file, and they now set 0600, as a real one should be. I didn't check the live `.env`'s mode, since nothing in this work may touch it. It is worth a line in the after-merge steps, and for ticket 12.
+
+**S4.** `aw.card_goes_out` now calls `cards.build` first. No test's result changed: the suite is 5967 passed. With `preview` raising, a throwaway probe now gives `refused` and `posted_at None`, where review 11 walked `recorded`.
+
+**The live `.env`.** Until this ticket, each suite start called `os.path.realpath` on the live path, through `LiveEnvGuard`, and `test_an_env_file_in_the_repo_is_refused` resolved it. Each is a metadata lookup and not an open, in my ticket 11 runs and this ticket's first red runs. Both are gone: the guard uses `abspath`, and the test names a file beside it. The two full runs above don't look it up by those routes. I can't prove that from inside a run, because a stat isn't an audit event.
+
+**Not checked:** a real SSH call (`remote_child.py` supplies the origin), and how Discord renders any of this.
