@@ -51,14 +51,14 @@ import sqlite3
 from jura_growth import approval_settings, approvals, db, discord, feed, locks, log, privacy, timeutil
 
 CHANNEL = "approvals"
-USERNAME = "Jura growth · approvals"
+USERNAME = feed.USERNAME
 LOCK = "approval-cards"
 # Kept free in a card's first piece: its first line grows when it is edited ("Superseded: …"),
 # and an edit past Discord's limit would cut the end of the piece, closing fence and all.
 HEADER_ROOM = 120
 APPROVER = "Ting Yu"  # the one approver: CONTROL_DISCORD_USER_ID
 # What a card can show: a record's status, or CLAIMED once it is used.
-CLAIMED = "used"
+CLAIMED = approvals.CLAIMED
 _OPEN = (approvals.PENDING, approvals.APPROVED)  # cards that can still change
 
 
@@ -255,7 +255,7 @@ def _edit_changed(conn: sqlite3.Connection) -> int:
             "UPDATE approval_cards SET shows = ?, updated_at = ? WHERE approval_id = ?",
             (now_shows, timeutil.stamp(), approval.number),
         )
-        feed.announce(conn, approval, row["shows"], now_shows, _card_title(rest, approval),
-                      has_successor=approvals.successor(conn, approval) is not None)
+        note = _superseded_note(conn, approval) if now_shows == approvals.SUPERSEDED else None
+        feed.announce(conn, approval, row["shows"], now_shows, _card_title(rest, approval), note=note)
         edited += 1
     return edited

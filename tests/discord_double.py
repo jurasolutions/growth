@@ -49,6 +49,7 @@ class Request:
     payload_json: str | None = None
     files: list[tuple[str, bytes]] = field(default_factory=list)
     message_id: str | None = None
+    timeout: dict | None = None  # the read, write, connect and pool seconds this request allowed
 
     def texts(self) -> list[str]:
         """Everything in the request a person could read: the payload and each attachment."""
@@ -105,7 +106,8 @@ class DiscordDouble:
     def _handle(self, request: httpx.Request) -> httpx.Response:
         parts = request.url.path.split("/")  # ['', 'api', 'webhooks', n, token, ...]
         channel = self._channel_by_id.get(parts[3] if len(parts) > 3 else "", "?")
-        recorded = Request(channel=channel, method=request.method, url=str(request.url))
+        recorded = Request(channel=channel, method=request.method, url=str(request.url),
+                           timeout=request.extensions.get("timeout"))
         self._decode(request, recorded)
         self.requests.append(recorded)
 

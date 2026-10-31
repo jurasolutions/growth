@@ -188,6 +188,8 @@ def post(
     components: list[dict] | None = None,
     first_piece_room: int = 0,
     files_first: bool = False,
+    silent: bool = False,
+    patience: float | None = None,
 ) -> PostResult:
     """Post `content` (and `files`) to a channel, or save it to the outbox.
 
@@ -202,6 +204,10 @@ def post(
 
     A long message splits (`split`), with `first_piece_room` characters kept free in its first
     piece. Files go on the last piece, or with `files_first` on the first, beside the buttons.
+
+    `silent` posts without a notification. `patience` is how many seconds each piece may take,
+    retries included, for a message that must not hold up its caller; past that it goes to the
+    outbox like any other that Discord didn't take.
 
     The last line of defence (MC §4.3, §4.4): the content, username, file names
     and text files go through `privacy.for_discord()`, after `privacy.learn()`
@@ -247,7 +253,7 @@ def post(
         with _using(client) as http:
             for index, piece in enumerate(pieces):
                 response = _send(http, url, piece, uploads if index == with_files else [], username, suppress_embeds, wait=wait,
-                                 components=components if index == 0 else None)
+                                 components=components if index == 0 else None, silent=silent, patience=patience)
                 if wait:
                     message_ids.append(_message_id(response))
     except DiscordError as error:
@@ -356,6 +362,7 @@ class DiscordError(RuntimeError):
 
 
 SUPPRESS_EMBEDS = 1 << 2  # Discord message flag: no link previews
+SUPPRESS_NOTIFICATIONS = 1 << 12  # Discord message flag: posted, with no notification
 
 
 def _send(
@@ -368,10 +375,13 @@ def _send(
     *,
     wait: bool = False,
     components: list[dict] | None = None,
+    silent: bool = False,
+    patience: float | None = None,
 ) -> httpx.Response:
     payload: dict = {"content": content, "allowed_mentions": {"parse": []}}
-    if suppress_embeds:
-        payload["flags"] = SUPPRESS_EMBEDS
+    flags = (SUPPRESS_EMBEDS if suppress_embeds else 0) | (SUPPRESS_NOTIFICATIONS if silent else 0)
+    if flags:
+        payload["flags"] = flags
     if username:
         payload["username"] = username[:80]
     params = {}
@@ -380,7 +390,7 @@ def _send(
     if components is not None:
         payload["components"] = components
         params["with_components"] = "true"
-    return _deliver(client, "POST", url, payload, files, params=params or None)
+    return _deliver(client, "POST", url, payload, files, params=params or None, patience=patience)
 
 
 def _deliver(
@@ -391,24 +401,25 @@ def _deliver(
     files: list[tuple[str, bytes]],
     *,
     params: dict | None = None,
+    patience: float | None = None,
 ) -> httpx.Response:
+    give_up = None if patience is None else time.monotonic() + patience
     for attempt in range(3):
+        allowed = {} if give_up is None else {"timeout": max(give_up - time.monotonic(), 0.1)}
         try:
             if files:
                 multipart: dict = {"payload_json": (None, json.dumps(payload), "application/json")}
                 for i, (name, body) in enumerate(files):
                     multipart[f"files[{i}]"] = (name, body)
-                response = client.request(method, url, files=multipart, params=params)
+                response = client.request(method, url, files=multipart, params=params, **allowed)
             else:
-                response = client.request(method, url, json=payload, params=params)
+                response = client.request(method, url, json=payload, params=params, **allowed)
         except (httpx.HTTPError, httpx.InvalidURL) as error:
             # Only the error's type: httpx messages can quote the URL, which is the secret.
             raise DiscordError(f"Discord could not be reached ({type(error).__name__})") from None
-        if response.status_code == 429 and attempt < 2:
-            time.sleep(_retry_after(response))
-            continue
-        if response.status_code >= 500 and attempt < 2:
-            time.sleep(2.0)
+        wait = _retry_after(response) if response.status_code == 429 else 2.0 if response.status_code >= 500 else None
+        if wait is not None and attempt < 2 and (give_up is None or time.monotonic() + wait < give_up):
+            time.sleep(wait)
             continue
         if response.status_code >= 300:
             # Never include the URL: it is the secret.
