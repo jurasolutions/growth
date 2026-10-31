@@ -123,15 +123,20 @@ def for_discord(text: str, *, own_copy: Iterable[str] = (), conversation: Iterab
     text = config.redact(text)
     own = [config.redact(c) for c in own_copy if c and c.strip()]
     talk = [config.redact(c) for c in conversation if c and c.strip()]
+    pieces = _split(text, own, talk)
     groups = set(_name_groups)
-    for match in EMAIL_RE.finditer(text):
-        address = _plain(match.group(0))
-        if address.lower() not in _owner:
-            parts = _name_parts(address)
-            if parts:
-                groups.add(frozenset(parts))
+    # What a person wrote teaches nothing: `next.email@x` in a quote mustn't mask the frame around it.
+    for part, kind in pieces:
+        if kind == _CONVERSATION:
+            continue
+        for match in EMAIL_RE.finditer(part):
+            address = _plain(match.group(0))
+            if address.lower() not in _owner:
+                found = _name_parts(address)
+                if found:
+                    groups.add(frozenset(found))
     names = _NameMatcher(groups, _companies | _kept_names)
-    return "".join(_mask(part, kind, names) for part, kind in _split(text, own, talk))
+    return "".join(_mask(part, kind, names) for part, kind in pieces)
 
 
 def _bare(value: str) -> str:

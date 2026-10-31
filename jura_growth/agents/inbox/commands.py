@@ -22,10 +22,10 @@ def status() -> None:
         counts = {**store.day_counts(conn, day), **store.open_counts(conn)}
         click.echo(
             f"today: {counts['reactions']} reactions, {counts['noise']} noise; "
-            f"open: {counts['needs_you']} needing a hand reply, {counts['unreported']} not yet reported"
+            f"open: {counts['hand_replies']} needing a hand reply, {counts['unreported']} not yet reported"
         )
-        rows = db.rows(conn, "SELECT key, value FROM inbox_state WHERE key LIKE 'mail.last_success.%' ORDER BY key")
-        for row in rows:
-            click.echo(f"{row['key'].rsplit('.', 1)[-1]} mailbox: last good check {row['value']}")
-        if not rows:
+        checks = store.with_prefix(conn, store.LAST_SUCCESS)
+        for label, stamp in checks:
+            click.echo(f"{label} mailbox: last good check {stamp}")
+        if not checks:
             click.echo("no good mail check yet")

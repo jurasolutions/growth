@@ -66,11 +66,11 @@ def setup_gaps() -> list:
 
 def health(conn: sqlite3.Connection) -> list[str]:
     """Reports waiting on Discord, and a mailbox that can't be read. Reads only."""
-    from jura_growth.agents.inbox import mail, store
+    from jura_growth.agents.inbox import store
 
     try:
         waiting = store.open_counts(conn)["unreported"]
-        lines = [f"Inbox: {problem}" for problem in mail.problems(conn)]
+        lines = [f"Inbox: {problem}" for _, problem in store.with_prefix(conn, store.PROBLEM)]
     except sqlite3.OperationalError:  # not migrated yet: nothing has been read
         return []
     if waiting:
@@ -87,8 +87,8 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         return {"figures": {}, "lines": [], "brief": []}
     reactions = counts["reactions"]
     parts = [f"{reactions} reaction{'s' if reactions != 1 else ''}", f"{counts['noise']} filtered as noise"]
-    if counts["needs_you"]:
-        parts.append(f"{counts['needs_you']} needing a hand reply")
+    if counts["hand_replies"]:
+        parts.append(f"{counts['hand_replies']} needing a hand reply")
     if counts["unreported"]:
         parts.append(f"{counts['unreported']} not yet reported")
     return {

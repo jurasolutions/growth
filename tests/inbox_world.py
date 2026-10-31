@@ -73,6 +73,9 @@ class StrictIMAP:
         self.fetch_specs: list[str] = []
         self.body_fetches = 0
         self.fail_at: dict[str, Exception] = {}
+        self.refuse_headers = False  # a NO on the header FETCH
+        self.refuse_bodies = False  # a NO on the body FETCH
+        self.bodies_instead: dict[int, bytes] = {}  # the numbers shifted: this body answers that number
         self.watching: sqlite3.Connection | None = None
         self.logged_out = False
 
@@ -137,6 +140,8 @@ class StrictIMAP:
         self.fetch_specs.append(spec)
         if "PEEK" not in spec:
             raise Forbidden(f"fetch without BODY.PEEK marks mail read: {spec}")
+        if self.refuse_headers if "HEADER.FIELDS" in spec else self.refuse_bodies:
+            return "NO", [b"try again later"]
         partial = re.search(r"<0\.(\d+)>", spec)
         parts: list = []
         for number in str(numbers).split(","):
@@ -147,6 +152,7 @@ class StrictIMAP:
                 parts += [(meta, head), b")"]
             else:
                 self.body_fetches += 1
+                raw = self.bodies_instead.get(int(number), raw)
                 sent = raw[: int(partial.group(1))] if partial else raw
                 parts += [(f"{int(number)} (BODY[] {{{len(sent)}}}".encode(), sent), b")"]
         return "OK", parts

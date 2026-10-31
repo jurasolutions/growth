@@ -1,6 +1,6 @@
 """R1: one message in #mission-control for every reaction, retried until it is delivered.
 
-An item's `reported_at` stays empty until Discord takes its message (technical review B7), and
+An inbox item's `reported_at` stays empty until Discord takes its message (technical review B7), and
 `report_due` runs in the precheck and after a run, so a message Discord refused goes again on the
 next check and a delivered one never does. Nothing is attempted with no webhook set, and the
 health strip counts what is waiting.
@@ -8,6 +8,8 @@ health strip counts what is waiting.
 Everything a person wrote goes through `quoted`, the one builder, and sits inside one quote block,
 which the conversation class carries (`privacy.py`). The frame around it is fixed text and record
 fields, so nothing they wrote can pass as the engine's own words, close the quote or ping anyone.
+Intake registers none of their words with `privacy.never_show`: that blanks any plain text the words
+match, so a subject reading `evil.test` would hide the sender's domain in the frame.
 """
 
 from __future__ import annotations
@@ -17,42 +19,42 @@ import re
 import sqlite3
 
 from jura_growth import discord, log, privacy, timeutil
-from jura_growth.agents.inbox import store
+from jura_growth.agents.inbox import settings, store
 
 CHANNEL = "mission-control"
 USERNAME = "Jura growth · inbox"
 FOLD_OLD_OVER = 5  # F12: more old messages than this fold into one report
+FOLD_SHOWN = 40  # inbox items named in a fold before "and N more"
 NAME_SHOWN = 80
 SUBJECT_SHOWN = 160
 CUT_NOTE = "(cut: the rest is in the mailbox)"
 NEXT_NEW = "Next: no draft yet in this build. Answer in the mailbox if it needs one."
 
-_LINES = re.compile(r"\r\n|[\r\n\x0b\x0c\x85  ]")
-_MASKED_LINK = re.compile(r"\[([^\]\n]*)\]\(\s*<?([^)\s>]*)>?[^)\n]*\)")
-
-
-def _defang(url: str) -> str:
-    return re.sub(r"^(\w+)://", r"\1[:]//", url)
+_LINK_TARGET = re.compile(r"\]\(\s*<?\s*(\w+)://")
+_SPOILER = re.compile(r"\|(?=\|)")
+_ZERO_WIDTH_SPACE = chr(0x200b)
+_NOT_A_BACKTICK = chr(0x02cb)
 
 
 def _neutral(line: str) -> str:
     """One line of someone's text, unable to restyle anything or ping anyone (N5, A4, A5): no
-    backticks to open a fence, no mention, and a masked link showing where it really goes."""
-    line = _MASKED_LINK.sub(lambda m: f"[{m.group(1)}] ({_defang(m.group(2))})", line)
-    line = line.replace("`", "ˋ").replace("||", "|​|")
-    line = re.sub(r"@(everyone|here)", "@​\\1", line).replace("<@", "<@​").replace("<#", "<#​")
+    backticks to open a fence, no spoiler, no mention, and no masked link at any depth of nesting.
+    A link target's address stays readable and can't be clicked, so what it is shows."""
+    line = _LINK_TARGET.sub(lambda m: f"]\\({m.group(1)}[:]//", line).replace("](", "]\\(")
+    line = _SPOILER.sub("|" + _ZERO_WIDTH_SPACE, line.replace("`", _NOT_A_BACKTICK))
+    line = discord.defuse_mentions(line)
     return re.sub(r"^(\s*)(#{1,3}\s|-#\s)", r"\1\\\2", line)
 
 
 def quoted(text: str) -> str:
     """`text` as a Discord quote: every line marked, whatever line break it used."""
-    return "\n".join(f"> {_neutral(line)}".rstrip() for line in _LINES.split(text))
+    return "\n".join(f"> {_neutral(line)}".rstrip() for line in store.clean_text(text).split("\n"))
 
 
 def _heading(item: dict) -> str:
     if item["source"] == "enquiry":
         return "Website enquiry"
-    return "Reply to our email" if item["lead_id"] else "Email"
+    return "Answer to our email" if item["lead_id"] else "Email"
 
 
 def _when(item: dict) -> str:
@@ -106,15 +108,15 @@ def build(item: dict) -> tuple[str, str]:
 
 def _fold(items: list[dict]) -> str:
     """F12: a long absence reads as one message, and each still has an id and a domain."""
-    shown = ", ".join(f"{store.label(i['id'])} {i['sender_domain'] or 'unknown'}" for i in items[:40])
-    more = f", and {len(items) - 40} more" if len(items) > 40 else ""
-    return (f"**{len(items)} older messages** arrived more than 48 hours ago. No drafts: answer by hand if any "
-            f"still matters.\n{shown}{more}")
+    shown = ", ".join(f"{store.label(i['id'])} {i['sender_domain'] or 'unknown'}" for i in items[:FOLD_SHOWN])
+    more = f", and {len(items) - FOLD_SHOWN} more" if len(items) > FOLD_SHOWN else ""
+    return (f"**{len(items)} older messages** arrived more than {settings.limit('old_after_hours')} hours ago. "
+            f"No drafts: answer by hand if any still matters.\n{shown}{more}")
 
 
 def report_due(conn: sqlite3.Connection) -> int:
     """Post every report still owed, and stop at the first Discord refuses: the rest wait for the
-    next check, in order. Never raises for one bad item. Returns how many were delivered."""
+    next check, in order. Never raises for one bad row. Returns how many were delivered."""
     if not discord.webhook_set(CHANNEL):
         return 0
     due = store.unreported(conn)

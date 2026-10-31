@@ -24,7 +24,7 @@ def test_iw_w5_a_reaction_is_recorded_once(conn):
     assert isinstance(first, store.Recorded)
     assert isinstance(second, store.Duplicate) and second.item_id == first.item_id
     assert db.scalar(conn, "SELECT count(*) FROM inbox_items") == 1
-    assert store.item(conn, first.item_id)["text"] == "Do you work with clinics?"
+    assert store.get(conn, first.item_id)["text"] == "Do you work with clinics?"
 
 
 def test_iw_w5_known_says_whether_a_key_was_recorded(conn):
@@ -37,7 +37,7 @@ def test_iw_w5_known_says_whether_a_key_was_recorded(conn):
 def test_the_conversation_key_is_kept_on_the_item(conn):
     """F8 in ticket 02 builds on it."""
     made = store.record(conn, reaction(conversation="thread-9"))
-    assert store.item(conn, made.item_id)["conversation"] == "thread-9"
+    assert store.get(conn, made.item_id)["conversation"] == "thread-9"
 
 
 @pytest.mark.parametrize("field, value", [("source", "pigeon"), ("state", "misplaced")])
@@ -55,7 +55,7 @@ def test_every_state_in_the_prd_model_and_the_amendments_can_be_stored(conn):
     made = store.record(conn, reaction())
     for state in store.STATES:
         store.set_item_state(conn, made.item_id, state)
-        assert store.item(conn, made.item_id)["state"] == state
+        assert store.get(conn, made.item_id)["state"] == state
     with pytest.raises(ValueError):
         store.set_item_state(conn, made.item_id, "misplaced")
 
@@ -64,7 +64,7 @@ def test_every_state_in_the_prd_model_and_the_amendments_can_be_stored(conn):
 def test_iw_a6_stored_text_is_capped(conn, length, cut):
     """IW-A6: at most `caps.INBOX_TEXT_CHARS`, and the item says when it was cut."""
     made = store.record(conn, reaction(text="x" * length))
-    row = store.item(conn, made.item_id)
+    row = store.get(conn, made.item_id)
     assert len(row["text"]) == min(length, caps.INBOX_TEXT_CHARS)
     assert bool(row["text_cut"]) is cut
 
@@ -72,7 +72,7 @@ def test_iw_a6_stored_text_is_capped(conn, length, cut):
 def test_iw_a6_a_cut_across_an_emoji_leaves_valid_text(conn):
     """IW-A6: code points are never split, and a lone surrogate from a bad decode is replaced."""
     made = store.record(conn, reaction(text="x" * 3999 + "\U0001f600\U0001f600", subject="bad \udce9 subject"))
-    row = store.item(conn, made.item_id)
+    row = store.get(conn, made.item_id)
     assert row["text"].encode("utf-8") and row["text"].endswith("\U0001f600")
     assert row["subject"].encode("utf-8")
 
@@ -82,21 +82,21 @@ def test_iw_a6_a_cut_across_an_emoji_leaves_valid_text(conn):
     [
         ("a\x00b", "ab"),
         ("a\x1b[31mred\x1b[0mb", "aredb"),
-        ("a‮b⁦c​d﻿e", "abcde"),
+        ("a\u202eb\u2066c\u200bd\ufeffe", "abcde"),
         ("a\x07\x08b", "ab"),
-        ("one\r\ntwo three\x85four", "one\ntwo\nthree\nfour"),
+        ("one\r\ntwo\u2028three\x85four", "one\ntwo\nthree\nfour"),
     ],
 )
 def test_iw_a12_controls_never_reach_the_stored_text(conn, dirty, clean):
     """IW-A12: NUL, ANSI escapes, RTL overrides, zero-width characters, odd line breaks."""
     made = store.record(conn, reaction(text=dirty))
-    assert store.item(conn, made.item_id)["text"] == clean
+    assert store.get(conn, made.item_id)["text"] == clean
 
 
 def test_iw_a7_a_subject_and_a_name_are_one_clean_line(conn):
     """IW-A7, IW-A12: no CR, LF or control in anything that may become a header."""
-    made = store.record(conn, reaction(subject="Hi\r\nBcc: x@evil.test\x00", sender_name="Jane\r\n\tTan‮"))
-    row = store.item(conn, made.item_id)
+    made = store.record(conn, reaction(subject="Hi\r\nBcc: x@evil.test\x00", sender_name="Jane\r\n\tTan\u202e"))
+    row = store.get(conn, made.item_id)
     assert row["subject"] == "Hi Bcc: x@evil.test"
     assert row["sender_name"] == "Jane Tan"
 

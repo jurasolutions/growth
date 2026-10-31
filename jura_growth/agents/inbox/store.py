@@ -2,8 +2,10 @@
 
 Mail intake and the browser watch both come through here, so everything that must hold for any
 reaction holds at this seam: counted once by its key, stored text capped and free of control
-characters, source and state from the model. It knows nothing about mail: a `Reaction` arrives
-with its key and conversation already worked out, and `thread` is opaque to it.
+characters, source and state from the model. `record` knows nothing about mail: a `Reaction`
+arrives with its key and conversation already worked out, and `thread` is opaque to it. The small
+tables beside it, what the mail check remembers and Jura's outgoing ids, live here too because
+they are the same database's, and nothing else writes them.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ STATES = ("new", "triaged", "reported", "waiting", "sent", "skipped", "lapsed", 
           "needs-you", "noise", "unverified", "answered-by-hand", "closed", "done")
 NOISE = "noise"
 REPORTED = "reported"
-NEEDS_YOU = "needs-you"
+NEEDS_HAND_REPLY = "needs-you"  # the state's name in the PRD; in words, "needs a hand reply"
 NEW = "new"
 
 NAME_CHARS = 120
@@ -33,15 +35,15 @@ ADDRESS_CHARS = 254
 TARGET_CHARS = 1000
 
 _ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-Z\\-_])")
-_LINE_BREAKS = re.compile(r"\r\n|[\r\x0b\x0c\x85  ]")
+LINE_BREAKS = re.compile(r"\r\n|[\r\x0b\x0c\x85\u2028\u2029]")
 # C0 and C1 controls but tab and newline, bidi marks and overrides, zero-width characters.
-_INVISIBLE = re.compile(r"[\x00-\x08\x0e-\x1f\x7f-\x9f؜᠎​-‏‪-‮⁠-⁩﻿]")
+_INVISIBLE = re.compile(r"[\x00-\x08\x0e-\x1f\x7f-\x9f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
 
 
 def clean_text(value: str) -> str:
     """Text as it may be stored and shown: valid Unicode, no control characters, plain newlines."""
     value = value.encode("utf-8", "replace").decode("utf-8")
-    value = _LINE_BREAKS.sub("\n", _ANSI.sub("", value))
+    value = LINE_BREAKS.sub("\n", _ANSI.sub("", value))
     return _INVISIBLE.sub("", value)
 
 
@@ -125,12 +127,13 @@ def known(conn: sqlite3.Connection, key: str) -> bool:
     return db.one(conn, "SELECT 1 FROM inbox_items WHERE key = ?", (key,)) is not None
 
 
-def item(conn: sqlite3.Connection, item_id: int) -> dict | None:
+def get(conn: sqlite3.Connection, item_id: int) -> dict | None:
+    """One inbox item, whole."""
     return db.one(conn, "SELECT * FROM inbox_items WHERE id = ?", (item_id,))
 
 
 def label(item_id: int) -> str:
-    """The id Ting Yu sees on a report, and types to act on it."""
+    """An inbox item's id, which Ting Yu sees on its report and types to act on it."""
     return f"I-{item_id:04d}"
 
 
@@ -144,7 +147,7 @@ def set_item_state(conn: sqlite3.Connection, item_id: int, state: str) -> None:
 
 
 def unreported(conn: sqlite3.Connection) -> list[dict]:
-    """Every item still owed a report, oldest first. Noise never is (R2)."""
+    """Every inbox item still owed a report, oldest first. Noise never is (R2)."""
     return db.rows(conn, "SELECT * FROM inbox_items WHERE reported_at IS NULL AND state != ? ORDER BY id", (NOISE,))
 
 
@@ -178,11 +181,23 @@ def open_counts(conn: sqlite3.Connection) -> dict[str, int]:
     """What is still open, whatever day it arrived."""
     return {
         "unreported": db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE reported_at IS NULL AND state != ?", (NOISE,)) or 0,
-        "needs_you": db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE state = ?", (NEEDS_YOU,)) or 0,
+        "hand_replies": db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE state = ?", (NEEDS_HAND_REPLY,)) or 0,
     }
 
 
 # --- what the mail check remembers --------------------------------------------
+
+LAST_SUCCESS = "mail.last_success."
+FAILING_SINCE = "mail.failing_since."
+PROBLEM = "mail.problem."
+ALERTED_ON = "mail.alerted_on."
+
+
+def with_prefix(conn: sqlite3.Connection, prefix: str) -> list[tuple[str, str]]:
+    """(what follows `prefix`, value) for each remembered key that starts with it."""
+    rows = db.rows(conn, "SELECT key, value FROM inbox_state WHERE key LIKE ? ORDER BY key", (f"{prefix}%",))
+    return [(row["key"].removeprefix(prefix), row["value"]) for row in rows]
+
 
 
 def get_state(conn: sqlite3.Connection, key: str) -> str | None:
@@ -205,6 +220,15 @@ def clear_state(conn: sqlite3.Connection, key: str) -> None:
 
 
 def remember_outgoing(conn: sqlite3.Connection, message_id: str, *, lead_id: int | None = None) -> None:
+    """Keep the `Message-ID` of a message Jura sent, so its copy is recognised (F4) and an answer
+    naming it finds its lead (F2).
+
+    Nothing calls this yet: ticket 03's `inbox-send` sets a `Message-ID` on each inbox reply and
+    records it here. Outreach sends carry none (`outreach/send.py` leaves it to Resend, which
+    doesn't report the one it sets), so outreach mail has nothing to look up. F2's domain match
+    is what covers it (`replies.Contacts.match`): a colleague on the lead's domain still counts, and
+    someone elsewhere answering outreach is reported as a stranger. Copies of outreach mail are
+    dropped by sender domain, so F4 holds for them too."""
     conn.execute(
         "INSERT OR IGNORE INTO inbox_outgoing (message_key, lead_id, recorded_at) VALUES (?, ?, ?)",
         (text_key(message_id.strip()), lead_id, timeutil.stamp()),

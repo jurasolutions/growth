@@ -926,7 +926,7 @@ def test_iw_a8_iw_a9_a_reply_address_that_isnt_one_person_means_a_hand_reply(con
     mail.intake(conn)
 
     [item] = items(conn)
-    assert item["state"] == store.NEEDS_YOU
+    assert item["state"] == store.NEEDS_HAND_REPLY
     assert thread_of(item)["reply_to"] is None
     assert [i["id"] for i in store.unreported(conn)] == [item["id"]]
 
@@ -943,7 +943,7 @@ def test_iw_a8_a_from_with_two_addresses_means_a_hand_reply(conn, monkeypatch):
     mail.intake(conn)
 
     [item] = items(conn)
-    assert item["state"] == store.NEEDS_YOU and thread_of(item)["reply_to"] is None
+    assert item["state"] == store.NEEDS_HAND_REPLY and thread_of(item)["reply_to"] is None
 
 
 def test_iw_a8_a_display_name_cant_borrow_an_address(conn, monkeypatch):
@@ -1022,7 +1022,7 @@ def test_iw_a9_an_enquiry_naming_jura_as_the_person_never_gets_a_draft(conn, mon
     mail.intake(conn)
 
     [item] = items(conn)
-    assert item["state"] == store.NEEDS_YOU
+    assert item["state"] == store.NEEDS_HAND_REPLY
     assert thread_of(item)["reply_to"] is None
 
 
@@ -1067,7 +1067,7 @@ def test_iw_a12_malformed_mail_doesnt_stop_the_batch(conn, monkeypatch, raw):
     found = items(conn)
     assert len(found) == 2 and found[1]["text"] == "The next message"
     for item in found:
-        assert not set(item["text"] + item["subject"] + item["sender_name"]) & {"\x00", "‮"}
+        assert not set(item["text"] + item["subject"] + item["sender_name"]) & {"\x00", "\u202e"}
 
 
 def test_iw_a12_no_sender_means_a_hand_reply(conn, monkeypatch):
@@ -1078,7 +1078,7 @@ def test_iw_a12_no_sender_means_a_hand_reply(conn, monkeypatch):
     mail.intake(conn)
 
     [item] = items(conn)
-    assert item["state"] == store.NEEDS_YOU and item["sender_domain"] == ""
+    assert item["state"] == store.NEEDS_HAND_REPLY and item["sender_domain"] == ""
 
 
 def test_iw_a12_no_date_counts_as_new(conn, monkeypatch):
@@ -1143,7 +1143,7 @@ def test_iw_a12_a_message_that_cant_be_parsed_at_all_is_still_reported(conn, mon
     mail.intake(conn)
 
     first, second = items(conn)
-    assert first["state"] == store.NEEDS_YOU and "couldn't be read" in first["note"]
+    assert first["state"] == store.NEEDS_HAND_REPLY and "couldn't be read" in first["note"]
     assert second["text"] == "Second message"
     assert fake.logged_out
 

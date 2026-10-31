@@ -45,7 +45,8 @@ CREATE TABLE inbox_state (
 );
 
 -- Each outgoing Message-ID, hashed, so a copy of Jura's own mail is recognised even if a header
--- was rewritten, and a reply naming one finds its lead (F2, F4).
+-- was rewritten, and an answer naming one finds its lead (F2, F4). Written from ticket 03 on, for
+-- inbox replies. Outreach sends carry no kept id: see `store.remember_outgoing`.
 CREATE TABLE inbox_outgoing (
   message_key TEXT PRIMARY KEY,
   lead_id INTEGER,

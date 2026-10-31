@@ -63,7 +63,7 @@ def test_iw_r1_the_text_shown_is_the_stored_text_byte_for_byte(conn, monkeypatch
     assert item["text"] == words
     [post] = discord_double.contents(CHANNEL)
     assert "\n".join(f"> {line}".rstrip() for line in words.splitlines()) in post
-    assert post.startswith(f"**I-0001 · Reply to our email** · {lead['domain']}")
+    assert post.startswith(f"**I-0001 · Answer to our email** · {lead['domain']}")
 
 
 def test_iw_r1_two_identical_messages_the_same_day_are_two_reports(conn, monkeypatch, discord_double):  # noqa: F811
@@ -121,7 +121,7 @@ def test_iw_f1_an_opt_out_report_names_the_word_and_what_was_done(conn, monkeypa
     check(conn)
 
     [post] = discord_double.contents(CHANNEL)
-    assert "a short message with the word remove" in post
+    assert "an explicit ask, with the word remove" in post
     assert "suppressed" in post and "no reply will be drafted" in post
 
 
@@ -249,7 +249,7 @@ def test_iw_b7_one_bad_row_doesnt_hold_up_the_rest(conn, monkeypatch, discord_do
 
 def test_iw_n5_every_line_is_quoted_whatever_line_break_it_used():
     """IW-N5: `report.quoted` is the one builder."""
-    assert report.quoted("one\ntwo\r\nthree\rfour five\x85six") == "> one\n> two\n> three\n> four\n> five\n> six"
+    assert report.quoted("one\ntwo\r\nthree\rfour\u2028five\x85six") == "> one\n> two\n> three\n> four\n> five\n> six"
     assert report.quoted("") == ">"
 
 
@@ -260,7 +260,7 @@ def test_iw_n5_every_line_is_quoted_whatever_line_break_it_used():
         ("`code`", "> ˋcodeˋ"),
         ("# Approved by Ting Yu", "> \\# Approved by Ting Yu"),
         ("-# small print", "> \\-# small print"),
-        ("||hidden||", "> |​|hidden|​|"),
+        ("||hidden||", "> |\u200b|hidden|\u200b|"),
         ("> already quoted", "> > already quoted"),
     ],
 )
@@ -272,9 +272,9 @@ def test_iw_a5_formatting_cant_close_the_quote_or_restyle_what_follows(written, 
 @pytest.mark.parametrize(
     "written, real",
     [
-        ("[jurasolutions.sg](https://evil.test)", "[jurasolutions.sg] (https[:]//evil.test)"),
-        ("see [Approve](<https://evil.test/x>) now", "see [Approve] (https[:]//evil.test/x) now"),
-        ('[a](https://evil.test "title")', "[a] (https[:]//evil.test)"),
+        ("[jurasolutions.sg](https://evil.test)", "[jurasolutions.sg]\\(https[:]//evil.test)"),
+        ("see [Approve](<https://evil.test/x>) now", "see [Approve]\\(https[:]//evil.test/x>) now"),
+        ('[a](https://evil.test "title")', '[a]\\(https[:]//evil.test "title")'),
     ],
 )
 def test_iw_a5_a_masked_link_shows_its_real_address_and_cant_be_clicked(written, real):
@@ -444,12 +444,12 @@ def test_iw_r5_a_day_with_nothing_adds_nothing_to_the_digest(conn):
 def test_iw_r5_needs_you_and_unreported_counts_reach_the_digest(conn, monkeypatch):
     """IW-R5: and they don't age out with the day."""
     at(monkeypatch, NOW)
-    store.record(conn, store.Reaction(source="email", key="k", conversation="c", state=store.NEEDS_YOU, text="Hello there"))
+    store.record(conn, store.Reaction(source="email", key="k", conversation="c", state=store.NEEDS_HAND_REPLY, text="Hello there"))
     at(monkeypatch, "2026-10-29T10:00:00+08:00")
 
     part = inbox.digest(conn, "2026-10-29")
 
-    assert part["figures"]["inbox_needs_you"] == 1 and part["figures"]["inbox_unreported"] == 1
+    assert part["figures"]["inbox_hand_replies"] == 1 and part["figures"]["inbox_unreported"] == 1
     assert part["figures"]["inbox_reactions"] == 0
     assert part["lines"] == ["Inbox: 0 reactions, 0 filtered as noise, 1 needing a hand reply, 1 not yet reported"]
     assert part["brief"] == []

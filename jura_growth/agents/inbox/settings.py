@@ -42,9 +42,7 @@ def limit(name: str) -> int:
 
 def minutes_between_social_replies() -> int:
     """A floor: config may lengthen the gap and never shorten it."""
-    configured = _configured().get("minutes_between_social_replies")
-    floor = caps.INBOX_MINUTES_BETWEEN_SOCIAL_REPLIES
-    return floor if configured is None else max(floor, int(configured))
+    return caps.at_least(caps.INBOX_MINUTES_BETWEEN_SOCIAL_REPLIES, _configured().get("minutes_between_social_replies"))
 
 
 def platform_domains() -> tuple[str, ...]:
