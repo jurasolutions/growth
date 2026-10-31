@@ -11,4 +11,14 @@ Not part of this feature's release. It predates this branch, and it needs to be 
 
 **Fix.** Give those kinds the rule `social-post` has: a card that can't show the exact text isn't posted and can't be approved, with a note saying why. For `community-post`, also apply ticket 11's no-card rule. Add `outreach-email`'s no-card rule here too if ticket 11 had to stop at social.
 
+**Widened after review 11 (its S1).** These kinds also accept a typed approval with no card, reproduced with `approvals.decide` and no sweep. Apply the rule to each of them, and decide whether it should move to the core and be driven by `needs_card`, which today only describes `on_approve`.
+
+| Kind | What follows the approval | Reachable on the shipped config? |
+|---|---|---|
+| `app-release` | The claim goes through, and `release-plan` prints the merge | Yes. Ting Yu still runs the merge by hand |
+| `app-build` | A handoff to Dispatch, on its own branch | Yes, with `dispatch_builds` on |
+| `group-rules` | Sets the rules, which unlock community posts | Yes, with no public action of its own |
+| `community-post` | Claimed by a run | No: `config/community.yaml` is `browser: false` |
+| `group-join`, answers | Claimed by a run | No, as above |
+
 ## Comments

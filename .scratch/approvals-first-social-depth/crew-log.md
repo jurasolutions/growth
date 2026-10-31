@@ -152,3 +152,31 @@ artifacts: issues/11-no-card-no-approval.md; issues/12-masked-cards-on-other-kin
 decisions: under the standing instruction. No typed approval without a card, for social and for outreach, since outreach is live and an email can't be taken back; this goes further than the reviewer's recommendation on outreach. Masked outreach and community cards go to ticket 12, not this release: they predate the branch, he sees the marker, and community isn't reachable yet. Typed approval is not kept as a Discord outage route; the heartbeat re-posts. Same developer and worktree
 questions: -
 evidence:  reviews/code-review-10.md; git log c11eb61..origin/main -> PR #20, nine commits
+
+## 2026-11-01T02:35+0800 developer (ticket 11, appended by the conductor)
+status:    done
+persona:   developer
+ticket:    11
+artifacts: crew/approvals-first-social-depth-10-final-fixes, tip 2e00e94: merges 739fab8, ff5382b; b1c035d, f163784, 3d98254, 29a48d7, ec959f9, 2e00e94
+decisions: the outreach stop condition was not hit, only the shared helper changed. card_problem stays in on_approve, for the reason it gives. St1's test deleted. Added needs_card; pending counts only live drafts
+questions: inputs/icp.md dated 01:38 is new and not from this branch. Conductor checked: no agent in this project's sessions wrote it in the last six hours, and it differs from the draft, so it is treated as Ting Yu's own step, read-only
+evidence:  suite at ec959f9 -> 5952 passed, none failed or skipped; clock across midnight, same. St3 mutation -> the new twin fails
+
+## 2026-11-01T03:00+0800 reviewer (ticket 11, appended by the conductor)
+status:    done
+persona:   reviewer
+ticket:    11
+artifacts: reviews/code-review-11.md
+decisions: changes-requested. B2: over remote, a no-card refusal reads "the command was not understood", and an identical retry can approve. B1 holds for both kinds. Should-fix: S1, S2, S3, S4, SEC3, St4, St5, St6
+questions: widen ticket 12 to the other kinds
+evidence:  suite in a stand-in root -> 5952 passed (5434 plus 518 rerun with prd/ copied in); canary .env never opened; no privacy.learn -> 1 failed; outreach walk -> refused, 0 sent, then heartbeat, approve, 1 sent
+open:      the reviewer aimed one guard test at the live .env path against its brief. Its audit hook refused the open, and a realpath made a metadata lookup. No content was read or printed. Every later run used a stand-in root
+
+## 2026-11-01T03:05+0800 conductor (ticket 13)
+status:    done
+persona:   conductor
+ticket:    12, 13
+artifacts: issues/13-refusals-say-why.md; issues/12-masked-cards-on-other-kinds.md widened
+decisions: under the standing instruction. B2 and every small should-fix go in ticket 13. The other kinds stay out of this release and go to ticket 12, since none is a public post or an email and the release has grown enough; PR body names them. S2 goes in the release notes as a read-only check. Same developer and worktree
+questions: -
+evidence:  reviews/code-review-11.md
