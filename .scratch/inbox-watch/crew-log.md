@@ -93,3 +93,12 @@ decisions: merged after one fix round; the final review checks the fixes. A redr
 decisions: developer changed `done`'s contract so a new card can't block clearing a promise; accepted
 questions: -
 evidence:  developer: 5642 passed at 78009f6; reviewer: scheduled runs refused on all six steer commands
+
+## 2026-11-01 conductor (ticket 06 merged)
+status:    done
+persona:   conductor
+ticket:    06
+artifacts: crew/inbox-watch
+decisions: merged after one fix round; a run that can't prove the thread, the identity or a read-back ends `unknown`, alerted and never retried
+questions: -
+evidence:  developer: 6017 passed on a fresh database at 7d9fd8a
