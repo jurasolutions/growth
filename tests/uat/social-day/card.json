@@ -1,0 +1,20 @@
+{
+  "layout": "headline",
+  "headline": "A model reads the invoice and you check it",
+  "subtitle": "What the new feature does with a supplier invoice.",
+  "visual": {
+    "type": "flow",
+    "caption": "How one invoice moves through",
+    "steps": [
+      {"icon": "mail", "label": "Invoice arrives"},
+      {"icon": "scan-text", "label": "Model reads it"},
+      {"icon": "user-check", "label": "You check it"},
+      {"icon": "circle-check", "label": "Filed"}
+    ]
+  },
+  "items": [
+    {"title": "It reads the fields", "detail": "Supplier, date and total come out of the page.", "icon": "file-text"},
+    {"title": "You stay in charge", "detail": "Nothing is filed until a person has looked.", "icon": "eye"},
+    {"title": "Try it on one supplier", "detail": "Start where the invoices all look the same.", "icon": "lightbulb"}
+  ]
+}
