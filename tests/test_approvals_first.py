@@ -12,12 +12,13 @@ import json
 import pytest
 
 import approval_world as aw
+import mission_world as mw
 import publish_fake
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, cards, db, pause, paths, runner
+from jura_growth import approvals, cards, db, mission, one_pager, pause, paths, runner
 from jura_growth.agents import social
-from jura_growth.agents.publish import items
+from jura_growth.agents.publish import items, kinds
 from jura_growth.agents.social import history, render, submit
 from sweep import PHONE, d2_secrets  # noqa: F401
 from test_social import FB, IG, IMDA, MONDAY, NEWS, SHEETS, TIP, env, write  # noqa: F401 - env is a fixture
@@ -495,3 +496,104 @@ def test_a_skip_drops_that_platform_for_the_day_and_says_so_on_the_card(conn, so
     _, second = approvals.pending(conn)
     pw.decide(conn, second, "skip", monkeypatch=monkeypatch)
     assert "instagram" in history.skipped_platforms(conn, pw.DAY)
+
+
+# --- a refused card is said out loud, and nothing says otherwise (round 2, R2-B2) --------------------
+
+
+UNREADABLE = "Discord would mask part of the post, so its card can't show the exact text"
+
+
+def refuse_facebook(monkeypatch) -> None:
+    """The gate has passed, and then the kind finds Facebook's card can't show the post."""
+    real = kinds.SocialPost.card_problem
+
+    def problem(self, conn, subject):
+        return UNREADABLE if items.of(conn, subject).platform == "facebook" else real(self, conn, subject)
+
+    monkeypatch.setattr(kinds.SocialPost, "card_problem", problem)
+
+
+def test_a_refused_card_posts_one_note_saying_why_and_the_rest_of_the_day_carries_on(conn, social_day, monkeypatch):
+    refuse_facebook(monkeypatch)
+    submit_tip(conn)
+    cards.sweep(conn)
+    cards.sweep(conn)
+    first, _ = approvals.pending(conn)
+    every = [(r.channel, r.content or "") for r in social_day.requests]
+    [note] = [text for channel, text in every if first.id in text and channel != "approvals"]
+    assert [channel for channel, text in every if text == note] == ["social-drafts"]
+    assert UNREADABLE in note and "lapses" in note and "Tue 10 Nov, 17:00" in note
+    assert FB.strip() not in note
+    assert len(social_day.posts("approvals")) == 1  # Instagram's
+    assert_nothing_asks_to_post_by_hand(social_day)
+    assert len(aw.events(conn, "approval.card_refused")) == 1
+
+
+def test_submit_tells_the_truth_about_a_refused_card(conn, social_day, monkeypatch):
+    refuse_facebook(monkeypatch)
+    outcome = submit_tip(conn)
+    first, second = approvals.pending(conn)
+    assert outcome.lines[0].startswith("Delivered, with no card for facebook")
+    assert f"Approval requested: facebook as {first.id} in #approvals" not in outcome.text()
+    assert f"No approval card for facebook ({first.id}): {UNREADABLE}" in outcome.text()
+    assert f"Approval requested: instagram as {second.id} in #approvals" in outcome.text()
+
+
+def test_submit_tells_the_truth_when_discord_didnt_take_the_card(conn, social_day):
+    social_day.mode = "500"
+    outcome = submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    assert outcome.lines[0].startswith("Delivered, with no card for facebook, instagram")
+    assert f"{first.id}: its card goes to #approvals once Discord takes it" in outcome.text()
+    assert f"as {first.id} in #approvals" not in outcome.text()
+
+
+def test_the_digest_tells_the_truth_about_a_refused_card(conn, social_day, monkeypatch):
+    refuse_facebook(monkeypatch)
+    submit_tip(conn)
+    line = social.digest(conn, "2026-11-10")["lines"][0]
+    assert "1 draft waiting in #approvals (instagram)" in line and "1 draft with no card (facebook)" in line
+
+
+def test_the_one_pager_tells_the_truth_about_a_refused_card(conn, social_day, monkeypatch):
+    refuse_facebook(monkeypatch)
+    submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    conn.commit()
+    text = one_pager.text(mission.read(mw.source(now="2026-11-10T08:00:00+08:00")))
+    assert f"{first.id} (social-post) has no card: {UNREADABLE}" in text
+    assert not any(first.id in line and "heartbeat" in line for line in text.splitlines())
+
+
+def test_the_one_pager_still_expects_the_heartbeat_for_a_card_discord_didnt_take(conn, social_day):
+    social_day.mode = "500"
+    submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    conn.commit()
+    social_day.mode = "accept"
+    text = one_pager.text(mission.read(mw.source(now="2026-11-10T08:00:00+08:00")))
+    assert any(first.id in line and "heartbeat" in line for line in text.splitlines())
+
+
+def test_a_typed_approval_of_a_post_with_no_card_is_refused_and_can_be_skipped(conn, env, monkeypatch, discord_double):
+    """The one way left to approve words he hasn't read. The refusal stays inside the kind."""
+    pw.at(monkeypatch, pw.MORNING)
+    pw.social_config(monkeypatch, browser=BOTH)
+    _, request = pw.item(conn, "facebook", text=f"Call us on {PHONE} about your invoices.\n\nhttps://jurasolutions.sg\n")
+    cards.sweep(conn)
+    answer = pw.decide(conn, request, monkeypatch=monkeypatch)
+    assert answer.answer == approvals.REFUSED and "can't show the exact text" in answer.text
+    assert approvals.get(conn, request.id).status == approvals.PENDING
+    pw.at(monkeypatch, pw.TEN)
+    pw.run(conn, monkeypatch=monkeypatch)
+    assert pw.next_item(conn).item is None
+    assert pw.decide(conn, request, "skip", monkeypatch=monkeypatch).answer == "recorded"
+
+
+def test_a_post_whose_card_went_out_whole_can_still_be_approved_if_a_name_is_learned_after(conn, social_day, monkeypatch):
+    """He read it. Learning a lead's name at 09:00 doesn't unread it."""
+    submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    monkeypatch.setattr(kinds.SocialPost, "card_problem", lambda self, conn, subject: UNREADABLE)
+    assert pw.decide(conn, first, monkeypatch=monkeypatch).answer == "recorded"

@@ -172,6 +172,7 @@ class Request:
     use_by: datetime | None
     posted: bool
     close_reason: str | None
+    refused: str | None = None  # why the sweep refused its card: it will never post
 
 
 # The one-pager job's own schedule (config/settings.yaml); without the job, its planned 08:00.
@@ -323,7 +324,7 @@ def _from_db(
     if "discord_posts" in tables:
         facts["undelivered"] = conn.execute("SELECT count(*) FROM discord_posts WHERE delivered = 0 AND ts > ?", (since,)).fetchone()[0]
     if "approvals" in tables:
-        facts["approvals"] = _requests(conn, now, last_one_pager=last)
+        facts["approvals"] = _requests(conn, now, last_one_pager=last, events="events" in tables)
     facts["plugin_lines"] = _plugin_lines(conn)
     return facts
 
@@ -414,7 +415,7 @@ def _last_one_pager(conn: sqlite3.Connection, now: datetime, scheduled: datetime
 # --- approval requests ----------------------------------------------------------------
 
 
-def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: datetime) -> tuple[Request, ...]:
+def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: datetime, events: bool = False) -> tuple[Request, ...]:
     """Live requests, and those decided or closed since the last one-pager.
     Its own SELECT: approvals.py may supersede on a read, which is a write."""
     since = last_one_pager.isoformat(timespec="seconds")
@@ -424,7 +425,13 @@ def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: dateti
         " ORDER BY requested_at, id",
         (since, since),
     ).fetchall()
-    return tuple(_request(row, now) for row in rows)
+    # `cards.REFUSED_EVENT`: a card the sweep refused, which the heartbeat won't post.
+    refused = dict(conn.execute(
+        "SELECT json_extract(payload_json, '$.approval'), json_extract(payload_json, '$.why') FROM events "
+        "WHERE kind = 'approval.card_refused'"
+    ).fetchall()) if events else {}
+    return tuple(dataclasses.replace(request, refused=_clean_or_none(refused.get(request.id)))
+                 for request in (_request(row, now) for row in rows))
 
 
 def _request(row: sqlite3.Row, now: datetime) -> Request:

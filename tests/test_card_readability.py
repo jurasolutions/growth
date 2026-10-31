@@ -11,7 +11,7 @@ import pytest
 import gate_adapter_community_post
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, brand_check, cards, privacy
+from jura_growth import approvals, brand_check, cards, paths, privacy
 from test_social import env  # noqa: F401 - a fixture
 
 
@@ -89,3 +89,64 @@ def test_a_community_post_can_not_close_its_cards_fence(conn, monkeypatch, tmp_p
     conn.execute("UPDATE community_posts SET text = text || ' ``` a fence'")
     text = approvals.kinds()[gate.kind].kind.preview(conn, subject).text
     assert text.count("```") == 2
+
+
+# --- the reason names every masked word, so one regeneration can fix them all (round 2, R2-B1) ------
+
+
+LONG = "Most small teams chase late invoices the same way, and it costs them a Friday afternoon every week. "
+
+
+def reasons(text: str, channel: str = "social-facebook") -> list[str]:
+    found = brand_check.check(text, channel_name=channel, sources=[], context={"theme": {"id": "automation-tip"}})
+    return [str(issue) for issue in found.issues if "approval card" in issue.message]
+
+
+def test_a_mask_far_along_a_line_is_quoted_where_it_is():
+    [reason] = reasons(LONG * 3 + "Call 8123 4567 today.")
+    assert "[phone removed] today" in reason and "8123" not in reason
+
+
+def test_every_masked_place_gets_its_own_reason_on_any_line():
+    privacy.remember_address("mark.lee@example.com.sg")
+    text = (f"Call 8123 4567 today.\n\n{LONG}Firms with 3000-4000 employees.\n\n{LONG}{LONG}Mark your calendar.\n\n"
+            f"Write to jane.tan@example.com about it. {LONG}See https://www.example.com/news/article-98765432 for more.")
+    found = reasons(text)
+    assert len(found) == 5
+    for words in ("[phone removed] today", "with [phone removed] employees", "[name removed] your calendar", "j***@example.com", "article-[phone removed]"):
+        assert sum(words in reason for reason in found) == 1, words
+    for value in ("8123", "3000-4000", "Mark your", "jane.tan", "98765432"):
+        assert not any(value in reason for reason in found), value
+
+
+def test_each_reason_says_what_to_do_about_that_kind_of_mask():
+    privacy.remember_address("mark.lee@example.com.sg")
+    [link] = reasons("See https://www.example.com/news/article-98765432 for more.")
+    assert "link" in link and "phone number" not in link
+    [phone] = reasons("Firms with 3000-4000 employees.")
+    assert "3,000 to 4,000" in phone
+    [name] = reasons("Mark your calendar.")
+    assert "name" in name and "ordinary word" in name
+    [address] = reasons("Write to jane.tan@example.com about it.")
+    assert "address" in address
+
+
+def test_a_window_stays_short_and_inside_its_line():
+    [reason] = reasons("Before this line.\n" + LONG * 3 + "Call 8123 4567 today. " + LONG * 3 + "\nAfter this line.")
+    assert "Before this line" not in reason and "After this line" not in reason
+    assert len(reason.split("“")[1]) < 120
+
+
+def test_the_same_words_twice_are_said_once():
+    assert len(reasons("Call 8123 4567 today.\n\nCall 8123 4567 today.")) == 1
+
+
+def test_masking_nobody_can_place_still_fails_with_a_reason(monkeypatch):
+    monkeypatch.setattr(privacy, "own_copy_as_shown", lambda text: text + " changed")
+    assert reasons("A small note.")
+
+
+def test_the_prompt_says_what_the_run_can_see_for_itself():
+    prompt = " ".join((paths.REPO_ROOT / "prompts" / "social.md").read_text(encoding="utf-8").split())
+    for words in ("no phone numbers", "3,000 to 4,000", "long run of digits"):
+        assert words in prompt, words

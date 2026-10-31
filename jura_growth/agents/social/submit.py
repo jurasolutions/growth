@@ -242,9 +242,11 @@ def submit(
     if dropped:
         discord.alert(conn, _alert_text(day, {p: results[p] for p in dropped}, "dropped"), agent="social")
 
-    lines = [f"Delivered to #{'approvals' if len(requests) == len(passing) else CHANNEL}: "
-             f"{', '.join(passing)} ({theme.label}) in {out}"]
-    lines += [f"Approval requested: {platform} as {approval.id} in #approvals" for platform, approval in requests.items()]
+    card_lines, carded = _card_lines(conn, requests)
+    missing = [p for p in passing if settings.platforms[p].browser and p not in carded]
+    place = f"with no card for {', '.join(missing)}" if missing else f"to #{'approvals' if len(carded) == len(passing) else CHANNEL}"
+    lines = [f"Delivered{',' if missing else ''} {place}: {', '.join(passing)} ({theme.label}) in {out}"]
+    lines += card_lines
     if dropped:
         lines.append(f"Dropped after the brand check: {', '.join(dropped)}")
     lines += _verdict_lines(every)
@@ -263,6 +265,24 @@ def post_no_draft(conn: sqlite3.Connection, day: date, reason: str, *, record: b
 
 
 # --- helpers -----------------------------------------------------------------
+
+
+def _card_lines(conn, requests) -> tuple[list[str], list[str]]:
+    """What became of each request's card, read after the sweep, and the platforms that have one."""
+    from jura_growth import approvals, cards
+
+    lines, carded = [], []
+    for platform, approval in requests.items():
+        current = approvals.get(conn, approval.id)
+        why = cards.refusal(conn, approval.id)
+        if current is not None and current.posted_at:
+            carded.append(platform)
+            lines.append(f"Approval requested: {platform} as {approval.id} in #approvals")
+        elif why:
+            lines.append(f"No approval card for {platform} ({approval.id}): {why}")
+        else:
+            lines.append(f"Approval requested: {platform} as {approval.id}: its card goes to #approvals once Discord takes it")
+    return lines, carded
 
 
 def _verdict_lines(every: dict[str, VariantResult]) -> list[str]:

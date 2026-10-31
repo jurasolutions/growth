@@ -28,7 +28,8 @@ The rules:
   outbox: the record waits, and the one-pager lists it as unposted.
 - A preview with more than ten files is refused before anything is posted,
   rather than dropping one (AC-M5.5). So is a card a kind says can't show what
-  it asks about (`card_problem`): it stays unposted, and the one-pager lists it.
+  it asks about (`card_problem`). The request stays unposted and one note in
+  the kind's feed says why, and the one-pager and the digest say it has no card.
 - Cards mention nobody and go through `discord.post()`'s masking, with the
   Keychain values loaded first (`privacy.load_for_masking`), because a
   preview carries text another process wrote.
@@ -54,6 +55,7 @@ from jura_growth import approval_settings, approvals, db, discord, feed, locks, 
 CHANNEL = "approvals"
 USERNAME = feed.USERNAME
 LOCK = "approval-cards"
+REFUSED_EVENT = "approval.card_refused"
 # Kept free in a card's first piece: its first line grows when it is edited ("Superseded: …"),
 # and an edit past Discord's limit would cut the end of the piece, closing fence and all.
 HEADER_ROOM = 120
@@ -199,9 +201,11 @@ def _post_unposted(conn: sqlite3.Connection) -> int:
             continue  # its plug-in isn't loaded; the one-pager lists it as unposted
         try:
             content, files = build(conn, approval, registered.kind)
+        except CardRefused as error:
+            _say_refused(conn, approval, registered, str(error))
+            continue
         except Exception as error:  # noqa: BLE001 - one bad preview never holds up the rest
-            why = str(error) if isinstance(error, CardRefused) else f"{type(error).__name__}: {error}"
-            log.event(conn, "approval.card_refused", {"approval": approval.id, "kind": approval.kind, "why": why},
+            log.event(conn, "approval.card_error", {"approval": approval.id, "kind": approval.kind, "why": f"{type(error).__name__}: {error}"},
                       level="warning", agent=registered.agent)
             continue
         result = discord.post(conn, CHANNEL, content, files=files, username=USERNAME, dedupe=False,
@@ -222,6 +226,27 @@ def _post_unposted(conn: sqlite3.Connection) -> int:
             )
         posted += 1
     return posted
+
+
+def refusal(conn: sqlite3.Connection, approval_id: str) -> str | None:
+    """Why the sweep refused this request's card, or None if it hasn't."""
+    row = conn.execute(
+        "SELECT json_extract(payload_json, '$.why') FROM events WHERE kind = ? AND json_extract(payload_json, '$.approval') = ? LIMIT 1",
+        (REFUSED_EVENT, approval_id),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _say_refused(conn: sqlite3.Connection, approval: approvals.Approval, registered, why: str) -> None:
+    """A request with no card still waits, so say so, once: one event and one note in the kind's
+    feed. It's at most once, like a feed line: a note Discord doesn't take goes to the outbox."""
+    if refusal(conn, approval.id) is not None:
+        return
+    log.event(conn, REFUSED_EVENT, {"approval": approval.id, "kind": approval.kind, "why": why}, level="warning", agent=registered.agent)
+    channel = feed.channel_for(registered)
+    if channel:
+        note = f"**{approval.id} has no card** · {approval.reason}\n{why}. Nothing goes out, and it lapses {timeutil.when(approval.decide_by)}."
+        discord.post(conn, channel, note, username=USERNAME, dedupe=False, suppress_embeds=True)
 
 
 def _own_copy(conn: sqlite3.Connection, approval: approvals.Approval, registered) -> tuple[str, ...]:

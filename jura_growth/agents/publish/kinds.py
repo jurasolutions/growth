@@ -241,6 +241,15 @@ class SocialPost:
             return "Discord would mask part of the post, so its card can't show the exact text"
         return None
 
+    def on_approve(self, conn: sqlite3.Connection, subject: str, args: dict) -> None:
+        """A typed approval can reach a request whose card was refused, and that would be a yes to
+        words he hasn't read. A post whose card went out whole stands, whatever is learned since.
+        A refusal rolls the decision back, and a skip still works."""
+        latest = items.latest_request(conn, _item(conn, subject))
+        problem = self.card_problem(conn, subject) if latest and latest.posted_at is None else None
+        if problem:
+            raise approvals.BadArgs(f"{problem}, so it can't be approved")
+
     def own_copy(self, conn: sqlite3.Connection, subject: str) -> tuple[str, ...]:
         """The post's text, as Jura's own copy on its card (`privacy`). A draft past the brand gate only."""
         item = _item(conn, subject)

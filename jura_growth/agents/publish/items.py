@@ -393,10 +393,11 @@ def raise_request(conn: sqlite3.Connection, item: Item, *, run_id: int | None) -
 
 
 def platforms_on_a_card(conn: sqlite3.Connection, day: str) -> set[str]:
-    """The platforms whose social post for `day` waits on a pending approval card."""
+    """The platforms whose social post for `day` waits on a pending approval card that went out."""
     rows = conn.execute("SELECT * FROM publish_items WHERE day = ? AND kind = ?", (day, SOCIAL_ITEM)).fetchall()
     found = (Item.from_row(row) for row in rows)
-    return {item.platform for item in found if (latest := latest_request(conn, item)) and latest.status == approvals.PENDING}
+    return {item.platform for item in found
+            if (latest := latest_request(conn, item)) and latest.status == approvals.PENDING and latest.posted_at}
 
 
 def unless_paused(conn: sqlite3.Connection, promise: str) -> str:
