@@ -67,11 +67,6 @@ def today() -> date:
     return now_sgt().date()
 
 
-def within(window: tuple[str, str]) -> bool:
-    """Whether now, in SGT, is inside a ("HH:MM", "HH:MM") window, both ends included."""
-    return window[0] <= now_sgt().strftime("%H:%M") <= window[1]
-
-
 def today_str() -> str:
     return today().isoformat()
 

@@ -25,7 +25,7 @@ from jura_growth import discord, health, images, log, mission, paths, privacy, s
 ASK_ME = ("`/growth status`", "`/growth approvals`", "`/growth one-pager`", "`/growth pause <agent|all>`", "`/growth resume <agent|all>`")
 # Today shows these jobs as counts per status, whatever their slot count,
 # and lists every other job slot by slot (MC §5.4.4; code review 08 S-4).
-COUNTED_JOBS = frozenset({"scout-send", "publish", "inbox-check", "inbox-send"})
+COUNTED_JOBS = frozenset({"scout-send", "publish", "inbox-check", "inbox-send", "inbox-watch"})
 
 
 def text(snapshot: mission.Snapshot) -> str:

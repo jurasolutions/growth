@@ -30,9 +30,11 @@ FOLD_SHOWN = 40  # inbox items named in a fold before "and N more"
 NAME_SHOWN = 80
 SUBJECT_SHOWN = 160
 CUT_NOTE = "(cut: the rest is in the mailbox)"
+CUT_NOTE_SOCIAL = "(cut: the rest is in the thread)"
 FLOOD_SHOWN = 10  # S15: reports in one run before the rest fold into a line
-_SOCIAL_HEADINGS = {"facebook-comment": "Facebook comment", "facebook-dm": "Facebook message",
-                    "instagram-comment": "Instagram comment", "instagram-dm": "Instagram message"}
+SOCIAL_HEADINGS = {"facebook-comment": "Facebook comment", "facebook-dm": "Facebook message",
+                   "instagram-comment": "Instagram comment", "instagram-dm": "Instagram message"}
+RUN_MESSAGE = store.RUN_MESSAGE
 
 _LINK_TARGET = re.compile(r"\]\(\s*<?\s*(\w+)://")
 _SPOILER = re.compile(r"\|(?=\|)")
@@ -56,10 +58,12 @@ def quoted(text: str) -> str:
 
 
 def _heading(item: dict) -> str:
+    if item["source"] in SOCIAL_HEADINGS:
+        return SOCIAL_HEADINGS[item["source"]]
+    if item["source"] == RUN_MESSAGE:
+        return "From the watch"
     if item["source"] == "enquiry":
         return "Website enquiry"
-    if item["source"] in _SOCIAL_HEADINGS:
-        return _SOCIAL_HEADINGS[item["source"]]
     return "Answer to our email" if item["lead_id"] else "Email"
 
 
@@ -80,6 +84,14 @@ def _extras(item: dict) -> list[str]:
     return extras
 
 
+def _no_text(item: dict) -> str:
+    """Fixed words for a message with no text. No model guesses what a voice note says (F7)."""
+    from jura_growth.agents.inbox import watch
+
+    kind = json.loads(item["thread_json"] or "{}").get("attachment")
+    return f"sent {watch.ATTACHMENTS.get(kind, watch.ATTACHMENTS['other'])}, see thread"
+
+
 def _block(items: list[dict], texts: list[str], cuts: list[bool]) -> str:
     """Everything they wrote, as stored, in one quote block: a conversation's messages in order."""
     newest = items[-1]
@@ -93,9 +105,10 @@ def _block(items: list[dict], texts: list[str], cuts: list[bool]) -> str:
     for number, (item, text, cut) in enumerate(zip(items, texts, cuts)):
         if number:
             lines += ["", f"(then, {_when(item)})"]
-        lines.append(text if text else "(no text: see the mailbox)")
+        social = item["source"] in SOCIAL_HEADINGS
+        lines.append(text if text else _no_text(item) if social else "(no text: see the mailbox)")
         if cut:
-            lines.append(CUT_NOTE)
+            lines.append(CUT_NOTE_SOCIAL if social else CUT_NOTE)
         lines += _extras(item)
     return quoted("\n".join(lines))
 
@@ -141,10 +154,14 @@ def _build(items: list[dict]) -> tuple[str, str]:
     """One conversation's report and the quote block in it, always one Discord message, measured
     masked: masking can lengthen text, and a piece past the limit would split the report."""
     newest = items[-1]
-    where = newest["sender_domain"] or newest["target"] or "an unknown sender"
+    if newest["source"] == RUN_MESSAGE:
+        return f"**{store.label(newest['id'])} · {_heading(newest)}** · {_when(newest)}\n{newest['note']}", ""
+    where = newest["sender_domain"] or "an unknown sender"
     count = f", {len(items)} messages" if len(items) > 1 else ""
     high = " · **high priority**" if newest["priority"] == "high" else ""
     head = f"**{store.label(newest['id'])} · {_heading(newest)}{count}**{high} · {where}, {_when(newest)}"
+    if newest["target"]:
+        head += f"\nOpen: <{newest['target']}>"
     note = " ".join(dict.fromkeys(item["note"] for item in items if item["note"]))
 
     def whole(block: str) -> str:
@@ -203,7 +220,7 @@ def report_due(conn: sqlite3.Connection) -> int:
         except Exception as error:  # noqa: BLE001 - one bad row never holds up the rest
             log.event(conn, "inbox.report_refused", {"item": group[-1]["id"], "error": type(error).__name__}, level="warning", agent="inbox")
             continue
-        if not _post(conn, content, (block,)):
+        if not _post(conn, content, (block,) if block else ()):
             return delivered
         store.mark_reported(conn, [item["id"] for item in group])
         delivered += len(group)

@@ -66,7 +66,7 @@ class _ResendUnavailable(Exception):
 
 def in_window() -> bool:
     """PRD §4: launchd can fire early until the Mac restarts, so the hours are checked here too."""
-    return timeutil.within(caps.INBOX_SEND_WINDOW)
+    return settings.in_hours(caps.INBOX_SEND_WINDOW)
 
 
 def due(conn: sqlite3.Connection) -> list[dict]:

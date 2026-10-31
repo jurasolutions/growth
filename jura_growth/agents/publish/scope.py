@@ -64,15 +64,16 @@ def browser_hosts(platforms: tuple[str, ...] | None = None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(host for name in names for host in hosts.BROWSER_HOSTS[name]))
 
 
-def domain_rules() -> list[str]:
-    """One `ClaudeInChromeDomain` rule per host the run may drive. Chrome matches a rule against the
+def domain_rules(platforms: tuple[str, ...] | None = None) -> list[str]:
+    """One `ClaudeInChromeDomain` rule per host the run may drive: of `platforms`, or of every enabled
+    platform when None (`browser_hosts`). Chrome matches a rule against the
     address's host and port, so the fixture site's rule names its port when it has one: rehearsal
     R1 (2026-10-30) showed `ClaudeInChromeDomain(publish-fixture.localhost)` denies
     `http://publish-fixture.localhost:8765/…`. The real platforms use the default port."""
     site = fixture.active()
     if site is not None:
         return [f"ClaudeInChromeDomain({site.base.split('://', 1)[1]})"]  # host[:port], an IPv6 literal bracketed
-    return [f"ClaudeInChromeDomain({host})" for host in browser_hosts()]
+    return [f"ClaudeInChromeDomain({host})" for host in browser_hosts(platforms)]
 
 
 def permissions():

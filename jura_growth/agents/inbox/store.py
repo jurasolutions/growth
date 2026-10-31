@@ -22,12 +22,21 @@ from jura_growth.agents.inbox import settings
 
 SOURCES = ("email", "enquiry", "facebook-comment", "facebook-dm", "instagram-comment", "instagram-dm", "post-stats",
            "app-usage")
+SOCIAL_SOURCES = ("facebook-comment", "facebook-dm", "instagram-comment", "instagram-dm")
+RUN_MESSAGE = "post-stats"  # counts and notes from a watch run: fixed words and validated numbers, no one's text
 STATES = ("new", "triaged", "reported", "waiting", "sending", "sent", "skipped", "lapsed", "superseded", "unknown", "failed",
-          "needs-you", "noise", "unverified", "answered-by-hand", "closed", "done")
+          "needs-you", "noise", "unverified", "answered-by-hand", "closed", "done", "observed", "baseline", "own")
 NOISE = "noise"
 REPORTED = "reported"
 NEEDS_HAND_REPLY = "needs-you"  # the state's name in the PRD; in words, "needs a hand reply"
 NEW = "new"
+UNVERIFIED = "unverified"
+ANSWERED_BY_HAND = "answered-by-hand"
+# A watch run's record, until that run's checks have read what Chrome really returned (N3). It goes to
+# no report and no triage while it is held.
+OBSERVED = "observed"
+BASELINE = "baseline"  # seen on the first read of a surface (F12): never told, and not a day's reaction
+OWN = "own"  # signed with the Page's name or address: set aside, counted, and not a day's reaction
 TRIAGED = "triaged"  # classed, with a draft ready for its card
 WAITING = "waiting"  # its card is up
 SENDING = "sending"  # its approval is claimed: it may be on its way, and the claim is never made twice
@@ -39,7 +48,11 @@ UNKNOWN = "unknown"  # it may have gone out, so it is never sent again
 SUPERSEDED = "superseded"
 # The sources a person writes through, and so what triage reads. `MAIL_SOURCES` answer by email.
 MAIL_SOURCES = ("email", "enquiry")
-PEOPLE_SOURCES = (*MAIL_SOURCES, "facebook-comment", "facebook-dm", "instagram-comment", "instagram-dm")
+PEOPLE_SOURCES = (*MAIL_SOURCES, *SOCIAL_SOURCES)
+# What triage may not read as a conversation's history. Noise isn't a person writing. A held or unverified
+# item's words aren't proved to be anyone's, a baseline is old enough to be left alone, and the Page's own
+# aren't a person's (code review 05).
+NOT_HISTORY = (NOISE, OBSERVED, UNVERIFIED, BASELINE, OWN)
 
 NAME_CHARS = 120
 SUBJECT_CHARS = 300
@@ -155,6 +168,10 @@ def label(item_id: int) -> str:
     return f"I-{item_id:04d}"
 
 
+def has_state(conn: sqlite3.Connection, state: str) -> bool:
+    return db.one(conn, "SELECT 1 FROM inbox_items WHERE state = ? LIMIT 1", (state,)) is not None
+
+
 def set_item_state(conn: sqlite3.Connection, item_id: int, state: str, *, note: str | None = None) -> None:
     """Move an inbox item on. A `note` joins what it already says, and the intake's warning stays."""
     if state not in STATES:
@@ -168,9 +185,9 @@ def set_item_state(conn: sqlite3.Connection, item_id: int, state: str, *, note: 
 # --- reports ------------------------------------------------------------------
 
 
-# Owed a report now. Noise never is (R2), and a message waiting for triage isn't yet: its report says
-# what triage made of it (R1).
-_OWED = "reported_at IS NULL AND state NOT IN ('noise', 'new')"
+# Owed a report now. Noise never is (R2). A message waiting for triage isn't yet, since its report says
+# what triage made of it (R1), and a held one isn't until its run's checks have read it (N3).
+_OWED = f"reported_at IS NULL AND state NOT IN ('{NOISE}', '{NEW}', '{OBSERVED}')"
 
 
 def unreported(conn: sqlite3.Connection) -> list[dict]:
@@ -206,8 +223,8 @@ def day_counts(conn: sqlite3.Connection, day: str) -> dict[str, int]:
     """One day's figures: counts only, for the digest and the morning brief (R5)."""
     row = db.one(
         conn,
-        "SELECT sum(state != ?) AS reactions, sum(state = ?) AS noise FROM inbox_items WHERE substr(recorded_at, 1, 10) = ?",
-        (NOISE, NOISE, day),
+        "SELECT sum(state NOT IN (?, ?, ?)) AS reactions, sum(state = ?) AS noise FROM inbox_items WHERE substr(recorded_at, 1, 10) = ?",
+        (NOISE, BASELINE, OWN, NOISE, day),
     ) or {}
     return {"reactions": row.get("reactions") or 0, "noise": row.get("noise") or 0}
 
@@ -232,6 +249,11 @@ def waiting_for_triage(conn: sqlite3.Connection) -> list[dict]:
 def in_conversation(conn: sqlite3.Connection, conversation: str) -> list[dict]:
     """Every message in one conversation, oldest first."""
     return db.rows(conn, "SELECT * FROM inbox_items WHERE conversation = ? ORDER BY id", (conversation,))
+
+
+def history(conn: sqlite3.Connection, conversation: str) -> list[dict]:
+    """What triage may read of a conversation, oldest first: only what a person is known to have written."""
+    return [item for item in in_conversation(conn, conversation) if item["state"] not in NOT_HISTORY]
 
 
 def count_attempt(conn: sqlite3.Connection, item_ids: list[int]) -> None:

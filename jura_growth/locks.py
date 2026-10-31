@@ -17,6 +17,8 @@ from jura_growth import paths
 
 # The skip reason when a job's lock is taken: its previous run hasn't finished.
 STILL_GOING = "previous run still going"
+# The one lock every browser job takes, since they share Chrome and the accounts (ADR 0006).
+BROWSER = "browser"
 
 
 def _path(name: str) -> Path:

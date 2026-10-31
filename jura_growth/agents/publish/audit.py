@@ -53,6 +53,20 @@ typed, because they reach #alerts and the run update (BP §4.7).
 `no_browser` says the browser check itself (`list_connected_browsers`, `tabs_context_mcp` or
 `tabs_create_mcp`) found no connected browser: the AC-P9.4 outcome. Page text saying so doesn't
 count.
+
+**Other browser jobs (`AuditRules`, inbox watch technical review B1).** Everything above is the
+publish job's default. An inbox job passes its own command words, and may add:
+
+- `read_only` (a watch run): an allow list. Any Chrome tool outside `READ_ONLY_TOOLS`, or `computer`
+  action outside `LOOKS`, fails, because a click can be Like, Hide, Delete or Block and a transcript
+  can't say which, and a tool the extension adds later must not pass by being new.
+- `asked_check`: what a run may ask to open, beyond its hosts. It judges only the address asked for:
+  where a platform then redirects (a login wall) is the platform's choice, and a stop signal.
+- `one_line` (a reply run): Return sends in a DM. So a line break in typed text, `shift+return`, or
+  Return before a field holds a whole approved text fails. Once one does, one send (Return or a
+  click) is allowed, and any later click, key or typing fails until the run's done word.
+- `place_check`: how an address is held to `places`. `hosts.within` knows only groups, and a thread
+  is one exact address, `hosts.same_place`.
 """
 
 from __future__ import annotations
@@ -61,7 +75,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Iterator
+from typing import Callable, Iterator
 
 from jura_growth import transcripts
 from jura_growth.agents.publish import hosts as hosts_mod
@@ -84,6 +98,8 @@ EDIT_KEYS = {"backspace", "delete", "up", "down", "left", "right", "arrowup", "a
              "home", "end", "pageup", "pagedown", "page_up", "page_down"}
 # Page actions that may not follow a stop.
 ACTS_AFTER_STOP = {"form_input", "file_upload", "upload_image", "navigate"}
+# All a read-only run may call. `computer` stays for its looks alone (ADR 0006's reversal).
+READ_ONLY_TOOLS = {"navigate", "read_page", "get_page_text", "find", "computer", "tabs_close_mcp", *TABLESS}
 URL_KEYS = ("url", "uri", "href", "link")
 TAIL_CHARS = 20_000  # how far from a result's end its tab context may start
 MAX_DEPTH = 16  # the deepest JSON tab context read; anything deeper is unreadable
@@ -97,6 +113,30 @@ _REMINDER_OPEN, _REMINDER_CLOSE = "<system-reminder>", "</system-reminder>"
 _CREATED = re.compile(r"tab\s*id\D{0,3}(\d+)", re.I)
 _NAVIGATED = re.compile(r"\s*Navigated to (\S+)")
 _HANDED_OUT = re.compile(r'"due"\s*:\s*true|^A-[0-9]+ · ', re.M)
+RETURN_KEYS = {"return", "enter", "kp_enter"}
+SHIFT_RETURN_KEYS = {"shift+return", "shift+enter"}
+_LINE_BREAK = re.compile(r"[\n\r\x0b\x0c\x85\u2028\u2029]")
+
+
+@dataclass(frozen=True)
+class AuditRules:
+    """What one browser job is held to. The defaults are the publish job's."""
+
+    next_word: str | None = "publish next"  # the command that hands out an item; None, a run that never claims
+    stopped_word: str | None = "publish stopped"
+    done_word: str | None = "publish done"
+    tool_word: str = "publish"  # what findings call the run, since they reach #alerts
+    read_only: bool = False
+    one_line: bool = False
+    place_check: Callable[[str, str], bool] = hosts_mod.within
+    asked_check: Callable[[str], bool] | None = None
+
+
+PUBLISH_RULES = AuditRules()
+
+
+def _said(word: str | None, command: str) -> bool:
+    return bool(word) and word in command
 
 
 @dataclass
@@ -149,10 +189,12 @@ class _Uploads:
 
 
 def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[str], approved: list[str],
-          images: list[str], site: Fixture | None = None, places: tuple[str, ...] | list[str] = ()) -> Audit:
+          images: list[str], site: Fixture | None = None, places: tuple[str, ...] | list[str] = (),
+          rules: AuditRules = PUBLISH_RULES) -> Audit:
     """`site`: the fixture platform, when it is on (BP-07). Then every address must be on the
     fixture site (`hosts.site_problem`) in place of `hosts`. `places`: the claimed group items'
-    own addresses, which every address must also be inside (code review 06, B1)."""
+    own addresses, which every address must also be inside (code review 06, B1). `rules`: see
+    `AuditRules`."""
     found = Audit()
     allowed = tuple(h.lower() for h in hosts)
     texts = [normal(text) for text in approved if text and text.strip()]
@@ -161,16 +203,17 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
     closed: set[str] = set()
     fields = _Fields()
     claimed = stopped = attempted_done = False
+    sent = False  # one_line: the one send has happened, and the run's done word hasn't followed it
 
     def fail(text: str) -> None:
         if text not in found.failures:
             found.failures.append(text)
 
     def check_url(url: str, where: str) -> None:
-        problem = _url_problem(url, allowed, site)
+        problem = _url_problem(url, allowed, site, rules.tool_word)
         if problem:
             fail(f"{where}: {problem}")
-        elif places and url.strip() not in BLANK_TABS and not any(hosts_mod.within(url, place) for place in places):
+        elif places and url.strip() not in BLANK_TABS and not any(rules.place_check(url, place) for place in places):
             fail(f"{where}: an address outside the claimed item's own page")
 
     def typed(text: str, tool: str, name: str) -> None:
@@ -181,12 +224,14 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
     for call in transcript.calls:
         if call.name == "Bash":
             command = str(call.input.get("command", ""))
-            if call.ok and "publish next" in command and _HANDED_OUT.search(call.result):
+            if call.ok and _said(rules.next_word, command) and _HANDED_OUT.search(call.result):
                 claimed = True
-            if call.ok and "publish stopped" in command:
+            if call.ok and _said(rules.stopped_word, command):
                 stopped = True
-            if "publish done" in command and "--url" in command:
-                attempted_done = True  # recorded or refused, the run says the post went out
+            if _said(rules.done_word, command):
+                sent = False
+                if "--url" in command:
+                    attempted_done = True  # recorded or refused, the run says the post went out
             continue
         if not call.name.startswith(CHROME):
             continue
@@ -194,7 +239,7 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
         if tool in TABLESS and NO_BROWSER.search(call.result or call.error_text or ""):
             found.no_browser = True
         if tool in DENIED_TOOLS:
-            fail(f"tried {tool}, which a publish run may never use")
+            fail(f"tried {tool}, which a {rules.tool_word} run may never use")
         tab = _tab_of(call.input)
         if tool not in TABLESS:
             if tab is None:
@@ -205,10 +250,16 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
             value = call.input.get(key)
             if isinstance(value, str):
                 check_url(value, f"{tool} was asked to open")
+                if rules.asked_check and value.strip() not in BLANK_TABS and not rules.asked_check(value):
+                    fail(f"{tool} was asked to open an address a {rules.tool_word} run doesn't read")
 
         action = str(call.input.get("action", "")) if tool == "computer" else ""
         if stopped and (tool in ACTS_AFTER_STOP or (tool == "computer" and action not in LOOKS)):
-            fail(f"{f'{tool} {action}'.strip()} after publish stopped")
+            fail(f"{f'{tool} {action}'.strip()} after {rules.stopped_word}")
+        if rules.read_only and (tool not in READ_ONLY_TOOLS or (tool == "computer" and action not in LOOKS)):
+            fail(f"{f'{tool} {action}'.strip()} in a {rules.tool_word} run, which may only read")
+        if rules.one_line:
+            sent = _one_line(tool, call.input, action, _whole_text_typed(fields, texts), sent, fail)
         if tool == "form_input":
             value = call.input.get("value")
             name = f"form-{call.input.get('ref', '?')}"
@@ -267,6 +318,45 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
     return found
 
 
+def _whole_text_typed(fields: _Fields, texts: list[str]) -> bool:
+    return any(normal("".join(pieces)) in texts for pieces in fields.typed.values())
+
+
+def _one_line(tool: str, given: dict, action: str, whole: bool, sent: bool, fail) -> bool:
+    """A reply run's typing (`AuditRules.one_line`), judged before the call changes the fields:
+    whether the one send has happened by the end of this call."""
+    typed = given.get("value") if tool == "form_input" else given.get("text") if action == "type" else None
+    if isinstance(typed, str) and _LINE_BREAK.search(typed):
+        fail(f"{tool} typed a line break, and Return sends in a direct message")
+    if tool == "form_input":
+        if sent:
+            fail("form_input after the reply was sent")
+        return sent
+    if tool != "computer":
+        return sent
+    if action in CLICKS:
+        if sent:
+            fail(f"computer {action} after the reply was sent")
+        return sent or whole
+    if action == "type":
+        if sent:
+            fail("computer typed after the reply was sent")
+        return sent
+    if action == "key":
+        text = given.get("text")
+        for key in str(text).lower().split() if isinstance(text, str) else ():
+            if sent:
+                fail(f"computer pressed {key} after the reply was sent")
+            elif key in SHIFT_RETURN_KEYS:
+                fail(f"computer pressed {key}, which breaks a line in a one-line reply")
+            elif key in RETURN_KEYS:
+                if whole:
+                    sent = True
+                else:
+                    fail("computer pressed Return before the field held a whole approved text")
+    return sent
+
+
 def _keyboard(given: dict, action: str, fields: _Fields, typed, fail) -> None:
     """One `computer` call's effect on the fields."""
     if action in CLICKS:
@@ -293,7 +383,7 @@ def _keyboard(given: dict, action: str, fields: _Fields, typed, fail) -> None:
             typed(key, "computer", fields.key())
 
 
-def _url_problem(url: str, allowed: tuple[str, ...], site: Fixture | None = None) -> str | None:
+def _url_problem(url: str, allowed: tuple[str, ...], site: Fixture | None = None, word: str = "publish") -> str | None:
     text = url.strip().rstrip(".,;")
     if text in BLANK_TABS:
         return None
@@ -301,7 +391,7 @@ def _url_problem(url: str, allowed: tuple[str, ...], site: Fixture | None = None
         return f"a Discord host ({transcripts.host_of(text)})"
     if site is not None:
         return hosts_mod.site_problem(text, site)
-    return hosts_mod.url_problem(text, allowed, "the publish hosts")
+    return hosts_mod.url_problem(text, allowed, f"the {word} hosts")
 
 
 def _tab_of(given: dict) -> str | None:
@@ -351,6 +441,56 @@ def _without_trailing_reminders(tail: str) -> str:
             break
         tail = tail[:start].rstrip()
     return tail
+
+
+def tab_addresses(text: str) -> list[tuple[str, str]]:
+    """(tab id, address) from the tab context that ends a tool's result, for another job's checks.
+    Page text can't plant one (`_trailing_tabs`)."""
+    return _trailing_tabs(text)
+
+
+_CONTEXT_HEADING = re.compile(r"(?:^|\n)\s*Tab Context:\s*(?:- Executed on tabId:[^\n]*\s*)?$")
+_RESULT_HEADING = re.compile(r"\A(?:(?:Title|URL|Source element):[^\n]*\n)+(?:---[^\n]*\n)?")
+
+
+def page_text(text: str) -> str:
+    """What a page said in a read tool's result: without the title and address that may open it, and
+    without the tab context and reminders that end it. An address the run asked for, or a page's
+    title, isn't anything a person there wrote (code review 05, B2). Never raises."""
+    try:
+        start = max(0, len(text) - TAIL_CHARS)
+        tail = _without_trailing_reminders(text[start:])
+        cut = _tail_json_start(tail)
+        if cut is None:
+            cut = _tail_lines_start(tail)
+        body = text[:start] + (tail if cut is None else _CONTEXT_HEADING.sub("", tail[:cut]))
+        return _RESULT_HEADING.sub("", body)
+    except Exception:  # noqa: BLE001 - page content is never allowed to break a check
+        return ""
+
+
+def _tail_json_start(tail: str) -> int | None:
+    """Where the JSON tab context `_tail_json` reads begins, or None."""
+    if not tail.endswith(("}", "]")):
+        return None
+    starts = [i for i in range(len(tail) - 1, -1, -1) if tail[i] in "{[" and (i == 0 or tail[i - 1] == "\n")]
+    for begin in starts[:TAIL_CANDIDATES]:
+        block = tail[begin:]
+        if _depth(block) > MAX_DEPTH:
+            continue
+        try:
+            json.loads(block)
+        except ValueError:
+            continue
+        return begin
+    return None
+
+
+def _tail_lines_start(tail: str) -> int | None:
+    """Where the `- Available tabs:` block `_tail_lines` reads begins, or None."""
+    if not _tail_lines(tail):
+        return None
+    return tail.rfind("- Available tabs:")
 
 
 def _tail_json(tail: str) -> list[tuple[str, str]]:

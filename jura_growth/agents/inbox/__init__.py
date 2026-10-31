@@ -11,8 +11,12 @@ This agent sees mail, triages it, reports it, and sends the replies Ting Yu appr
 - `report`: one message per conversation in #mission-control, retried until delivered.
 - `kinds`: the `email-reply` approval kind: what a reply is, its card, and what each answer does.
 - `send`: `inbox send-due`, which claims an approved reply and sends exactly that.
+- `watch`: what a watch run may record, and what its records come to. The jobs that drive the browser
+  belong to the `inbox_browser` plug-in, which has its own pause flag. Its commands are here, because
+  a second `inbox` click group would silently replace this one.
 - `job`: the job's precheck.
-- `commands`: `jura-growth inbox status | pending | submit | send-due`.
+- `commands`: `jura-growth inbox status | pending | submit | send-due`, and a watch run's `watch-targets`,
+  `observe` and `stopped`.
 - `settings`: the limits in `caps.py`, tightened by `config/inbox.yaml`.
 
 Job `inbox-check` runs every 15 minutes, 07:00 to 23:45 SGT. Its precheck reads the mail and reports

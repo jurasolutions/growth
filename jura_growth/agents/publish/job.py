@@ -45,12 +45,20 @@ def precheck(job: str, conn: sqlite3.Connection):
     cards.sweep_safely(conn)
     if settle_orphans(conn, None):  # the runner holds the publish lock and no run has claimed yet
         return pause.is_paused(conn, items.AGENT)
+    problem = auth_problem("the publish job needs the claude.ai login")
+    if problem:
+        return problem
+    if not claim.claimable(conn):
+        return agents.NothingToDo(claim.NOTHING_DUE)
+    return None
+
+
+def auth_problem(needs: str) -> str | None:
+    """Why a browser job can't start: a variable that would hide the Chrome tools (AC-P9.5)."""
     for name in AUTH_VARIABLES:
         if os.environ.get(name):
             return (f"{name} is set, so Claude Code would start without the Chrome tools; remove it from the "
-                    f"environment scheduled runs get (the publish job needs the claude.ai login)")
-    if not claim.claimable(conn):
-        return agents.NothingToDo(claim.NOTHING_DUE)
+                    f"environment scheduled runs get ({needs})")
     return None
 
 
@@ -118,7 +126,7 @@ def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
                    f"group, and the Page's own timeline." for item in doubted]
     stops = [item for item in claimed if item.state == "stopped"]
     if model_failed and not errors:
-        errors = [_failure(conn, item, run_id) for item in claimed] or [_ending(outcome.error, run_id)]
+        errors = [_failure(conn, item, run_id) for item in claimed] or [ending(outcome.error, run_id, " before claiming anything")]
     status = "failed" if errors else outcome.status
     return runner.Outcome(status, summary=summary, error=" ".join(errors), cost_usd=outcome.cost_usd,
                           alerted=bool(stops) and not unknown and not failures)
@@ -204,9 +212,10 @@ def _failure(conn: sqlite3.Connection, item: items.Item, run_id: int) -> str:
             f"(run {run_id}'s transcript keeps them).")
 
 
-def _ending(error: str, run_id: int) -> str:
+def ending(error: str, run_id: int, when: str = "") -> str:
+    """How a run ended, in closed words: the model's own are withheld."""
     phrase = next((words for prefix, words in ENDINGS if (error or "").startswith(prefix)), MODEL_FAILED)
-    return f"Run {run_id} {phrase} before claiming anything; its words are withheld (run {run_id}'s transcript keeps them)."
+    return f"Run {run_id} {phrase}{when}; its words are withheld (run {run_id}'s transcript keeps them)."
 
 
 def _audit(run_id: int, claimed: list[items.Item]) -> audit.Audit:
@@ -247,15 +256,21 @@ def _copy_problems(conn: sqlite3.Connection, claimed: list[items.Item]) -> list[
 
 
 def failed_closed(conn: sqlite3.Connection, run_id: int | None, outcome, error: Exception):
-    """The outcome when the checks themselves broke (`publish.after_run`, B3): failed, with a
-    fixed reason naming the run and the error's type only, and publishing paused. Logging and
-    the pause are tried, and neither can stop the failed outcome from standing."""
+    """The outcome when the checks themselves broke (`publish.after_run`, B3)."""
+    return checks_failed(conn, run_id, outcome, error, agent=items.AGENT, event="publish.checks_failed",
+                         paused=f"Publishing is paused for every item until you resume it: {commands.RESUME}.")
+
+
+def checks_failed(conn: sqlite3.Connection, run_id: int | None, outcome, error: Exception, *, agent: str, event: str, paused: str):
+    """A browser run nobody could check: failed, with a fixed reason naming the run and the error's
+    type only, and its agent paused. Logging and the pause are tried, and neither can stop the failed
+    outcome from standing."""
     from jura_growth import runner
 
     name = type(error).__name__
     for step in (
-        lambda: log.event(conn, "publish.checks_failed", {"error": name}, level="error", agent=items.AGENT, run_id=run_id),
-        lambda: pause.pause(conn, items.AGENT, f"the checks after run {run_id} couldn't run", notify=False),
+        lambda: log.event(conn, event, {"error": name}, level="error", agent=agent, run_id=run_id),
+        lambda: pause.pause(conn, agent, f"the checks after run {run_id} couldn't run", notify=False),
     ):
         try:
             step()
@@ -264,8 +279,7 @@ def failed_closed(conn: sqlite3.Connection, run_id: int | None, outcome, error: 
     return runner.Outcome(
         "failed",
         summary=f"the checks after run {run_id} couldn't run",
-        error=(f"The checks after run {run_id} couldn't run ({name}), so the run is treated as failed. Publishing "
-               f"is paused for every item until you resume it: {commands.RESUME}."),
+        error=f"The checks after run {run_id} couldn't run ({name}), so the run is treated as failed. {paused}",
         cost_usd=getattr(outcome, "cost_usd", None),
     )
 
@@ -274,15 +288,20 @@ def _no_browser(conn: sqlite3.Connection, run_id: int) -> None:
     """Log it, and alert only on the first such run of the day (AC-P9.4). `discord.alert` posts
     every time it is called, and the text is the same each slot, so the once-a-day rule is kept
     here, from the day's `publish.no_browser` events, rather than by Discord's dedupe."""
+    no_browser_once(conn, run_id, items.AGENT, "publish.no_browser",
+                    f"No browser was connected when the publish job ran (run {run_id}), so nothing was posted. "
+                    "Approved items stay approved until their deadline.")
+
+
+def no_browser_once(conn: sqlite3.Connection, run_id: int, agent: str, event: str, opening: str) -> None:
+    """Log a run that found no browser, and alert only on the first of the day."""
     today = timeutil.today_str()
-    earlier = db.scalar(conn, "SELECT count(*) FROM events WHERE kind = 'publish.no_browser' AND ts LIKE ?", (f"{today}%",))
-    log.event(conn, "publish.no_browser", {"run": run_id}, level="warning", agent=items.AGENT, run_id=run_id)
+    earlier = db.scalar(conn, "SELECT count(*) FROM events WHERE kind = ? AND ts LIKE ?", (event, f"{today}%"))
+    log.event(conn, event, {"run": run_id}, level="warning", agent=agent, run_id=run_id)
     if earlier:
         return
-    discord.alert(conn, f"No browser was connected when the publish job ran (run {run_id}), so nothing was posted. "
-                        "Approved items stay approved until their deadline. On the Mac, open Chrome with the Claude "
-                        "extension signed in to the same account as Claude Code. This is the only alert about it "
-                        "today.", agent=items.AGENT)
+    discord.alert(conn, f"{opening} On the Mac, open Chrome with the Claude extension signed in to the same account as "
+                        "Claude Code. This is the only alert about it today.", agent=agent)
 
 
 def settle_orphans(conn: sqlite3.Connection, run_id: int | None) -> list[str]:

@@ -180,7 +180,7 @@ community        Mon 07:30                                no         never
 backup           daily 23:30                              yes        never
 
 discord    0 of {channels} channel webhooks set
-agents     app-factory, community, inbox, outreach, publish, scout, social
+agents     app-factory, community, inbox, inbox-browser, outreach, publish, scout, social
 """
 GOLDEN_JOBS = {line.split()[0] for line in STATUS_GOLDEN.splitlines()[4:13]}
 GAP_PREFIX = "setup gap  "

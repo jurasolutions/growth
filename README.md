@@ -126,13 +126,15 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
 - The code enforces the same command list again: with `JURA_GROWTH_JOB` set, any other command
   exits with status 2 and a `refused:` line (`jura_growth/headless.py`). A command job may run
   only its own command. Commands you run in Terminal are unaffected.
-- **The browser job is narrower (ADR 0005).** A job in `caps.BROWSER_JOBS` (only `publish`) with
-  `browser: true` gets `--chrome` and `--add-dir` for its own scratch folder only
-  (`data/growth/work/publish/`), so it reads nothing else under `jurasolutions/` beyond what its
+- **The browser jobs are narrower (ADR 0005, ADR 0006).** A job in `caps.BROWSER_JOBS` (`publish`,
+  `inbox-watch`, `inbox-reply`) with `browser: true` gets `--chrome` and `--add-dir` for its own
+  scratch folder only (`data/growth/work/<job>/`), and takes the one `browser` lock they share, so
+  a job that finds it held leaves a quiet record and starts no Claude. It reads nothing else under `jurasolutions/` beyond what its
   commands print; `publish next` copies the item's images into that folder, read-only, for the
   Chrome upload tool, which uploads only files the session may read (rehearsal 2026-10-30). It has no web search or fetch. Its Chrome tools come from the plug-in's
   `Permissions.allowed_tools`: the tab tools by name and one `ClaudeInChromeDomain(<host>)` rule
-  per host of each platform switched on and in `browser` mode, never a page tool by name. Any other job that
+  per host, never a page tool by name. For `publish` that is each platform switched on and in `browser`
+  mode; the watch names Facebook and Instagram itself, whatever `publish_mode` says. Any other job that
   sets `browser: true` fails. After the run, its transcript is audited for hosts, tabs, typed
   text, uploads and actions after a stop, and its summary and error are rewritten from the
   item's record, so no model or page text reaches the run row, `#alerts` or a run update.
@@ -177,7 +179,18 @@ numbers and addresses masked. A conversation it hasn't dealt with after two trie
 is reported anyway, and a failed triage run alerts once without counting toward auto-pause.
 
 A report Discord refused goes again on the next check. `jura-growth pause inbox` stops all of it, and the
-16:45 check carries on. The PRD is `prd/pending/prd-jura-inbox-watch-2026-10-31.md`.
+16:45 check carries on.
+
+`inbox-watch` (hourly, 09:05 to 21:05 SGT, plug-in `inbox-browser`) reads Facebook and Instagram through
+Chrome and records what people said with `inbox observe --file`. It starts in an empty folder as triage does,
+and what it recorded goes on to triage once it has been checked. It can't click: `computer`, `form_input`,
+`file_upload` and `upload_image` are denied by name (ADR 0006), and its transcript is audited as
+`read_only`. It must record every surface, so a surface it can't read shows as failed, and goes to
+Needs you after 3 of its hours. A message whose text wasn't in what Chrome returned to that run is
+`unverified`: reported as such, with no draft. A stop signal pauses `inbox-browser` and `publish`, since
+they share the accounts, and a `publish` pause skips the watch. `jura-growth pause inbox-browser`
+stops it and leaves the mail running. The first-run checks are in the setup guide.
+The PRD is `prd/pending/prd-jura-inbox-watch-2026-10-31.md`.
 
 A draft for an email becomes one card in `#approvals`, of kind `email-reply`: what they said, who really
 gets the reply, the draft exactly as it goes out, and what each answer does. It is always one message, so

@@ -35,3 +35,12 @@ In the same rehearsal, the transcript audit learned the extension's real tab-con
 trailing `<system-reminder>` block. It reads only lines of exactly that shape, split on `\n`
 alone, takes the address from the last `("…")`, and drops reminder blocks from the very end only
 (code review rehearsal-fixes, SEC-B1, SEC-B2, SEC-N1). This closes code review 03 S-10.
+
+## Amendment 2026-10-31 (inbox watch)
+
+`publish` is no longer the only browser job, so this record's title no longer holds in full. `inbox-watch`
+and `inbox-reply` join `caps.BROWSER_JOBS`, with their rules from the `inbox_browser` plug-in, and
+everything above stays true of them: `--chrome` only for those jobs, page tools only by domain, no
+`--add-dir` beyond their own scratch folder, and an audited transcript. All three take one `browser` lock in
+the runner, and the two inbox jobs start in an empty folder rather than the repo. The audit gained `AuditRules`, and `audit.audit` without them behaves as before. ADR 0006 has the
+reasons, and what a watch run is denied beyond this.
