@@ -71,3 +71,26 @@ decisions: round 3 blocker "A 5,000-user rollout." fixed by the conductor as the
 decisions: left open, recorded for the PR: R3-S2 "A 500-store chain." skips the card tie and passes on main too; "The 2000 shops" pinned as a known limit; a claim split over two sentences with a small count ("We help shops. 62 of them renew." with a source) relies on Ting Yu's read of the card
 questions: -
 evidence:  tests/test_brand_check.py -> 5 red, then 336 passed with test_social_figures.py
+
+## 2026-11-01T00:30+0800 developer (ticket 02, appended by the conductor)
+status:    done
+persona:   developer
+ticket:    02
+artifacts: crew/approvals-first-social-depth-02-approvals-first-and-feeds, through 2283be8 (the flip, last and alone)
+decisions: anything the masking layer changes fails the brand gate, so the approval card shows exactly what posts; a refused card posts a note in the kind's feed
+decisions: NOT_NAMES takes role vocabulary, everyday words and theme-label words, so a lead's address can't teach "AI" as a name
+questions: -
+evidence:  uv run pytest, twice -> 4963 passed, 0 failed, 0 skipped
+evidence:  12 mutations with a stand-in claude first on PATH -> all caught
+incident:  in round 0 a deliberate mutation made a test start the real claude for about 2 minutes. Checked by the conductor: conftest sets JURA_GROWTH_ENV_FILE to a missing file and JURA_GROWTH_DISCORD=off, that worktree has no .env, and live growth.db shows no new run. Cost: tokens only. The test now uses a stand-in
+open:      one unnamed intermittent failure in one full run; failure names are now kept; QA to hunt it
+
+## 2026-11-01T00:31+0800 reviewer (ticket 02, two rounds)
+status:    done
+persona:   reviewer
+ticket:    02
+artifacts: reviews/code-review-02.md
+decisions: round 1 SP-B1, SEC-B1, SEC-B2 and round 2 R2-B1, R2-B2 fixed; guards, seven feeds, 18:05, N7 and the flip alone hold. Round 2's fixes are verified at the final review, not by a round 3
+decisions: accepted cost: a post naming a word the masking layer changes is refused, and a second failure drops that platform's day. Link case rare (reviewer: 3 of 34 shapes, live 0 of 3)
+questions: -
+evidence:  reviews/code-review-02.md
