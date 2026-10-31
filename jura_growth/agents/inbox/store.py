@@ -23,11 +23,17 @@ from jura_growth.agents.inbox import settings
 SOURCES = ("email", "enquiry", "facebook-comment", "facebook-dm", "instagram-comment", "instagram-dm", "post-stats",
            "app-usage")
 STATES = ("new", "triaged", "reported", "waiting", "sent", "skipped", "lapsed", "superseded", "unknown", "failed",
-          "needs-you", "noise", "unverified", "answered-by-hand", "closed", "done")
+          "needs-you", "noise", "unverified", "answered-by-hand", "closed", "done", "observed", "baseline")
 NOISE = "noise"
 REPORTED = "reported"
 NEEDS_HAND_REPLY = "needs-you"  # the state's name in the PRD; in words, "needs a hand reply"
 NEW = "new"
+UNVERIFIED = "unverified"
+ANSWERED_BY_HAND = "answered-by-hand"
+# A watch run's record, until that run's checks have read what Chrome really returned (N3). It goes to
+# no report and no triage while it is held.
+OBSERVED = "observed"
+BASELINE = "baseline"  # seen on the first read of a surface (F12): never told, and not a day's reaction
 
 NAME_CHARS = 120
 SUBJECT_CHARS = 300
@@ -147,8 +153,9 @@ def set_item_state(conn: sqlite3.Connection, item_id: int, state: str) -> None:
 
 
 def unreported(conn: sqlite3.Connection) -> list[dict]:
-    """Every inbox item still owed a report, oldest first. Noise never is (R2)."""
-    return db.rows(conn, "SELECT * FROM inbox_items WHERE reported_at IS NULL AND state != ? ORDER BY id", (NOISE,))
+    """Every inbox item still owed a report, oldest first. Noise never is (R2), and a held item isn't yet."""
+    return db.rows(conn, "SELECT * FROM inbox_items WHERE reported_at IS NULL AND state NOT IN (?, ?) ORDER BY id",
+                   (NOISE, OBSERVED))
 
 
 def mark_reported(conn: sqlite3.Connection, item_ids: list[int]) -> None:
@@ -171,8 +178,8 @@ def day_counts(conn: sqlite3.Connection, day: str) -> dict[str, int]:
     """One day's figures: counts only, for the digest and the morning brief (R5)."""
     row = db.one(
         conn,
-        "SELECT sum(state != ?) AS reactions, sum(state = ?) AS noise FROM inbox_items WHERE substr(recorded_at, 1, 10) = ?",
-        (NOISE, NOISE, day),
+        "SELECT sum(state NOT IN (?, ?)) AS reactions, sum(state = ?) AS noise FROM inbox_items WHERE substr(recorded_at, 1, 10) = ?",
+        (NOISE, BASELINE, NOISE, day),
     ) or {}
     return {"reactions": row.get("reactions") or 0, "noise": row.get("noise") or 0}
 
@@ -180,7 +187,8 @@ def day_counts(conn: sqlite3.Connection, day: str) -> dict[str, int]:
 def open_counts(conn: sqlite3.Connection) -> dict[str, int]:
     """What is still open, whatever day it arrived."""
     return {
-        "unreported": db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE reported_at IS NULL AND state != ?", (NOISE,)) or 0,
+        "unreported": db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE reported_at IS NULL AND state NOT IN (?, ?)",
+                                (NOISE, OBSERVED)) or 0,
         "hand_replies": db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE state = ?", (NEEDS_HAND_REPLY,)) or 0,
     }
 

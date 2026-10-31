@@ -28,7 +28,12 @@ FOLD_SHOWN = 40  # inbox items named in a fold before "and N more"
 NAME_SHOWN = 80
 SUBJECT_SHOWN = 160
 CUT_NOTE = "(cut: the rest is in the mailbox)"
+CUT_NOTE_SOCIAL = "(cut: the rest is in the thread)"
 NEXT_NEW = "Next: no draft yet in this build. Answer in the mailbox if it needs one."
+NEXT_NEW_SOCIAL = "Next: no draft yet in this build. Answer on the platform if it needs one."
+SOCIAL_HEADINGS = {"facebook-comment": "Facebook comment", "facebook-dm": "Facebook message",
+                   "instagram-comment": "Instagram comment", "instagram-dm": "Instagram message"}
+RUN_MESSAGE = "post-stats"  # counts and notes from a watch run: fixed words and validated numbers, no one's text
 
 _LINK_TARGET = re.compile(r"\]\(\s*<?\s*(\w+)://")
 _SPOILER = re.compile(r"\|(?=\|)")
@@ -52,6 +57,10 @@ def quoted(text: str) -> str:
 
 
 def _heading(item: dict) -> str:
+    if item["source"] in SOCIAL_HEADINGS:
+        return SOCIAL_HEADINGS[item["source"]]
+    if item["source"] == RUN_MESSAGE:
+        return "From the watch"
     if item["source"] == "enquiry":
         return "Website enquiry"
     return "Answer to our email" if item["lead_id"] else "Email"
@@ -74,6 +83,14 @@ def _extras(item: dict) -> list[str]:
     return extras
 
 
+def _no_text(item: dict) -> str:
+    """Fixed words for a message with no text. No model guesses what a voice note says (F7)."""
+    from jura_growth.agents.inbox import watch
+
+    kind = json.loads(item["thread_json"] or "{}").get("attachment")
+    return f"sent {watch.ATTACHMENTS.get(kind, watch.ATTACHMENTS['other'])}, see thread"
+
+
 def _block(item: dict, text: str, cut: bool) -> str:
     lines = []
     if item["sender_name"]:
@@ -82,18 +99,24 @@ def _block(item: dict, text: str, cut: bool) -> str:
         lines.append(f"Subject: {item['subject'][:SUBJECT_SHOWN]}")
     if lines:
         lines.append("")
-    lines.append(text if text else "(no text: see the mailbox)")
+    social = item["source"] in SOCIAL_HEADINGS
+    lines.append(text if text else _no_text(item) if social else "(no text: see the mailbox)")
     if cut:
-        lines.append(CUT_NOTE)
+        lines.append(CUT_NOTE_SOCIAL if social else CUT_NOTE)
     return quoted("\n".join([*lines, *_extras(item)]))
 
 
 def build(item: dict) -> tuple[str, str]:
     """The report's text and the quote block in it, always one Discord message, measured masked:
     masking can lengthen text, and a piece past the limit would split the report."""
+    if item["source"] == RUN_MESSAGE:
+        return f"**{store.label(item['id'])} · {_heading(item)}** · {_when(item)}\n{item['note']}", ""
     where = item["sender_domain"] or "an unknown sender"
     head = f"**{store.label(item['id'])} · {_heading(item)}** · {where}, {_when(item)}"
-    note = item["note"] or (NEXT_NEW if item["state"] == store.NEW else "")
+    if item["target"]:
+        head += f"\nOpen: <{item['target']}>"
+    new = NEXT_NEW_SOCIAL if item["source"] in SOCIAL_HEADINGS else NEXT_NEW
+    note = item["note"] or (new if item["state"] == store.NEW else "")
     text = item["text"]
     cut = bool(item["text_cut"])
     while True:
@@ -137,7 +160,7 @@ def report_due(conn: sqlite3.Connection) -> int:
         except Exception as error:  # noqa: BLE001 - one bad row never holds up the rest
             log.event(conn, "inbox.report_refused", {"item": item["id"], "error": type(error).__name__}, level="warning", agent="inbox")
             continue
-        if not _post(conn, content, (block,)):
+        if not _post(conn, content, (block,) if block else ()):
             break
         store.mark_reported(conn, [item["id"]])
         delivered += 1

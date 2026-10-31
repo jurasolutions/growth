@@ -20,6 +20,13 @@ check_seconds: 120
 # jura_growth/agents/inbox/settings.py. Each one also covers its subdomains.
 extra_platform_domains: []
 
+# The Page and the account the watch reads, whatever publish_mode says in config/social.yaml, and
+# their names as the platforms show them, so their own words are never read as a reaction. These must
+# match page_url in config/social.yaml once that is set.
+pages:
+  facebook: {url: "https://www.facebook.com/jurasolutionssg", name: "Jura Solutions"}
+  instagram: {url: "https://www.instagram.com/jura_solutions/", name: "jura_solutions"}
+
 # The mail servers whose Authentication-Results header counts, by the id that opens it. A sender can
 # write that header too, so any other reads as no verdict: an enquiry reads as unsigned, and a
 # colleague is taken at their word. Empty until UAT Part B reads the id from one real enquiry's raw

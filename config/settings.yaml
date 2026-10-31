@@ -148,6 +148,15 @@ jobs:
     quiet: true
     schedule: {daily_every: {start: "07:00", end: "23:45", minutes: 15}}
 
+  # Reads Facebook and Instagram through Chrome and records what people said. It can't click. Its tools
+  # come from the inbox-browser plug-in, and its hours are checked in code too.
+  inbox-watch:
+    agent: inbox-browser
+    kind: claude
+    prompt: inbox-watch.md
+    browser: true
+    schedule: {daily_every: {start: "09:05", end: "21:05", minutes: 60}}
+
   backup:
     agent: backup
     kind: command
