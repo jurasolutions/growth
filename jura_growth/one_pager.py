@@ -6,7 +6,7 @@ Ask me. `post()` sends `text()` to #mission-control through `discord.post()`,
 which masks it and splits it only past 2,000 characters.
 
 Amended 2026-10-31: what goes to #mission-control is the morning picture
-(`brief.py`) with a short message (`summary()`). `text()` is the long form:
+(`picture.py`) with a short message (`summary()`). `text()` is the long form:
 `--no-post` prints it, and it goes out instead when the picture can't be drawn.
 The 14-day grid (`grid_html`) is no longer posted, because it can't be read at
 the size Discord shows it; `jura-growth one-pager --grid` draws it to a file.
@@ -23,12 +23,15 @@ from datetime import timedelta
 from html import escape
 from pathlib import Path
 
-from jura_growth import brief, discord, health, images, log, mission, paths, privacy, slots, timeutil
+from jura_growth import cards, discord, health, images, log, mission, paths, picture, privacy, slots, timeutil
 
 ASK_ME = ("`/growth status`", "`/growth approvals`", "`/growth one-pager`", "`/growth pause <agent|all>`", "`/growth resume <agent|all>`")
 # Today shows these jobs as counts per status, whatever their slot count,
 # and lists every other job slot by slot (MC §5.4.4; code review 08 S-4).
 COUNTED_JOBS = frozenset({"scout-send", "publish"})
+# A Fix line in the message: long enough for any real wording, and short enough that
+# four of them and the rest fit one message, which is what carries the picture.
+SUMMARY_FIX_LIMIT = 360
 
 
 def text(snapshot: mission.Snapshot) -> str:
@@ -45,21 +48,25 @@ def text(snapshot: mission.Snapshot) -> str:
 def summary(snapshot: mission.Snapshot) -> str:
     """The message that carries the picture: enough to act on from a notification."""
     now = snapshot.now
-    lines = [f"**{health.day_label(now)}, as of {now:%H:%M} SGT**", brief.verdict(snapshot)]
-    found = brief.waiting(snapshot)
+    lines = [f"**{health.day_label(now)}, as of {now:%H:%M} SGT**", picture.verdict(snapshot)]
+    found = picture.waiting(snapshot)
     if found:
-        counts = Counter(brief.cards.label(r.kind) for r in found)
+        counts = Counter(cards.label(r.kind) for r in found)
         soonest = found[0]
         lines.append(
             "Decide in #approvals: " + ", ".join(f"{kind} {counts[kind]}" for kind in sorted(counts))
-            + f". Soonest: {soonest.id}, by {brief.by_when(soonest.decide_by, now)}."
+            + f". Soonest: {soonest.id}, by {picture.by_when(soonest.decide_by, now)}."
         )
-    fixes = brief.fixes(snapshot)
-    lines += [f"- {item}" for item in fixes[:brief.FIX_SHOWN]]
-    if len(fixes) > brief.FIX_SHOWN:
-        lines.append(f"- and {len(fixes) - brief.FIX_SHOWN} more: `/growth status`")
+    fixes = picture.fixes(snapshot)
+    lines += [f"- {_fix_line(item)}" for item in fixes[:picture.FIX_SHOWN]]
+    if len(fixes) > picture.FIX_SHOWN:
+        lines.append(f"- and {len(fixes) - picture.FIX_SHOWN} more: `/growth status`")
     lines.append(" · ".join(ASK_ME[:2]))
     return "\n".join(lines)
+
+
+def _fix_line(item: str) -> str:
+    return item if len(item) <= SUMMARY_FIX_LIMIT else item[: SUMMARY_FIX_LIMIT - 1] + "…"
 
 
 def messages(snapshot: mission.Snapshot) -> list[str]:
@@ -270,15 +277,15 @@ def grid_png(snapshot: mission.Snapshot) -> tuple[Path | None, str | None]:
     return _drawn(lambda: render_grid(snapshot, out, chrome=images.Chrome(images.DEFAULT_CHROME), offline=OFFLINE))
 
 
-def brief_png(snapshot: mission.Snapshot) -> tuple[Path | None, str | None]:
-    """The morning picture drawn to `data/growth/one-pager/brief-<day>.png`, with
+def picture_png(snapshot: mission.Snapshot) -> tuple[Path | None, str | None]:
+    """The morning picture drawn to `data/growth/one-pager/picture-<day>.png`, with
     its page beside it as `.html` to open on the Mac; or None and why not."""
     folder = paths.one_pager_dir()
     day = f"{snapshot.now:%Y-%m-%d}"
 
     def draw() -> Path:
-        png = brief.render(snapshot, folder / f"brief-{day}.png", chrome=images.Chrome(images.DEFAULT_CHROME), offline=OFFLINE)
-        paths.writable(folder / f"brief-{day}.html").write_text(brief.html(snapshot), encoding="utf-8")
+        png = picture.render(snapshot, folder / f"picture-{day}.png", chrome=images.Chrome(images.DEFAULT_CHROME), offline=OFFLINE)
+        paths.writable(folder / f"picture-{day}.html").write_text(picture.html(snapshot), encoding="utf-8")
         return png
 
     return _drawn(draw)
@@ -297,11 +304,11 @@ def post(conn: sqlite3.Connection, snapshot: mission.Snapshot) -> discord.PostRe
     """The morning picture to #mission-control with its short message. Never
     deduplicated: asked for twice, it posts twice (MC §5.10). When the picture
     can't be drawn, the long text goes instead and says why."""
-    png, problem = brief_png(snapshot)
+    png, problem = picture_png(snapshot)
     if png:
         content = summary(snapshot)
     else:
-        log.event(conn, "one_pager.brief_failed", {"error": problem}, level="warning")
+        log.event(conn, "one_pager.picture_failed", {"error": problem}, level="warning")
         content = f"{text(snapshot)}\n\n(The picture couldn't be drawn: {problem})"
     return discord.post(conn, CHANNEL, content, files=[png] if png else [], username=USERNAME, dedupe=False,
                         suppress_embeds=True)

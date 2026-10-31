@@ -1,13 +1,13 @@
-"""Posting the one-pager: the 08:00 job, the command and the remote request (ticket MC-09).
+"""Posting the one-pager: the job, the command and the remote request (ticket MC-09).
 
 Seams S4 and S5 (the one-pager through the Discord double), S9 (the `one-pager` job through
-`runner.run`, in process) and S8 (`jura-growth remote -- one-pager`). The grid is drawn by real
-headless Chrome, offline, where a test looks at the PNG; elsewhere `one_pager.render_grid` is a
-stub that writes a small valid PNG, so the tests stay quick.
+`runner.run`, in process) and S8 (`jura-growth remote -- one-pager`). The picture is drawn by real
+headless Chrome, offline, where a test looks at the PNG; elsewhere `picture.render` and
+`one_pager.render_grid` are stubs that write a small valid PNG, so the tests stay quick.
 
-Rows: AC-M1.1 (the PNG on the last piece), AC-M1.5 (the job passes `may_use`), AC-M1.6, AC-M3.7
-(no run update), AC-M10.1 (`one-pager` through `remote`; its table row is in test_remote.py),
-X12 (the job writes lapses before it builds) and the sweep (AC-M11.1, AC-M12.1).
+Rows: MB1 (one message with one PNG), MB9, MB10, MB11, MB12, AC-M1.5 (the job passes `may_use`),
+AC-M1.6, AC-M3.7 (no run update), AC-M10.1 (`one-pager` through `remote`; its table row is in
+test_remote.py), X12 (the job writes lapses before it builds) and the sweep (AC-M11.1, AC-M12.1).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import mission_world as world
 import sweep
 from discord_double import discord_double  # noqa: F401 - a fixture
 from sweep import d2_secrets  # noqa: F401 - a fixture
-from jura_growth import approvals, cards, config, discord, headless, images, mission, one_pager, paths, privacy, runner
+from jura_growth import approvals, backup, cards, config, discord, headless, images, mission, one_pager, paths, picture, privacy, runner
 from jura_growth.cli import cli
 from jura_growth.origin import Origin
 
@@ -53,7 +53,7 @@ def clock(monkeypatch):
 
 @pytest.fixture
 def stub_grid(monkeypatch):
-    """`render_grid` writes a 1×1 PNG where the real one would go, and counts its calls."""
+    """`picture.render` and `render_grid` write a 1×1 PNG where the real one would go, and count their calls."""
     drawn = []
 
     def render(snapshot, out, *, chrome, offline=False):
@@ -63,7 +63,17 @@ def stub_grid(monkeypatch):
         return out
 
     monkeypatch.setattr(one_pager, "render_grid", render)
+    monkeypatch.setattr(picture, "render", render)
     return drawn
+
+
+@pytest.fixture
+def no_picture(monkeypatch):
+    """The picture can't be drawn, so the long text goes out."""
+    def refuse(snapshot, out, *, chrome, offline=False):
+        raise images.RenderError("no picture in this test")
+
+    monkeypatch.setattr(picture, "render", refuse)
 
 
 def posts(double):
@@ -91,25 +101,36 @@ def test_the_scheduled_one_pager_may_use_its_own_command():
     assert headless.may_use("one-pager", "one-pager")
 
 
-# --- AC-M1.1: the 08:00 job ----------------------------------------------------------------------
+# --- MB1, MB10: one message with one picture ---------------------------------------------------------
 
 
 @needs_chrome
-def test_the_0800_job_posts_one_message_in_order_with_one_png_on_it(conn, discord_double):
+def test_the_job_posts_one_message_with_the_picture_on_it(conn, discord_double):
     world.load_fortnight(conn)
     outcome = runner.run("one-pager", ignore_schedule=True)
     assert outcome.status == "ok", outcome
     (post,) = posts(discord_double)
     assert post.content.splitlines()[0] == HEADER
-    assert section_order(post.content) == sorted(section_order(post.content))
+    assert post.content.splitlines()[1] == picture.verdict(mission.read(mission.Source.here()))
+    assert "**Needs you**" not in post.content
     (name, body), = post.files
-    assert name.endswith(".png") and body.startswith(images.PNG_SIGNATURE)
+    assert name == "picture-2026-11-10.png" and body.startswith(images.PNG_SIGNATURE)
     width, height = struct.unpack(">II", body[16:24])
-    assert (width, height) == one_pager.grid_size(mission.read(mission.Source.here()))
+    assert width == 1200 and 400 < height <= picture.MAX_HEIGHT
     assert outcome.summary == "posted to #mission-control"
 
 
-def test_past_2000_characters_it_splits_and_the_png_rides_on_the_last_piece_only(conn, discord_double, stub_grid, monkeypatch):
+def test_however_much_there_is_the_picture_and_its_message_stay_one_post(conn, discord_double, stub_grid, monkeypatch):
+    real = mission.read
+    lines = tuple(f"Build it: APP-{n:03d} is waiting for a builder, approval A-{n:04d} " + "x" * 400 for n in range(40))
+    monkeypatch.setattr(mission, "read", lambda source: dataclasses.replace(real(source), plugin_lines=lines))
+    result = CliRunner().invoke(cli, ["one-pager"])
+    assert result.exit_code == 0, result.output
+    (post,) = posts(discord_double)
+    assert len(post.content) <= 2000 and len(post.files) == 1
+
+
+def test_past_2000_characters_the_long_text_splits_with_no_picture(conn, discord_double, no_picture, monkeypatch):
     real = mission.read
     lines = tuple(f"Build it: APP-{n:03d} is waiting for a builder, approval A-{n:04d}" for n in range(40))
     monkeypatch.setattr(mission, "read", lambda source: dataclasses.replace(real(source), plugin_lines=lines))
@@ -118,8 +139,27 @@ def test_past_2000_characters_it_splits_and_the_png_rides_on_the_last_piece_only
     pieces = posts(discord_double)
     assert len(pieces) > 1 and all(len(p.content) <= 2000 for p in pieces)
     assert pieces[0].content.splitlines()[0] == HEADER
-    assert [len(p.files) for p in pieces] == [0] * (len(pieces) - 1) + [1]
+    assert all(p.files == [] for p in pieces)
     assert "\n".join(p.content for p in pieces).count("**Ask me**") == 1
+
+
+def test_the_post_path_waits_for_a_held_lock_before_it_draws(conn, discord_double, stub_grid, monkeypatch):
+    """S4: the one-pager shares its minute with publish's first slot."""
+    real, patient = mission.read, mission.read_patiently
+    answers = [mission.UNFINISHED_WRITE, mission.OK]
+    slept = []
+    monkeypatch.setattr(mission, "read", lambda source: dataclasses.replace(real(source), db_state=answers.pop(0)))
+    monkeypatch.setattr(mission, "read_patiently", lambda source: patient(source, sleep=slept.append))
+    result = CliRunner().invoke(cli, ["one-pager"])
+    assert result.exit_code == 0, result.output
+    assert slept == [mission.LOCK_RETRY] and answers == []
+    assert "unfinished write" not in posts(discord_double)[0].content
+
+
+def test_no_post_and_grid_dont_wait_for_a_lock(conn, stub_grid, monkeypatch):
+    monkeypatch.setattr(mission, "read_patiently", lambda source: pytest.fail("this path waited"))
+    assert CliRunner().invoke(cli, ["one-pager", "--no-post"]).exit_code == 0
+    assert CliRunner().invoke(cli, ["one-pager", "--grid"]).exit_code == 0
 
 
 def test_the_job_posts_no_run_update(conn, discord_double, stub_grid):
@@ -177,15 +217,77 @@ def test_without_a_webhook_the_one_pager_waits_in_the_outbox_and_says_so(conn, s
     assert saved[0]["content"].startswith(HEADER) and saved[0]["files"][0].endswith(".png")
 
 
-def test_when_the_grid_cant_be_drawn_the_text_still_posts_and_says_why(conn, discord_double, monkeypatch, tmp_path):
+def _assert_the_long_text_went_out(conn, double, why: str) -> None:
+    (post,) = posts(double)
+    assert post.files == []
+    assert section_order(post.content) == sorted(section_order(post.content))
+    assert post.content.splitlines()[-1].startswith(f"(The picture couldn't be drawn: {why}")
+    assert aw.events(conn, "one_pager.picture_failed")
+
+
+def test_when_the_picture_cant_be_drawn_the_long_text_posts_and_says_why(conn, discord_double, monkeypatch, tmp_path):
     monkeypatch.setenv("JURA_GROWTH_CHROME", str(tmp_path / "no-chrome"))
     monkeypatch.setattr(images, "DEFAULT_CHROME", str(tmp_path / "no-chrome"))
     result = CliRunner().invoke(cli, ["one-pager"])
     assert result.exit_code == 0, result.output
-    (post,) = posts(discord_double)
-    assert post.files == []
-    assert post.content.splitlines()[-1].startswith("(The 14-day grid couldn't be drawn: Google Chrome not found")
-    assert aw.events(conn, "one_pager.grid_failed")
+    _assert_the_long_text_went_out(conn, discord_double, "Google Chrome not found")
+
+
+def test_when_the_page_cant_be_saved_the_long_text_posts_and_says_why(conn, discord_double, stub_grid, monkeypatch):
+    real = paths.writable
+
+    def refuse(path):
+        if Path(path).suffix == ".html":
+            raise OSError("the folder is read-only")
+        return real(path)
+
+    monkeypatch.setattr(paths, "writable", refuse)
+    assert CliRunner().invoke(cli, ["one-pager"]).exit_code == 0
+    _assert_the_long_text_went_out(conn, discord_double, "OSError: the folder is read-only")
+
+
+@needs_chrome
+def test_a_picture_over_the_maximum_sends_the_long_text_and_is_never_clipped(conn, discord_double, monkeypatch):
+    monkeypatch.setattr(picture, "MAX_HEIGHT", 300)
+    assert CliRunner().invoke(cli, ["one-pager"]).exit_code == 0
+    _assert_the_long_text_went_out(conn, discord_double, "the picture would be")
+    assert not list((paths.data_dir() / "one-pager").glob("picture-*.png"))
+
+
+@needs_chrome
+def test_the_page_is_saved_beside_the_picture(conn, discord_double):
+    """MB9: to open on the Mac. The page holds no script, and the PNG is the one that went."""
+    assert CliRunner().invoke(cli, ["one-pager"]).exit_code == 0
+    folder = paths.data_dir() / "one-pager"
+    assert sorted(f.name for f in folder.iterdir()) == ["picture-2026-11-10.html", "picture-2026-11-10.png"]
+    page = (folder / "picture-2026-11-10.html").read_text(encoding="utf-8")
+    assert "<script" not in page and "Decide in #approvals" in page
+    (_, body), = posts(discord_double)[0].files
+    assert body == images.pixels_only((folder / "picture-2026-11-10.png").read_bytes())
+
+
+# --- MB12: the grid is drawn on request, never posted ---------------------------------------------
+
+
+def test_grid_draws_its_file_prints_its_path_and_posts_nothing(conn, discord_double, stub_grid):
+    result = CliRunner().invoke(cli, ["one-pager", "--grid"])
+    assert result.exit_code == 0, result.output
+    path = paths.data_dir() / "one-pager" / "grid-2026-11-10.png"
+    assert result.output.strip() == str(path) and path.exists()
+    assert discord_double.requests == []
+
+
+def test_grid_says_so_when_it_cant_be_drawn(conn, discord_double, monkeypatch, tmp_path):
+    monkeypatch.setenv("JURA_GROWTH_CHROME", str(tmp_path / "no-chrome"))
+    monkeypatch.setattr(images, "DEFAULT_CHROME", str(tmp_path / "no-chrome"))
+    result = CliRunner().invoke(cli, ["one-pager", "--grid"])
+    assert result.output.startswith("The grid couldn't be drawn: Google Chrome not found")
+    assert discord_double.requests == []
+
+
+def test_a_normal_post_writes_no_grid(conn, discord_double, stub_grid):
+    assert CliRunner().invoke(cli, ["one-pager"]).exit_code == 0
+    assert not list((paths.data_dir() / "one-pager").glob("grid-*"))
 
 
 def test_no_post_still_writes_nothing_and_expires_nothing(conn, monkeypatch, stub_grid):
@@ -199,28 +301,39 @@ def test_no_post_still_writes_nothing_and_expires_nothing(conn, monkeypatch, stu
     assert called == [] and stub_grid == []
 
 
-def test_the_grid_is_kept_one_file_a_day(conn, discord_double, stub_grid):
+def test_the_picture_is_kept_one_file_a_day(conn, discord_double, stub_grid):
     CliRunner().invoke(cli, ["one-pager"])
     CliRunner().invoke(cli, ["one-pager"])
-    assert [p.name for p in stub_grid] == ["grid-2026-11-10.png"] * 2
+    assert [p.name for p in stub_grid] == ["picture-2026-11-10.png"] * 2
     assert stub_grid[0].parent == paths.data_dir() / "one-pager"
 
 
-def test_the_2330_backup_keeps_fourteen_days_of_grids(conn, monkeypatch):
-    """Code review 09, S-1: `retention.one_pager_days`, pruned with the backups."""
+def test_the_2330_backup_keeps_fourteen_days_of_pictures_pages_and_grids(conn, monkeypatch):
+    """Code review 09, S-1, and T-B4: `retention.one_pager_days`, pruned with the backups. A
+    page holds approval reasons as text, so it mustn't outlive them."""
     assert config.settings()["retention"]["one_pager_days"] == 14
     folder = paths.data_dir() / "one-pager"
     folder.mkdir(parents=True)
     for day in range(1, 21):
         (folder / f"grid-2026-10-{day:02d}.png").write_bytes(tiny_png())
-    (folder / "notes.txt").write_text("not a grid")
+        (folder / f"picture-2026-10-{day:02d}.png").write_bytes(tiny_png())
+        (folder / f"picture-2026-10-{day:02d}.html").write_text("<p>a page</p>")
+    kept_others = ["grid-notes.png", "notes.txt", "picture-final.html", "picture-2026-13-99.png", "picture-2026-10-01.txt"]
+    for name in kept_others:
+        (folder / name).write_text("not one of the dated files")
     monkeypatch.setenv("JURA_GROWTH_NOW", "2026-10-24T23:30:00+08:00")
     result = CliRunner().invoke(cli, ["backup"])
     assert result.exit_code == 0, result.output
     names = sorted(f.name for f in folder.iterdir())
-    assert names == [f"grid-2026-10-{day:02d}.png" for day in range(11, 21)] + ["notes.txt"]  # 11 Oct to 24 Oct is 14 days
+    kept = [f"{stem}-2026-10-{day:02d}.{ext}" for day in range(11, 21)  # 11 Oct to 24 Oct is 14 days
+            for stem, ext in (("grid", "png"), ("picture", "png"), ("picture", "html"))]
+    assert names == sorted(kept + kept_others)
     (written,) = aw.events(conn, "backup.written")
-    assert written["grids_pruned"] == 10
+    assert written["grids_pruned"] == 30
+
+
+def test_pruning_with_no_folder_removes_nothing():
+    assert backup.prune_pictures() == 0
 
 
 # --- X12: the job writes the day's lapses before it builds -----------------------------------------
@@ -310,7 +423,7 @@ def test_no_planted_secret_or_personal_data_reaches_the_posted_one_pager(conn, d
     sweep.assert_clean(discord_double, sweep.outbox_dir(), planted)
 
 
-def test_no_planted_value_reaches_the_split_pieces_or_the_outbox(conn, discord_double, d2_secrets, stub_grid, monkeypatch):
+def test_no_planted_value_reaches_the_split_pieces_or_the_outbox(conn, discord_double, d2_secrets, no_picture, monkeypatch):
     planted = sweep.planted()
     _plant(conn, planted)
     real = mission.read

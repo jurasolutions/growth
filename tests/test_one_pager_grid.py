@@ -25,7 +25,7 @@ needs_chrome = pytest.mark.skipif(CHROME is None, reason="Google Chrome is not i
 
 
 def test_the_core_and_the_one_pager_import_no_agent():
-    for module in ("one_pager.py", "images.py"):
+    for module in ("one_pager.py", "picture.py", "images.py"):
         text = (paths.REPO_ROOT / "jura_growth" / module).read_text(encoding="utf-8")
         assert "jura_growth.agents." not in text, module
         imports = [line for line in text.splitlines() if line.startswith(("import ", "from "))]
