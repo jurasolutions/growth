@@ -23,7 +23,7 @@ the Posts API, `publish_mode: auto` and the two-hour skip window are dropped. `p
 
 ## How a day runs
 
-1. 07:00 SGT: launchd runs `jura-growth run social`. The plug-in's precheck skips the run when
+1. 07:30 SGT: launchd runs `jura-growth run social`. The plug-in's precheck skips the run when
    today's drafts are already in, every platform is skipped, "No draft today" was already posted,
    or it's a weekend and `weekends: false`.
 2. Headless Claude follows `prompts/social.md`: `jura-growth social today`, research (web search
@@ -176,7 +176,7 @@ post says the images use fallback fonts. `--offline` blocks the network (the tes
 
 | Key | Default | |
 |---|---|---|
-| `weekends` | `true` | `false` makes the 07:00 job skip Saturday and Sunday (PRD open question 2) |
+| `weekends` | `true` | `false` makes the 07:30 job skip Saturday and Sunday (PRD open question 2) |
 | `rhythm` | PRD §5.2 (amended 2026-10-30) | Weekday to theme. Fallbacks are the following days' themes, in order |
 | `theme_gap_days` | 2 | A theme posted in the last this many days (not counting today) is unavailable in `today` and refused by `submit`, without using the regeneration, so the same kind of post never runs two days in a row. `0` switches it off |
 | `themes.<id>` | | `label`, `brief`, `layout`, `news`, `min_sources`, `max_sources`, `max_source_age_days`, `needs_tool` |
@@ -204,7 +204,7 @@ industry pattern, the explainer and the weekend question.
 | Sat | `ai-good-read`: a newsletter, report, podcast or long read about AI | headline | exactly 1 |
 | Sun | `automation-tip`: one small thing to automate, with AI or without | headline | optional, up to 2 |
 
-The 48 hours before 07:00 on a Monday are a weekend, so "AI this week" accepts stories from the
+The 48 hours before 07:30 on a Monday are a weekend, so "AI this week" accepts stories from the
 last 7 days (`max_source_age_days: 7`), newest first.
 
 ## Data
@@ -238,7 +238,7 @@ there a waiting card stays live until it lapses (A13).
 **Weekends stay on.** This was decided at sign-off (BP1, for the Facebook Page). BP-04 asked again
 (BP §6 Q1), and the crew's recorded decision keeps weekends on with every platform switched on in
 `browser` mode, so Saturday and Sunday bring up to two approval cards each. To turn weekend
-posts off, set `weekends: false` in `config/social.yaml`: the 07:00 social job then skips
+posts off, set `weekends: false` in `config/social.yaml`: the 07:30 social job then skips
 Saturday and Sunday, so no weekend draft, item or card is made for any platform. There is no
 per-platform weekend switch.
 

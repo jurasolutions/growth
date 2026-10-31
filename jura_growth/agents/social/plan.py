@@ -1,4 +1,4 @@
-"""`jura-growth social today`: everything the 07:00 run needs to choose and
+"""`jura-growth social today`: everything the 07:30 run needs to choose and
 write the day's post, in one place."""
 
 from __future__ import annotations

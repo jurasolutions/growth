@@ -41,7 +41,7 @@ jurasolutions/data/growth/
   runs/YYYY-MM-DD.jsonl       every event, one JSON line each
   transcripts/YYYY-MM-DD/     full stream-json transcript of each headless run (30 days)
   backups/                    nightly copies of growth.db (14 days)
-  one-pager/                  the one-pager's grid PNG, grid-YYYY-MM-DD.png, one a day (14 days)
+  one-pager/                  the morning picture, a PNG and an .html page, one a day (14 days)
   discord-outbox/             messages Discord didn't take: no webhook yet, or unreachable
   daily-summary.json          what the digest and the morning brief read
   work/<job>/                 scratch space a headless run may write drafts into
@@ -84,15 +84,17 @@ All times SGT, from `config/settings.yaml`:
 
 | Job | When | Kind |
 |---|---|---|
-| `app-factory` | 06:30 daily | headless Claude |
-| `social` | 07:00 daily: drafts for the Facebook Page and Instagram (LinkedIn switched off since 2026-10-29) | headless Claude |
-| `one-pager` | 08:00 daily | command |
-| `scout-research` | 09:00 business days | headless Claude |
+| `scout-research` | 06:30 business days | headless Claude |
+| `app-factory` | 07:00 daily | headless Claude |
+| `social` | 07:30 daily: drafts for the Facebook Page and Instagram (LinkedIn switched off since 2026-10-29) | headless Claude |
+| `community` | Mondays 08:00 | headless Claude |
+| `outreach-requests` | 08:30 business days: raises requests for emails queued earlier, and posts their cards | command |
+| `one-pager` | 09:00 daily | command |
+| `publish` | 09:00–17:40 daily, every 20 minutes | headless Claude |
 | `scout-send` | 09:30–16:30 business days, every 10 minutes | command |
 | `heartbeat` | 12:00 daily | command |
 | `scout-sync` | 16:45 business days | command |
 | `digest` | 17:30 daily | command |
-| `community` | Mondays 07:30 | headless Claude |
 | `backup` | 23:30 daily | command |
 
 `jura-growth schedule install` loads them into launchd (`~/Library/LaunchAgents/sg.jurasolutions.growth.*`).

@@ -186,6 +186,15 @@ def installed(job: str) -> bool:
     return _launchctl("print", f"{_domain()}/{label(job)}").returncode == 0
 
 
+def installed_at(job: str) -> datetime | None:
+    """When `install` last wrote the job's plist, or None with no plist."""
+    try:
+        modified = (launch_agents_dir() / f"{label(job)}.plist").stat().st_mtime
+    except OSError:
+        return None
+    return datetime.fromtimestamp(modified, timeutil.SGT)
+
+
 def describe(spec: dict) -> str:
     schedule = spec["schedule"]
     if "daily" in schedule:
