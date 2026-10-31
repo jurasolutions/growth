@@ -407,6 +407,14 @@ def _file_done(found: catalog.PrdFile, row: dict, release: approvals.Approval) -
 # --- the one-pager -------------------------------------------------------------------------------------
 
 
+# Fix lines: the action first, and on the first line what fits three rows of the morning picture.
+# The picture stops at the first line; the message and the long text carry the rest.
+PREVIEW_LINE = "Run `jura-growth apps built {app_id} …` to ask again. {label} is on its preview.\n{request} {why}: {preview}"
+MAIN_LINE = "Once main holds {sha}, run `jura-growth apps released {app_id} --task {task}`.\n{label} waits for main: its merge was printed for {request}."
+APPROVED_LINE = "Run `jura-growth apps release-plan {app_id}` for the merge. {label} is approved ({request})."
+NEVER_PRINTED = "approved, but its merge was never printed"
+
+
 def health_lines(conn: sqlite3.Connection) -> list[str]:
     """Built apps not yet released (MC §5.4, §5.7): left on their preview by a skip, an expiry or
     a lapse; approved and waiting for `release-plan`; or claimed and waiting for main. A request
@@ -424,27 +432,23 @@ def health_lines(conn: sqlite3.Connection) -> list[str]:
         latest = approvals.latest(conn, KIND, builds.subject(app_id))
         if latest is None or latest.status == approvals.SUPERSEDED:
             continue
-        lapsed = "approved, but its merge was never printed"
         if latest.status == approvals.PENDING:
             if now < timeutil.parse(latest.decide_by):
                 continue
             why = "expired unanswered"
         elif latest.status == approvals.APPROVED and latest.used_at:
-            lines.append(f"App release waiting for main: {label}: the merge of {short(row['head_sha'])} was printed for "
-                         f"{latest.id}; once main holds it, run `jura-growth apps released {app_id} --task {row['task_id']}`.")
+            lines.append(MAIN_LINE.format(sha=short(row["head_sha"]), app_id=app_id, task=row["task_id"], label=label, request=latest.id))
             continue
         elif latest.status == approvals.APPROVED:
             if latest.use_by is None or now < timeutil.parse(latest.use_by):
-                lines.append(f"App release approved: {label}: run `jura-growth apps release-plan {app_id}` for the merge "
-                             f"({latest.id}).")
+                lines.append(APPROVED_LINE.format(app_id=app_id, label=label, request=latest.id))
                 continue
-            why = lapsed
+            why = NEVER_PRINTED
         elif latest.status == approvals.SKIPPED:
             why = "skipped"
         else:
-            why = lapsed if latest.decided_at else "expired unanswered"
-        lines.append(f"App on its preview: {label} stays on {row['preview_url']} ({latest.id} {why}); reporting the build "
-                     f"again with `jura-growth apps built {app_id} …` asks again.")
+            why = NEVER_PRINTED if latest.decided_at else "expired unanswered"
+        lines.append(PREVIEW_LINE.format(app_id=app_id, label=label, request=latest.id, why=why, preview=row["preview_url"]))
     return lines
 
 
