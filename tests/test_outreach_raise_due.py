@@ -10,11 +10,13 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from click.testing import CliRunner
 
 import mission_world as world
 from discord_double import discord_double  # noqa: F401 - a fixture
 from jura_growth import config, db, headless, mission, pause, paths, runner
 from jura_growth.agents.outreach import approval
+from jura_growth.cli import cli
 
 from test_scout_support import at, configure, fake_resend, live_ready, outreach_requests, scout_env, seed  # noqa: F401
 
@@ -128,6 +130,44 @@ def test_a_live_problem_raises_nothing(conn, monkeypatch, discord_double, sent):
     assert approval.raising_problem(conn)
     runner.run(JOB)
     assert outreach_requests(conn) == [] and cards(discord_double) == [] and sent == []
+
+
+def pending_with_no_card(conn, monkeypatch) -> None:
+    """A live request raised and not yet posted, as when Discord was down."""
+    leftovers(conn, monkeypatch, 1)
+    live_with_room(monkeypatch, 2)
+    approval.raise_due(conn)
+    assert len(outreach_requests(conn, "pending")) == 1
+
+
+def raise_due_by_hand():
+    result = CliRunner().invoke(cli, ["outreach", "raise-due"])
+    assert result.exit_code == 0, result.output
+    return result
+
+
+def test_by_hand_while_paused_it_posts_nothing_and_says_so(conn, monkeypatch, discord_double):
+    pending_with_no_card(conn, monkeypatch)
+    pause.pause(conn, "outreach", "by hand", notify=False)
+    before = len(cards(discord_double))
+    assert raise_due_by_hand().output.strip() == "no requests raised"
+    assert len(cards(discord_double)) == before
+    assert len(outreach_requests(conn, "pending")) == 1
+
+
+def test_by_hand_under_the_pause_file_it_posts_nothing(conn, monkeypatch, discord_double):
+    pending_with_no_card(conn, monkeypatch)
+    paths.pause_file().write_text("holiday")
+    before = len(cards(discord_double))
+    assert raise_due_by_hand().output.strip() == "no requests raised"
+    assert len(cards(discord_double)) == before
+
+
+def test_by_hand_with_nothing_in_the_way_it_posts_the_card_still_waiting(conn, monkeypatch, discord_double):
+    pending_with_no_card(conn, monkeypatch)
+    before = len(cards(discord_double))
+    raise_due_by_hand()
+    assert len(cards(discord_double)) == before + 1
 
 
 def test_nothing_to_raise_leaves_one_quiet_trace_and_no_run_row(conn, monkeypatch, discord_double):
