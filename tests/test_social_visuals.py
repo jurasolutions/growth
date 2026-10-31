@@ -208,6 +208,8 @@ BANNED_FIELDS = {
     "flow caption": lambda word: {"type": "flow", "caption": f"How we {word} it", "steps": steps(3)},
     "compare label": lambda word: {"type": "compare", "left": {**side(), "label": f"We {word} it"}, "right": side()},
     "compare point": lambda word: {"type": "compare", "left": {**side(), "points": [f"We {word} it", "Point"]}, "right": side()},
+    "compare right label": lambda word: {"type": "compare", "left": side(), "right": {**side(), "label": f"We {word} it"}},
+    "compare right point": lambda word: {"type": "compare", "left": side(), "right": {**side(), "points": [f"We {word} it", "Point"]}},
 }
 
 
@@ -233,6 +235,18 @@ def test_a_buzzword_in_a_figures_words_fails_the_social_card_gate(env, conn, fie
     card = {"layout": "headline", "headline": "A plain headline", "items": TIP_ITEMS, "visual": visual}
     outcome = submit.submit(conn, _folder(card, **files, **{"sources.md": sources}), offline=True)
     assert outcome.status == "retry" and "card: retry" in outcome.text(), outcome.text()
+
+
+def test_a_figures_value_reaches_the_social_card_gate(env, conn):
+    sentence = "IMDA says 11% of the firms it asked tried this first."
+    files = {
+        "facebook.md": NEWS["facebook.md"].replace("Two AI updates worth knowing about this week.", sentence),
+        "instagram.md": NEWS["instagram.md"].replace("Two AI updates worth knowing about this week.", sentence),
+    }
+    sources = f"- {IMDA} | IMDA | 2026-10-26 | A survey\n- {SHEETS} | Example News | 2026-10-26 | Sheets\n"
+    card = {"layout": "headline", "headline": "A plain headline", "items": TIP_ITEMS, "visual": {**FIGURE, "value": "11%!"}}
+    outcome = submit.submit(conn, _folder(card, **files, **{"sources.md": sources}), offline=True)
+    assert outcome.status == "retry" and "card: retry" in outcome.text() and "exclamation" in outcome.text().lower(), outcome.text()
 
 
 def test_a_link_or_a_hashtag_on_the_picture_fails(env, conn):

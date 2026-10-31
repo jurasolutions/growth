@@ -69,7 +69,7 @@ CASES = {
     "figure-ring-short": {"layout": "headline", **SHORT, "visual": {"type": "figure", "value": "50%", "label": "A sample", "source": "Sample"}},
     "figure-ring-full": {"layout": "headline", **FULL, "visual": figure("99.5%", label=FIG_LABEL, source=FIG_SOURCE)},
     "figure-ring-whole": {"layout": "headline", **FULL, "visual": figure("100%", label=FIG_LABEL, source=FIG_SOURCE)},
-    "figure-no-ring-full": {"layout": "headline", **FULL, "visual": figure("000,000.00x", label=FIG_LABEL, source=FIG_SOURCE)},
+    "figure-no-ring-full": {"layout": "headline", **FULL, "visual": figure("000,000.000x", label=FIG_LABEL, source=FIG_SOURCE)},
     "list-2-short": {"layout": "list", **SHORT, "items": [{"title": "One thing", "icon": "mail"}, {"title": "Another thing", "icon": "phone"}]},
     "list-5-full": {"layout": "list", **FULL, "items": MANY_ITEMS},
     "list-5-no-icons": {"layout": "list", **FULL, "items": [{"title": item["title"]} for item in MANY_ITEMS]},

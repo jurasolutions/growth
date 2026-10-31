@@ -18,7 +18,7 @@ from datetime import date
 from pathlib import Path
 
 from jura_growth import brand_check
-from jura_growth.agents.social import history, render
+from jura_growth.agents.social import render
 from jura_growth.agents.social.settings import Theme
 
 # Same stopping characters as brand_check.find_links, so a source and the link
@@ -197,7 +197,7 @@ def theme_problems(sub: Submission, theme: Theme, today: date) -> list[str]:
             f"{theme.label} takes at most {theme.max_sources} sources; found {count} "
             "(list only what the post relies on, and link each one)"
         )
-    hosts = {history.normalise_url(source.url).split("/")[0] for source in sub.sources}
+    hosts = {brand_check.host_of(source.url).removeprefix("www.") for source in sub.sources}
     if count >= theme.min_sources and len(hosts) < theme.min_hosts:
         problems.append(
             f"{theme.label} needs sources on {theme.min_hosts} different sites (the company's own announcement and "

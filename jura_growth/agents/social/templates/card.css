@@ -393,7 +393,7 @@ body {
 .has-tile .intro > .tile { --tile: calc(var(--slide-tile) * var(--fit)); margin-bottom: var(--space-3); }
 .has-tile .main { justify-content: center; }
 .fmt-portrait.has-tile { --subtitle-measure: 40ch; }
-.fmt-landscape.has-tile { --headline-size: 44px; --subtitle-size: 24px; --headline-measure: 40ch; --subtitle-measure: 80ch; --slide-tile: 56px; --gap: var(--space-3); }
+.fmt-landscape.has-tile { --headline-size: 44px; --subtitle-size: 24px; --headline-measure: 40ch; --subtitle-measure: var(--measure-prose); --slide-tile: 56px; --gap: var(--space-3); }
 .fmt-portrait.has-tile .subtitle { font-size: calc(var(--subtitle-size) * 1.2 * var(--fit)); }
 
 /* --- tool card ---------------------------------------------------------- */

@@ -180,6 +180,37 @@ def test_ai_news_with_two_sources_on_one_host_is_refused(env, conn, monkeypatch)
     assert submissions(conn) == 0
 
 
+def test_a_query_string_does_not_make_a_second_host(env, conn, monkeypatch):
+    monkeypatch.setenv("JURA_GROWTH_NOW", FRIDAY)
+    first, second = "https://example.com?a=1", "https://www.example.com?a=2"
+    both = f"- {first} | IMDA | 2026-10-28 | One\n- {second} | IMDA | 2026-10-28 | Two\n"
+    facebook = NEWS["facebook.md"].replace(IMDA, first).replace(SHEETS, second)
+    outcome = run(conn, submission("2026-10-30", card=headline_card(), sources=both, **{"facebook.md": facebook}))
+    assert outcome.status == "invalid" and "found 1" in outcome.text(), outcome.text()
+
+
+def test_a_subdomain_counts_as_another_host(env, conn, monkeypatch):
+    """The PRD's word is hosts, and telling a company's blog from its site needs a list of public
+    suffixes. Independence stays a prompt rule, and Ting Yu's eye on the card."""
+    monkeypatch.setenv("JURA_GROWTH_NOW", FRIDAY)
+    first, second = "https://example.com/news", "https://blog.example.com/news"
+    both = f"- {first} | Example News | 2026-10-28 | One\n- {second} | Example News | 2026-10-28 | Two\n"
+    facebook = NEWS["facebook.md"].replace(IMDA, first).replace(SHEETS, second)
+    card = json.loads(headline_card())
+    for item in card["items"]:
+        item["source"] = "Example News"
+    outcome = run(conn, submission("2026-10-30", card=json.dumps(card), sources=both, **{"facebook.md": facebook}))
+    assert outcome.status == "delivered", outcome.text()
+
+
+def test_ai_news_takes_at_most_three_sources(env, conn, monkeypatch):
+    monkeypatch.setenv("JURA_GROWTH_NOW", FRIDAY)
+    four = "".join(f"- https://site{n}.example.com/a | IMDA | 2026-10-28 | Story\n" for n in range(4))
+    outcome = run(conn, submission("2026-10-30", card=headline_card(), sources=four))
+    assert outcome.status == "invalid" and "at most 3 sources; found 4" in outcome.text(), outcome.text()
+    assert submissions(conn) == 0
+
+
 def test_two_hosts_is_a_rule_for_ai_news_only(env, conn, monkeypatch):
     """`ai-this-week` may list two pages of one publisher."""
     settings = load()
@@ -221,6 +252,29 @@ def test_each_theme_refuses_one_item_short_and_takes_its_minimum_on_any_day(env,
     names = [f.name for f in outcome.images["instagram"]]
     assert names == [f"instagram-{n}-of-{count + 1}-1080x1350.png" for n in range(1, count + 2)]
     assert [f.name for f in outcome.images["facebook"]] == ["facebook-1200x630.png"]
+
+
+def test_on_a_tuesday_ai_news_goes_out_with_the_cover_first(env, conn):
+    """Tuesday is no carousel day, and the cover is the card itself, then one slide per item."""
+    both = SOURCES.replace("2026-10-28", "2026-10-26")
+    outcome = run(conn, submission(TUESDAY_DAY, card=headline_card(), sources=both), theme_id="ai-news")
+    assert outcome.status == "delivered", outcome.text()
+    assert [f.name for f in outcome.images["instagram"]] == [f"instagram-{n}-of-4-1080x1350.png" for n in range(1, 5)]
+    pages = [page for out, page in env["shots"] if out.name.startswith("instagram")]
+    assert "A plain headline about the story" in pages[0] and "visual-flow" in pages[0]
+    for number, page in enumerate(pages[1:], start=2):
+        assert f"{number:02d} / 04" in page and f"Point {'abc'[number - 2]} worth keeping" in page
+        assert "visual-flow" not in page and "has-tile" in page
+
+
+@pytest.mark.parametrize("theme_id, count, card", MIN_ITEMS)
+def test_an_item_with_no_icon_is_refused_on_every_theme(env, conn, monkeypatch, theme_id, count, card):
+    monkeypatch.setenv("JURA_GROWTH_NOW", "2026-10-28T07:05:00+08:00")
+    one_bare = json.loads(card(count))
+    del one_bare["items"][0]["icon"]
+    outcome = run(conn, theme_folder(theme_id, json.dumps(one_bare)), theme_id=theme_id)
+    assert outcome.status == "invalid" and "`icon`" in outcome.text(), outcome.text()
+    assert submissions(conn) == 0
 
 
 def test_items_with_no_detail_do_not_count(env, conn):
