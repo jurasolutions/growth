@@ -3,12 +3,14 @@
 The render helper: an HTML page, built on `design-system/` tokens, drawn to a
 PNG by headless Google Chrome. The caller passes Chrome's path and limits in
 (`Chrome`), so the core reads no agent's settings: the social cards
-(`agents/social/render.py`) and the one-pager's grid both come through here.
+(`agents/social/render.py`), the one-pager's grid and the morning picture all
+come through here.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -115,6 +117,33 @@ def run_chrome(args: list[str], chrome: Chrome, *, offline: bool) -> subprocess.
         raise RenderError(f"Chrome took longer than {chrome.timeout_seconds}s") from error
     finally:
         shutil.rmtree(profile, ignore_errors=True)
+
+
+_MEASURE = """<script>
+addEventListener('load', function () {
+  document.fonts.ready.then(function () {
+    var page = document.querySelector('.page') || document.body;
+    document.documentElement.setAttribute('data-measured-height', Math.ceil(page.getBoundingClientRect().height));
+  });
+});
+</script>"""
+_MEASURED = re.compile(r'<html[^>]*\bdata-measured-height="(\d+)"')
+_MEASURE_WINDOW = 800  # any height: the page's own height doesn't depend on the viewport
+
+
+def measure_height(page: str, width: int, *, chrome: Chrome, offline: bool = False) -> int:
+    """How tall the HTML `page` is at `width`, in whole pixels rounded up: its `.page`, or its
+    `body` without one. The script that measures goes in a private copy, so the page the caller
+    saves or shoots never holds it."""
+    copy = page.replace("</body>", _MEASURE + "</body>") if "</body>" in page else page + _MEASURE
+    with tempfile.TemporaryDirectory(prefix="jura-card-") as folder:
+        source = Path(folder) / "card.html"
+        source.write_text(copy, encoding="utf-8")
+        result = run_chrome([f"--window-size={width},{_MEASURE_WINDOW}", "--dump-dom", source.as_uri()], chrome, offline=offline)
+    found = _MEASURED.search(result.stdout or "")
+    if not found:
+        raise RenderError(f"Chrome reported no height (exit {result.returncode}): {(result.stderr or '')[-300:]}")
+    return int(found.group(1))
 
 
 def screenshot(page: str, out: Path, width: int, height: int, *, chrome: Chrome, offline: bool = False) -> Path:
