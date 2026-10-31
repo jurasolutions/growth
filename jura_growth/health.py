@@ -19,7 +19,8 @@ from __future__ import annotations
 import plistlib
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
+from itertools import combinations
 from typing import Any, Callable, Mapping
 
 from jura_growth import agents, config, discord, holidays, schedule, timeutil
@@ -203,38 +204,92 @@ class Drift:
 
     @property
     def line(self) -> str:
-        return (f"Scheduled jobs are running about {abs(self.hours):g} hours off: `{self.job}` is due at {self.due} SGT and "
-                f"ran at {self.ran} SGT. Posting and sending windows are missed while this lasts. launchd's calendar "
-                "keeps the time zone it started with, so restart the Mac once.")
+        unit = "hour" if abs(self.hours) == 1 else "hours"
+        return (f"Scheduled jobs are running about {abs(self.hours):g} {unit} off: `{self.job}` is due at {self.due} SGT and "
+                f"ran at {self.ran} SGT. Posting and sending windows are missed while this lasts. Most likely launchd kept "
+                "an old time zone. Restart the Mac once. If it's still off tomorrow, run `jura-growth schedule install`.")
 
 
 DRIFT_MINIMUM = timedelta(minutes=30)
 DRIFT_TOLERANCE = timedelta(minutes=5)
-DRIFT_JOBS_NEEDED = 2  # one job off by a steady amount could be chance; two can't be a wake-up catching up
+DRIFT_LOOKBACK = timedelta(days=3)  # a paused job's old runs hold no alarm
+_DAY = timedelta(days=1)
 
 
-def schedule_drift(starts: Mapping[str, list[datetime]], jobs: Mapping[str, Mapping[str, Any]]) -> Drift | None:
-    """Whether the daily jobs fire at the wrong SGT time: for each job with one daily slot and two
-    runs, both runs off by the same amount, and at least `DRIFT_JOBS_NEEDED` jobs agreeing. A Mac
-    waking late moves one slot, by a different amount each day, so it never reads as drift."""
-    off: list[tuple[timedelta, str, str, str]] = []
+@dataclass(frozen=True)
+class _SteadilyOff:
+    """One daily job whose last two runs missed its slot by the same amount."""
+
+    job: str
+    slot: time
+    gap: timedelta
+    newest: datetime
+
+
+def schedule_drift(starts: Mapping[str, list[datetime]], jobs: Mapping[str, Mapping[str, Any]], now: datetime) -> Drift | None:
+    """Whether the daily jobs fire at the wrong SGT time. `starts` holds each job's last runs, newest
+    first; a job counts when it has one daily slot and two runs in the last `DRIFT_LOOKBACK`.
+
+    It takes the largest group of jobs steadily off by the same amount, so one job off by something
+    else doesn't hide it. The group needs two slots more than `DRIFT_TOLERANCE` apart. That is what
+    rules out a late wake, even one at the same time every day: jobs firing together at a wake are
+    off by amounts that differ by exactly the distance between their slots. A daily job on time since
+    the group's newest run means the clock is right again, so the morning after a restart is quiet,
+    though the jobs that haven't run since still hold their last two drifted runs."""
+    off: list[_SteadilyOff] = []
+    on_time: list[datetime] = []
     for job, spec in jobs.items():
-        daily = (spec.get("schedule") or {}).get("daily")
-        runs = starts.get(job) or []
-        if not daily or len(runs) < 2:
+        slot = _daily_slot(spec)
+        recent = (run.astimezone(timeutil.SGT) for run in (starts.get(job) or [])[:2])
+        runs = [run for run in recent if now - run <= DRIFT_LOOKBACK]
+        if slot is None or not runs:
             continue
-        hour, minute = (int(part) for part in str(daily).split(":"))
-        gaps = []
-        for run in runs[:2]:
-            at = run.astimezone(timeutil.SGT)
-            minutes = ((at.hour * 60 + at.minute) - (hour * 60 + minute) + 720) % 1440 - 720
-            gaps.append(timedelta(minutes=minutes))
-        if abs(gaps[0]) >= DRIFT_MINIMUM and abs(gaps[0] - gaps[1]) <= DRIFT_TOLERANCE:
-            off.append((gaps[0], job, str(daily), runs[0].astimezone(timeutil.SGT).strftime("%H:%M")))
-    if len(off) < DRIFT_JOBS_NEEDED or max(o[0] for o in off) - min(o[0] for o in off) > DRIFT_TOLERANCE:
+        gaps = [_gap(run, slot) for run in runs]
+        if abs(gaps[0]) < DRIFT_MINIMUM:
+            on_time.append(runs[0])
+        elif len(gaps) == 2 and abs(gaps[1]) >= DRIFT_MINIMUM and _apart(*gaps) <= DRIFT_TOLERANCE:
+            off.append(_SteadilyOff(job, slot, gaps[0], runs[0]))
+    group = _largest_group(off)
+    if not group or any(run > max(member.newest for member in group) for run in on_time):
         return None
-    gap, job, due, ran = off[0]
-    return Drift(job, due, ran, round(gap.total_seconds() / 1800) / 2)
+    first = group[0]
+    return Drift(first.job, first.slot.strftime("%H:%M"), first.newest.strftime("%H:%M"), round(first.gap.total_seconds() / 1800) / 2)
+
+
+def _daily_slot(spec: Mapping[str, Any]) -> time | None:
+    """The job's one daily slot. None without one, or when it isn't a valid HH:MM."""
+    try:
+        return datetime.strptime(str((spec.get("schedule") or {}).get("daily")), "%H:%M").time()
+    except ValueError:
+        return None
+
+
+def _after_midnight(clock: datetime | time) -> timedelta:
+    return timedelta(hours=clock.hour, minutes=clock.minute)
+
+
+def _gap(run: datetime, slot: time) -> timedelta:
+    """How far a run's time of day is from its slot, from -12 hours up to, not including, +12."""
+    half = _DAY / 2
+    return (_after_midnight(run) - _after_midnight(slot) + half) % _DAY - half
+
+
+def _apart(one: timedelta, other: timedelta) -> timedelta:
+    """The distance between two times of day, the short way round the clock."""
+    return min((one - other) % _DAY, (other - one) % _DAY)
+
+
+def _largest_group(off: list[_SteadilyOff]) -> list[_SteadilyOff]:
+    """The most jobs whose gaps all fall within `DRIFT_TOLERANCE`, slots far enough apart. Empty if none."""
+    groups = ([member for member in off if (member.gap - start.gap) % _DAY <= DRIFT_TOLERANCE] for start in off)
+    return max((group for group in groups if _slots_apart(group)), key=len, default=[])
+
+
+def _slots_apart(group: list[_SteadilyOff]) -> bool:
+    return any(
+        _apart(_after_midnight(one.slot), _after_midnight(other.slot)) > DRIFT_TOLERANCE
+        for one, other in combinations(group, 2)
+    )
 
 
 def _missed(snapshot) -> list[str]:
