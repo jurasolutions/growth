@@ -109,10 +109,10 @@ def account() -> Account | None:
         return None
     return Account(
         "levi",
-        config.secret("OUTREACH_IMAP_HOST"),
+        config.require("OUTREACH_IMAP_HOST"),
         int(config.secret("OUTREACH_IMAP_PORT") or 993),
-        config.secret("OUTREACH_IMAP_USER"),
-        config.secret("OUTREACH_IMAP_PASSWORD"),
+        config.require("OUTREACH_IMAP_USER"),
+        config.require("OUTREACH_IMAP_PASSWORD"),
     )
 
 
@@ -211,7 +211,8 @@ def _readable_parts(message: Message) -> Iterator[Message]:
         return
     if message.is_multipart():
         for part in message.get_payload():
-            yield from _readable_parts(part)
+            if isinstance(part, Message):
+                yield from _readable_parts(part)
     elif not message.get_filename():
         yield message
 
@@ -224,19 +225,28 @@ def _from_html(text: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", " ", text))
 
 
-def own_text(message: Message) -> str:
-    """The reply's own words, without the quoted original."""
+def plain_text(message: Message) -> str:
+    """The message's words as written: its plain part, or its HTML part as text."""
     parts = list(_readable_parts(message))
     part = next((p for p in parts if p.get_content_type() == "text/plain"), None)
     if part is None:
         part = next((p for p in parts if p.get_content_type() == "text/html"), None)
     if part is None:
         return ""
-    text = _decoded(part)
-    if part.get_content_type() == "text/html":
-        text = _from_html(text)
+    return _from_html(_decoded(part)) if part.get_content_type() == "text/html" else _decoded(part)
+
+
+def own_text(message: Message) -> str:
+    """The reply's own words, without the quoted original. Someone who writes below the quote
+    keeps their words."""
+    text = plain_text(message)
     match = QUOTE_START_RE.search(text)
-    return text[: match.start()] if match else text
+    if not match:
+        return text
+    head = text[: match.start()]
+    if head.strip():
+        return head
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(">"))
 
 
 def _short_opt_out(text: str) -> str | None:

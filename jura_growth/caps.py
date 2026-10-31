@@ -55,6 +55,26 @@ PUBLISH_MINUTES_BETWEEN_ACTIONS = 20
 # end of the window on its day. Config may narrow it, never widen it.
 PUBLISH_WINDOW = ("09:00", "18:00")
 
+# Inbox watch (inbox watch PRD §4). Config may lower any of these, and may only lengthen the gap
+# between two social replies.
+INBOX_EMAIL_REPLIES_PER_DAY = 30
+INBOX_SOCIAL_REPLIES_PER_DAY = 20
+INBOX_MINUTES_BETWEEN_SOCIAL_REPLIES = 20
+INBOX_WATCH_POSTS_PER_RUN = 8
+INBOX_DECIDE_BY_DAYS = 3
+INBOX_USE_BY_DAYS = 2
+INBOX_TEXT_CHARS = 4000  # of a person's message, stored and shown no longer than this
+INBOX_TEXT_RETENTION_DAYS = 90  # after an item closes
+# One mail check stays small: fetch first and commit per message, so a decision in Discord never
+# waits on the network (technical review, B5).
+INBOX_BODIES_PER_CHECK = 50
+INBOX_CHECK_SECONDS = 120
+INBOX_FIRST_RUN_DAYS = 7
+INBOX_LOOK_BACK_DAYS = 45  # the limit the 16:45 reply check uses
+INBOX_OLD_AFTER_HOURS = 48  # older at intake: reported with no draft (F12)
+# SGT, both ends inclusive. Launchd can fire early until the Mac restarts, so the code checks too.
+INBOX_CHECK_WINDOW = ("07:00", "23:59")
+
 # App factory
 APP_PRDS_PER_DAY = 1
 APP_PRDS_WAITING_MAX = 7
