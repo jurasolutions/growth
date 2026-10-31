@@ -1,6 +1,6 @@
 # 11: No card, no approval, and close review 10
 
-Status: ready-for-agent
+Status: done
 Blocked by: 10
 
 Work on the same branch, `crew/approvals-first-social-depth-10-final-fixes`, in the same worktree. Read `reviews/code-review-10.md` first; the finding ids below are its own.

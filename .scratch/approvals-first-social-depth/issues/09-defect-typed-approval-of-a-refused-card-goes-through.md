@@ -1,6 +1,6 @@
 # 09: Defect: a typed approval of a refused card goes through
 
-Status: ready-for-agent
+Status: done
 Severity: major
 Owner: developer
 Found by: the final review, as SP-B2 (`reviews/code-review-final.md`). QA reproduced it in separate processes at f0db1e5 (`reviews/qa-final.md`).

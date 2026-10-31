@@ -1,6 +1,6 @@
 # 07: Defect: a missing config folder silently drops the buzzword check
 
-Status: ready-for-agent
+Status: done
 Severity: minor (shipped runs always have the folder, and the numbers rule still holds without it)
 Owner: developer
 Found by: ticket 04's developer (crew log, "open for the final review"); confirmed by QA at f0db1e5, `reviews/qa-final.md`

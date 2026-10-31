@@ -252,6 +252,7 @@ A kind is an object with:
 | `args_help` | Optional. The refusal text when one of them is missing |
 | `on_approve(conn, subject, args)` | Optional. Applies the change inside the decision's transaction, after `approved` is written. Raise `approvals.BadArgs(text)` to refuse with that text; a `NotApproved` from a claim inside it also refuses. A returned string is appended to the answer |
 | `switched_off(conn, subject)` | Optional. The kind's own switch (outreach in shadow mode, a platform in draft or switched off): a reason makes `use()` refuse without claiming |
+| `needs_card` | Optional. True when the kind's `on_approve` refuses a request whose card hasn't gone out (`social-post`, `outreach-email`). `pending` says so beside the request |
 | `feed_channel` | Optional. The channel this kind's feed lines go to, ahead of the plug-in's `FEED_CHANNEL` and `RUN_UPDATE_DISCORD_CHANNEL` |
 | `feed_approved` | Optional. A string, or `(conn, subject)` returning one: the next step on an approved feed line, in one short sentence. Keep it true: say so when nothing can act on the approval |
 | `card_problem(conn, subject)` | Optional. Why the card can't show what it asks about, or `None`. A reason means no card and one note in the feed, and the request lapses unless a card goes out. The kind's `on_approve` refuses a typed approval of such a request. Learn the names first (`privacy.learn`), since each process starts knowing none |

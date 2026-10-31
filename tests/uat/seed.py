@@ -37,7 +37,7 @@ own scenarios to `SCENARIOS`.
 Part C's publish scenarios (BP-02a) put Facebook in `browser` mode in `$UAT/config` and seed the
 day's Facebook draft through the same code `social submit` uses, which raises its card:
 
-- `social-post` (C1): one pending `social-post` card, decide by 18:00 on the seeded day.
+- `social-post` (C1): one pending `social-post` card, decide by 17:00 on the seeded day.
 - `social-approved` (C2): that card approved through the Dispatch origin, not yet claimed.
 - `claimed-not-closed` (C2): claimed by a publish run that recorded neither done nor stopped, so
   it is `unknown`, publish is paused and #alerts says how to settle it. Seed it between 09:00 and
@@ -325,9 +325,9 @@ def s1_history(conn) -> None:
 
 
 def s2_today(conn) -> None:
-    run_row(conn, "app-factory", "app-factory", at(today(), "06:31"), minutes=6, cost=1.20,
+    run_row(conn, "app-factory", "app-factory", at(today(), "07:01"), minutes=6, cost=1.20,
             summary="OK: filed APP-014 PayNow QR for small shops")
-    run_row(conn, "social", "social", at(today(), "07:00"), minutes=4.2, cost=0.41,
+    run_row(conn, "social", "social", at(today(), "07:30"), minutes=4.2, cost=0.41,
             summary="OK: drafted Facebook and Instagram for \"PayNow QR for small shops\"")
 
 
@@ -402,7 +402,7 @@ def s4_queued_emails(conn) -> None:
 
 def s5_s6_planted(conn) -> None:
     previous = previous_business_day()
-    run_row(conn, "scout", "scout-research", at(previous, "09:00:30"), summary=f"OK: 3 leads (token {RESEND_KEY})")
+    run_row(conn, "scout", "scout-research", at(previous, "06:30:30"), summary=f"OK: 3 leads (token {RESEND_KEY})")
     failed = run_row(conn, "outreach", "scout-sync", at(previous, "16:45:30"), status="failed",
                      error=f"ResendError: 401 for key {RESEND_KEY}")
     folder = paths.data_dir() / "transcripts" / today().isoformat()

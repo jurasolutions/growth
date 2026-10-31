@@ -1,6 +1,6 @@
 # 08: Defect: a refusal test fails whenever the live engine writes during it
 
-Status: ready-for-agent
+Status: done
 Severity: minor (a test only; no product behaviour is wrong, and nothing was written to live data by a test)
 Owner: developer
 Found by: QA at f0db1e5, `reviews/qa-final.md`. This is the intermittent failure ticket 02 asked QA to hunt.

@@ -241,9 +241,9 @@ def test_s1_scout_send_on_6_november_misses_two_slots_then_runs_quietly_at_10_26
 
 def test_s2_today_app_factory_and_social_ran(seeded):
     factory = db.one(seeded, "SELECT * FROM runs WHERE job = 'app-factory' AND started_at LIKE '2026-11-10%'")
-    assert factory["started_at"] == "2026-11-10T06:31:00+08:00" and factory["cost_usd"] == 1.20 and "APP-014" in factory["summary"]
+    assert factory["started_at"] == "2026-11-10T07:01:00+08:00" and factory["cost_usd"] == 1.20 and "APP-014" in factory["summary"]
     social = db.one(seeded, "SELECT * FROM runs WHERE job = 'social' AND started_at LIKE '2026-11-10%'")
-    assert social["started_at"] == "2026-11-10T07:00:00+08:00" and social["finished_at"] == "2026-11-10T07:04:12+08:00"
+    assert social["started_at"] == "2026-11-10T07:30:00+08:00" and social["finished_at"] == "2026-11-10T07:34:12+08:00"
     assert social["cost_usd"] == 0.41
 
 

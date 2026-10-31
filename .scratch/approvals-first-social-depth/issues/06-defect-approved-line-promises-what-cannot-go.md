@@ -1,6 +1,6 @@
 # 06: Defect: an approved line can promise a post nothing will make
 
-Status: ready-for-agent
+Status: done
 Severity: minor (a false line; nothing posts that shouldn't, and the lapse line that follows is true)
 Owner: developer
 Found by: QA at f0db1e5, `reviews/qa-final.md`

@@ -54,7 +54,7 @@ def test_today_dates_every_base_row_from_that_day(uat):
     first = rows("SELECT min(started_at) AS first FROM runs")[0]["first"]
     assert first.startswith("2026-11-09")  # eight days back
     factory = rows("SELECT started_at FROM runs WHERE job = 'app-factory' AND started_at LIKE '2026-11-17%'")
-    assert [r["started_at"] for r in factory] == ["2026-11-17T06:31:00+08:00"]
+    assert [r["started_at"] for r in factory] == ["2026-11-17T07:01:00+08:00"]
     lead_233 = rows("SELECT queued_at, send_after FROM outreach_messages WHERE lead_id = 233")[0]
     assert lead_233 == {"queued_at": "2026-11-16T09:12:00+08:00", "send_after": "2026-11-16"}
     batch = rows("SELECT DISTINCT send_after FROM outreach_messages WHERE lead_id BETWEEN 240 AND 260")
@@ -82,12 +82,12 @@ def test_a_day_that_isnt_a_business_day_is_refused_for_outreach_and_seeds_nothin
 
 def test_the_default_day_is_today_in_sgt(uat):
     seed.seed(uat)
-    assert rows("SELECT 1 FROM runs WHERE job = 'app-factory' AND started_at = '2026-11-17T06:31:00+08:00'")
+    assert rows("SELECT 1 FROM runs WHERE job = 'app-factory' AND started_at = '2026-11-17T07:01:00+08:00'")
 
 
 def test_the_command_line_takes_today(uat):
     assert seed.main([str(uat), "--today", "2026-11-17"]) == 0
-    assert rows("SELECT 1 FROM runs WHERE started_at = '2026-11-17T07:00:00+08:00'")
+    assert rows("SELECT 1 FROM runs WHERE started_at = '2026-11-17T07:30:00+08:00'")
     assert seed.main([str(uat), "--scenario", "base", "--today", "2026-11-14"]) == 2
 
 

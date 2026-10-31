@@ -1,6 +1,6 @@
 # 05: Defect: the digest and the morning brief call a closed card "no card" and "waiting"
 
-Status: ready-for-agent
+Status: done
 Severity: minor (wording; nothing posts and no card or feed line is wrong)
 Owner: developer
 Found by: QA at f0db1e5, `reviews/qa-final.md`. The final review found the same thing as its blocker SP-B1 (`reviews/code-review-final.md`), so it must be fixed before merge whatever its severity, and that review has the fix.
