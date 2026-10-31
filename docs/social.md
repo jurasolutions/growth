@@ -81,7 +81,9 @@ In this order. Steps 1 to 4 refuse without using up the day's regeneration.
      `visual` (`needs_visual`);
    - no `"carousel": false` on a theme that goes out as a carousel;
    - **what the picture says, tied to the post:** a figure's value and any other number on the
-     card appear the same way in every variant, and a `source` label on a figure or an item is
+     card, in digits or in words past a small count ("forty", "nine in ten", "two-thirds", "twice"),
+     appear the same way in every variant, read as the numbers rule reads them, so a date or a link
+     in the post doesn't count. A `source` label on a figure or an item is
      the publisher on a line of `sources.md`. This doesn't prove a figure true. It means the
      picture says nothing the post and its sources don't, and Ting Yu reads those on the card.
 3. **No repeats:** no story URL and no tool used in the last 14 days (`caps.NO_REPEAT_DAYS`).
@@ -452,10 +454,6 @@ the tools; otherwise tools are ranked by newest.
 
 ## Known issues
 
-- **"were", "well" and "wed" count as "we" in the core numbers rule.** `brand_check.JURA_SELF_RE`
-  makes the apostrophe optional (`we'?re`, `we'?ll`, `we'?d`), so a news sentence such as "86%
-  were using AI" is read as a figure about Jura and fails. The prompt tells the run to avoid
-  those words next to digits until the core pattern requires the apostrophe.
 - **Source addresses with brackets** (for example IRAS's `goods-services-tax-(gst)`) are cut at
   the bracket by the core link finder, so `submit` refuses them and asks for another address.
 - **Instagram "Link in bio"** points at jurasolutions.sg, not the article; Instagram news captions

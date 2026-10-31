@@ -80,8 +80,9 @@ to do about it. Cover these four things, in plain paragraphs with no labels:
    take the next theme.
 3. **What changes for a small business, with a concrete example.** Name a kind of business and a
    real task: a clinic that keeps its monthly claims in a spreadsheet, a trading firm chasing late
-   invoices. Say what that person's day looks like afterwards. The example is yours to describe, so
-   it carries no figure: never invent how much time or money it saves.
+   invoices. Write it as a picture ("Picture a clinic..."), never as something that happened to a
+   real business or client, and say what that person's day could look like. The example is yours
+   to describe, so it carries no figure: never invent how much time or money it saves.
 4. **One thing to do this week.** One small step the reader can take themselves, without buying
    anything from Jura. Offer it plainly and leave out any deadline.
 
@@ -101,14 +102,14 @@ Every variant:
   (say "uses AI" instead). No urgency ("act now", "limited", "don't miss").
 - No "this, not that" lines: avoid "X, not Y", "not just X but Y" and "it's not about X, it's
   about Y". Say the positive thing directly.
-- **Numbers:** no figures about Jura beyond the approved claims. Never put a digit, or a number
-  word from two up ("twelve", "a dozen"), in a sentence that contains "we", "our", "us" or
-  "Jura". A figure from a news story is fine in a sentence about that story, with the source
-  linked. For now the checker also reads "were", "well" and "wed" as "we're", "we'll" and
-  "we'd", so keep those words out of any sentence with a figure ("86% of them use AI", not
-  "86% were using AI").
+- **Numbers:** no figures about Jura beyond the approved claims. Never put a digit, a number
+  word from two up ("twelve", "a dozen"), or "half", "twice" or "double", in a sentence that
+  contains "we", "our", "us" or "Jura". A figure from a news story is fine in a sentence about
+  that story, with the source linked.
 - Plain text only. No markdown: no `**bold**`, no `#` headings, no `[text](url)` links, no code
   fences. Write links in full (`https://...`). Lines starting with "- " are fine.
+- A company name that reads as a web address (a name ending in `.ai`, say) counts as a link, on
+  the card and on Instagram too. Write it without the dot.
 - Hashtags go together on the last line, nowhere else.
 - End with a gentle pointer to Jura where it fits naturally (jurasolutions.sg or
   jurasolutions.sg/apps). No hard sell.
@@ -150,15 +151,16 @@ in `today`, and `submit` refuses another one.
 - `headline` at most 90 characters, a statement (never a question), sentence case. `subtitle` at
   most 150 characters. No links or hashtags on the card. The overline defaults to the theme label.
 - `items`: `{"title": "...", "detail": "...", "source": "IMDA", "icon": "mail"}`. Titles at most 90
-  characters, details at most 220, source labels at most 40. `today` says how many a theme needs,
+  characters, details at most 220, source labels at most 40. Titles follow the headline's rules: a
+  statement, never a question, in sentence case. `today` says how many a theme needs,
   and an item without a detail doesn't count. Instagram posts them as a carousel on any day: the card
   first, then one slide per item (icon, title, detail, source), so write each detail as one or two
   plain sentences that add something the headline doesn't. On a theme that goes out as a carousel,
   don't set `"carousel": false`. `from-the-toolbox` needs no items.
 - `icon`: one of the names `today` lists, and nothing else. Every item needs one, on every theme
   except `from-the-toolbox`. Pick the plainest match for what the item says.
-- `proper_nouns`: names the sentence-case check should accept in the headline (for example a
-  product name).
+- `proper_nouns`: names the sentence-case check should accept in the headline and the item titles
+  (a product or a company, say). A news day usually needs them.
 
 ### The picture
 
@@ -184,8 +186,9 @@ picture shows, in sentence case.
 illustrative: no made-up example numbers, no rounded guesses, nothing about Jura. A figure's
 `value` is copied from the source and written the same way in every post, and its `source` is the
 publisher, written as it is in `sources.md`. An item's `source` is the publisher too. Any other
-number on the card, in a label, a point, a title or a detail, also has to appear the same way in
-every post, so keep numbers off the card unless the post says them. With no sourced figure, draw a
+number on the card, in digits or in words ("forty", "nine in ten", "two-thirds", "twice"), in a
+label, a point, a title or a detail, also has to appear the same way in every post, so keep numbers
+off the card unless the post says them. A small count in words ("Two AI updates") is fine. With no sourced figure, draw a
 `flow` or a `compare`. Never make a figure up to fill the picture.
 
 A flow, with items, for a tip:

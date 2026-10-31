@@ -150,3 +150,30 @@ def test_no_example_card_carries_a_figure_a_run_could_copy():
 def test_the_prompt_names_every_kind_of_refusal_a_card_can_get():
     for phrase in ("card items", "`visual`", "`icon`", "two different sites"):
         assert phrase in FLAT
+
+
+@pytest.mark.parametrize("text", [PROMPT, DOCS], ids=["prompt", "docs"])
+def test_the_rule_the_checker_dropped_is_gone(text):
+    """The checker no longer reads "were" as "we're", so the warning only put a figure in front of
+    the run. A model copies what it sees."""
+    assert '"were"' not in text and "86%" not in text
+
+
+def test_a_concrete_example_reads_as_a_picture_and_never_as_a_client():
+    assert 'Picture a clinic' in FLAT
+    assert "never as something that happened to a real business or client" in FLAT
+
+
+def test_item_titles_follow_the_headlines_rules():
+    assert "Titles follow the headline's rules" in FLAT
+    assert "`proper_nouns`: names the sentence-case check should accept in the headline and the item titles" in FLAT
+
+
+def test_the_prompt_warns_of_the_other_ways_to_fail_the_gate():
+    assert '"half", "twice" or "double"' in FLAT
+    assert "reads as a web address" in FLAT
+
+
+@pytest.mark.parametrize("text", [FLAT, re.sub(r"\s+", " ", DOCS)], ids=["prompt", "docs"])
+def test_the_tie_is_described_as_the_code_applies_it(text):
+    assert "in digits or in words" in text
