@@ -9,15 +9,23 @@ decision in #approvals, or handed off to be built), prd-done (built; PRD moved
 to prd/done/apps), live (in the site registry), dropped (not to be picked;
 Ting Yu skipped its PRD). An idea whose PRD expired unanswered keeps status
 idea with a `reopens` date, and shows as `resting` until then (MC §5.9 step 5).
+
+Several processes write it (the factory, decisions, `apps idea` from Discord), so
+every read, change and save runs under `locked()`, and `save` replaces the file
+in one step: a reader never sees half a file, and no writer loses another's row.
 """
 
 from __future__ import annotations
 
+import os
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import yaml
 
-from jura_growth import paths, timeutil
+from jura_growth import locks, paths, timeutil
 from jura_growth.agents.apps import prd as prd_mod
 
 SEED = Path(__file__).with_name("backlog-seed.yaml")
@@ -37,8 +45,12 @@ HEADER = """\
 # source: ting-yu marks an idea Ting Yu sent with `apps idea`; the factory picks
 #   those first, oldest first (`added`). One it couldn't take has `held` and
 #   `held_reason`, and is an ordinary candidate from then on.
+#
+# Only this header is written back: comments you add lower down are lost the
+# next time the file is saved.
 
 """
+LOCK = "app-backlog"
 
 
 def path() -> Path:
@@ -53,16 +65,35 @@ def load() -> list[dict]:
 
 
 def save(rows: list[dict]) -> Path:
+    """The whole file, written beside it, flushed to disk, then swapped in with `os.replace`.
+    Call it under `locked()` with the rows read under the same lock."""
     target = paths.writable(path())
     body = yaml.safe_dump({"apps": rows}, sort_keys=False, allow_unicode=True, width=100)
-    target.write_text(HEADER + body, encoding="utf-8")
+    handle, temp = tempfile.mkstemp(dir=target.parent, prefix=".app-backlog.", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            out.write(HEADER + body)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temp, target)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
     return target
 
 
+@contextmanager
+def locked() -> Iterator[None]:
+    """One writer at a time, across processes. Not re-entrant: never nest it."""
+    with locks.waiting(LOCK):
+        yield
+
+
 def seed_if_missing() -> Path | None:
-    if path().exists():
-        return None
-    return save(load())
+    with locked():
+        if path().exists():
+            return None
+        return save(load())
 
 
 def find(rows: list[dict], *, slug: str, name: str) -> dict | None:
@@ -79,9 +110,15 @@ def mark_written(*, name: str, slug: str, app_id: str, prd_path: str, tier: str,
                  idea: str | None = None) -> dict:
     """`idea` names the row by its slug when the PRD's name and slug differ from it (an idea of
     Ting Yu's, renamed to meet the factory's name rules)."""
-    rows = load()
-    row = next((r for r in rows if r.get("slug") == idea), None) if idea else None
-    row = row or find(rows, slug=slug, name=name)
+    with locked():
+        rows = load()
+        row = next((r for r in rows if r.get("slug") == idea), None) if idea else None
+        return _mark_written(rows, row or find(rows, slug=slug, name=name), name=name, slug=slug, app_id=app_id,
+                             prd_path=prd_path, tier=tier, category=category, does=does)
+
+
+def _mark_written(rows: list[dict], row: dict | None, *, name: str, slug: str, app_id: str, prd_path: str, tier: str,
+                  category: str, does: str) -> dict:
     if row is None:
         row = {"name": name, "slug": slug, "tier": tier, "category": category, "does": does, "status": "idea",
                "notes": f"New idea from the app factory, {timeutil.today_str()}."}
@@ -113,40 +150,43 @@ def _note(row: dict, note: str) -> str:
 
 def drop(*, app_id: str, slug: str | None, name: str | None, note: str) -> dict | None:
     """Ting Yu skipped the app's PRD: the idea closes for good."""
-    rows = load()
-    row = _row_for(rows, app_id=app_id, slug=slug, name=name)
-    if row is None:
-        return None
-    row.update(status="dropped", notes=_note(row, note))
-    save(rows)
-    return row
+    with locked():
+        rows = load()
+        row = _row_for(rows, app_id=app_id, slug=slug, name=name)
+        if row is None:
+            return None
+        row.update(status="dropped", notes=_note(row, note))
+        save(rows)
+        return row
 
 
 def rest(*, app_id: str, slug: str | None, name: str | None, note: str, reopens: str) -> dict | None:
     """The app's PRD expired unanswered: the idea is an idea again, offered from `reopens`."""
-    rows = load()
-    row = _row_for(rows, app_id=app_id, slug=slug, name=name)
-    if row is None:
-        return None
-    for key in ("app_id", "prd", "prd_date"):
-        row.pop(key, None)
-    row.update(status="idea", reopens=reopens, notes=_note(row, f"{note} Offered again from {reopens}."))
-    save(rows)
-    return row
+    with locked():
+        rows = load()
+        row = _row_for(rows, app_id=app_id, slug=slug, name=name)
+        if row is None:
+            return None
+        for key in ("app_id", "prd", "prd_date"):
+            row.pop(key, None)
+        row.update(status="idea", reopens=reopens, notes=_note(row, f"{note} Offered again from {reopens}."))
+        save(rows)
+        return row
 
 
 def release(*, app_id: str, slug: str | None, name: str | None, prd_path: str | None, note: str) -> dict | None:
     """The app's build is on jurasolutions.sg (`apps released`): live, with its PRD in
     prd/done/apps when it was moved there (`prd_path`), else its PRD path left as it was."""
-    rows = load()
-    row = _row_for(rows, app_id=app_id, slug=slug, name=name)
-    if row is None:
-        return None
-    if prd_path:
-        row["prd"] = prd_path
-    row.update(status="live", released=timeutil.today_str(), notes=_note(row, note))
-    save(rows)
-    return row
+    with locked():
+        rows = load()
+        row = _row_for(rows, app_id=app_id, slug=slug, name=name)
+        if row is None:
+            return None
+        if prd_path:
+            row["prd"] = prd_path
+        row.update(status="live", released=timeutil.today_str(), notes=_note(row, note))
+        save(rows)
+        return row
 
 
 def resting(row: dict, today: str | None = None) -> bool:

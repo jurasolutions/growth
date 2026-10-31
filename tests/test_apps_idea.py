@@ -15,7 +15,12 @@ user. Remote calls go through click's `CliRunner` with the SSH origin passed in 
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
+import sys
+
+import yaml
 
 import pytest
 from click.testing import CliRunner
@@ -100,9 +105,33 @@ def test_without_a_colon_the_name_is_the_first_few_words(conn):
     ("  : a colon first, so the words name it", "A colon first, so the"),
     ("GST checker for imports: add GST to the landed cost", "GST checker for imports"),
     ("Petty cash log.", "Petty cash log"),
+    # Review N4: only a colon and a space name it, so a web address or a time doesn't.
+    ("https://www.iras.gov.sg/gst a GST registration checker", "Https://www.iras.gov.sg/gst a GST registration checker"),
+    ("Remind staff at 9:30 to submit timesheets", "Remind staff at 9:30 to"),
+    ("Shift planner (06:30 starts): plan early shifts", "Shift planner (06:30 starts)"),
+    ("Petty cash log:", "Petty cash log"),
 ])
 def test_the_name_comes_from_the_part_before_the_first_colon(text, name):
     assert ideas.name_for(text) == name
+
+
+@pytest.mark.parametrize("text", [
+    "A very long name for a tool that goes on and on well past the sixty character mark: and then the rest",
+    "Supercalifragilisticexpialidocious" * 4 + " and more words",
+    "https://www.iras.gov.sg/taxes/goods-services-tax-(gst)/basics-of-gst/current-gst-rates a checker",
+])
+def test_a_derived_name_is_at_most_60_characters_cut_at_a_word(text):
+    """Review N7: the cap holds for the first-words fallback too."""
+    name = ideas.name_for(text)
+    assert 0 < len(name) <= 60 and len(ideas.slug_for(name)) <= 60
+    if " " in text[:61]:
+        assert text.lower().startswith(name.lower()) and text[len(name)] in " :"
+
+
+def test_two_ideas_that_start_with_a_web_address_are_not_the_same_idea(conn):
+    first = answer(remote(idea_words("https://www.iras.gov.sg/gst a GST registration checker")))
+    second = answer(remote(idea_words("https://www.mom.gov.sg/leave a leave calculator")))
+    assert first["exit_code"] == 0 == second["exit_code"], (first, second)
 
 
 def test_an_empty_idea_is_refused_and_nothing_is_written(conn):
@@ -112,10 +141,19 @@ def test_an_empty_idea_is_refused_and_nothing_is_written(conn):
     assert not backlog.path().exists()
 
 
-def test_words_with_no_letters_or_figures_are_refused(conn):
-    body = answer(remote(["apps", "idea", "…", "!!"]))
+@pytest.mark.parametrize("words", [["…", "!!"], ["请假", "计划", "工具"], ["Планировщик", "отпусков"]])
+def test_an_idea_with_no_latin_letters_is_refused_with_why(conn, words):
+    """Review N8: the name becomes the tool's web address, so it needs Latin letters."""
+    body = answer(remote(["apps", "idea", *words]))
     assert body["exit_code"] == 2 and body["text"].startswith("refused:")
+    assert "Latin letters" in body["text"] and "web address" in body["text"]
     assert not backlog.path().exists()
+
+
+def test_non_latin_text_after_a_latin_name_is_kept_word_for_word(conn):
+    text = "Leave form maker: 请假 表格, a leave form in English and Chinese"
+    assert remote(idea_words(text)).exit_code == 0
+    assert row("leave-form-maker")["does"] == text
 
 
 def test_an_idea_over_500_characters_is_refused_and_one_of_500_is_taken(conn):
@@ -176,6 +214,54 @@ def test_a_hyphen_or_a_dash_inside_the_text_is_not_an_option(conn):
     assert row("job-sheet")["does"] == text
 
 
+# --- review S2: the text can't inject YAML or mentions --------------------------------------------
+
+HOSTILE = [
+    "Anchor tool: &a [1, 2] *a <<: *a",
+    "Tag tool: !!python/object/apply:os.system ['echo hi'] !!binary aGk=",
+    "Doc tool: --- status: live ... --- second: doc",
+    "Key tool: status: live, source: agent, slug: quote-builder",
+    "Null tool: ~ null yes no on off 0x1F 1e3 'single' \"double\"",
+    "Comment tool: # not a comment | > {flow: map} [flow, list]",
+]
+
+
+@pytest.mark.parametrize("text", HOSTILE)
+def test_yaml_in_the_text_stays_text_and_sets_no_field(conn, text):
+    result = remote(idea_words(text))
+    assert answer(result)["exit_code"] == 0, result.output
+    documents = list(yaml.safe_load_all(backlog.path().read_text(encoding="utf-8")))
+    assert len(documents) == 1
+    [added] = [r for r in documents[0]["apps"] if r.get("source") == "ting-yu"]
+    assert added["does"] == text and added["status"] == "idea" and added["source"] == "ting-yu"
+    assert set(added) == {"name", "slug", "does", "status", "source", "added", "actor", "notes"}
+    assert row("quote-builder")["app_id"] == "APP-001" and len(backlog.load()) == 21
+
+
+@pytest.mark.parametrize("text", [
+    "Multi line tool: first line\nstatus: live\n- name: Forged\n  source: ting-yu",
+    "Doc break tool: one\n---\napps: []\n...",
+    "Odd space tool: one\u2028two\u0085three\ttab",
+])
+def test_newlines_from_the_terminal_stay_inside_the_one_row(conn, text):
+    """Dispatch splits on whitespace, so only the terminal can send a newline."""
+    assert invoke("apps", "idea", text).exit_code == 0
+    rows = backlog.load()
+    assert len(rows) == 21 and not any(r["name"] == "Forged" for r in rows)
+    assert rows[-1]["does"] == text.strip() and rows[-1]["source"] == "ting-yu"
+
+
+def test_mentions_in_the_text_never_ping_anyone_from_the_reply(conn):
+    text = "Ping tool: @everyone and @here and <@123> and <@!456> and <@&789> please"
+    body = answer(remote(idea_words(text)))
+    assert body["exit_code"] == 0
+    for live in ("@everyone", "@here", "<@1", "<@!", "<@&"):
+        assert live not in body["text"], live
+    assert row("ping-tool")["does"] == text  # the row keeps his words; only the answer is defused
+    plain = remote(idea_words("Pong tool: @everyone <@&789>"), as_json=False)
+    assert "@everyone" not in plain.output and "<@&" not in plain.output
+
+
 def test_an_older_idea_of_ting_yus_is_named_as_coming_first(conn):
     assert remote(idea_words("Petty cash log: track petty cash")).exit_code == 0
     body = answer(remote(idea_words("Stock count sheet: print a count sheet")))
@@ -227,9 +313,11 @@ def test_context_lists_ting_yus_ideas_oldest_first_and_only_open_ones(conn, monk
     _add("Petty cash log: track petty cash", "2026-10-19", monkeypatch)
     _add("Job sheet: a one-page job sheet", "2026-10-20", monkeypatch)
     monkeypatch.setenv("JURA_GROWTH_NOW", f"{TODAY}T06:30:00+08:00")
-    assert invoke("apps", "hold-idea", "job-sheet", "--reason", "it reads as legal advice").exit_code == 0
     view = json.loads(invoke("apps", "context", "--json").output)
-    assert [r["slug"] for r in view["ting_yu_ideas"]] == ["petty-cash-log", "stock-count-sheet"]
+    assert [r["slug"] for r in view["ting_yu_ideas"]] == ["petty-cash-log", "job-sheet", "stock-count-sheet"]
+    assert invoke("apps", "hold-idea", "petty-cash-log", "--reason", "it reads as legal advice").exit_code == 0
+    view = json.loads(invoke("apps", "context", "--json").output)
+    assert [r["slug"] for r in view["ting_yu_ideas"]] == ["job-sheet", "stock-count-sheet"]
     assert all(r["source"] == "ting-yu" and r["effective_status"] == "idea" for r in view["ting_yu_ideas"])
 
 
@@ -247,10 +335,65 @@ def test_an_idea_whose_prd_was_written_leaves_the_queue(conn, tmp_path):
     assert view["ting_yu_ideas"] == []
 
 
-def test_submit_prd_refuses_an_idea_slug_that_isnt_an_open_backlog_idea(tmp_path):
-    for slug in ("no-such-idea", "quote-builder"):
-        result = invoke("apps", "submit-prd", "--dry-run", "--idea", slug, str(write(tmp_path, GOOD)))
-        assert result.exit_code == 1 and f"idea: {slug!r}" in result.output, result.output
+@pytest.mark.parametrize("slug", ["no-such-idea", "quote-builder", "invoice-builder"])
+def test_submit_prd_refuses_an_idea_slug_that_isnt_an_open_idea_of_ting_yus(tmp_path, conn, slug):
+    """Review B1: `invoice-builder` is an open seed idea. Marking it would rename it to the PRD's
+    name, so the seed idea would be lost from the backlog."""
+    before = backlog.load()
+    for dry_run in (["--dry-run"], []):
+        result = invoke("apps", "submit-prd", *dry_run, "--idea", slug, str(write(tmp_path, GOOD)))
+        assert result.exit_code == 1 and f"idea: {slug!r} isn't an open idea of Ting Yu's" in result.output, result.output
+    assert backlog.load() == before
+    assert not (paths.prd_dir() / "pending" / "apps" / "prd-app-003-delivery-order-maker-2026-10-26.md").exists()
+
+
+def _without_the_seed_delivery_order_row() -> None:
+    backlog.save([r for r in backlog.load() if r["slug"] != "delivery-order-maker"])
+
+
+def test_submit_prd_marks_only_the_oldest_of_ting_yus_ideas(tmp_path, conn, monkeypatch):
+    _without_the_seed_delivery_order_row()
+    _add("Petty cash log: track petty cash", "2026-10-20", monkeypatch)
+    _add("DO maker: delivery orders with a signature box", "2026-10-21", monkeypatch)
+    monkeypatch.setenv("JURA_GROWTH_NOW", f"{TODAY}T06:30:00+08:00")
+    result = invoke("apps", "submit-prd", "--dry-run", "--idea", "do-maker", str(write(tmp_path, GOOD)))
+    assert result.exit_code == 1 and "petty-cash-log comes first" in result.output, result.output
+
+
+def test_a_renamed_prd_without_idea_is_refused_while_ting_yus_idea_waits(tmp_path, conn):
+    """The link doesn't rest on the prompt remembering `--idea`."""
+    _without_the_seed_delivery_order_row()
+    assert invoke("apps", "idea", "DO maker: delivery orders with a signature box").exit_code == 0
+    result = invoke("apps", "submit-prd", "--dry-run", str(write(tmp_path, GOOD)))
+    assert result.exit_code == 1 and "--idea do-maker" in result.output and "apps hold-idea" in result.output
+
+
+def test_a_prd_with_his_ideas_own_name_is_marked_against_it_without_idea(tmp_path, conn):
+    _without_the_seed_delivery_order_row()
+    assert invoke("apps", "idea", "Delivery order maker: DOs with a signature box").exit_code == 0
+    assert invoke("apps", "submit-prd", str(write(tmp_path, GOOD))).exit_code == 0
+    marked = row("delivery-order-maker")
+    assert marked["source"] == "ting-yu" and marked["status"] == "prd-pending" and marked["app_id"] == "APP-003"
+    assert [r["slug"] for r in backlog.load()].count("delivery-order-maker") == 1
+
+
+def test_after_his_idea_is_held_today_the_normal_pick_may_be_filed(tmp_path, conn):
+    assert invoke("apps", "idea", "Petty cash log: track petty cash").exit_code == 0
+    assert invoke("apps", "submit-prd", "--dry-run", str(write(tmp_path, GOOD))).exit_code == 1
+    assert invoke("apps", "hold-idea", "petty-cash-log", "--reason", "it needs a rule no page confirms").exit_code == 0
+    result = invoke("apps", "submit-prd", str(write(tmp_path, GOOD)))
+    assert result.exit_code == 0, result.output
+    assert row("delivery-order-maker")["status"] == "prd-pending" and "source" not in row("delivery-order-maker")
+    assert row("petty-cash-log")["status"] == "idea"
+
+
+def test_renaming_his_idea_onto_another_rows_slug_is_refused(tmp_path, conn):
+    """Review B1: two rows would share one slug. The seed's Delivery order maker is still here."""
+    assert invoke("apps", "idea", "DO maker: delivery orders with a signature box").exit_code == 0
+    before = backlog.load()
+    result = invoke("apps", "submit-prd", "--idea", "do-maker", str(write(tmp_path, GOOD)))
+    assert result.exit_code == 1 and "Delivery order maker" in result.output and "backlog" in result.output
+    assert backlog.load() == before
 
 
 # --- holding an idea that fails a check -----------------------------------------------------------
@@ -268,6 +411,22 @@ def test_hold_idea_records_the_reason_in_the_notes_and_the_digest(conn):
     assert f"App factory: your idea Petty cash log wasn't picked first: {reason}." in lines
 
 
+def test_hold_idea_caps_the_reason_at_300_characters(conn):
+    assert invoke("apps", "idea", "Petty cash log: track petty cash").exit_code == 0
+    assert invoke("apps", "hold-idea", "petty-cash-log", "--reason", "word " * 1000).exit_code == 0
+    reason = row("petty-cash-log")["held_reason"]
+    assert len(reason) <= 300 and reason.startswith("word word") and reason.endswith("…")
+    assert all(len(line) < 400 for line in apps_plugin.digest(conn, TODAY)["lines"])
+
+
+def test_hold_idea_holds_only_the_oldest_of_ting_yus_ideas(conn, monkeypatch):
+    _add("Petty cash log: track petty cash", "2026-10-20", monkeypatch)
+    _add("Job sheet: a one-page job sheet", "2026-10-21", monkeypatch)
+    result = invoke("apps", "hold-idea", "job-sheet", "--reason", "x")
+    assert result.exit_code == 1 and "petty-cash-log comes first" in result.output
+    assert "held" not in row("job-sheet")
+
+
 def test_hold_idea_only_holds_an_open_idea_of_ting_yus(conn):
     for slug in ("invoice-builder", "quote-builder", "no-such-idea"):
         result = invoke("apps", "hold-idea", slug, "--reason", "x")
@@ -280,7 +439,7 @@ def test_hold_idea_only_holds_an_open_idea_of_ting_yus(conn):
 
 def test_hold_idea_needs_a_reason(conn):
     assert invoke("apps", "idea", "Petty cash log: track petty cash").exit_code == 0
-    assert invoke("apps", "hold-idea", "petty-cash-log", "--reason", "  ").exit_code == 1
+    assert invoke("apps", "hold-idea", "petty-cash-log", "--reason", "  ").exit_code == 2
     assert "held" not in row("petty-cash-log")
 
 
@@ -326,6 +485,51 @@ def test_the_prompt_holds_a_failed_idea_and_says_so_in_the_summary():
     assert "Ting Yu's idea" in finish and "held" in finish
 
 
+def test_the_prompt_holds_an_idea_whose_prd_still_cant_be_filed():
+    """Review S4: an idea that passes the content checks but fails at `submit-prd` is held too, so
+    it isn't first again tomorrow."""
+    filing = _section("4. Check, then file")
+    assert "jura-growth apps hold-idea <slug> --reason" in filing
+    assert re.search(r"brand check fails twice", filing) and re.search(r"refus", filing)
+
+
 def test_the_prompt_links_the_prd_to_the_idea_row():
     assert "jura-growth apps submit-prd --idea <slug>" in PROMPT
     assert "--idea <slug>" in _section("4. Check, then file")
+
+
+# --- review S1: parallel writers never lose a row ------------------------------------------------
+
+
+def test_parallel_ideas_each_answered_added_are_each_on_disk(conn):
+    """Every `apps idea` that answered "Added" has its row, whatever else wrote at the same time:
+    the backlog is read, changed and saved under one lock, and replaced in one step."""
+    assert invoke("apps", "idea", "Seed first: make the file").exit_code == 0
+    command = [sys.executable, "-m", "jura_growth"]
+    children = [
+        subprocess.Popen([*command, "apps", "idea", f"Race idea {chr(97 + n)}: tool number {n}"],
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ))
+        for n in range(12)
+    ]
+    added = []
+    for n, child in enumerate(children):
+        out, err = child.communicate(timeout=120)
+        assert child.returncode == 0, out + err
+        assert out.startswith("Added to the app backlog:")
+        added.append(f"race-idea-{chr(97 + n)}")
+    on_disk = [r["slug"] for r in backlog.load()]
+    assert sorted(slug for slug in on_disk if slug.startswith("race-idea")) == sorted(added)
+    assert len(on_disk) == 20 + 1 + 12 and len(set(on_disk)) == len(on_disk)
+
+
+def test_a_save_replaces_the_file_in_one_step_and_leaves_no_temp_file(conn, monkeypatch):
+    assert invoke("apps", "idea", "Petty cash log: track petty cash").exit_code == 0
+    replaced = []
+    real = os.replace
+    monkeypatch.setattr(os, "replace", lambda src, dst: (replaced.append((str(src), str(dst))), real(src, dst))[1])
+    assert invoke("apps", "idea", "Job sheet: a one-page job sheet").exit_code == 0
+    [(src, dst)] = replaced
+    assert dst == str(backlog.path().resolve()) and os.path.dirname(src) == os.path.dirname(dst)
+    assert sorted(p.name for p in backlog.path().parent.iterdir() if p.name.startswith(".app-backlog")) == []
+    text = backlog.path().read_text(encoding="utf-8")
+    assert text.startswith(backlog.HEADER) and len(backlog.load()) == 22

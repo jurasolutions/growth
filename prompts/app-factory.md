@@ -173,6 +173,13 @@ time or money ("saves you hours", "in seconds"). Never mention Jura client count
 3. If the brand check fails, fix **every** reason in one regeneration and submit once more. A
    second brand failure drops today's PRD: finish with `FAIL: brand check failed twice`.
 4. If `submit-prd` refuses because of a limit, finish with `SKIP: <reason>`.
+5. If the PRD was for one of Ting Yu's ideas and it still can't be filed, hold the idea, so it
+   isn't first again tomorrow:
+   `jura-growth apps hold-idea <slug> --reason "<what submit-prd said, in one plain sentence>"`.
+   That covers the brand check fails twice, and any rejection or refusal you can't fix within your
+   two dry runs (a duplicate it found, a source it wouldn't accept). A limit refusal (step 4) is
+   not the idea's fault: don't hold it then. While his oldest idea waits unheld, `submit-prd`
+   refuses any other PRD, so hold it before you fall back to the normal pick.
 
 ## 5. Finish
 

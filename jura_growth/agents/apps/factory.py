@@ -113,10 +113,10 @@ def submit(conn: sqlite3.Connection, text: str, *, dry_run: bool = False, idea: 
 
     ctx = context(conn)
     errors = prd_mod.validate_factory(text, ctx) + private_problems(conn, text)
-    problem = ideas.link_problem(idea) if idea else None
-    if problem:
-        errors.append(problem)
     parsed = prd_mod.parse(text)
+    # Ting Yu's oldest idea first, and only his rows renamed (`ideas.binding`).
+    idea, problems = ideas.binding(prd_slug=parsed.slug, prd_name=parsed.name, idea=idea)
+    errors += problems
     if errors:
         if not dry_run:
             log.event(conn, "apps.submit.rejected", {"app": parsed.app_id, "slug": parsed.slug, "errors": errors[:20]}, level="warning", agent=NAME)
