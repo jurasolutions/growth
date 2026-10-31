@@ -10,3 +10,14 @@ decisions: the interview is his message plus the code and live findings in PRD �
 decisions: pictures are diagrams, because design-system README §4 rules out stock illustration and drawn scenes
 questions: -
 evidence:  uv run pytest -> 3939 passed, 41 failed on the draft (fixtures and shipped-config tests to update in tickets)
+
+## 2026-10-31T19:30+0800 conductor (G2, G3)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: PRD §2 "Amended 2026-10-31 after the spec reviews", §5; issues/01-04
+decisions: G2 and G3 decided under the standing instruction, not on an explicit answer. Every blocker in reviews/functional.md and reviews/technical.md is taken
+decisions: where they differ: fence-aware split (technical B2) with images on the first piece (functional B1); decide-by 17:00 (functional B2) over wording only (technical N10); no images no card on both platforms (functional B5) over Instagram only (technical B6)
+decisions: scout: no tools recommended; hashtags_max lowered to 5
+questions: -
+evidence:  reviews/technical.md, reviews/functional.md, scout/ read in full
