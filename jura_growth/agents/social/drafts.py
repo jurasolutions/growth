@@ -138,8 +138,17 @@ def _card_depth(card: render.CardSpec | None, theme: Theme) -> list[str]:
 
 
 def states_figure(post: str, figure: str) -> bool:
-    """Whether `post` states this figure whole: "1%" isn't in "11%", and "3" isn't in "3.5"."""
-    return re.search(rf"(?<![\w.,$]){re.escape(figure)}(?![\w%]|[.,]\d)", post) is not None
+    """Whether `post` states this figure, with both read the way the numbers rule reads them. So "1%"
+    isn't in "11%", "3" isn't in "3.5", and a date, a clock time, a link or a hashtag states nothing."""
+    wanted = brand_check.figures_in(figure)
+    if wanted:
+        stated = {brand_check.figure_key(found) for found in brand_check.figures_in(post)}
+        return all(brand_check.figure_key(found) in stated for found in wanted)
+    # A value that is no figure on its own ("2026", "forty"): the words themselves, outside any link.
+    prose = post
+    for link in brand_check.find_links(post):
+        prose = prose.replace(link, " ")
+    return re.search(rf"(?<![\w.,$]){re.escape(figure)}(?![\w%]|[.,]\d)", prose, re.I) is not None
 
 
 def _publishers(sub: Submission) -> set[str]:
@@ -163,13 +172,17 @@ def _card_evidence(sub: Submission) -> list[str]:
     for where, label in labels:
         if label.casefold() not in publishers:
             problems.append(f'{where}: source "{label}" is not the publisher on any line of sources.md; name it as that line does')
-    figures = brand_check.figures_in("\n".join(card.printed_words()))
-    if card.visual is not None and card.visual.value:
-        figures.insert(0, card.visual.value)
-    for figure in dict.fromkeys(figures):
-        for platform, text in sub.variants.items():
-            if not states_figure(text, figure):
-                problems.append(f'the card says "{figure}" and {platform}.md doesn\'t: every post states each figure on the card, written the same way')
+    figures = {brand_check.figure_key(found): found for found in reversed(brand_check.figures_in("\n".join(card.printed_words())))}
+    value = card.visual.value if card.visual is not None else ""
+    for platform, text in sub.variants.items():
+        stated = {brand_check.figure_key(found) for found in brand_check.figures_in(text)}
+        missing = [found for key, found in figures.items() if key not in stated]
+        if value and not states_figure(text, value) and value not in missing:
+            missing.insert(0, value)
+        problems += [
+            f'the card says "{found}" and {platform}.md doesn\'t: every post states each figure on the card, written the same way'
+            for found in missing
+        ]
     return problems
 
 
