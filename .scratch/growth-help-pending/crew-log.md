@@ -71,3 +71,21 @@ artifacts: reviews/code-review-01.md ("Re-review d7d3211")
 decisions: approve; nit left: a non-empty file with no tables still migrates, then says nothing pending
 questions: -
 evidence:  full suite -> 4755 passed; reverting each change fails tests; pyright package count unchanged at 70
+
+## 2026-11-01T02:30+08:00 release-manager
+status:    needs-human
+persona:   release-manager
+ticket:    01
+artifacts: reviews/release.md; pr-body.md
+decisions: three waivers: QA ran before the last fix; SSH and Discord unverified; defect 03 closed on a document
+questions: open the PR; take the idea's name out before pushing to a public repo
+evidence:  full suite on Python 3.12.14 and 3.14.7 -> 4755 passed, none skipped; no migrations added
+
+## 2026-11-01T02:35+08:00 conductor
+status:    done
+persona:   conductor
+ticket:    01
+artifacts: PR on crew/growth-help-pending
+decisions: took the idea's name out and rewrote the unpushed commits; opened the PR under the standing instruction; the merge stays Ting Yu's (G4); developer worktree, ticket branch and QA branch removed, with QA's defect 02 tests folded in and its defect 03 tests dropped
+questions: -
+evidence:  git diff between the old and new merge, outside .scratch -> empty; git log -p for the name -> 0
