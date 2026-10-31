@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sqlite3
 import struct
 import zlib
 from pathlib import Path
@@ -26,15 +27,21 @@ import mission_world as world
 import sweep
 from discord_double import discord_double  # noqa: F401 - a fixture
 from sweep import d2_secrets  # noqa: F401 - a fixture
-from jura_growth import approvals, backup, cards, config, discord, headless, images, mission, one_pager, paths, picture, privacy, runner
+from jura_growth import approvals, backup, cards, config, db, discord, headless, images, log, mission, one_pager, paths, picture, privacy, runner
 from jura_growth.cli import cli
 from jura_growth.origin import Origin
+from jura_growth import timeutil
 
 EIGHT_AM = "2026-11-10T08:00:00+08:00"
+NINE = "2026-11-10T09:00:00+08:00"
 SECTIONS = ("Needs you", "Approvals waiting", "Today", "Yesterday", "Ask me")
 HEADER = "**Tue 10 Nov, as of 08:00 SGT**"
 CHROME = images.chrome_path(images.DEFAULT_CHROME)
 needs_chrome = pytest.mark.skipif(CHROME is None, reason="Google Chrome is not installed")
+
+
+def one_pager_now():
+    return timeutil.parse(NINE)
 
 
 def tiny_png() -> bytes:
@@ -334,6 +341,258 @@ def test_the_2330_backup_keeps_fourteen_days_of_pictures_pages_and_grids(conn, m
 
 def test_pruning_with_no_folder_removes_nothing():
     assert backup.prune_pictures() == 0
+
+
+# --- issue 03: a long lock never ends in nothing -----------------------------------------------------
+
+
+def locked(*args, **kwargs):
+    """What `db.connect` raises once a writer has held growth.db past its wait."""
+    raise sqlite3.OperationalError("database is locked")
+
+
+@pytest.fixture
+def post_path(conn, discord_double, monkeypatch):
+    monkeypatch.setenv("JURA_GROWTH_NOW", NINE)
+    monkeypatch.setattr(mission, "read_patiently", lambda source: mission.read(source))  # no real waiting
+    return discord_double
+
+
+def test_the_command_gets_the_morning_post_out_past_the_write_connections_wait(post_path, monkeypatch):
+    monkeypatch.setattr(db, "connect", locked)
+    result = CliRunner().invoke(cli, ["one-pager"])
+    assert result.exception is None, repr(result.exception)
+    assert len(post_path.posts("mission-control")) == 1
+
+
+def test_the_job_gets_the_morning_post_out_past_the_write_connections_wait(post_path, monkeypatch):
+    monkeypatch.setattr(db, "connect", locked)
+    runner.run("one-pager", ignore_schedule=True)
+    assert len(post_path.posts("mission-control")) == 1
+
+
+def test_a_lock_after_delivery_doesnt_report_a_post_that_went_out_as_failed(post_path, monkeypatch):
+    monkeypatch.setattr(discord, "_record", locked)
+    result = CliRunner().invoke(cli, ["one-pager"])
+    assert len(post_path.posts("mission-control")) == 1
+    assert result.exception is None, repr(result.exception)
+
+
+@pytest.fixture
+def hold(conn, monkeypatch):
+    """A real lock from a second connection, as issue 03's steps do. Only the waits are shortened,
+    because no test can spend them."""
+    monkeypatch.setenv("JURA_GROWTH_NOW", NINE)
+    monkeypatch.setattr(db, "BUSY_SECONDS", 0.05)
+    monkeypatch.setattr(db, "SHORT_WAIT", 0.05)
+    monkeypatch.setattr(mission, "BUSY_TIMEOUT", 0.01)
+    monkeypatch.setattr(mission, "LOCK_PATIENCE", 0.03)
+    monkeypatch.setattr(mission, "LOCK_RETRY", 0.01)
+    holders = []
+
+    def begin(kind: str) -> None:
+        holder = sqlite3.connect(paths.db_path(), isolation_level=None)
+        holder.execute(f"BEGIN {kind}")
+        holders.append(holder)
+
+    yield begin
+    for holder in holders:
+        if holder.in_transaction:
+            holder.execute("ROLLBACK")
+        holder.close()
+
+
+def mirrored_on(now: str, kind: str) -> list[dict]:
+    path = paths.data_dir() / "runs" / f"{now[:10]}.jsonl"
+    return [line for line in map(json.loads, path.read_text().splitlines()) if line["kind"] == kind]
+
+
+def mirrored(kind: str) -> list[dict]:
+    return mirrored_on(NINE, kind)
+
+
+LOCKS = ["EXCLUSIVE", "IMMEDIATE"]
+
+
+@needs_chrome
+@pytest.mark.parametrize("kind", LOCKS)
+def test_the_job_posts_through_a_real_lock_held_throughout(kind, hold, discord_double, monkeypatch):
+    hold(kind)
+    outcome = runner.run("one-pager", ignore_schedule=True)
+    assert (outcome.status, outcome.summary) == ("ok", "posted to #mission-control")
+    (post,) = posts(discord_double)
+    (name, body), = post.files
+    assert name == "picture-2026-11-10.png" and body.startswith(images.PNG_SIGNATURE)
+    assert post.content.splitlines()[0] == "**Tue 10 Nov, as of 09:00 SGT**"
+    if kind == "EXCLUSIVE":  # nothing can be read, so this is the bad-day picture, and it says why
+        assert "unfinished write" in post.content
+        assert mirrored("one_pager.upkeep_skipped")
+    assert mirrored("run.database_locked")[0]["payload"]["job"] == "one-pager"
+
+
+def test_a_job_that_posted_through_the_lock_still_reads_as_run(hold, discord_double, stub_grid):
+    hold("EXCLUSIVE")
+    runner.run("one-pager", ignore_schedule=True)
+    assert [line["payload"]["job"] for line in mirrored("run.quiet")] == ["one-pager"]
+
+
+@pytest.mark.parametrize("kind", LOCKS)
+def test_the_command_posts_through_a_real_lock_and_says_so(kind, hold, discord_double, stub_grid):
+    hold(kind)
+    result = CliRunner().invoke(cli, ["one-pager"])
+    assert result.exception is None, repr(result.exception)
+    assert result.output.strip().splitlines()[-1] == "posted to #mission-control"
+    assert len(posts(discord_double)) == 1
+
+
+def test_dispatchs_path_answers_through_a_real_lock(hold, discord_double, stub_grid, monkeypatch, tmp_path):
+    env = tmp_path / "remote.env"
+    env.write_text("CONTROL_DISCORD_USER_ID=111\n")
+    env.chmod(0o600)
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(env))
+    config.reset_caches()
+    hold("EXCLUSIVE")
+    result = CliRunner().invoke(cli, ["remote", "--actor", aw.CONTROL, "--json", "--", "one-pager"], obj={"origin": Origin.ssh()})
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.output)
+    assert (body["answer"], body["text"]) == ("recorded", "posted to #mission-control")
+    assert len(posts(discord_double)) == 1
+    assert mirrored("remote.command")[0]["payload"]["words"] == ["one-pager"]  # the audit line isn't lost
+
+
+def test_nothing_on_dispatchs_path_takes_the_long_wait(hold, discord_double, stub_grid, monkeypatch, tmp_path):
+    """Thirty seconds on any one of these connections would go past Dispatch's 60."""
+    env = tmp_path / "remote.env"
+    env.write_text("CONTROL_DISCORD_USER_ID=111\n")
+    env.chmod(0o600)
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(env))
+    config.reset_caches()
+    waits = []
+
+    def connect(path=None, *, migrate_now=True, wait=None):
+        waits.append(wait)
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(db, "connect", connect)
+    result = CliRunner().invoke(cli, ["remote", "--actor", aw.CONTROL, "--json", "--", "one-pager"], obj={"origin": Origin.ssh()})
+    assert result.exit_code == 0, result.output
+    assert len(waits) >= 4 and set(waits) == {db.SHORT_WAIT}, waits
+
+
+def test_other_remote_commands_keep_the_long_wait(conn, monkeypatch, tmp_path):
+    env = tmp_path / "remote.env"
+    env.write_text("CONTROL_DISCORD_USER_ID=111\n")
+    env.chmod(0o600)
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(env))
+    config.reset_caches()
+    waits = []
+    real = db.connect
+
+    def connect(path=None, *, migrate_now=True, wait=None):
+        waits.append(wait)
+        return real(path, migrate_now=migrate_now, wait=wait)
+
+    monkeypatch.setattr(db, "connect", connect)
+    assert CliRunner().invoke(cli, ["remote", "--actor", aw.CONTROL, "--", "status"], obj={"origin": Origin.ssh()}).exit_code == 0
+    assert waits and set(waits) == {None}
+
+
+def test_a_lock_landing_after_the_post_never_posts_twice(hold, discord_double, stub_grid, monkeypatch):
+    """Delivered, then the lock: the run's row can't be finished, and that mustn't re-run the job."""
+    real = log.finish_run
+
+    def finish(conn, *args, **kwargs):
+        hold("EXCLUSIVE")
+        return real(conn, *args, **kwargs)
+
+    monkeypatch.setattr(log, "finish_run", finish)
+    outcome = runner.run("one-pager", ignore_schedule=True)
+    assert outcome.status == "ok"
+    assert len(posts(discord_double)) == 1
+    assert mirrored("run.database_locked")
+
+
+def test_when_even_the_post_is_impossible_the_failure_leaves_a_clear_trace(hold, discord_double, stub_grid, monkeypatch):
+    hold("EXCLUSIVE")
+    monkeypatch.setattr(one_pager, "post", lambda conn, snapshot: (_ for _ in ()).throw(RuntimeError("the disk is full")))
+    outcome = runner.run("one-pager", ignore_schedule=True)
+    assert outcome.status == "failed" and "the disk is full" in outcome.error
+    assert "the disk is full" in mirrored("one_pager.not_posted")[0]["payload"]["error"]
+    assert "the disk is full" in mirrored("run.database_locked")[0]["payload"]["error"]
+    assert [p for p in discord_double.posts("alerts") if "the disk is full" in p.content]
+
+
+def test_the_command_reports_a_post_that_failed_rather_than_hiding_it(hold, discord_double, stub_grid, monkeypatch):
+    hold("EXCLUSIVE")
+    monkeypatch.setattr(one_pager, "post", lambda conn, snapshot: (_ for _ in ()).throw(RuntimeError("the disk is full")))
+    result = CliRunner().invoke(cli, ["one-pager"])
+    assert result.exit_code != 0
+    assert mirrored("one_pager.not_posted")
+
+
+def test_a_delivered_post_with_a_real_lock_on_its_record_keeps_a_trace(hold, discord_double, stub_grid, monkeypatch):
+    real = discord._record
+
+    def record(conn, *args, **kwargs):
+        hold("EXCLUSIVE")
+        return real(conn, *args, **kwargs)
+
+    monkeypatch.setattr(discord, "_record", record)
+    result = CliRunner().invoke(cli, ["one-pager"])
+    assert result.exception is None, repr(result.exception)
+    assert result.output.strip().splitlines()[-1] == "posted to #mission-control"
+    assert mirrored("discord.post")[0]["payload"]["not_recorded"]
+
+
+def test_other_jobs_still_stop_at_a_lock(hold):
+    """Only the morning post runs without its database. Nothing else may."""
+    hold("EXCLUSIVE")
+    with pytest.raises(sqlite3.OperationalError):
+        runner.run("backup", ignore_schedule=True)
+
+
+def test_a_non_lock_error_isnt_taken_for_a_lock(conn, discord_double, stub_grid, monkeypatch):
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(db, "connect", broken)
+    assert CliRunner().invoke(cli, ["one-pager"]).exception is not None
+    assert posts(discord_double) == []
+
+
+def test_a_non_lock_error_at_the_post_isnt_taken_for_a_lock(conn, discord_double, stub_grid, monkeypatch):
+    real, calls = db.connect, []
+
+    def connect(*args, **kwargs):
+        calls.append(1)
+        if len(calls) > 1:  # the upkeep's is fine; the post's isn't
+            raise sqlite3.OperationalError("disk I/O error")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(db, "connect", connect)
+    assert CliRunner().invoke(cli, ["one-pager"]).exception is not None
+    assert posts(discord_double) == []
+    assert "disk I/O error" in mirrored_on(EIGHT_AM, "one_pager.not_posted")[0]["payload"]["error"]
+
+
+def test_ordinary_connections_keep_their_long_wait():
+    assert db.BUSY_SECONDS == 30
+
+
+def test_the_whole_wait_stays_inside_dispatchs_window(monkeypatch):
+    """Dispatch runs `/growth one-pager` with a 60-second timeout, and one-pagers aren't deduplicated:
+    a post that goes out after Dispatch has reported a failure gets asked for again. In the worst
+    case every connection waits its turn: the upkeep, the read's retries, the post, and the masking
+    and the audit line in `remote`."""
+    slept = []
+    reads = []
+    locked_out = mission.Snapshot(one_pager_now(), mission.UNFINISHED_WRITE)
+    monkeypatch.setattr(mission, "read", lambda source: reads.append(1) or locked_out)
+    mission.read_patiently(None, sleep=slept.append)
+    reading = sum(slept) + len(reads) * mission.BUSY_TIMEOUT
+    connections = 4 * db.SHORT_WAIT
+    drawing_and_posting = 6  # two Chrome runs at about a second each under load, and the upload
+    assert reading + connections + drawing_and_posting < 60
 
 
 # --- X12: the job writes the day's lapses before it builds -----------------------------------------

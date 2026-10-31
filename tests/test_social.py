@@ -767,12 +767,12 @@ def test_digest_figures(env, conn, linkedin_on):
     assert social.digest(conn, "2026-10-27")["figures"]["social_drafts_waiting"] == 0
     run_submit(conn, write(paths.work_dir("social") / "2026-10-27", TIP))
     part = social.digest(conn, "2026-10-27")
-    assert part["figures"] == {"social_drafts_waiting": 3, "social_skipped": 0, "social_published": 0}
+    assert part["figures"] == {"social_drafts_waiting": 3, "social_drafts_by_hand": 3, "social_skipped": 0, "social_published": 0}
     assert part["brief"] == ["3 social drafts waiting"]
     history.skip(conn, date(2026, 10, 27), "instagram", "test")
     history.mark_published(conn, date(2026, 10, 27), "linkedin", None)
     part = social.digest(conn, "2026-10-27")
-    assert part["figures"] == {"social_drafts_waiting": 1, "social_skipped": 1, "social_published": 1}
+    assert part["figures"] == {"social_drafts_waiting": 1, "social_drafts_by_hand": 1, "social_skipped": 1, "social_published": 1}
     assert part["brief"] == ["1 social draft waiting"]
     summary = digest.build(conn, "2026-10-27")
     assert "1 social draft waiting" in summary["brief_line"]

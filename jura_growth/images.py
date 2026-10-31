@@ -15,8 +15,10 @@ import shutil
 import struct
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 from jura_growth import paths
 
@@ -119,6 +121,15 @@ def run_chrome(args: list[str], chrome: Chrome, *, offline: bool) -> subprocess.
         shutil.rmtree(profile, ignore_errors=True)
 
 
+@contextmanager
+def _page_file(page: str) -> Iterator[str]:
+    """The HTML `page` in a temp file, for as long as Chrome needs it, as a file URL."""
+    with tempfile.TemporaryDirectory(prefix="jura-card-") as folder:
+        source = Path(folder) / "card.html"
+        source.write_text(page, encoding="utf-8")
+        yield source.as_uri()
+
+
 _MEASURE = """<script>
 addEventListener('load', function () {
   document.fonts.ready.then(function () {
@@ -136,10 +147,8 @@ def measure_height(page: str, width: int, *, chrome: Chrome, offline: bool = Fal
     `body` without one. The script that measures goes in a private copy, so the page the caller
     saves or shoots never holds it."""
     copy = page.replace("</body>", _MEASURE + "</body>") if "</body>" in page else page + _MEASURE
-    with tempfile.TemporaryDirectory(prefix="jura-card-") as folder:
-        source = Path(folder) / "card.html"
-        source.write_text(copy, encoding="utf-8")
-        result = run_chrome([f"--window-size={width},{_MEASURE_WINDOW}", "--dump-dom", source.as_uri()], chrome, offline=offline)
+    with _page_file(copy) as source:
+        result = run_chrome([f"--window-size={width},{_MEASURE_WINDOW}", "--dump-dom", source], chrome, offline=offline)
     found = _MEASURED.search(result.stdout or "")
     if not found:
         raise RenderError(f"Chrome reported no height (exit {result.returncode}): {(result.stderr or '')[-300:]}")
@@ -149,12 +158,10 @@ def measure_height(page: str, width: int, *, chrome: Chrome, offline: bool = Fal
 def screenshot(page: str, out: Path, width: int, height: int, *, chrome: Chrome, offline: bool = False) -> Path:
     """Draw the HTML `page` to the PNG `out`, exactly `width` by `height`."""
     out = paths.writable(Path(out))
-    with tempfile.TemporaryDirectory(prefix="jura-card-") as folder:
-        source = Path(folder) / "card.html"
-        source.write_text(page, encoding="utf-8")
+    with _page_file(page) as source:
         if out.exists():
             out.unlink()
-        result = run_chrome([f"--window-size={width},{height}", f"--screenshot={out}", source.as_uri()], chrome, offline=offline)
+        result = run_chrome([f"--window-size={width},{height}", f"--screenshot={out}", source], chrome, offline=offline)
     if not out.exists():
         raise RenderError(f"Chrome wrote no image (exit {result.returncode}): {(result.stderr or '')[-300:]}")
     actual = png_size(out)

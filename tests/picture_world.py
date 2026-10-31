@@ -14,7 +14,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from jura_growth import mission, slots
+from jura_growth import health, mission, slots
+from jura_growth.agents import outreach
 from jura_growth.agents.apps import builds, releases
 from jura_growth.timeutil import SGT
 from test_one_pager import HEALTH_ITEMS
@@ -26,7 +27,7 @@ JOBS = {"Scout": "scout-research", "Outreach": "outreach-requests", "Social": "s
 TIMES = {"scout-research": (6, 30), "outreach-requests": (8, 30), "social": (7, 30), "community": (8, 0), "app-factory": (7, 0)}
 RECORDED = {  # what the plug-ins' digests record on a quiet day: real zeros
     "leads_added": 0, "outreach_mode": "live", "emails_queued": 0, "emails_sent": 0, "replies": 0, "reply_detection": True,
-    "unsubscribes": 0, "bounces": 0, "complaints": 0, "social_drafts_waiting": 0, "social_published": 0,
+    "unsubscribes": 0, "bounces": 0, "complaints": 0, "social_drafts_waiting": 0, "social_drafts_by_hand": 0, "social_published": 0,
     "community_posts_planned": 0, "app_prd_today": None,
 }
 
@@ -82,7 +83,7 @@ def typical() -> mission.Snapshot:
     }
     return snap(
         slots={**morning(community=None, social="skipped"), **later},
-        morning=figures(leads_added=3, emails_queued=2, social_drafts_waiting=1, app_prd_today="APP-014 Invoice chaser"),
+        morning=figures(leads_added=3, emails_queued=2, social_drafts_waiting=2, social_drafts_by_hand=1, app_prd_today="APP-014 Invoice chaser"),
         yesterday=mission.Yesterday("2026-11-09", (), 0.41, {**RECORDED, "emails_sent": 4, "replies": 1, "social_published": 1}),
         approvals=(request(412), request(413, "social-post", decide_by=NOW + timedelta(hours=3))),
         paused=(("social", "3 failed runs in a row"),),
@@ -107,6 +108,9 @@ PLUGIN_WORDINGS = {  # the plug-ins' real Fix lines, with the longest of what fi
     "app release approved": releases.APPROVED_LINE.format(app_id="APP-014", label=LABEL, request="A-0153"),
     "build handoff by hand": builds.HAND_BUILD_LINE.format(label=LABEL, request="A-0153", build_it=builds.build_it(PRD, "A-0153")),
     "build handoff to Dispatch": builds.DISPATCH_LINE.format(label=LABEL, request="A-0153"),
+    "live outreach blocked": outreach.LIVE_BLOCKED_LINE.format(things="3 things stop", problem="RESEND_API_KEY_OUTREACH is not set in .env (a sending-only Resend key)"),
+    "six unset settings": health._gap_lines(tuple(health.Gap(name) for name in (
+        "RESEND_API_KEY_OUTREACH", "UNSUBSCRIBE_SECRET", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "D1_DATABASE_ID", "OUTREACH_IMAP_PASSWORD")))[0],
     "the ICP": "Put the ICP in inputs/icp.md, from the draft in outputs/growth/setup/. Scout research waits until it's there.",
 }
 
@@ -146,7 +150,7 @@ def worst() -> mission.Snapshot:
     return snap(
         now,
         slots={**day, **later},
-        morning=figures(social_drafts_waiting=12345),
+        morning=figures(social_drafts_waiting=12345, social_drafts_by_hand=12345),
         yesterday=mission.Yesterday("2026-11-24", (), 12345.67, wide),
         approvals=requests + tuple(request(9100 + n, reading=mission.Reading.LAPSED) for n in range(12)),
         plugin_lines=fixes,

@@ -14,8 +14,9 @@ import pytest
 
 import picture_chrome as oracle
 import picture_world as world
-from jura_growth import images, mission, paths, picture
+from jura_growth import agents, health, images, mission, paths, picture
 from jura_growth.timeutil import SGT
+from test_scout_support import buttons, configure, live_ready, scout_env  # noqa: F401
 
 CHROME_PATH = images.chrome_path(images.DEFAULT_CHROME)
 needs_chrome = pytest.mark.skipif(CHROME_PATH is None, reason="Google Chrome is not installed")
@@ -118,6 +119,55 @@ def test_the_sections_appear_in_the_order_ting_yu_acts_on_them():
 def test_the_five_agent_rows_appear_in_order():
     texts = inspected("typical")["texts"]
     assert [t for t in texts if t in world.JOBS] == list(world.JOBS)
+
+
+# --- final B1, issue 04: real wordings built through the real checks -------------------------------
+
+
+def _problem(kind: str, monkeypatch) -> None:
+    """Make one real `send.live_problems()` wording the first problem."""
+    live = dict(mode="live", legal_review_done=True, sending_domain="hello.jurasolutions.sg")
+    if kind == "buttons":
+        buttons(monkeypatch, False)
+    elif kind == "legal":
+        configure(monkeypatch, **{**live, "legal_review_done": False})
+    elif kind == "domain unset":
+        configure(monkeypatch, **{**live, "sending_domain": ""})
+    elif kind == "domain wrong":
+        configure(monkeypatch, **{**live, "sending_domain": "example.com"})
+    elif kind == "resend":
+        monkeypatch.delenv("RESEND_API_KEY_OUTREACH")
+    elif kind == "unsubscribe":
+        monkeypatch.delenv("UNSUBSCRIBE_SECRET")
+    elif kind == "do-not-contact":
+        (paths.inputs_dir() / "do-not-contact.csv").unlink()
+    elif kind == "d1":
+        monkeypatch.delenv("D1_DATABASE_ID")
+
+
+def _fix_rows(**fields) -> list[dict]:
+    base = dict(slots=world.morning(), morning=world.figures(), yesterday=world.figures(), approvals=())
+    return oracle.inspect(picture.html(world.snap(**{**base, **fields})), chrome=CHROME)["fixRows"]
+
+
+@pytest.mark.parametrize("kind", ["buttons", "legal", "domain unset", "domain wrong", "resend", "unsubscribe", "do-not-contact", "d1"])
+def test_each_real_line_about_live_outreach_fits_its_fix_row_whole(conn, scout_env, monkeypatch, kind):
+    live_ready(monkeypatch)
+    _problem(kind, monkeypatch)
+    module = next(m for m in agents.plugins() if getattr(m, "NAME", "") == "outreach")
+    lines = module.health(conn)
+    assert len(lines) == 1, lines
+    (row,) = _fix_rows(plugin_lines=tuple(lines))
+    assert not row["cut"], f"the picture cuts {lines[0]!r}"
+    assert row["text"].startswith("Run jura-growth outreach status")
+    assert "\n" in lines[0], "the message and the long text carry what to clear"
+
+
+def test_every_unset_setting_is_named_on_its_fix_row(conn):
+    gaps = tuple(gap for gap in health.setup_gaps() if gap.of is None)
+    assert len(gaps) >= 6
+    (row,) = _fix_rows(gaps=gaps)
+    assert not row["cut"], f"the picture cuts {row['text']!r}"
 
 
 # --- hostile text (MB8) --------------------------------------------------------------------------

@@ -61,7 +61,7 @@ def summary(snapshot: mission.Snapshot) -> str:
     fixes = picture.fixes(_markdown_safe(snapshot))
     lines += [f"- {discord.shortened(item, SUMMARY_FIX_LIMIT)}" for item in fixes[:picture.FIX_SHOWN]]
     if len(fixes) > picture.FIX_SHOWN:
-        lines.append(f"- and {len(fixes) - picture.FIX_SHOWN} more: `/growth status`")
+        lines.append(f"- and {len(fixes) - picture.FIX_SHOWN} more: run `jura-growth one-pager --no-post` on the Mac")
     lines.append(" · ".join(ASK_ME[:2]))
     return "\n".join(lines)
 
@@ -304,7 +304,7 @@ def _drawn(draw) -> tuple[Path | None, str | None]:
         return None, f"{type(error).__name__}: {error}"
 
 
-def post(conn: sqlite3.Connection, snapshot: mission.Snapshot) -> discord.PostResult:
+def post(conn: sqlite3.Connection | None, snapshot: mission.Snapshot) -> discord.PostResult:
     """The morning picture to #mission-control with its short message. Never
     deduplicated: asked for twice, it posts twice (MC §5.10). When the picture
     can't be drawn, the long text goes instead and says why."""
