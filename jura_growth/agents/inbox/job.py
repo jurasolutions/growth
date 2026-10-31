@@ -48,6 +48,6 @@ def precheck(conn: sqlite3.Connection) -> agents.NothingToDo | None:
     found = _guarded(conn, "intake", lambda: mail.intake(conn), mail.Intake(failed=1))
     _guarded(conn, "settle", lambda: triage.settle(conn), 0)
     reported = _guarded(conn, "report", lambda: report.report_due(conn), 0)
-    if _guarded(conn, "settle", lambda: triage.waiting(conn), False):
+    if _guarded(conn, "waiting", lambda: triage.waiting(conn), False):
         return None
     return agents.NothingToDo(f"{found.recorded} new, {found.noise} noise, {reported} reported")

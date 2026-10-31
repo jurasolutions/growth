@@ -9,8 +9,8 @@ import pytest
 
 from jura_growth import brand_check
 
-GOOD = "Yes, we work with clinics. The first step is a short discovery call to map how your invoices run today."
-THEM = {"sender_name": "Priya Nair", "their_words": "Do you work with clinics? We have 12 staff."}
+GOOD = "We help with invoices and the copying between systems that follows. The first step is a short discovery call."
+THEM = {"sender_name": "Priya Nair", "their_words": "Do you do invoices? We have 12 staff."}
 
 
 def issues(text: str, channel: str = "inbox-email", **context) -> list[str]:
@@ -38,13 +38,13 @@ def test_iw_e4_each_channels_length_is_under_its_limit(channel, words, passes):
 
 def test_iw_a11_an_email_may_have_paragraphs():
     """IW-E4: only a DM's Enter sends."""
-    assert issues("Hi Priya,\n\nYes, we work with clinics.\n\nLevi will write back this week.") == []
+    assert issues("Hi Priya,\n\nYes, we can help with that.\n\nLevi will write back this week.") == []
 
 
 @pytest.mark.parametrize("line_break", ["\n", "\r", "\r\n", " ", " ", "\u0085", "\x0b", "\x0c"])
 def test_iw_a11_a_social_draft_refuses_every_line_break(line_break):
     """IW-A11: Enter sends in a DM, so a fragment would go out."""
-    found = issues(f"Yes, we work with clinics.{line_break}Levi will write back.", "inbox-social")
+    found = issues(f"Yes, we can help with that.{line_break}Levi will write back.", "inbox-social")
     assert any("one paragraph" in reason for reason in found)
 
 
@@ -113,7 +113,7 @@ def test_iw_e4_dates_and_times_arent_figures():
 ])
 def test_iw_e4_a_name_they_didnt_give_is_refused(greeting, passes):
     """IW-E4: a first name only if it is in their name or their words."""
-    assert (issues(f"{greeting}\n\nYes, we work with clinics.") == []) is passes
+    assert (issues(f"{greeting}\n\nYes, we can help with that.") == []) is passes
 
 
 def test_iw_e4_a_name_they_signed_with_passes():
@@ -192,6 +192,6 @@ def test_iw_fn3_an_instagram_comment_carries_no_link():
 def test_iw_d9_a_high_draft_is_short_and_names_levi():
     """IW-D9: a short holding reply that promises nothing beyond a personal reply from Levi."""
     assert issues("I am sorry to hear this. Levi will reply to you personally.", high=True) == []
-    assert any("Levi" in reason for reason in issues("I am sorry to hear this.", high=True))
+    assert any("reply personally" in reason for reason in issues("I am sorry to hear this.", high=True))
     assert any("short" in reason for reason in issues("Levi will reply. " + " ".join(["word"] * 60), high=True))
-    assert issues("Yes, we work with clinics.") == []  # only a high draft has to
+    assert issues("Yes, we can help with that.") == []  # only a high draft has to

@@ -136,7 +136,7 @@ def intake(conn: sqlite3.Connection) -> Intake:
     for label in _unreadable_settings():
         result.failed += 1
         problem(conn, label, f"The {label} mailbox's settings can't be read, so new mail isn't being read. Check the Keychain.",
-                 "unreadable settings", at_once=True)
+                "unreadable settings", at_once=True)
     for login in mailboxes():
         started = timeutil.stamp()
         try:
@@ -144,7 +144,7 @@ def intake(conn: sqlite3.Connection) -> Intake:
         except replies.RepliesAuthError as error:
             result.failed += 1
             problem(conn, login.label, f"The {login.label} mailbox refused the login, so new mail isn't being read. Check its password.",
-                     type(error).__name__, at_once=True)
+                    type(error).__name__, at_once=True)
             continue
         except Exception as error:  # noqa: BLE001 - a network fault, a locked database or a bug
             result.failed += 1
@@ -289,7 +289,9 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
 
     reply_to = _recipient(headers, sender)
     ours = replies.sent_subjects(conn, contact["lead_id"]) if contact else set()
-    wants_out = replies.opt_out_reason(subject, own, ours) if contact else None
+    # A stated failure means it may not be from this address, and a suppression is theirs to ask for (SEC-2, SEC-6).
+    forged = bool(sender) and replies.failed_verdict(headers, suppression.domain_of(sender))
+    wants_out = replies.opt_out_reason(subject, own, ours) if contact and not forged else None
     counted_already = contact is not None and replies.counted(conn, key)
     who = reply_to if from_form else (sender or reply_to or "")
     # The form's own display name is Jura's, so the person's name comes from what the form wrote.
@@ -299,6 +301,8 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
     state, notes = store.NEW, []
     if from_form and not signed:
         notes.append("It says it came from the website form, but it isn't signed by Jura.")
+    if forged and not from_form:
+        notes.append("The receiving server says this may not be from this address.")
     if wants_out:
         state = store.REPORTED
         notes.append(f"They asked to be removed ({wants_out}): the address is suppressed and no reply will be drafted.")
@@ -312,7 +316,8 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
     reaction = store.Reaction(
         source="enquiry" if signed else "email",
         key=key,
-        conversation=store.text_key("mail", who or key, replies.bare_subject(subject)),
+        # A forged sender doesn't join their conversation, so it can't replace their draft (SEC-6).
+        conversation=store.text_key("mail", who or key, replies.bare_subject(subject), *(("may be forged",) if forged else ())),
         sender_name=name,
         sender_address=who or "",
         sender_domain=suppression.domain_of(who) if who else "",
@@ -324,6 +329,9 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
             "references": _ids(headers.get("References"))[-REFERENCES_KEPT:],
             "reply_to": reply_to,
             "copied": _copied(headers),
+            # Whether `who` is this mail's own sender, and so whether triage may suppress it. Not an
+            # address typed on the form, nor a `Reply-To` standing in for a From it can't read (SEC-2).
+            "own_sender": bool(sender) and who == sender and not from_form and not forged,
         },
         attachments=attachments,
         lead_id=contact["lead_id"] if contact else None,

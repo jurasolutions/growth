@@ -104,7 +104,7 @@ def test_iw_w1_the_double_refuses_anything_that_would_change_the_mailbox():
 def test_iw_w1_the_window_is_checked_in_code(monkeypatch, conn, moment, reads):
     """IW-W1, PRD §4: launchd can fire early, so an early run just skips."""
     at(monkeypatch, moment)
-    fake = mailbox_env(monkeypatch, [raw_mail(when="2026-10-26T01:00:00+08:00")])
+    fake = mailbox_env(monkeypatch, [raw_mail(when="2026-10-26T01:00:00+08:00", List_Id="<news.vendor.example>")])
 
     outcome = runner.run("inbox-check")
 

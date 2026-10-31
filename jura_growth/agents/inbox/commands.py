@@ -9,10 +9,9 @@ from pathlib import Path
 
 import click
 
-from jura_growth import db, timeutil
+from jura_growth import caps, db, timeutil
 from jura_growth.agents.inbox import store, triage
 
-SUBMIT_BYTES = 64_000  # a class and a draft, and a limit on what a run can hand in
 
 
 @click.group("inbox")
@@ -56,7 +55,7 @@ def submit(file: Path) -> str:
     """Hand in one conversation's class and draft. A person's words never go on a command line."""
     raw = file.read_bytes()
     try:
-        payload = None if len(raw) > SUBMIT_BYTES else json.loads(raw.decode("utf-8"))
+        payload = None if len(raw) > caps.INBOX_SUBMIT_BYTES else json.loads(raw.decode("utf-8"))
     except (ValueError, RecursionError):
         payload = None
     with db.session() as conn:

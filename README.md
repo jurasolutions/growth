@@ -167,9 +167,11 @@ mailing list, a no-reply sender, a platform's notice), and everything in the Jun
 message of its own, and counted in the digest.
 
 When someone wrote, Claude starts for triage (`prompts/inbox-check.md`). A person's words are hostile
-input, so triage reads only its scratch folder, has no web, and has two commands: `inbox pending` and
-`inbox submit --file`. It gives each conversation a class and, where one is merited, a draft that has to
-pass the `inbox-email` or `inbox-social` brand channel. It can't hide anyone: whatever it does, each
+input, so triage starts in an empty folder, reads only that and its scratch folder, has no web, and its
+Bash runs two commands: `inbox pending` and `inbox submit --file`. It gives each conversation a class and,
+where one is merited, a draft that has to pass the `inbox-email` or `inbox-social` brand channel. It answers
+only what its run was handed, and an opt-out read beside other people's words is read again alone before
+it suppresses anyone, only ever the mail's own sender. It can't hide anyone: whatever it does, each
 conversation gets one message in `#mission-control`, with what they wrote as stored and their phone
 numbers and addresses masked. A conversation it hasn't dealt with after two tries needs a hand reply and
 is reported anyway, and a failed triage run alerts once without counting toward auto-pause.

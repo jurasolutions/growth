@@ -24,6 +24,11 @@ from pathlib import Path
 
 NAME = "inbox"
 MIGRATIONS = Path(__file__).parent / "migrations"
+# Claude Code runs these unasked (its permissions page, "read-only commands"), and a Read rule doesn't
+# stop `grep -r`. Triage's Bash only ever runs `jura-growth`, so it can do without every one of them.
+_READ_COMMANDS = ("cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "find", "ls", "tree", "wc", "which", "diff", "stat", "du",
+                  "cd", "git", "sed", "awk", "sort", "uniq", "cut", "tr", "strings", "xxd", "od", "file", "less", "more", "env",
+                  "printenv", "ps", "pwd", "echo", "python", "python3", "sqlite3", "curl", "wget")
 # Under `data/growth/`. Not a blanket `**`: a deny would hit triage's own scratch folder.
 _NOT_FOR_TRIAGE = ("growth.db*", "transcripts/**", "backups/**", "discord-outbox/**", "runs/**", "launchd/**", "one-pager/**",
                    "work/publish/**", "work/inbox-watch/**", "work/inbox-reply/**")
@@ -50,9 +55,12 @@ def precheck(job: str, conn: sqlite3.Connection):
 
 
 def permissions(job: str):
-    """Triage's two commands, and nothing else it could reach (technical review, B4). The runner's
-    `--add-dir` is already only its scratch folder; these name what matters most, as a second layer.
-    With `--strict-mcp-config` and no `--chrome` it has no MCP tools to deny."""
+    """Triage's two commands, and the rules around what it could read (technical review, B4; code
+    review 02, SEC-1). The runner starts it in an empty folder, adds only its scratch folder, and
+    fences its file tools to those two. These are the second layer: its Bash needs none of the
+    commands that read, and the data it must not see is named. None of this is proved on a double:
+    `reviews/uat.md` has the canary row for the real model. With `--strict-mcp-config` and no
+    `--chrome` it has no MCP tools to deny."""
     if job != "inbox-check":
         return None
     from jura_growth import headless, paths
@@ -60,7 +68,8 @@ def permissions(job: str):
     denied = [f"Read(/{paths.data_dir()}/{place})" for place in _NOT_FOR_TRIAGE]
     return headless.Permissions(
         commands=("inbox pending", "inbox submit"),
-        disallowed_tools=("WebSearch", "WebFetch", *denied, f"Read(/{paths.outputs_dir()}/**)"),
+        disallowed_tools=("WebSearch", "WebFetch", *denied, f"Read(/{paths.outputs_dir()}/**)",
+                          *(f"Bash({command}:*)" for command in _READ_COMMANDS)),
     )
 
 

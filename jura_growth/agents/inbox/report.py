@@ -141,8 +141,8 @@ def _flood(groups: list[list[dict]]) -> str:
 
 
 def _in_turn(groups: list[list[dict]]) -> list[list[dict]]:
-    """S15: spam goes last, so it is the first to fold."""
-    return sorted(groups, key=lambda group: group[-1]["class"] == "spam")
+    """S15, D9: spam goes last, so it is the first to fold, and a high item shows first."""
+    return sorted(groups, key=lambda group: (group[-1]["class"] == "spam", group[-1]["priority"] != "high"))
 
 
 def report_due(conn: sqlite3.Connection) -> int:
@@ -163,10 +163,7 @@ def report_due(conn: sqlite3.Connection) -> int:
             return delivered
         store.mark_reported(conn, [i["id"] for i in old])
         delivered += len(old)
-    groups: dict[str, list[dict]] = {}
-    for item in due:
-        groups.setdefault(item["conversation"], []).append(item)
-    turns = _in_turn(list(groups.values()))
+    turns = _in_turn(list(store.by_conversation(due).values()))
     shown, folded = (turns[:FLOOD_SHOWN], turns[FLOOD_SHOWN:]) if len(turns) > FLOOD_SHOWN else (turns, [])
     for group in shown:
         try:
