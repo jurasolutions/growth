@@ -53,3 +53,12 @@ artifacts: crew/inbox-watch
 decisions: merged after two review rounds; round 3's narrow fixes (closed rule, R-4, R-5) are checked by the final review, not a third round
 questions: -
 evidence:  conductor read mail.py's unsigned path: reported with a note, not noise
+
+## 2026-10-31 conductor (correction)
+status:    done
+persona:   conductor
+ticket:    01
+artifacts: issues/03, issues/04
+decisions: my merge of ticket 01 stopped on a conflict in two ticket files, my script carried on, and commit 45c3b5e closed the merge with conflict markers still in them. Local only, never pushed. Resolved here, keeping the developer's wording, which already held mine, plus the frame fingerprint check
+questions: -
+evidence:  grep for conflict markers across the worktree -> none
