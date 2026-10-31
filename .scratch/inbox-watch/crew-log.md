@@ -25,3 +25,13 @@ decisions: N12 widened so Messenger replies stay possible through Business Suite
 decisions: tech lead's edges kept: 01 -> 02 -> 03 -> 04; 01 -> 05; 03, 04, 05 -> 06
 questions: -
 evidence:  reviews/functional.md, technical.md, test-strategy.md read in full; base suite 3982 passed (tech lead, qa lead)
+
+## 2026-10-31 conductor (ticket 01, review rounds 1 and 2)
+status:    done
+persona:   conductor
+ticket:    01
+artifacts: reviews/code-review-01.md; issues/03, 04
+decisions: opt-outs end in one closed phrase list. Any reply already cancels follow-ups, so a miss isn't chased and triage can still class it; precision wins over recall. This replaces "suppress when in doubt"
+decisions: Message-ID on outreach sends goes in ticket 03, UAT confirming Resend keeps it
+questions: -
+evidence:  developer: 4330 passed at 92c6157; reviewer round 2: 3 blocking
