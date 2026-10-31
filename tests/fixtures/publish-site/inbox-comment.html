@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Comment · publish fixture</title>
+<style>
+body { font-family: system-ui, sans-serif; margin: 0; background: #f4f4f4; color: #1c1c1c; }
+header { background: #fff; border-bottom: 1px solid #ddd; padding: 12px 16px; display: flex; gap: 12px; align-items: center; }
+.avatar { width: 36px; height: 36px; border-radius: 50%; background: #2f6b4f; color: #fff; display: grid; place-items: center; font-weight: 700; }
+main { max-width: 640px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+textarea { width: 100%; min-height: 60px; font: inherit; box-sizing: border-box; }
+button { font: inherit; padding: 8px 16px; }
+.muted { color: #666; font-size: 14px; }
+.message { white-space: pre-wrap; margin: 8px 0; }
+</style>
+</head>
+<body>
+<header><div class="avatar" aria-hidden="true">J</div><div><strong id="identity">jura_solutions</strong>
+<div class="muted">Fixture social site for the inbox reply rehearsal (not a real platform)</div></div></header>
+<main>
+<article class="card">
+  <p><strong>Jura Solutions</strong> · A post of Jura's</p>
+  <p class="muted">3 comments</p>
+  <div id="comment"><p class="message"><strong>Mei Ling</strong><br>Do you work with clinics?</p>
+    <button id="reply">Reply</button></div>
+  <div id="replies"></div>
+  <p id="box" hidden><label>Reply as <strong>Jura Solutions</strong> <textarea id="field"></textarea></label><button id="post">Post</button></p>
+</article>
+</main>
+<script>
+// Reply puts their handle in the field, as the real pages do: the read-back allows it.
+var field = document.getElementById("field");
+document.getElementById("reply").addEventListener("click", function () {
+  document.getElementById("box").hidden = false;
+  field.value = "@mei_ling ";
+  field.focus();
+});
+document.getElementById("post").addEventListener("click", function () {
+  if (!field.value) return;
+  var line = document.createElement("p");
+  line.className = "message";
+  line.textContent = "Jura Solutions: " + field.value;
+  document.getElementById("replies").appendChild(line);
+  field.value = "";
+  document.getElementById("box").hidden = true;
+});
+</script>
+</body>
+</html>

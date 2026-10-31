@@ -55,6 +55,7 @@ RAISERS = {
     ("jura_growth.agents.community.group_rules", "request"):
         "community set rules= and rules_confirmed=yes, publish note-rules",
     ("jura_growth.agents.inbox.kinds", "raise_request"): "inbox submit, inbox send-due, inbox reword",
+    ("jura_growth.agents.inbox.social", "raise_request"): "inbox submit, inbox send-due, inbox reword",
 }
 
 KIND_NAMES = ("kind", "approval_kind", "kinds")

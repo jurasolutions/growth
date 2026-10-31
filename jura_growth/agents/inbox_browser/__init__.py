@@ -9,7 +9,8 @@ first, so every `inbox` command is registered by the `inbox` plug-in, and no `MI
 - `scope`: what a watch run may do. It can't click.
 - `job`: the hooks. The audit fails a run and pauses this agent; a stop signal pauses `publish` too.
 
-Job `inbox-watch` reads hourly, 09:05 to 21:05 SGT.
+Job `inbox-watch` reads hourly, 09:05 to 21:05 SGT, and `inbox-reply` posts one approved reply a run,
+every 20 minutes, 09:10 to 20:50 SGT. The `social-reply` kind is declared here, for this agent's pause flag.
 """
 
 from __future__ import annotations
@@ -28,29 +29,31 @@ def permissions(job: str):
 
 
 def precheck(job: str, conn: sqlite3.Connection):
-    if job != "inbox-watch":
-        return None
     from jura_growth.agents.inbox_browser import job as watch_job
 
-    return watch_job.precheck(conn)
+    if job == "inbox-reply":
+        return watch_job.reply_precheck(conn)
+    return watch_job.precheck(conn) if job == "inbox-watch" else None
 
 
 def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
     """The watch's checks, failing closed: the runner keeps a run's own outcome when this raises, and
     that outcome holds the model's words and has had no audit."""
-    if job != "inbox-watch":
+    if job not in ("inbox-watch", "inbox-reply"):
         return None
     from jura_growth.agents.inbox_browser import job as watch_job
 
     try:
-        return watch_job.after_run(conn, job, run_id, outcome)
+        hook = watch_job.reply_after_run if job == "inbox-reply" else watch_job.after_run
+        return hook(conn, job, run_id, outcome)
     except Exception as error:  # noqa: BLE001 - fail closed, whatever went wrong
         return watch_job.failed_closed(conn, run_id, outcome, error)
 
 
 def approval_kinds() -> dict:
-    """None yet: `social-reply` comes with the reply job."""
-    return {}
+    from jura_growth.agents.inbox import social
+
+    return social.kinds()
 
 
 def setup_gaps() -> list:

@@ -36,7 +36,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from jura_growth import approvals, brand_check, caps, cards, db, discord, gate, log, paths, privacy, timeutil
-from jura_growth.agents.inbox import checks, kinds, mail, report, settings, store
+from jura_growth.agents.inbox import checks, kinds, mail, report, settings, social, store
 from jura_growth.agents.outreach import replies
 
 AGENT = "inbox"
@@ -123,7 +123,7 @@ def note_without_its_verdict(note: str) -> str:
 
 def _redraft_note(conn: sqlite3.Connection, item: dict, what_happened: str) -> None:
     """His redraft came to nothing: the card stands as it was, and he hears so, once. Inside a transaction."""
-    record = approvals.latest(conn, kinds.KIND, kinds.subject_of(item["id"]))
+    record = social.latest_for(conn, item)
     number = record.id if record else store.label(item["id"])
     store.clear_ask(conn, item["id"])
     store.set_brand_failures(conn, [item["id"]], 0)
@@ -135,7 +135,7 @@ def _settle_redrafts(conn: sqlite3.Connection) -> None:
     """A redraft he has since decided past, or that has used its attempts. Neither touches the card."""
     limit = caps.INBOX_TRIAGE_ATTEMPTS
     for item in store.asked_redrafts(conn):
-        record = approvals.latest(conn, kinds.KIND, kinds.subject_of(item["id"]))
+        record = social.latest_for(conn, item)
         with db.transaction(conn):
             if record is None or record.status != approvals.PENDING:
                 store.clear_ask(conn, item["id"])
@@ -397,13 +397,12 @@ def _redrafted(conn: sqlite3.Connection, payload: dict, item: dict, kind: str, d
     """The redraft he asked for. In one transaction the new request is raised and the old card closes
     (S1), so a failure anywhere leaves the card he has."""
     candidate = {**item, "draft": draft, "class": kind, "priority": "high" if high else item["priority"]}
-    reply = kinds.reply_of(candidate)
-    if reply is None or not kinds.card_fits(conn, candidate, reply):
+    if social.card_problem(conn, candidate):
         return _brand_failed(conn, payload, [item], [brand_check.Issue("channel", "It won't fit on one card with what they said")])
     with db.transaction(conn):
         store.update_draft(conn, item["id"], draft, promised=high or checks.promises_a_reply(draft), kind=kind,
                            priority="high" if high else None, language=payload.get("language"))
-        kinds.raise_request(conn, kinds.subject_of(item["id"]), reason=kinds.reason_of(candidate))
+        social.raise_for(conn, candidate, reason=kinds.reason_of(candidate))
         log.event(conn, "inbox.triaged", {"item": item["id"], "class": kind}, agent=AGENT)
     cards.sweep_safely(conn)
     return Submitted(0, [f"OK: {payload['id']} redrafted"])
@@ -434,7 +433,7 @@ def _raise_its_card(conn: sqlite3.Connection, item_id: int) -> None:
     """Where a fresh draft's request is raised, and never in the precheck (N10). The card goes up once
     it has committed. A failure here can't undo the draft just handed in: the next send slot does it."""
     try:
-        if kinds.raise_due(conn):
+        if kinds.raise_due(conn) + social.raise_due(conn):
             cards.sweep_safely(conn)
     except Exception as error:  # noqa: BLE001
         log.event(conn, "inbox.raise_failed", {"item": item_id, "error": type(error).__name__}, level="warning", agent=AGENT)

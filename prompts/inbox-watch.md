@@ -120,7 +120,8 @@ thread and each surface's last entry. Each entry is one of these three.
 - `occurrence` counts how many times this person has written these same words in this thread as you
   read it, oldest first. "Hello?" sent on Monday and again on Thursday is two entries, 1 and 2.
 - `age_hours` is about how old it is, from the time the page shows. Leave it out if the page shows none.
-- `answered` is `true` when the Page has already replied below it.
+- `answered` is `true` when the Page has already replied below it. Record a message again with this set if
+  you find the Page has since answered one you may have recorded before: a hand reply closes its card.
 - A message with no words, such as a sticker, a voice note or a photo, has `"text": ""` and an
   `"attachment"` of `voice-note`, `sticker`, `photo`, `video`, `gif`, `file` or `other`. Never guess
   what it says.

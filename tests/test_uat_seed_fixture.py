@@ -32,6 +32,18 @@ def uat(tmp_path, monkeypatch):
     return folder
 
 
+def test_iw_d4_fixture_reply_seeds_an_approved_reply_at_the_sites_own_thread_address(uat):
+    from jura_growth.agents.inbox import reply_run, social
+
+    seed.seed(uat, scenario="fixture-reply")
+    with db.session() as conn:
+        request = only_request(conn, social.KIND)
+        assert request.status == "approved" and request.used_at is None
+        [item] = reply_run.due(conn)
+        assert item["target"] == f"{FIXTURE}/direct/t/1234567/"
+        assert social.reply_of(item) is not None
+
+
 def only_request(conn, kind: str) -> approvals.Approval:
     [row] = conn.execute("SELECT * FROM approvals WHERE kind = ?", (kind,)).fetchall()
     return approvals.Approval.from_row(row)

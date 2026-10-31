@@ -32,5 +32,12 @@ loopback address literal (`127.0.0.1`, `[::1]`), and refuses it with the live da
 for the join pages) seeds an approved item on one page. The steps are in
 `.scratch/mission-control/uat.md`, Part R.
 
+`inbox-thread.html` and `inbox-comment.html` are the inbox reply job's pages. In the thread, Return sends at
+once, as in a real direct message, and every send shows, so a split or a second send can be seen. Add
+`?request=1` for a message request, which needs Accept. In the comment, Reply puts `@mei_ling` in the field. The
+thread is also served at `direct/t/1234567/` and `messages/t/1234567/`, unchanged, because a reply's target must
+be one thread's own address. `uv run python -m tests.uat.seed "$UAT" --scenario fixture-reply` seeds an approved
+reply there.
+
 `instagram.html` is the same composer as `page.html`, showing the Jura Solutions Instagram account
 (`@jura_solutions`), for Instagram's R1, R2 and R6 (`--scenario fixture-post-instagram`; rehearsal 2026-10-30).

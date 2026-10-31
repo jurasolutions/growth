@@ -48,6 +48,15 @@ What a run may ask to open is held to a surface, a thread, a post of Jura's or a
 page can send it to `l.php` or `/accounts/logout/`. Where the platform then redirects is its own
 choice: a login wall is a stop signal, not a finding.
 
+A reply run has to click and type, so it keeps `computer`. Before anything else it reads its target and
+says what it found, and the code decides: a newer message supersedes the draft, an answer from the Page closes
+it, a target that has gone closes it, and only a clean read is claimed. Nothing is typed before the claim. The
+audit's `one_line` rule then holds it to the approved text, whole, once, with one send, and `form_input` and
+uploads are denied by name. The audit still can't tell what a click did, so the prompt names the only clicks it
+may make, and Part B of the UAT reads the Page's activity log. A claim with no outcome is `unknown`, pauses
+`inbox-browser` and is never sent again, so nothing resolves it. A comment's target is held to its host and its
+read-back to its post, and a DM's target to one thread's own address.
+
 ## Decision 3: the conversation class
 
 Text a person wrote and their display name may appear on a card and on an R1 message, on Ting Yu's own

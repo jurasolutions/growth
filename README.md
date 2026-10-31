@@ -203,6 +203,14 @@ Needs you after 3 of its hours. A message whose text wasn't in what Chrome retur
 `unverified`: reported as such, with no draft. A stop signal pauses `inbox-browser` and `publish`, since
 they share the accounts, and a `publish` pause skips the watch. `jura-growth pause inbox-browser`
 stops it and leaves the mail running. The first-run checks are in the setup guide.
+
+`inbox-reply` (every 20 minutes, 09:10 to 20:50 SGT, plug-in `inbox-browser`) posts one reply he approved, of
+kind `social-reply`, and starts no Claude when none is due. It reads first and says what it found, and
+`inbox reply-next` decides: a newer message supersedes the draft, an answer from the Page closes it, a target
+that has gone closes it, and only a clean read is claimed (`agents/inbox/reply_run.py`). The audit's `one_line`
+rule holds it to the approved text, whole, once, with one send, because Return sends in a DM. It reads the
+reply back, and a claim with no outcome is `unknown`, pauses `inbox-browser` and is never sent again. A DM's
+target must be one thread's own address, or it is an item to answer by hand.
 The PRD is `prd/pending/prd-jura-inbox-watch-2026-10-31.md`.
 
 A draft for an email becomes one card in `#approvals`, of kind `email-reply`: what they said, who really

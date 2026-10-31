@@ -32,7 +32,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from typing import Any, Iterable
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
 
 from jura_growth import caps, config, db, discord, log, pause, timeutil, transcripts
 from jura_growth.agents.inbox import settings, store
@@ -98,6 +98,7 @@ _POST_LABEL = re.compile(r"P-\d{1,9}")
 _OVER_CAP = "watch.over_cap."  # in `inbox_state`, per run, until its message is written
 _OWN = "watch.own."  # likewise: what a run set aside as the Page's own
 _BEHIND = "watch.behind."  # a surface a run couldn't finish recording, by run
+_ANSWERED = "watch.answered."  # + an item: the run that says the Page has answered it, until its checks
 # What `read_page`'s tree may put between the lines of one message: punctuation, refs and roles.
 _TREE_GAP = (r"(?:[\W_]|ref_\w+|generic|text|statictext|span|div|paragraph|listitem|list|link|group|article|heading|"
              r"section|row|cell|button|\bp\b){0,40}?")
@@ -221,6 +222,22 @@ def _key_text(text: str) -> str:
     return letters or folded
 
 
+def same_words(one: str, other: str) -> bool:
+    """Whether two tellings are one message, as a key reads them: a "See more" and spacing don't count."""
+    return bool(_key_text(one)) and _key_text(one) == _key_text(other)
+
+
+def same_name(one: str, other: str) -> bool:
+    return bool(_folded(one)) and _folded(one) == _folded(other)
+
+
+def without_comment(url: str) -> str:
+    """The post a comment's permalink is on: a newer comment with no address of its own still belongs to it."""
+    parts = urlsplit(url)
+    query = "&".join(f"{name}={value}" for name, values in parse_qs(parts.query).items() if name not in _COMMENT_QUERY for value in values)
+    return urlunsplit((parts.scheme, parts.netloc, _IG_COMMENT.split(parts.path, maxsplit=1)[0], query, ""))
+
+
 # --- observe --------------------------------------------------------------------------------------
 
 
@@ -315,6 +332,27 @@ def _told_under_other_key(conn: sqlite3.Connection, conversation: str, words_key
     return False
 
 
+def _hold_answered(conn: sqlite3.Connection, run_id: int, key: str, conversation: str, words_key: str) -> None:
+    """A message already known, which the run now says the Page has answered. Held until its checks,
+    like anything a run records, so a steered run can't close a card (`settle`)."""
+    row = db.one(conn, "SELECT id FROM inbox_items WHERE key = ? OR (conversation = ? AND json_extract(thread_json, '$.words_key') = ?) "
+                       "ORDER BY id LIMIT 1", (key, conversation, words_key))
+    if row:
+        store.set_state(conn, f"{_ANSWERED}{row['id']}", str(run_id))
+
+
+def record_newer(conn: sqlite3.Connection, run_id: int, item: dict, text: str, occurrence: int, url: str) -> None:
+    """A reply run read a newer message from this person on this thread (F9). It goes the way anything a
+    run reads goes, held as `observed` until the run's checks, and in this item's conversation. A comment
+    with no safe address of its own takes its post's, since a draft on it can only go there."""
+    platform = item["source"].split("-", 1)[0]
+    own_url = url and target_problem(platform, url) is None and thread_of(url) == thread_of(item["target"])
+    target = url if own_url else without_comment(item["target"]) if item["source"].endswith("-comment") else item["target"]
+    given = {"source": item["source"], "surface": store.thread_of(item).get("surface") or "posts", "url": target, "author": item["sender_name"],
+             "text": text, "occurrence": occurrence, "age_hours": 0, "answered": False}
+    _reaction(conn, run_id, given, {}, Observed())
+
+
 def _is_own(platform: str, author: str, address: Any) -> bool:
     """The Page's own words: its address where the page links the name, which a name can't borrow,
     and otherwise its name. Facebook names aren't unique, so what goes by name alone is counted."""
@@ -361,11 +399,13 @@ def _reaction(conn: sqlite3.Connection, run_id: int, given: dict, counted: dict,
     words_key = store.text_key(source, thread, who, what, str(occurrence))
     key = store.text_key(source, "comment", own_id) if own_id else words_key
     loose_key = store.text_key(source, who, what, str(occurrence))
+    age, answered = _age(given), given.get("answered") is True
     if store.known(conn, key) or _told_under_other_key(conn, conversation, words_key, own_id, loose_key, thread):
         result.duplicates += 1
+        if answered:
+            _hold_answered(conn, run_id, key, conversation, words_key)
         return None
 
-    age, answered = _age(given), given.get("answered") is True
     first = _first_read(conn, surface)
     too_old = age is not None and age >= settings.limit("old_after_hours")
     own = _is_own(platform, author, given.get("author_url"))
@@ -738,7 +778,21 @@ def settle(conn: sqlite3.Connection, run_id: int | None, results: Iterable[str],
         conn.execute("UPDATE inbox_items SET state = ?, note = ?, updated_at = ? WHERE id = ?",
                      (state, note, timeutil.stamp(), item["id"]))
         settled.states[state] = settled.states.get(state, 0) + 1
+    _settle_answered(conn, run_id, results, trusted=trusted)
     return settled
+
+
+def _settle_answered(conn: sqlite3.Connection, run_id: int | None, results: tuple[str, ...], *, trusted: bool) -> None:
+    """The Page answered something still open (a hand reply from his phone): it closes, and he hears so
+    again, because he may still think it waits on him. Only a run that passed its checks can say so, and
+    its pages must have shown the message. What is on its way already is left to its own outcome."""
+    for name, said_by in store.with_prefix(conn, _ANSWERED):
+        store.clear_state(conn, _ANSWERED + name)
+        item = store.get(conn, int(name)) if name.isdigit() else None
+        if item is None or not trusted or said_by != str(run_id) or item["state"] not in (store.NEW, store.TRIAGED, store.WAITING):
+            continue
+        if words_on_page(item["text"], results):
+            store.close_and_tell(conn, item["id"], store.ANSWERED_BY_HAND, "The Page has answered this by hand, so it is closed, and no draft goes.")
 
 
 def settle_orphans(conn: sqlite3.Connection) -> Settled:

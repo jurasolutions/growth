@@ -56,6 +56,8 @@ target is a page of the fixture site, named with `--page`:
   `--page` names a stop page, `link-out.html`, `injection.html` or `other-identity.html`.
 - `fixture-join` (R5): a join for G9, a good-fit group whose address is `join.html` (membership
   questions) unless `--page profile-only-join.html`, approved.
+- `fixture-reply`: an approved `social-reply` to a direct message at the site's own thread address,
+  `direct/t/1234567/`, for `inbox-reply`'s rehearsal.
 """
 
 from __future__ import annotations
@@ -681,8 +683,26 @@ def fixture_join(conn) -> None:
     _approve(conn, made.approval)
 
 
+def fixture_reply(conn) -> None:
+    """An approved reply to the fixture's thread, as triage and Ting Yu would leave it."""
+    from jura_growth.agents.inbox import social, store
+
+    target = _fixture_page("inbox-thread.html").rsplit("/", 1)[0] + "/direct/t/1234567/"
+    with db.transaction(conn):
+        item_id = store.record(conn, store.Reaction(
+            source="instagram-dm", key=store.text_key("fixture-reply"), conversation=store.text_key("fixture-reply"), sender_name="Priya Nair",
+            sender_domain="instagram.com", text="Do you work with clinics?", target=target, thread={"surface": "instagram-primary", "occurrence": 1},
+        )).item_id
+        store.update_triage(conn, item_id, state=store.TRIAGED, note="", kind="question", priority="normal", language="English",
+                            draft="Thanks for asking. We work with small teams on invoices, and Levi can tell you more.", promised=False)
+    raised = social.raise_due(conn)
+    if not raised:
+        raise Refused(f"no card was raised: {store.get(conn, item_id)['note'] or social.switched_off(conn)}")
+    _approve(conn, raised[0])
+
+
 for _scenario in (social_post, social_approved, claimed_not_closed, community_plan, fixture_post, fixture_post_instagram,
-                  fixture_join):
+                  fixture_join, fixture_reply):
     _scenario.own_transactions = True  # type: ignore[attr-defined]
 
 
@@ -699,6 +719,7 @@ SCENARIOS: dict[str, Callable] = {
     "fixture-post": fixture_post,
     "fixture-post-instagram": fixture_post_instagram,
     "fixture-join": fixture_join,
+    "fixture-reply": fixture_reply,
 }
 
 

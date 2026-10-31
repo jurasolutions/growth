@@ -46,7 +46,7 @@ from dataclasses import dataclass
 import httpx
 
 from jura_growth import approvals, caps, cards, cloudflare, db, discord, locks, log, pause, suppression, timeutil
-from jura_growth.agents.inbox import kinds, mail, report, settings, store
+from jura_growth.agents.inbox import kinds, mail, reply_run, report, settings, social, store
 from jura_growth.agents.outreach import send as outreach_send
 from jura_growth.agents.scout import settings as scout_settings
 
@@ -98,7 +98,7 @@ def send_due(conn: sqlite3.Connection, *, client: httpx.Client | None = None) ->
             mail.failed(conn, _CRASH, error, line=f"The email reply send has been failing for over {mail.OVERDUE_HOURS} hours, so approved "
                                                   f"replies may be waiting. The last error was {what}.")
             summary = f"the send run stopped on {what}"
-        _tell_safely(conn)
+        tell_safely(conn)
     cards.sweep_safely(conn)
     return summary
 
@@ -142,6 +142,8 @@ def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> str:
     kinds.refresh_open(conn)
     kinds.settle_waiting(conn)
     kinds.raise_due(conn)
+    social.settle_waiting(conn)  # a social reply's card too: this job runs whatever the browser's flag says
+    social.raise_due(conn)
     done = {"sent": 0, "failed": 0, "uncertain": _close_expired_claims(conn), "will retry": 0, "refused by Resend": 0}
     if in_window() and not kinds.switched_off():
         for item in due(conn):
@@ -222,6 +224,8 @@ def _close_expired_claims(conn: sqlite3.Connection) -> int:
     """Claims past their retry time, whatever else is failing: he is told, and nothing more goes out."""
     closed = 0
     for item in store.with_state(conn, store.SENDING):
+        if item["source"] not in store.MAIL_SOURCES:  # a reply run's claim has no retry, and its own rule (N13)
+            continue
         earlier = approvals.latest(conn, kinds.KIND, kinds.subject_of(item["id"]))
         if earlier is None or not earlier.used_at or outreach_send.retry_closed(earlier, timeutil.now_sgt()):
             with db.transaction(conn):
@@ -304,6 +308,8 @@ def _mark_sent(conn: sqlite3.Connection, item_id: int, claimed: _Claimed, resend
 
 def _tell(conn: sqlite3.Connection, item: dict) -> bool:
     """One outcome's line, and whether Discord took it. Nothing is attempted with no webhook set."""
+    if item["source"] in store.SOCIAL_SOURCES:
+        return reply_run.tell(conn, item)
     label = store.label(item["id"])
     record = approvals.latest(conn, kinds.KIND, kinds.subject_of(item["id"]))
     number = record.id if record else label
@@ -337,7 +343,7 @@ def tell_outcomes(conn: sqlite3.Connection) -> int:
     return told
 
 
-def _tell_safely(conn: sqlite3.Connection) -> None:
+def tell_safely(conn: sqlite3.Connection) -> None:
     try:
         tell_outcomes(conn)
     except Exception as error:  # noqa: BLE001 - the send stands whatever happens to the line about it

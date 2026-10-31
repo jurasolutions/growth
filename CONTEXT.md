@@ -251,6 +251,11 @@ model only proposes: it can hide nobody and send nothing.
 **Watch run**:
 One read of the social platforms in the browser. It can read and record, and it can't act.
 
+**Reply run**:
+One `inbox-reply` run, which posts at most one approved social reply. It reads the target before its
+claim and the code decides from what it reports. It types only the approved text, whole, once, and reads
+it back. A claim it leaves open is `unknown` and is never sent again.
+
 **Surface**:
 One place a watch run reads, such as Instagram Requests or a Page's notifications. A surface with
 no record of a good read has failed, which is different from a quiet day.
@@ -279,8 +284,9 @@ An inbox reply that says Levi will come back personally. The item stays open aft
 Ting Yu clears it.
 
 **Needs a hand reply**:
-An inbox item the engine won't answer: no single address to reply to, a draft that failed the brand
-gate twice, a draft whose card won't fit one message, a person who opted out and wrote again. Also a sent
+An inbox item the engine won't answer: no single address or thread to reply to, a draft that failed the
+brand gate twice, a draft whose card won't fit one message, a person who opted out and wrote again, or a
+reply run that couldn't get a clean read of the thread. Also a sent
 reply that promised a personal one from Levi, which he owes until he clears it. Its state in the code is
 `needs-you`.
 _Avoid_: "needs you", which is the health strip

@@ -14,7 +14,7 @@ import sqlite3
 from typing import Callable, TypeVar
 
 from jura_growth import agents, caps, locks, log
-from jura_growth.agents.inbox import mail, report, settings, signals, store, triage, watch
+from jura_growth.agents.inbox import mail, reply_run, report, settings, signals, store, triage, watch
 
 T = TypeVar("T")
 
@@ -24,13 +24,15 @@ def in_window() -> bool:
 
 
 def _settle_held(conn: sqlite3.Connection) -> None:
-    """A watch run's held items, when no browser job is running. A browser pause stops the watch's
-    own precheck and never this one, so nobody stays hidden behind it (N3)."""
-    if not store.has_state(conn, store.OBSERVED):
+    """A browser run's held items and open claims, when no browser job is running. A browser pause stops
+    those jobs' own prechecks and never this one, so nobody stays hidden behind it (N3), and no claim stays
+    open (N13). `inbox-send` tells him what that claim came to."""
+    if not store.has_state(conn, store.OBSERVED) and not reply_run.open_claims(conn):
         return
     with locks.held(locks.BROWSER) as free:
         if free:
             watch.settle_orphans(conn)
+            reply_run.settle_open(conn)
 
 
 def _guarded(conn: sqlite3.Connection, step: str, work: Callable[[], T], otherwise: T) -> T:

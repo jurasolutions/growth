@@ -192,20 +192,22 @@ def reply_of(item: dict) -> Reply | None:
 # --- the card ------------------------------------------------------------------------------------
 
 
-def _title(item: dict) -> str:
+def title_of(item: dict) -> str:
     """Names no person: it is the line an agent feed repeats through plain masking."""
+    if item["source"] in report.SOCIAL_HEADINGS:
+        return f"Social reply · {report.SOCIAL_HEADINGS[item['source']]}"
     if item["source"] == "enquiry":
         return "Email reply · enquiry"
     return "Email reply · answer to our email" if item["lead_id"] else "Email reply"
 
 
-def _unanswered(conn: sqlite3.Connection, item: dict) -> list[dict]:
+def unanswered(conn: sqlite3.Connection, item: dict) -> list[dict]:
     """What this reply answers: their messages up to it, since the last reply that went out."""
     found: list[dict] = []
     for other in store.in_conversation(conn, item["conversation"]):
         if other["sent_at"]:
             found = []
-        elif other["id"] <= item["id"] and other["state"] != store.NOISE:
+        elif other["id"] <= item["id"] and other["state"] not in store.NOT_HISTORY:
             found.append(other)
     return found or [item]
 
@@ -242,7 +244,7 @@ def _card_lines(conn: sqlite3.Connection, item: dict, reply: Reply, record: appr
     language = language_line(item["language"])
     if language:
         before.append(language)
-    if _has_a_number(_unanswered(conn, item)):
+    if _has_a_number(unanswered(conn, item)):
         before.append("They left a number. It's in the mailbox.")
     draft = "\n".join(f"> {line}" if line else ">" for line in reply.draft.split("\n"))
     # No address on these lines: the signature's is Levi's own.
@@ -262,15 +264,15 @@ def reason_of(item: dict) -> str:
     return f"{store.label(item['id'])}, {item['class'] or 'a message'}"
 
 
-def _room_for_quote(item: dict, before: list[str], after: list[str]) -> int:
+def room_for_quote(item: dict, before: list[str], after: list[str]) -> int:
     """What a quote may take: a card is always one message, and the draft is never what gives way (B8).
     Measured masked, because masking can lengthen text."""
-    return discord.MAX_CONTENT - CARD_FRAME - report.masked_length("\n".join([_title(item), f"Why: {reason_of(item)}", *before, *after]))
+    return discord.MAX_CONTENT - CARD_FRAME - report.masked_length("\n".join([title_of(item), f"Why: {reason_of(item)}", *before, *after]))
 
 
 def card_fits(conn: sqlite3.Connection, item: dict, reply: Reply) -> bool:
     before, after = _card_lines(conn, item, reply, None)
-    return _room_for_quote(item, before, after) >= report.masked_length(report.quoted(report.CUT_NOTE))
+    return room_for_quote(item, before, after) >= report.masked_length(report.quoted(report.CUT_NOTE))
 
 
 # --- the kind ------------------------------------------------------------------------------------
@@ -302,8 +304,8 @@ class EmailReply:
         if item is None or reply is None:
             raise LookupError(f"no reply for {subject}")
         before, after = _card_lines(conn, item, reply, approvals.latest(conn, KIND, subject))
-        quote = report.card_quote(_unanswered(conn, item), _room_for_quote(item, before, after))
-        return approvals.Preview(title=_title(item), reason=reason_of(item), text="\n".join([*before, quote, *after]))
+        quote = report.card_quote(unanswered(conn, item), room_for_quote(item, before, after))
+        return approvals.Preview(title=title_of(item), reason=reason_of(item), text="\n".join([*before, quote, *after]))
 
     def deadlines(self, conn: sqlite3.Connection | None, subject: str, now: datetime) -> approvals.Deadlines:
         return approvals.Deadlines(decide_by=now + timedelta(days=settings.limit("decide_by_days")),

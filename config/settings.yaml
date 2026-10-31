@@ -170,6 +170,16 @@ jobs:
     browser: true
     schedule: {daily_every: {start: "09:05", end: "21:05", minutes: 60}}
 
+  # Posts one reply Ting Yu approved, after reading its target, then reads it back. The precheck starts
+  # no Claude when none is due, and its hours are checked in code too.
+  inbox-reply:
+    agent: inbox-browser
+    kind: claude
+    prompt: inbox-reply.md
+    browser: true
+    timeout_minutes: 15
+    schedule: {daily_every: {start: "09:10", end: "20:50", minutes: 20}}
+
   backup:
     agent: backup
     kind: command

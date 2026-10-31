@@ -11,7 +11,7 @@ SITE = paths.REPO_ROOT / "tests" / "fixtures" / "publish-site"
 PAGES = {
     "page.html", "instagram.html", "post.html", "login.html", "captcha.html", "checkpoint.html", "rate-limit.html", "removed.html",
     "admin-warning.html", "link-out.html", "injection.html", "join.html", "profile-only-join.html",
-    "other-identity.html", "rules.html", "index.html",
+    "other-identity.html", "rules.html", "index.html", "inbox-thread.html", "inbox-comment.html",
 }
 
 
@@ -23,6 +23,26 @@ def test_every_fixture_page_is_there_and_listed_on_the_index():
 
 
 GROUP_PAGES = ("join.html", "profile-only-join.html")
+
+
+def test_iw_d4_the_thread_page_is_also_served_at_a_threads_own_address(monkeypatch):
+    """A reply's target must be one thread's own address (N12), so the rehearsal's thread is there too."""
+    from jura_growth.agents.publish import fixture, hosts
+
+    monkeypatch.setenv(fixture.ENV, "http://publish-fixture.localhost:8765")
+    for path in ("direct/t/1234567", "messages/t/1234567"):
+        assert (SITE / path / "index.html").read_bytes() == (SITE / "inbox-thread.html").read_bytes()
+        assert hosts.dm_target_problem("instagram", f"http://publish-fixture.localhost:8765/{path}/") is None
+
+
+def test_iw_d4_in_the_thread_page_return_sends_as_it_does_in_a_real_direct_message():
+    text = (SITE / "inbox-thread.html").read_text(encoding="utf-8")
+    assert 'event.key === "Enter"' in text and "send();" in text
+    assert "Accept" in text and "request" in text
+
+
+def test_iw_n3_the_comment_page_fills_in_their_handle():
+    assert '"@mei_ling "' in (SITE / "inbox-comment.html").read_text(encoding="utf-8")
 
 
 def test_each_join_page_is_also_served_at_one_groups_own_address():
