@@ -145,10 +145,11 @@ def previous_business_day_start(now: datetime) -> datetime:
     return timeutil.midnight(day)
 
 
-def strip(snapshot) -> list[str]:
+def strip(snapshot, *, short: bool = False) -> list[str]:
     """The "Needs you" items, in the order of MC §5.4. Empty means nothing
     needs Ting Yu. `snapshot` is a `mission.Snapshot`; its strings are
-    already masked."""
+    already masked. `short` is the morning picture's wording: a job's missed
+    slots as a count without the times, and unset settings on one line."""
     from jura_growth import mission  # mission imports this module
     from jura_growth.run_update import untrusted_line
 
@@ -163,7 +164,7 @@ def strip(snapshot) -> list[str]:
             # A claude job's error is the model's own `FAIL:` line: untrusted (MC §4.3, final review Sp2).
             item += "\n> " + untrusted_line(failure.error)
         items.append(item)
-    items += _missed(snapshot)
+    items += _missed(snapshot, short=short)
     waiting_in_outbox = max(snapshot.undelivered, snapshot.outbox)
     if waiting_in_outbox:
         verb = "waits" if waiting_in_outbox == 1 else "wait"
@@ -183,14 +184,23 @@ def strip(snapshot) -> list[str]:
         jobs = [job for job, found in snapshot.installs.items() if found == state]
         if jobs:
             items.append(text.format(", ".join(jobs)))
-    items += [gap.line for gap in snapshot.gaps]
+    items += _gap_lines(snapshot.gaps) if short else [gap.line for gap in snapshot.gaps]
     items += _database(snapshot, mission)
     items += list(snapshot.plugin_lines)
     items += [f"A plug-in failed to load: {broken}" for broken in snapshot.broken]
     return items
 
 
-def _missed(snapshot) -> list[str]:
+def _gap_lines(gaps) -> list[str]:
+    """The setup gaps with every setting that is simply unset on one line."""
+    unset = [gap for gap in gaps if gap.of is None and not gap.must_be_unset]
+    lines = [gap.line for gap in gaps if gap not in unset]
+    if unset:
+        lines.append("Not set: " + ", ".join(f"`{gap.name}`" for gap in unset))
+    return lines
+
+
+def _missed(snapshot, *, short: bool = False) -> list[str]:
     since = previous_business_day_start(snapshot.now)
     by_job: dict[str, list[datetime]] = {}
     for (job, _), statuses in snapshot.slots.items():
@@ -200,6 +210,9 @@ def _missed(snapshot) -> list[str]:
         if not times:
             continue
         times.sort()
+        if short:
+            items.append(f"`{job}` missed {_plural(len(times), 'slot')} since {day_label(since)}.")
+            continue
         # "; " because each time holds a comma of its own.
         shown = "; ".join(timeutil.when(at) for at in times[:MISSED_SHOWN])
         more = f" and {len(times) - MISSED_SHOWN} more" if len(times) > MISSED_SHOWN else ""

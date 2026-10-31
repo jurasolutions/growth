@@ -112,6 +112,7 @@ class Snapshot:
     broken: tuple[str, ...] = ()  # plug-ins that failed to load
     yesterday: Yesterday | None = None
     spend_today: float = 0.0
+    morning: Yesterday | None = None  # today's figures so far, for the morning picture
 
 
 def db_problem(snapshot: Snapshot) -> DbWording | None:
@@ -144,6 +145,7 @@ class Yesterday:
     day: str
     lines: tuple[str, ...]
     spend: float
+    figures: Mapping[str, Any] = field(default_factory=dict)  # the plug-ins' figures, strings masked
 
 
 class Reading:
@@ -171,10 +173,11 @@ class Request:
     use_by: datetime | None
     posted: bool
     close_reason: str | None
+    reason: str = ""  # why the engine asked: the row's own words, no kind's content()
 
 
-# The one-pager job's own schedule (config/settings.yaml); without the job, its planned 08:00.
-ONE_PAGER_JOB, ONE_PAGER_DEFAULT = "one-pager", {"daily": "08:00"}
+# The one-pager job's own schedule (config/settings.yaml); without the job, its planned 09:00.
+ONE_PAGER_JOB, ONE_PAGER_DEFAULT = "one-pager", {"daily": "09:00"}
 ONE_PAGER_GRACE = timedelta(hours=1)  # a slot this recent is the one-pager being built now
 ONE_PAGER_LOOKBACK = timedelta(days=7)  # "since the last one-pager" never reaches further back
 
@@ -297,6 +300,7 @@ def _from_db(
         facts["slots"] = {key: [_clean_slot(slot) for slot in statuses] for key, statuses in found.items()}
         facts["failures"] = _failures(conn, now)
         facts["yesterday"], facts["spend_today"] = _yesterday(conn, now)
+        facts["morning"] = _morning(conn, now)
     if "pause_flags" in tables:
         rows = conn.execute("SELECT agent, reason FROM pause_flags WHERE paused = 1 ORDER BY agent").fetchall()
         facts["paused"] = tuple((_clean(row["agent"]), _clean(row["reason"] or "paused")) for row in rows)
@@ -330,7 +334,25 @@ def _yesterday(conn: sqlite3.Connection, now: datetime) -> tuple[Yesterday | Non
         if _state_of(error) == UNFINISHED_WRITE:
             raise
         return None, today  # a core table the digest reads isn't there yet
-    return Yesterday(day, tuple(_clean(line) for line in summary["lines"]), float(summary["claude_cost_usd"] or 0.0)), today
+    return _digest_day(day, summary), today
+
+
+def _morning(conn: sqlite3.Connection, now: datetime) -> Yesterday | None:
+    """Today's figures so far, read the way yesterday's are."""
+    from jura_growth import digest
+
+    day = now.date().isoformat()
+    try:
+        return _digest_day(day, digest.build(conn, day))
+    except sqlite3.Error as error:
+        if _state_of(error) == UNFINISHED_WRITE:
+            raise
+        return None
+
+
+def _digest_day(day: str, summary: Mapping[str, Any]) -> Yesterday:
+    figures = {key: _clean(value) if isinstance(value, str) else value for key, value in summary["figures"].items()}
+    return Yesterday(day, tuple(_clean(line) for line in summary["lines"]), float(summary["claude_cost_usd"] or 0.0), figures)
 
 
 def _plugin_lines(conn: sqlite3.Connection) -> tuple[str, ...]:
@@ -389,7 +411,7 @@ def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: dateti
     Its own SELECT: approvals.py may supersede on a read, which is a write."""
     since = last_one_pager.isoformat(timespec="seconds")
     rows = conn.execute(
-        "SELECT id, kind, status, requested_at, decide_by, use_by, decided_at, used_at, posted_at, close_reason"
+        "SELECT id, kind, status, requested_at, decide_by, use_by, decided_at, used_at, posted_at, close_reason, reason"
         " FROM approvals WHERE (status IN ('pending', 'approved') AND used_at IS NULL) OR decided_at > ? OR closed_at > ?"
         " ORDER BY requested_at, id",
         (since, since),
@@ -420,6 +442,7 @@ def _request(row: sqlite3.Row, now: datetime) -> Request:
         use_by=use_by,
         posted=row["posted_at"] is not None,
         close_reason=_clean_or_none(row["close_reason"]),
+        reason=_clean(row["reason"] or ""),
     )
 
 

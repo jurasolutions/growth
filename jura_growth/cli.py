@@ -392,12 +392,18 @@ def heartbeat() -> str:
 
 
 @cli.command("one-pager")
-@click.option("--no-post", is_flag=True, help="Print the one-pager instead of posting it.")
-def one_pager_cmd(no_post) -> str | None:
-    """Post the one-pager to #mission-control, with the 14-day grid.
+@click.option("--no-post", is_flag=True, help="Print the long form instead of posting.")
+@click.option("--grid", is_flag=True, help="Draw the 14-day grid to a file and print its path. Posts nothing.")
+def one_pager_cmd(no_post, grid) -> str | None:
+    """Post the morning picture to #mission-control.
 
     First write the approval lapses that are due (MC §4.2, A17), then build
-    from growth.db read-only. With --no-post, only print it: nothing is written."""
+    from growth.db read-only. With --no-post, only print the long form: nothing
+    is written. With --grid, only draw the 14-day grid."""
+    if grid:
+        png, problem = one_pager_mod.grid_png(mission.read(mission.Source.here()))
+        click.echo(png if png else f"The grid couldn't be drawn: {problem}")
+        return None
     if no_post:
         pieces = one_pager_mod.messages(mission.read(mission.Source.here()))
         for index, piece in enumerate(pieces):

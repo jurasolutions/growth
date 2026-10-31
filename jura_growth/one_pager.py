@@ -3,11 +3,14 @@
 Built from a `mission.Snapshot`, never from the database, in this order: the
 header, Needs you (the health strip), Approvals waiting, Today, Yesterday and
 Ask me. `post()` sends `text()` to #mission-control through `discord.post()`,
-which masks it and splits it only past 2,000 characters, with the 14-day grid
-as a PNG on the last piece (`grid_html`, drawn by the core Chrome helper in
-`images.py`). The 08:00 `one-pager` job and `/growth one-pager` both run
-`jura-growth one-pager`; `--no-post` prints `messages()`, the same text masked
-and split the same way.
+which masks it and splits it only past 2,000 characters.
+
+Amended 2026-10-31: what goes to #mission-control is the morning picture
+(`brief.py`) with a short message (`summary()`). `text()` is the long form:
+`--no-post` prints it, and it goes out instead when the picture can't be drawn.
+The 14-day grid (`grid_html`) is no longer posted, because it can't be read at
+the size Discord shows it; `jura-growth one-pager --grid` draws it to a file.
+The 09:00 `one-pager` job and `/growth one-pager` both run `jura-growth one-pager`.
 
 The one-pager is for Ting Yu only and shows only figures the engine recorded.
 """
@@ -20,7 +23,7 @@ from datetime import timedelta
 from html import escape
 from pathlib import Path
 
-from jura_growth import discord, health, images, log, mission, paths, privacy, slots, timeutil
+from jura_growth import brief, discord, health, images, log, mission, paths, privacy, slots, timeutil
 
 ASK_ME = ("`/growth status`", "`/growth approvals`", "`/growth one-pager`", "`/growth pause <agent|all>`", "`/growth resume <agent|all>`")
 # Today shows these jobs as counts per status, whatever their slot count,
@@ -37,6 +40,26 @@ def text(snapshot: mission.Snapshot) -> str:
     parts += _section("Yesterday", _yesterday(snapshot))
     parts += _section("Ask me", [" · ".join(ASK_ME)])
     return "\n".join(parts)
+
+
+def summary(snapshot: mission.Snapshot) -> str:
+    """The message that carries the picture: enough to act on from a notification."""
+    now = snapshot.now
+    lines = [f"**{health.day_label(now)}, as of {now:%H:%M} SGT**", brief.verdict(snapshot)]
+    found = brief.waiting(snapshot)
+    if found:
+        counts = Counter(brief.cards.label(r.kind) for r in found)
+        soonest = found[0]
+        lines.append(
+            "Decide in #approvals: " + ", ".join(f"{kind} {counts[kind]}" for kind in sorted(counts))
+            + f". Soonest: {soonest.id}, by {brief.by_when(soonest.decide_by, now)}."
+        )
+    fixes = brief.fixes(snapshot)
+    lines += [f"- {item}" for item in fixes[:brief.FIX_SHOWN]]
+    if len(fixes) > brief.FIX_SHOWN:
+        lines.append(f"- and {len(fixes) - brief.FIX_SHOWN} more: `/growth status`")
+    lines.append(" · ".join(ASK_ME[:2]))
+    return "\n".join(lines)
 
 
 def messages(snapshot: mission.Snapshot) -> list[str]:
@@ -242,10 +265,28 @@ OFFLINE = False
 
 def grid_png(snapshot: mission.Snapshot) -> tuple[Path | None, str | None]:
     """The grid drawn to `data/growth/one-pager/grid-<day>.png` (one file a
-    day, replaced by a later one-pager that day), or None and why not."""
+    day, replaced by a later one that day), or None and why not."""
     out = paths.one_pager_dir() / f"grid-{snapshot.now:%Y-%m-%d}.png"
+    return _drawn(lambda: render_grid(snapshot, out, chrome=images.Chrome(images.DEFAULT_CHROME), offline=OFFLINE))
+
+
+def brief_png(snapshot: mission.Snapshot) -> tuple[Path | None, str | None]:
+    """The morning picture drawn to `data/growth/one-pager/brief-<day>.png`, with
+    its page beside it as `.html` to open on the Mac; or None and why not."""
+    folder = paths.one_pager_dir()
+    day = f"{snapshot.now:%Y-%m-%d}"
+
+    def draw() -> Path:
+        png = brief.render(snapshot, folder / f"brief-{day}.png", chrome=images.Chrome(images.DEFAULT_CHROME), offline=OFFLINE)
+        paths.writable(folder / f"brief-{day}.html").write_text(brief.html(snapshot), encoding="utf-8")
+        return png
+
+    return _drawn(draw)
+
+
+def _drawn(draw) -> tuple[Path | None, str | None]:
     try:
-        return render_grid(snapshot, out, chrome=images.Chrome(images.DEFAULT_CHROME), offline=OFFLINE), None
+        return draw(), None
     except images.RenderError as error:
         return None, str(error)
     except Exception as error:  # noqa: BLE001 - the text goes out without the picture
@@ -253,14 +294,14 @@ def grid_png(snapshot: mission.Snapshot) -> tuple[Path | None, str | None]:
 
 
 def post(conn: sqlite3.Connection, snapshot: mission.Snapshot) -> discord.PostResult:
-    """The one-pager to #mission-control: the text, split only past 2,000
-    characters, and the grid on the last piece (`discord.post` attaches files
-    there). Never deduplicated: asked for twice, it posts twice (MC §5.10).
-    When the grid can't be drawn, the text still goes and says why."""
-    content = text(snapshot)
-    png, problem = grid_png(snapshot)
-    if problem:
-        log.event(conn, "one_pager.grid_failed", {"error": problem}, level="warning")
-        content += f"\n\n(The 14-day grid couldn't be drawn: {problem})"
+    """The morning picture to #mission-control with its short message. Never
+    deduplicated: asked for twice, it posts twice (MC §5.10). When the picture
+    can't be drawn, the long text goes instead and says why."""
+    png, problem = brief_png(snapshot)
+    if png:
+        content = summary(snapshot)
+    else:
+        log.event(conn, "one_pager.brief_failed", {"error": problem}, level="warning")
+        content = f"{text(snapshot)}\n\n(The picture couldn't be drawn: {problem})"
     return discord.post(conn, CHANNEL, content, files=[png] if png else [], username=USERNAME, dedupe=False,
                         suppress_embeds=True)
