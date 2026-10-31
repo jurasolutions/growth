@@ -265,7 +265,14 @@ What a surface's first good read found, except a message known to be under 48 ho
 hasn't answered. It is stored and never told.
 
 **Replies waiting**:
-The one-pager's section for open inbox items, between Needs you and Approvals waiting.
+The one-pager's section for open inbox items, between Needs you and Approvals waiting. `/growth inbox
+list` shows the same on request.
+
+**Closed**:
+An inbox item Ting Yu is asked nothing more about. A person's words are removed 90 days after it closes.
+A reported message closes when its report went, noise when it was recorded, and a hand reply when he
+clears it or a week on, when the list stops showing it. A promised reply stays listed until he clears it,
+and its words still go 90 days after it was sent.
 
 **Promised**:
 An inbox reply that says Levi will come back personally. The item stays open after it goes, until
@@ -280,6 +287,7 @@ _Avoid_: "needs you", which is the health strip
 
 **Noise**:
 Mail with evidence in its headers that no person wrote it: a mailing list, a no-reply sender, a
-platform's notice, and anything in the Junk folder. It gets no message of its own, and the digest
-counts it.
+platform's notice, and anything in the Junk folder. It gets no message of its own. The digest counts
+it, and the one-pager lists it under Replies waiting with each sender's domain, and a Junk message's
+subject.
 _Avoid_: spam, which is a class a model gives a person's comment

@@ -109,17 +109,20 @@ If H1 finds a canary, stop: `/growth pause inbox`, and pass the transcript to Cl
 
 | Row | Do this | Pass when |
 |---|---|---|
-| U22 | `/growth inbox redraft A-nnnn shorter, and ask what they use today` | Within about 15 minutes the old card closes, and a new draft follows the guidance |
+| U22 | `/growth inbox redraft A-nnnn shorter, and ask what they use today` | The old card stays open until the new one is up. Within about 15 minutes it closes, and a new draft follows the guidance |
 | U23 | `/growth inbox reword A-nnnn Thanks for asking. Levi will write back today.` | Old card closes, and the new card shows those exact words |
 | U24 | Reword with something that fails the brand check, such as `Thanks!` | The answer gives the reason, and the old card stays open (S1) |
 | U25 | Press Skip on a card | Nothing goes out, and the card reads skipped |
+| U25a | On a report that says no reply was needed, `/growth inbox draft I-nnnn say hello back` | Within about 15 minutes a card follows, using the guidance |
+| U25b | On a hand reply, `/growth inbox done I-nnnn` | It leaves `/growth inbox list`, and nothing goes out |
+| U25c | Send email A a message that gets it suppressed, then `/growth inbox unsuppress I-nnnn` | The suppression lifts. Try the same on an address that clicked unsubscribe on the website: it is refused and stays suppressed |
 
 ## F. Staying in charge
 
 | Row | Do this | Pass when |
 |---|---|---|
 | U26 | `/growth one-pager` | **Replies waiting** sits between Needs you and Approvals waiting, with A-id, source, sender, wait and excerpt. It shows the last good read per surface (F13) and a reactions count |
-| U27 | `/growth inbox list` | Shows the same waiting items, with the words readable, not `[name removed]` (F11) |
+| U27 | `/growth inbox list` | Shows the same waiting items. Excerpts are plain-masked by decision (B3, over F11), so a known contact's name reads `[name removed]` here and stays readable on the card and the report |
 | U28 | `/growth pause inbox-browser`, then comment as the test person | No watch or social reply runs. Email still works. `/growth resume inbox-browser`, and the comment is reported |
 | U29 | `/growth pause inbox`, then email from email A | No report or send while paused. `/growth resume inbox`, and the email is reported. On real outreach, the 16:45 check still records a contact's reply while paused (S10) |
 | U30 | Close Chrome for two watch slots, then reopen it | Failures show on the health strip within the hour. Then `/growth resume inbox-browser` if it auto-paused |

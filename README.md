@@ -181,6 +181,19 @@ is reported anyway, and a failed triage run alerts once without counting toward 
 A report Discord refused goes again on the next check. `jura-growth pause inbox` stops all of it, and the
 16:45 check carries on.
 
+The one-pager's **Replies waiting** section, between Needs you and Approvals waiting, gives one line per open
+conversation: who wrote, where, how long ago, an excerpt and what Ting Yu must do. A promised reply comes
+first, then anything high priority. Under the lines are the noise it filtered and each surface's last good
+read. It reads on the read model's read-only connection through the plug-in hook `one_pager_section(conn,
+since)`, and calls no kind's `content()`. `/growth inbox list` shows the same on request.
+
+From Discord he can steer it: `/growth inbox redraft A-nnnn <guidance>`, `reword A-nnnn <his words>`, `draft
+I-nnnn [guidance]`, `done I-nnnn` and `unsuppress I-nnnn`. They come only through `remote` and are refused to
+every run (`docs/dispatch-contract.md`). A high item goes to `#alerts` at once, and again at 24 hours if he
+hasn't decided. The first check after 08:00 reports the days of app usage not yet reported, at most 7. A
+spam complaint gets a high report. The nightly backup removes a person's words 90 days after their item
+closes, and `agents/inbox/text_retention.py` says what closes means for each state.
+
 `inbox-watch` (hourly, 09:05 to 21:05 SGT, plug-in `inbox-browser`) reads Facebook and Instagram through
 Chrome and records what people said with `inbox observe --file`. It starts in an empty folder as triage does,
 and what it recorded goes on to triage once it has been checked. It can't click: `computer`, `form_input`,
