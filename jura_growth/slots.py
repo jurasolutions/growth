@@ -20,6 +20,11 @@ The rules:
   quiet job writes nothing until it finishes.
 - Slots before a job's first record are not installed, and so are the upcoming
   slots of a job that isn't loaded in launchd.
+- A slot with no trace from before the job's plist was last installed is not
+  installed either. A job moved to a later time would otherwise read as missed
+  on the day it moved: its old run landed before the new slot, so it counts for
+  the slot before. The cost: any `schedule install` also clears true misses from
+  before it. Installs are rare and deliberate, so that is accepted.
 """
 
 from __future__ import annotations
@@ -140,6 +145,7 @@ def classify(
     days: Iterable[date],
     *,
     installed: Container[str] | None = None,
+    installed_at: Callable[[str], datetime | None] | None = None,
     business_day: BusinessDay = holidays.is_business_day,
 ) -> dict[tuple[str, date], list[SlotStatus]]:
     """Every slot of every job on each of `days`, with its slot status.
@@ -153,6 +159,8 @@ def classify(
     - `now` is the clock; a time with no zone is SGT, as `timeutil.parse` reads it.
     - `installed` names the jobs loaded in launchd; a job missing from it shows
       its upcoming slots as not installed. None counts every job as installed.
+    - `installed_at` says when a job's plist was last installed, or None for no
+      such moment (`schedule.installed_at`, or a test's fake).
 
     Every `(job, day)` pair gets a list, empty on a day with no slots.
     """
@@ -164,7 +172,8 @@ def classify(
 
     result: dict[tuple[str, date], list[SlotStatus]] = {}
     for job, spec in jobs.items():
-        judge = _Job(job, spec["schedule"], by_job.get(job, {}).values(), now, installed is None or job in installed, business_day)
+        since = installed_at(job) if installed_at else None
+        judge = _Job(job, spec["schedule"], by_job.get(job, {}).values(), now, installed is None or job in installed, business_day, since)
         for day in days:
             result[(job, day)] = judge.day(day)
     return result
@@ -187,9 +196,10 @@ class _Job:
     """One job's records, sorted and set against its schedule."""
 
     def __init__(
-        self, job: str, shape: Mapping[str, Any], records: Iterable[Record], now: datetime, loaded: bool, business_day: BusinessDay
+        self, job: str, shape: Mapping[str, Any], records: Iterable[Record], now: datetime, loaded: bool, business_day: BusinessDay,
+        since: datetime | None = None,
     ) -> None:
-        self.job, self.shape, self.now, self.loaded, self.business_day = job, shape, now, loaded, business_day
+        self.job, self.shape, self.now, self.loaded, self.business_day, self.since = job, shape, now, loaded, business_day, since
         self.slot_times = cache(self._slot_times)
         mine = sorted(records, key=lambda record: record.at)
         self.first = mine[0].at if mine else None
@@ -236,7 +246,7 @@ class _Job:
             return SlotStatus(self.job, at, runs[-1].run_status, records=tuple(window))
         if window:
             return SlotStatus(self.job, at, "skipped", window[-1].reason, records=tuple(window))
-        if self.first is None or at < self.first:
+        if self.first is None or at < self.first or (self.since is not None and at < self.since):
             return SlotStatus(self.job, at, "not installed")
         if at > self.now:
             return SlotStatus(self.job, at, "upcoming" if self.loaded else "not installed")
