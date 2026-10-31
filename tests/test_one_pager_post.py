@@ -30,7 +30,7 @@ from sweep import d2_secrets  # noqa: F401 - a fixture
 from jura_growth import approvals, backup, cards, config, db, discord, headless, images, log, mission, one_pager, paths, picture, privacy, runner
 from jura_growth.cli import cli
 from jura_growth.origin import Origin
-from jura_growth import timeutil
+from jura_growth import pause as pause_module, timeutil
 
 EIGHT_AM = "2026-11-10T08:00:00+08:00"
 NINE = "2026-11-10T09:00:00+08:00"
@@ -542,6 +542,19 @@ def test_a_delivered_post_with_a_real_lock_on_its_record_keeps_a_trace(hold, dis
     assert result.exception is None, repr(result.exception)
     assert result.output.strip().splitlines()[-1] == "posted to #mission-control"
     assert mirrored("discord.post")[0]["payload"]["not_recorded"]
+
+
+def test_a_paused_job_read_under_a_lock_stays_skipped_and_posts_nothing(conn, hold, discord_double, stub_grid):
+    """A pause is the kill switch. Under a write lock the flag can still be read, and the job must
+    obey it even though the skip can't be written. An EXCLUSIVE lock hides the flag: that post goes
+    to his own channel and the PAUSE file still stops it, a trade recorded in the crew log."""
+    pause_module.pause(conn, "digest", "held by hand", notify=False)
+    conn.commit()
+    hold("IMMEDIATE")
+    outcome = runner.run("one-pager", ignore_schedule=True)
+    assert outcome.status == "skipped" and "held by hand" in outcome.summary
+    assert posts(discord_double) == []
+    assert mirrored("run.quiet") == []
 
 
 def test_other_jobs_still_stop_at_a_lock(hold):

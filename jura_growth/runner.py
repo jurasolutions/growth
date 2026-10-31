@@ -131,8 +131,8 @@ def _run_past_a_lock(name: str, spec: dict, ignore_schedule: bool) -> Outcome:
 
 
 def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule: bool, ran: list | None = None) -> Outcome:
-    """`ran`, when given, gets the outcome as soon as the job's body has finished, so the caller can
-    tell a lock before the body from one after it."""
+    """`ran`, when given, gets the outcome as soon as the job is skipped or its body has finished, so
+    the caller can tell a lock before that from one after it."""
     agent = spec["agent"]
     # `quiet` means something only for a command job. A claude job spends
     # money and needs a run id (environment, transcript, `used_by_run`), so it
@@ -155,6 +155,8 @@ def _run_locked(conn: sqlite3.Connection, name: str, spec: dict, ignore_schedule
         log.event(conn, "run.quiet", {"job": name, "started_at": started_at, "reason": str(reason)}, agent=agent)
         return _run_update(conn, name, spec, None, Outcome("ok", str(reason)))
     if reason:
+        if ran is not None:
+            ran.append(Outcome("skipped", reason))  # a pause read under a lock holds, though the skip can't be written
         skip_id = None
         if quiet:
             log.event(conn, "run.skipped", {"job": name, "reason": reason}, agent=agent)

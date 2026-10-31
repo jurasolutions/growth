@@ -294,7 +294,7 @@ def _overdue_row(snapshot: mission.Snapshot, agent: Agent, slot: slots.SlotStatu
 # --- Yesterday, and later today -----------------------------------------------------------
 
 # Windows, not outcomes: the schedule can't say a post or an email will go out.
-LATER = (("publish", "Publish window"), ("scout-send", "Send window"), ("digest", "Digest"))
+LATER = (("publish", "Posting window"), ("scout-send", "Send window"), ("digest", "Digest"))
 
 
 def later_today(snapshot: mission.Snapshot) -> list[str]:

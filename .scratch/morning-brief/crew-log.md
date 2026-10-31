@@ -122,3 +122,15 @@ decisions: E15 sorted further than the ruling: pause, plug-in lines, the rest, n
 decisions: final B2: social_drafts_by_hand replaces S3's date match
 questions: -
 evidence:  pytest -> 4387 passed, 0 skipped; --live-fonts -> worst 1548, problems [] on all five; real EXCLUSIVE lock -> exit 0, 43 s, picture saved to the outbox; pyright -> 2 errors in runner.py on lines not changed here
+
+## 2026-11-01T00:30+0800 reviewer (final-2), conductor
+status:    done
+persona:   reviewer, conductor
+ticket:    final-2
+artifacts: reviews/code-review-final-2.md; jura_growth/runner.py, picture.py, README.md, ADR 0001, ADR 0002, tests
+decisions: reviewer approved, no blockers. Conductor made the small fixes directly, test-first, rather than dispatch again
+decisions: Sf1 fixed for a write lock: a pause read under a lock holds. Accepted: an EXCLUSIVE lock hides the flag, so a post can still reach his own channel; the PAUSE file still stops it
+decisions: Sf2 accepted: a lock after delivery can leave one false "failed" line next morning. Rare, and it beats a double post
+decisions: Sf3 and Sf4 fixed. Plug-in lines stay ahead of failures in Fix, because failures also go to #alerts and E15 feared the ICP line being pushed out
+questions: -
+evidence:  new test failed first (status ok, posted); full pytest after the fixes -> 4388 passed, 0 skipped
