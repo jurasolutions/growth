@@ -22,3 +22,8 @@ Not part of this feature's release. It predates this branch, and it needs to be 
 | `group-join`, answers | Claimed by a run | No, as above |
 
 ## Comments
+
+**Added after review 13 (F1, F2).** `remote` hides a refusal's reason in two ways, and neither changes what is refused.
+
+- An env file at mode 0644 prints a permissions warning first, so every refusal reads "the command was not understood", and the retry hazard from ticket 13 returns while the file stays loose. After-merge steps tell Ting Yu to check the mode. `remote` should find the `refused:` line whatever comes before it.
+- A `BadArgs` without the `refused:` prefix is hidden the same way. Every one has the prefix today, and only the README enforces it. Add a test that walks every kind's hooks, or add the prefix in one place.

@@ -180,3 +180,30 @@ artifacts: issues/13-refusals-say-why.md; issues/12-masked-cards-on-other-kinds.
 decisions: under the standing instruction. B2 and every small should-fix go in ticket 13. The other kinds stay out of this release and go to ticket 12, since none is a public post or an email and the release has grown enough; PR body names them. S2 goes in the release notes as a read-only check. Same developer and worktree
 questions: -
 evidence:  reviews/code-review-11.md
+
+## 2026-11-01T03:40+0800 developer (ticket 13, appended by the conductor)
+status:    done
+persona:   developer
+ticket:    13
+artifacts: c73caa3, 97992de, bee9118; merge f2ac501
+decisions: no assertion changed. S4 changed no results. A refused card's P-nnnn stays listed under "Growth is on it"
+questions: remote hides reasons when an env-file permissions warning prints first; to ticket 12, with a file-mode check in the after-merge steps
+evidence:  suite -> 5967 passed, none failed; across midnight, same. remote walk in new processes -> reasons reach the reply. Ticket 11's and this ticket's first red runs did stat the live .env, never opening it; the guard now uses abspath
+
+## 2026-11-01T04:00+0800 reviewer (ticket 13, appended by the conductor)
+status:    done
+persona:   reviewer
+ticket:    13
+artifacts: reviews/code-review-13.md
+decisions: approve, no must-fix. F1 and F2 go to ticket 12. F1 fails safe, predates this feature, and a chmod clears it
+questions: -
+evidence:  suite at bee9118 in a stand-in root -> 5967 passed, 0 skipped, midnight run not rerun; 0644 temp env file -> "the command was not understood", status pending; canary .env -> 0 opens
+
+## 2026-11-01T04:02+0800 conductor (merge of tickets 10, 11, 13)
+status:    done
+persona:   conductor
+ticket:    10, 11, 13
+artifacts: crew/approvals-first-social-depth at bee9118, fast-forward
+decisions: merged after approve; the gate goes next
+questions: -
+evidence:  git merge --ff-only -> bee9118
