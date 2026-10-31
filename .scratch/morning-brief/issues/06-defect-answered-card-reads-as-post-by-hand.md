@@ -1,6 +1,6 @@
 # 06: A draft whose card was answered reads as "to post by hand"
 
-Status: ready-for-agent
+Status: done
 Blocked by: none
 Severity: major (test strategy criterion 8: a false verdict), but it can't happen on this branch alone. The same finding as `reviews/code-review-final.md` B2, which also has the real-read repro and the fix.
 

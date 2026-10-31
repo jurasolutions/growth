@@ -1,6 +1,6 @@
 # 01: The morning picture
 
-Status: ready-for-agent
+Status: done
 Blocked by: none
 
 Turn the first draft (`jura_growth/brief.py`) into the morning picture that #mission-control receives. PRD MB1 to MB13, as worded in `reviews/functional.md` §2, which replaces the PRD where they differ.

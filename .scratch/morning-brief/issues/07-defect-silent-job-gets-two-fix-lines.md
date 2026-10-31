@@ -1,6 +1,6 @@
 # 07: A job silent two mornings gets two Fix lines
 
-Status: ready-for-agent
+Status: done
 Blocked by: none
 Severity: minor. Owner: the developer on the fix round. MB3 says one line per item, but both lines are true and each names the job, so nothing is hidden or false until the list passes its cap. The same finding as `reviews/code-review-final.md` S2.
 

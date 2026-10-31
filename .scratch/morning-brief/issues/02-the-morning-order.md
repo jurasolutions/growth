@@ -1,6 +1,6 @@
 # 02: The morning order
 
-Status: ready-for-agent
+Status: done
 Blocked by: none
 
 Move the drafting jobs to before 09:00 and the one-pager to 09:00, and add the job that raises outreach requests before the picture. PRD SC1 to SC7, as worded in `reviews/functional.md` §2.

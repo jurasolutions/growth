@@ -1,6 +1,6 @@
 # 03: A lock past 30 seconds stops the morning post
 
-Status: ready-for-agent
+Status: done
 Blocked by: none
 Severity: major (test strategy criterion 8: a criterion failing). Found by QA 01; no review has it.
 

@@ -1,5 +1,7 @@
 # Crew log: morning-brief
 
+*The conductor estimated the times in these headings, and they run ahead of the clock (the last is about two hours ahead). Reviews cite some of them as names, such as "the 23:10 ruling", so they stay. The commit times are the real ones.*
+
 ## 2026-10-31T19:15+0800 conductor (G0, G1)
 status:    done
 persona:   conductor
@@ -134,3 +136,14 @@ decisions: Sf2 accepted: a lock after delivery can leave one false "failed" line
 decisions: Sf3 and Sf4 fixed. Plug-in lines stay ahead of failures in Fix, because failures also go to #alerts and E15 feared the ICP line being pushed out
 questions: -
 evidence:  new test failed first (status ok, posted); full pytest after the fixes -> 4388 passed, 0 skipped
+
+## 2026-10-31T22:50+0800 qa-lead (gate), conductor
+status:    done
+persona:   qa-lead, conductor
+ticket:    -
+artifacts: reviews/quality-gate.md; renders/full.png, quiet.png, bad-day.png; issues 01 to 08 closed
+decisions: gate GO at b953955, with Sf2 graded minor and the EXCLUSIVE-lock trade, both ruled by the conductor and to be named in the PR
+decisions: origin/main merged in; the suite is rerun on it by the release manager
+decisions: G4 stays with Ting Yu. The PR is opened under the standing instruction and not merged
+questions: -
+evidence:  gate: full pytest -> 4388 passed, 0 skipped; --live-fonts -> problems [] on 5 fixtures; conductor viewed today's render from live data, read-only -> 1200x1338, readable

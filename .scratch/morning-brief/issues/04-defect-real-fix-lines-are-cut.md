@@ -1,6 +1,6 @@
 # 04: Real Fix lines lose what to do to the three-line clamp
 
-Status: ready-for-agent
+Status: done
 Blocked by: none
 Severity: major (test strategy criterion 8: a criterion failing; MB3). The same finding as `reviews/code-review-final.md` B1, reproduced here independently.
 

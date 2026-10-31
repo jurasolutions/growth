@@ -1,6 +1,6 @@
 # 05: The Dispatch contract still says the one-pager carries the grid
 
-Status: ready-for-agent
+Status: done
 Blocked by: none
 Severity: minor. Owner: the developer on the fix round. The same finding as `reviews/code-review-final.md` S5.
 

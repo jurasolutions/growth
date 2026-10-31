@@ -1,6 +1,6 @@
 # 08: On install day, an installed job reads "Not installed"
 
-Status: ready-for-agent
+Status: done
 Blocked by: none
 Severity: minor. Owner: the developer on the fix round. MB7 says the picture only shows what the engine recorded, and this row says two untrue things, but it shows only on an on-request post on install day. The scheduled 09:00 after an evening install is clean. The same finding as `reviews/code-review-final.md` S1.
 
