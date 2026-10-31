@@ -84,6 +84,7 @@ import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -93,6 +94,8 @@ from jura_growth.agents.outreach import send, store
 FOLDERS = ("JURA_GROWTH_DATA_DIR", "JURA_GROWTH_OUTPUTS_DIR", "JURA_PRD_DIR")
 # Folders the seed writes to only when they are set, and then only inside the UAT folder.
 OPTIONAL_FOLDERS = ("JURA_GROWTH_CONFIG_DIR",)
+LIVE_ENV_FILES = (paths.REPO_ROOT / ".env", paths.JURA_ROOT / "repos" / "growth" / ".env")  # where the live webhooks are
+WEBHOOK_PREFIX = "DISCORD_WEBHOOK_"
 HISTORY_DAYS = 8  # S1: run history from eight days before the seeded day
 OUTREACH_SCENARIOS = ("outreach-live", "edit-draft", "shadow-trial")  # only email waits for a business day; social runs daily
 
@@ -168,6 +171,32 @@ def refusal(folder: str | os.PathLike[str]) -> str | None:
         value = os.environ.get(variable)
         if value and not paths.is_within(value, folder):
             return f"{variable} ({value}) is outside {folder}"
+    return _webhook_refusal()
+
+
+def _cannot_leave_this_mac(url: str) -> bool:
+    """A recorder on this Mac, or the suite's double on a host that can't exist (RFC 2606)."""
+    if uat_stub.loopback_url_ok(url, uat_stub.LOOPBACK):
+        return True
+    return not uat_stub._UNSAFE.search(url) and (urlsplit(url).hostname or "").endswith(".invalid")
+
+
+def _webhook_refusal() -> str | None:
+    """Why this window could post to the live Discord, or None. Every scenario's sweep posts to
+    whatever webhooks it finds, and a card's button could decide a live request. A value is never
+    printed: it is a secret."""
+    value = os.environ.get("JURA_GROWTH_ENV_FILE")
+    if not value:
+        return "JURA_GROWTH_ENV_FILE isn't set, so the repo's .env and its live webhooks would be used: point it at your UAT env file"
+    if paths.is_within(value, paths.REPO_ROOT) or paths.is_within(value, paths.JURA_ROOT):
+        return f"JURA_GROWTH_ENV_FILE ({value}) is inside the repo or jurasolutions/, where the live webhooks are: use a file of its own"
+    for name, url in os.environ.items():
+        if name.startswith(WEBHOOK_PREFIX) and url and not _cannot_leave_this_mac(url):
+            return f"{name} is set in this shell: unset it, and put the test server's webhook in the UAT env file"
+    live = {url for path in LIVE_ENV_FILES for name, url in config._parse_env(path).items() if name.startswith(WEBHOOK_PREFIX) and url}
+    for name, url in config._parse_env(Path(value)).items():
+        if name.startswith(WEBHOOK_PREFIX) and url in live:
+            return f"{name} in the UAT env file is a live webhook: use the test server's"
     return None
 
 

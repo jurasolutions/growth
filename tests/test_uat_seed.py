@@ -50,6 +50,63 @@ def test_a_folder_outside_the_uat_folder_is_refused(uat, monkeypatch, tmp_path, 
     assert variable in seed.refusal(uat)
 
 
+# --- SEC-S1: the seed can't reach the live Discord -----------------------------------------------
+
+LIVE_WEBHOOK = "https://discord.com/api/webhooks/1234/live-token-in-a-test"
+
+
+def test_with_no_env_file_of_its_own_it_is_refused(uat, monkeypatch):
+    """Without the export, the repo's .env holds the live webhooks, and every sweep would post."""
+    monkeypatch.delenv("JURA_GROWTH_ENV_FILE")
+    assert "JURA_GROWTH_ENV_FILE" in seed.refusal(uat)
+
+
+@pytest.mark.parametrize("inside", [paths.REPO_ROOT, paths.JURA_ROOT / "repos" / "growth"])
+def test_an_env_file_in_the_repo_is_refused(uat, monkeypatch, inside):
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(inside / ".env"))
+    assert "JURA_GROWTH_ENV_FILE" in seed.refusal(uat)
+
+
+def test_a_webhook_in_the_shell_is_refused_and_not_printed(uat, monkeypatch):
+    monkeypatch.setenv("DISCORD_WEBHOOK_APPROVALS", LIVE_WEBHOOK)
+    why = seed.refusal(uat)
+    assert "DISCORD_WEBHOOK_APPROVALS" in why and "live-token" not in why
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:9000/api/webhooks/1/x", "https://discord.invalid/api/webhooks/1/x"])
+def test_a_webhook_that_cannot_leave_this_mac_is_allowed(uat, monkeypatch, url):
+    monkeypatch.setenv("DISCORD_WEBHOOK_APPROVALS", url)
+    assert seed.refusal(uat) is None
+
+
+@pytest.mark.parametrize("url", ["https://127.0.0.1.discord.com/api/webhooks/1/x", "https://discord.invalid.discord.com/api/webhooks/1/x",
+                                 "https://x.invalid@discord.com/api/webhooks/1/x", "https://discord.com\\@x.invalid/api/webhooks/1/x"])
+def test_a_host_that_only_looks_like_a_stand_in_is_refused(uat, monkeypatch, url):
+    monkeypatch.setenv("DISCORD_WEBHOOK_APPROVALS", url)
+    assert "DISCORD_WEBHOOK_APPROVALS" in seed.refusal(uat)
+
+
+def test_a_live_webhook_copied_into_the_env_file_is_refused_and_not_printed(uat, monkeypatch, tmp_path):
+    live_env = tmp_path / "live.env"
+    live_env.write_text(f"DISCORD_WEBHOOK_APPROVALS={LIVE_WEBHOOK}\n", encoding="utf-8")
+    monkeypatch.setattr(seed, "LIVE_ENV_FILES", (live_env,))
+    copy = tmp_path / "uat.env"
+    copy.write_text(f"DISCORD_WEBHOOK_FEED='{LIVE_WEBHOOK}'\n", encoding="utf-8")
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(copy))
+    why = seed.refusal(uat)
+    assert "DISCORD_WEBHOOK_FEED" in why and "live-token" not in why
+    copy.write_text("DISCORD_WEBHOOK_FEED=https://discord.com/api/webhooks/9/test-server\n", encoding="utf-8")
+    assert seed.refusal(uat) is None
+
+
+@pytest.mark.parametrize("scenario", ["social-day", "app-prd", "decide"])
+def test_a_scenario_that_posts_is_refused_with_no_env_file_and_seeds_nothing(uat, monkeypatch, scenario):
+    monkeypatch.delenv("JURA_GROWTH_ENV_FILE")
+    with pytest.raises(seed.Refused, match="JURA_GROWTH_ENV_FILE"):
+        seed.seed(uat, scenario)
+    assert not (uat / "data").exists()
+
+
 def test_the_live_data_folder_is_refused():
     live = paths.JURA_ROOT / "data" / "growth"
     assert "temporary" in seed.refusal(live)
