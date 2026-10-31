@@ -682,3 +682,32 @@ def test_one_unreleased_build_per_app(conn):
             "VALUES (?, 'x', 'y', 'A-9999', ?, ?)",
             (app_id, aw.NOW, aw.NOW),
         )
+
+
+# --- what the feed hears (functional S3) ---------------------------------------------------------
+
+
+def test_an_approved_release_names_its_next_step_and_the_claim_stays_silent(conn, discord_double):
+    app_id, _ = handed_off(conn)
+    sha = site_repo.branch(BRANCH)
+    assert built(app_id, sha).exit_code == 0
+    [request] = release_requests(conn)
+    aw.approve(conn, request, args={})
+    cards.sweep(conn)
+    [line] = [m for m in discord_double.contents("app-factory") if request.id in m]
+    assert f"`/growth apps release-plan {app_id}`" in line and line.startswith(f"**{request.id} approved**")
+    assert invoke("apps", "release-plan", app_id).exit_code == 0
+    cards.sweep(conn)
+    assert len([m for m in discord_double.contents("app-factory") if request.id in m]) == 1
+
+
+def test_a_recorded_release_posts_one_released_line(conn, discord_double):
+    app_id, sha, _ = approved_release(conn)
+    assert invoke("apps", "release-plan", app_id).exit_code == 0
+    site_repo.merge(sha)
+    before = len(discord_double.contents("app-factory"))
+    assert invoke("apps", "released", app_id, "--task", TASK).exit_code == 0
+    [line] = discord_double.contents("app-factory")[before:]
+    assert line.startswith(f"**{app_id} released**") and sha[:7] in line and TASK in line
+    assert invoke("apps", "released", app_id, "--task", TASK).exit_code == 0  # already recorded
+    assert len(discord_double.contents("app-factory")) == before + 1

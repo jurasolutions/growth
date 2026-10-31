@@ -81,7 +81,7 @@ class OutreachEmail:
     """The kind `approvals` asks about every `outreach_message:<id>`."""
 
     name = KIND
-    feed_approved = "It goes out on the next send run, inside today's window and caps."
+    feed_approved = "It goes out on a send run, inside the send window and the day's caps."
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         from jura_growth.agents.outreach import queue

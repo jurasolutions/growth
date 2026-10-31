@@ -9,9 +9,14 @@ publishing instead of widening it.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 from jura_growth import caps, config, timeutil
+
+
+# A social post is decided this long before the window closes, so an approval always has a
+# publish slot left: the last run starts at 17:40, and a claim needs 20 minutes since the last one.
+DECIDE_BEFORE_CLOSE = timedelta(hours=1)
 
 
 class LimitsError(ValueError):
@@ -48,6 +53,12 @@ def window() -> tuple[time, time]:
 def window_on(day: date) -> tuple[datetime, datetime]:
     start, end = window()
     return (datetime.combine(day, start, tzinfo=timeutil.SGT), datetime.combine(day, end, tzinfo=timeutil.SGT))
+
+
+def decide_by_on(day: date) -> datetime:
+    """When a social post for `day` must be decided: 17:00 SGT, or earlier when the window narrows."""
+    start, end = window_on(day)
+    return max(start, end - DECIDE_BEFORE_CLOSE)
 
 
 def in_window(moment: datetime) -> bool:

@@ -199,7 +199,7 @@ def _post_unposted(conn: sqlite3.Connection) -> int:
             continue
         result = discord.post(conn, CHANNEL, content, files=files, username=USERNAME, dedupe=False,
                               suppress_embeds=True, wait=True, components=button_row(approval, registered.kind),
-                              first_piece_room=HEADER_ROOM, files_first=True)
+                              first_piece_room=HEADER_ROOM, files_first=True, own_copy=_own_copy(conn, approval, registered))
         if not result.delivered:
             # Saved to the outbox by post(); the next sweep posts it again, whole. A piece that
             # did go out would be left with live buttons, so it goes first.
@@ -215,6 +215,20 @@ def _post_unposted(conn: sqlite3.Connection) -> int:
             )
         posted += 1
     return posted
+
+
+def _own_copy(conn: sqlite3.Connection, approval: approvals.Approval, registered) -> tuple[str, ...]:
+    """The parts of a card that are Jura's own outgoing text (`own_copy`, `privacy.py`), if the
+    kind names any. A failing hook keeps the card fully masked."""
+    hook = getattr(registered.kind, "own_copy", None)
+    if hook is None:
+        return ()
+    try:
+        return tuple(hook(conn, approval.subject))
+    except Exception as error:  # noqa: BLE001 - masked is the safe way to fail
+        log.event(conn, "approval.card_note_error", {"approval": approval.id, "error": f"{type(error).__name__}: {error}"},
+                  level="warning", agent=registered.agent)
+        return ()
 
 
 def _delete_pieces(conn: sqlite3.Connection, result: discord.PostResult) -> None:
@@ -247,7 +261,10 @@ def _edit_changed(conn: sqlite3.Connection) -> int:
             continue
         rest = row["first_piece"].split("\n", 1)
         content = header(conn, approval) + ("\n" + rest[1] if len(rest) > 1 else "")
-        done = row["message_id"] and discord.edit(conn, CHANNEL, row["message_id"], content, components=no_buttons).delivered
+        # What the piece already shows stands, so a kind's own copy isn't masked by the edit.
+        registered = approvals.kinds().get(approval.kind)
+        own = (rest[1],) if len(rest) > 1 and registered and getattr(registered.kind, "own_copy", None) else ()
+        done = row["message_id"] and discord.edit(conn, CHANNEL, row["message_id"], content, components=no_buttons, own_copy=own).delivered
         if not done:
             follow_up = f"{approval.id}: {status_line(conn, approval)} (the card couldn't be edited)."
             discord.post(conn, CHANNEL, follow_up, username=USERNAME, dedupe=False, suppress_embeds=True)

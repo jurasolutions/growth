@@ -214,3 +214,27 @@ def test_the_sweep_finds_nothing_planted_in_email_cards(conn, monkeypatch, disco
     assert_clean(discord_double, outbox_dir(), planted())
     seen = "\n".join(t for r in discord_double.requests for t in r.texts())
     assert MASKED_ADDRESS in seen and SOURCE_PAGE in seen
+
+
+# --- what the feed hears (FD1, functional S7) ----------------------------------------------------
+
+
+def test_an_approved_email_says_when_it_goes_without_promising_today(conn, monkeypatch, discord_double, lead_233):
+    cards.sweep(conn)
+    [request] = outreach_requests(conn)
+    decide(conn, request, "approve", monkeypatch)
+    cards.sweep(conn)
+    [line] = discord_double.contents("outreach-sent")
+    assert line.startswith(f"**{request.id} approved**") and "info@example.com.sg" in line
+    assert "inside the send window and the day's caps" in line and "today" not in line
+
+
+def test_a_lead_that_closes_a_waiting_email_says_why_in_the_cards_words(conn, discord_double, lead_233):
+    cards.sweep(conn)
+    [request] = outreach_requests(conn)
+    store.cancel_queued(conn, [233], "suppressed (unsubscribe)")
+    store.set_lead_status(conn, [233], "unsubscribed")
+    approvals.expire_due(conn)
+    cards.sweep(conn)
+    [line] = discord_double.contents("outreach-sent")
+    assert line.startswith(f"**{request.id} withdrawn**") and line.endswith("The request closed: lead unsubscribed.")

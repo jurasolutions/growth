@@ -12,9 +12,12 @@ The subject is one publish item, `publish_item:<id>`: one platform's post for on
   2026-10-27). The item is gone (`None`) once its draft is skipped or posted by hand, a skip is
   recorded for its day and platform, its page URL is unset, its platform is switched off
   (`enabled: false`), or an image is missing.
-- **Deadlines:** decide by and use by the end of the posting window on the day of the content
-  being asked about (18:00 SGT, or earlier when `config/publish.yaml` narrows the window). A
+- **Deadlines:** decide by an hour before the end of the posting window, and use by its end, on
+  the day of the content being asked about (17:00 and 18:00 SGT, or earlier when
+  `config/publish.yaml` narrows the window), so an approval always has a publish slot left. A
   request raised because the day changed therefore lapses at the new day's end, not the old one's.
+  A claim that finds the post changed after the decide-by raises the replacement straight away
+  (`approvals.use`), and that one has until the window's end.
 - **Switch:** the platform's `enabled` and its `publish_mode`. While the platform is turned off
   (LinkedIn since 2026-10-29) or in `draft` mode, a valid approval is refused and not claimed
   (A13, AC-P5.3), and no card is raised.
@@ -124,13 +127,20 @@ def kind_of(item: items.Item) -> str:
 
 
 def closes(item: items.Item, content: dict | None = None) -> datetime:
-    """When the item's chance to go out ends (its decide-by and use-by), for `content` as it
-    reads now (the item's own frozen copy when None)."""
+    """When the item's chance to go out ends (its use-by), for `content` as it reads now (the
+    item's own frozen copy when None). A social post's decide-by comes earlier (`decide_closes`)."""
     from jura_growth.agents.publish import group_kinds
 
     if item.kind == items.SOCIAL_ITEM:
         return limits.window_on(date.fromisoformat((content or item.content)["day"]))[1]
     return group_kinds.closes(item, content)
+
+
+def decide_closes(item: items.Item, content: dict | None = None) -> datetime:
+    """When a new request over the item can no longer be raised: its decide-by."""
+    if item.kind == items.SOCIAL_ITEM:
+        return limits.decide_by_on(date.fromisoformat((content or item.content)["day"]))
+    return closes(item, content)
 
 
 def opens(item: items.Item, content: dict | None = None) -> str:
@@ -154,7 +164,12 @@ class SocialPost:
 
     name = KIND
     used_word = "claimed by a publish run"
-    feed_approved = "It goes out on the next publish run, by 18:00 SGT. The run's update here gives the post's address."
+
+    def feed_approved(self, conn: sqlite3.Connection, subject: str) -> str:
+        """What happens next, kept true: the decide-by leaves a slot, and a pause holds it back."""
+        _, end = limits.window_on(date.fromisoformat(_item(conn, subject).day))
+        return items.unless_paused(conn, f"It goes out on a publish run today, by {end:%H:%M} SGT. "
+                                         "The run's update here gives the post's address.")
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         item = items.of(conn, subject)
@@ -164,8 +179,11 @@ class SocialPost:
         return hashed(content) if content is not None else None
 
     def preview(self, conn: sqlite3.Connection, subject: str) -> approvals.Preview:
-        """The card (AC-P1.1): the page and its URL, the day, the exact text, the image, the
-        links in the text and the brand-gate result."""
+        """The card (AC-P1.1): the page and its URL, the day, the headline, the exact text, the
+        images, the links in the text, the sources and the brand-gate result. Discord never shows
+        a phone number or a prospect's name, even in Jura's own copy (`privacy`), so a post
+        holding one says so here: what he approves is what goes out, whatever the card can show."""
+        from jura_growth import privacy
         from jura_growth.agents.social.settings import load
 
         item = _item(conn, subject)
@@ -178,6 +196,8 @@ class SocialPost:
         theme = settings.themes.get(post.get("theme") or "")
         run = f", drafted by social run {post['run_id']}" if post.get("run_id") else ""
         lines = [f"```\n{content['text'].strip()}\n```"]
+        if privacy.for_discord(content["text"], own_copy=[content["text"]]) != content["text"]:
+            lines.append("Part of this post is masked on this card, and goes out in full.")
         links = list(dict.fromkeys(_LINK.findall(content["text"])))
         lines.append("Links in the text: " + (", ".join(f"<{link}>" for link in links) if links else "none"))
         sources = [url for url in json.loads(post.get("source_urls") or "[]") if url not in links]
@@ -188,9 +208,10 @@ class SocialPost:
         images = [Path(image["path"]) for image in content["images"]]
         lines.append(f"{len(images)} image{'s' if len(images) != 1 else ''} attached, posted in this order." if images
                      else "No image.")
+        headline = qa.get("headline")  # beside the content, not in it: the title isn't hashed
         return approvals.Preview(
             title=f"{platform.label} as {content['posting_identity']}: {content['target_url']} · "
-                  f"{day:%a} {day.day} {day:%b %Y} · {item.label}",
+                  f"{day:%a} {day.day} {day:%b %Y} · {item.label}" + (f" · {headline}" if headline else ""),
             reason=f"the {platform.label} post for {day:%a} {day.day} {day:%b}"
                    + (f" ({theme.label})" if theme else "") + run,
             text="\n".join(lines),
@@ -198,12 +219,22 @@ class SocialPost:
         )
 
     def deadlines(self, conn: sqlite3.Connection, subject: str, now: datetime) -> approvals.Deadlines:
-        """The end of the posting window on the day of the content asked about now."""
+        """Decide by an hour before the window ends, and use by its end, on the content's day. A
+        request raised past that decide-by is a claim's replacement for a post that changed
+        (`approvals.use`): it has until the window's end."""
         item = _item(conn, subject)
         content = social_content(conn, item.ref_id)
         day = date.fromisoformat(content["day"] if content else item.day)
-        _, closes = limits.window_on(day)
-        return approvals.Deadlines(decide_by=closes, use_by=closes)
+        decide_by = limits.decide_by_on(day)
+        _, end = limits.window_on(day)
+        return approvals.Deadlines(decide_by=decide_by if now < decide_by else end, use_by=end)
+
+    def own_copy(self, conn: sqlite3.Connection, subject: str) -> tuple[str, ...]:
+        """The post's text, as Jura's own copy on its card (`privacy`). A draft past the brand gate only."""
+        item = _item(conn, subject)
+        post = db.one(conn, "SELECT text, qa_json FROM social_posts WHERE id = ?", (item.ref_id,))
+        passed = post and json.loads(post["qa_json"] or "{}").get("passed")
+        return (post["text"].strip(),) if passed else ()
 
     def switched_off(self, conn: sqlite3.Connection, subject: str) -> str | None:
         from jura_growth.agents.social.settings import load

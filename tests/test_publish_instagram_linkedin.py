@@ -35,7 +35,7 @@ URLS = {"instagram": pw.INSTAGRAM_URL, "linkedin": pw.LINKEDIN_URL}
 LABELS = {"instagram": "Instagram", "linkedin": "LinkedIn page"}
 IDENTITIES = {"instagram": "the Jura Solutions Instagram account", "linkedin": "the Jura Solutions LinkedIn company page"}
 VARIANTS = {"instagram": IG, "linkedin": LI}
-IMAGES = {"instagram": "instagram-1080x1350.png", "linkedin": "linkedin-1200x627.png"}
+IMAGES = {"instagram": [f"instagram-{n}-of-3-1080x1350.png" for n in (1, 2, 3)], "linkedin": ["linkedin-1200x627.png"]}
 
 
 @pytest.fixture
@@ -87,18 +87,15 @@ def test_submit_raises_exactly_one_social_post_request_for_the_platform_in_brows
     assert request.kind == "social-post" and request.subject == f"publish_item:{rows[0]['id']}"
     [card] = discord_double.posts("approvals")
     content = card.content or ""
-    assert content.split("\n")[0] == f"**{request.id} · social post** · decide by Tue 10 Nov, 18:00 SGT"
+    assert content.split("\n")[0] == f"**{request.id} · social post** · decide by Tue 10 Nov, 17:00 SGT"
     assert LABELS[platform] in content and URLS[platform] in content
     assert IDENTITIES[platform] in content
     assert VARIANTS[platform].strip() in content
     assert "Brand check: passed on attempt 1 of 2" in content
-    assert [name for name, _ in card.files] == [IMAGES[platform]]
+    assert [name for name, _ in card.files] == IMAGES[platform]
 
-    mine = [p for p in discord_double.posts("social-drafts") if (p.content or "").startswith(f"**{LABELS[platform]}**")]
-    assert len(mine) == 1
-    pointer = mine[0].content or ""
-    assert request.id in pointer and "#approvals" in pointer
-    assert VARIANTS[platform].strip() not in pointer and mine[0].files == []
+    assert [p for p in discord_double.posts("social-drafts") if (p.content or "").startswith(f"**{LABELS[platform]}**")] == []
+    assert not any(VARIANTS[platform].strip() in (p.content or "") for p in discord_double.posts("social-drafts"))
     others = [p for p in discord_double.posts("social-drafts")
               if (p.content or "").startswith(("**Facebook Page**", *(f"**{LABELS[o]}**" for o in NEW if o != platform)))]
     assert len(others) == 2 and all("post it by hand" in (p.content or "") and p.files for p in others)

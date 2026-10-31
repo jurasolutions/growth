@@ -21,8 +21,8 @@ In order:
    approval card in #approvals (browser publishing PRD §5.4). The card carries
    the post, its images and its sources; #social-drafts hears only what became
    of it (Ting Yu, 2026-10-31: `feed.py`, and the publish run's update). A
-   platform in browser mode that can't get an item (no page_url set, or its
-   posting window has closed) gets a note in #social-drafts saying why, and
+   platform in browser mode that can't get an item (no page_url set, too late
+   to be decided, or no images) gets a note in #social-drafts saying why, and
    never a request to post by hand.
 8. A platform in `draft` mode gets one #social-drafts message with its images,
    to post by hand.
@@ -226,7 +226,7 @@ def submit(
     dropped = [p for p in active if results[p].status != "pass"]
     status = "partial" if dropped or card_result.status != "pass" else "delivered"
     _write_outputs(out, sub, card, theme, passing, results, card_result, images, attempt, fonts, link_notes, notes_for_ting)
-    _log_rows(conn, day, theme.id, passing, sub, results, images, tool.slug if tool else None, attempt, theme.id != today_theme.id, fonts)
+    _log_rows(conn, day, theme.id, passing, sub, results, images, tool.slug if tool else None, attempt, theme.id != today_theme.id, fonts, card)
     requests = _raise_publish_items(conn, day, passing, settings, notes_for_ting)
     history.record_submission(conn, day, attempt=attempt, status=status, theme=theme.id, issues=issues)
     log.event(
@@ -306,13 +306,14 @@ def _write_outputs(out, sub, card, theme, passing, results, card_result, images,
     qa_path.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _log_rows(conn, day, theme_id, passing, sub, results, images, tool_slug, attempt, fallback, fonts) -> None:
+def _log_rows(conn, day, theme_id, passing, sub, results, images, tool_slug, attempt, fallback, fonts, card) -> None:
     now = timeutil.stamp()
     with db.transaction(conn):
         for platform in passing:
             result = results[platform]
             qa = {"passed": True, "attempt": attempt, "issues": [], "words": result.words,
-                  "hashtags": result.hashtags, "theme_fallback": fallback, "fonts_loaded": fonts}
+                  "hashtags": result.hashtags, "theme_fallback": fallback, "fonts_loaded": fonts,
+                  "headline": card.headline}
             conn.execute(
                 "INSERT INTO social_posts (date, theme, platform, text, image_paths, source_urls, qa_json, status, "
                 "tool_slug, run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)",

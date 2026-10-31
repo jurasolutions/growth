@@ -50,8 +50,6 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     rows = [r for r in db.rows(conn, "SELECT platform, status, published_at FROM social_posts WHERE date = ?", (day,))
             if r["platform"] in on]
     waiting = sorted(r["platform"] for r in rows if r["status"] == "draft")
-    # A platform in browser mode waits in #approvals; only draft mode leaves it in #social-drafts.
-    where = "#approvals" if all(load().platforms[name].browser for name in waiting) else "#social-drafts"
     skipped_rows = {r["platform"] for r in rows if r["status"] == "skipped"}
     skips = {
         r["platform"] for r in db.rows(conn, "SELECT platform FROM social_skips WHERE date = ?", (day,))
@@ -76,10 +74,7 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     }
     lines, brief = [], []
     if waiting:
-        lines.append(
-            f"Social: {len(waiting)} draft{'s' if len(waiting) != 1 else ''} waiting in {where} "
-            f"({', '.join(waiting)}), {skipped} skipped, {published} published"
-        )
+        lines.append(f"Social: {_where_they_wait(conn, day, waiting)}, {skipped} skipped, {published} published")
         brief.append(f"{len(waiting)} social draft{'s' if len(waiting) != 1 else ''} waiting")
     elif rows or skipped or published:
         lines.append(f"Social: no drafts waiting, {skipped} skipped, {published} published")
@@ -88,6 +83,24 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         lines.append(f"Social: no draft ({no_draft['reason']})")  # no day: see MC X15
         brief.append("no social draft today")
     return {"figures": figures, "lines": lines, "brief": brief}
+
+
+def _where_they_wait(conn: sqlite3.Connection, day: str, waiting: list[str]) -> str:
+    """Where each draft really is: on a pending card in #approvals, in #social-drafts for a platform
+    in draft mode, or nowhere, for a browser draft that got no card or whose card has closed."""
+    from jura_growth import db
+
+    from jura_growth.agents.social.settings import load
+
+    carded = {r["platform"] for r in db.rows(
+        conn, "SELECT i.platform FROM publish_items i JOIN approvals a ON a.subject = 'publish_item:' || i.id "
+              "WHERE i.day = ? AND i.kind = 'social_post' AND a.kind = 'social-post' AND a.status = 'pending'", (day,))}
+    platforms = load().platforms
+    places = {"waiting in #approvals": [n for n in waiting if n in carded],
+              "waiting in #social-drafts": [n for n in waiting if n not in carded and not platforms[n].browser],
+              "with no card": [n for n in waiting if n not in carded and platforms[n].browser]}
+    return ", ".join(f"{len(names)} draft{'s' if len(names) != 1 else ''} {where} ({', '.join(names)})"
+                     for where, names in places.items() if names)
 
 
 RUN_UPDATE_DISCORD_CHANNEL = "social-drafts"
@@ -134,9 +147,9 @@ def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     if all(settings.platforms[name].browser for name in active):
         from jura_growth.agents.publish import limits
 
-        closes = limits.window_on(day)[1]
-        if timeutil.now_sgt() >= closes:
-            return f"today's posting window closed at {closes:%H:%M} SGT, so a draft written now couldn't be approved and posted"
+        decide_by = limits.decide_by_on(day)
+        if timeutil.now_sgt() >= decide_by:
+            return f"today's posts had to be decided by {decide_by:%H:%M} SGT, so a draft written now couldn't be approved and posted"
     done = [s for s in history.submissions(conn, day) if s["status"] in ("no-draft", "dropped")]
     if done:
         return "“No draft today” was already posted today"

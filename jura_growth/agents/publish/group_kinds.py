@@ -239,9 +239,11 @@ def _item(conn: sqlite3.Connection, subject: str, kinds: tuple[str, ...]) -> ite
 class _GroupKind:
     name = ""
     feed_channel = "community"  # a group item's decision reports in #community, as its run update does
-    feed_approved = "It goes out on a publish run, inside the posting window."
     item_kinds: tuple[str, ...] = ()
     used_word = "claimed by a publish run"
+
+    def feed_approved(self, conn: sqlite3.Connection, subject: str) -> str:
+        return items.unless_paused(conn, "It goes out on a publish run, inside the posting window.")
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         from jura_growth.agents.publish import kinds

@@ -488,7 +488,10 @@ def test_nothing_planted_reaches_discord_from_a_publish_run(conn, fake, monkeypa
     fake.scenario(browser(*t.browser_check()), said)
     run()  # a failure before any claim
 
-    assert len(discord_double.contents("social-drafts")) == 4
+    drafts = discord_double.contents("social-drafts")
+    feed_lines = [m for m in drafts if " approved** · " in m.split("\n")[0]]
+    assert len(feed_lines) == 5  # one for each approval
+    assert len(drafts) - len(feed_lines) == 4  # the run updates of the runs that claimed
     assert len([a for a in alerts(discord_double) if "No browser" in a]) == 1
     sweep.assert_clean(discord_double, sweep.outbox_dir(), planted)
 

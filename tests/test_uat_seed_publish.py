@@ -39,7 +39,7 @@ def test_social_post_seeds_one_pending_facebook_card(uat):
     assert social["platforms"]["linkedin"]["enabled"] is False  # dropped on 2026-10-29: no LinkedIn card
     with db.session() as conn:
         [request] = facebook_requests(conn)
-        assert request.status == "pending" and request.decide_by == "2026-11-10T18:00:00+08:00"
+        assert request.status == "pending" and request.decide_by == "2026-11-10T17:00:00+08:00"
         assert db.scalar(conn, "SELECT count(*) FROM publish_items") == 1
 
 

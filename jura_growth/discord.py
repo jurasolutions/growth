@@ -277,6 +277,7 @@ def edit(
     *,
     client: httpx.Client | None = None,
     components: list[dict] | None = None,
+    own_copy: list[str] | tuple[str, ...] = (),
 ) -> PostResult:
     """Replace the text of a message this channel's webhook posted.
     `components` replaces its buttons too (`[]` removes them); None leaves
@@ -288,7 +289,7 @@ def edit(
     post instead. Edits don't notify (MC §5.1, decided cards)."""
     _require(channel)
     privacy.learn(conn)
-    content = privacy.for_discord(content)[:MAX_CONTENT]
+    content = privacy.for_discord(content, own_copy=own_copy)[:MAX_CONTENT]
     url = webhook(channel)
     if not url:
         return PostResult(channel, delivered=False, reason=f"{env_name(channel)} not set")
