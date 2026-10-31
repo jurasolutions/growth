@@ -6,8 +6,10 @@ waiting, Today, Yesterday and Ask me. `post()` sends `text()` to #mission-contro
 through `discord.post()`, which masks it and splits it only past 2,000 characters.
 
 Amended 2026-10-31: what goes to #mission-control is the morning picture
-(`picture.py`) with a short message (`summary()`). `text()` is the long form:
-`--no-post` prints it, and it goes out instead when the picture can't be drawn.
+(`picture.py`) with a short message (`summary()`), which also carries a plug-in's
+section when it has something to tell, as Replies waiting does for what is waiting.
+`text()` is the long form: `--no-post` prints it, and it goes out instead when the
+picture can't be drawn.
 The 14-day grid (`grid_html`) is no longer posted, because it can't be read at
 the size Discord shows it; `jura-growth one-pager --grid` draws it to a file.
 The 09:00 `one-pager` job and `/growth one-pager` both run `jura-growth one-pager`.
@@ -50,7 +52,9 @@ def text(snapshot: mission.Snapshot) -> str:
 
 
 def summary(snapshot: mission.Snapshot) -> str:
-    """The message that carries the picture: enough to act on from a notification."""
+    """The message that carries the picture: enough to act on from a notification, then any plug-in's
+    section with something to tell. Past 2,000 characters `discord.post` splits it at a line, with the
+    picture on the last piece."""
     now = snapshot.now
     lines = [f"**{health.day_label(now)}, as of {now:%H:%M} SGT**", picture.verdict(snapshot)]
     found = picture.waiting(snapshot)
@@ -61,13 +65,14 @@ def summary(snapshot: mission.Snapshot) -> str:
             "Decide in #approvals: " + ", ".join(f"{kind} {counts[kind]}" for kind in sorted(counts))
             + f". Soonest: {soonest.id}, by {picture.by_when(soonest.decide_by, now)}."
         )
-    if answer := picture.to_answer_by_hand(snapshot):
-        lines.append(f"Answer by hand: {answer}. Send `/growth inbox list`.")
     fixes = picture.fixes(_markdown_safe(snapshot))
     lines += [f"- {discord.shortened(item, SUMMARY_FIX_LIMIT)}" for item in fixes[:picture.FIX_SHOWN]]
     if len(fixes) > picture.FIX_SHOWN:
         lines.append(f"- and {len(fixes) - picture.FIX_SHOWN} more: run `jura-growth one-pager --no-post` on the Mac")
     lines.append(" · ".join(ASK_ME[:2]))
+    for name, found_lines in snapshot.plugin_sections:
+        if found_lines and name not in snapshot.quiet_sections:
+            lines += _section(name, list(found_lines))
     return "\n".join(lines)
 
 

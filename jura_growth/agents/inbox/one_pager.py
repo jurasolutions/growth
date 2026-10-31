@@ -1,8 +1,8 @@
 """R4: Replies waiting, the section of the one-pager's long text, and what `/growth pending` lists.
 
-Since the morning picture, the 09:00 post is the picture and a short message, which carry only counts:
-this section is in the text `--no-post` prints and in the post when the picture can't be drawn, and
-`/growth inbox list` prints it on request.
+The 09:00 post is the morning picture and its message. The picture carries only counts. The message
+carries this section whenever there is something to tell, so what is waiting reaches #mission-control
+every morning. `--no-post` and `/growth inbox list` print it on request.
 
 One line per open conversation: who wrote, where, how long ago, a short excerpt and what he must do. A
 promised reply is first (F10), then anything `high` (D9), then what only he can move, oldest first.
@@ -271,6 +271,13 @@ def pending_items(conn: sqlite3.Connection) -> list[PendingItem]:
 
 def lines(conn: sqlite3.Connection, since: str, *, limit: int | None = LINES_SHOWN) -> list[str]:
     """Every line of the section, most pressing first. It raises if the database does."""
+    return _read(conn, since, limit=limit)[0]
+
+
+def _read(conn: sqlite3.Connection, since: str, *, limit: int | None = LINES_SHOWN) -> tuple[list[str], bool]:
+    """The section's lines, and whether it is quiet: nothing waiting, nothing since the last one-pager,
+    no noise and nothing unread. A surface's last good read alone is routine, and a blind watch has its
+    own line under Needs you (F13), so it doesn't make a quiet morning's message longer."""
     now = timeutil.now_sgt()
     found = _conversations(conn, now)
     shown = [line.text for line in (found if limit is None else found[:limit])]
@@ -278,14 +285,16 @@ def lines(conn: sqlite3.Connection, since: str, *, limit: int | None = LINES_SHO
         shown.append(f"and {len(found) - limit} more: `/growth inbox list`")
     counted = _counted(conn, since)
     head = [counted] if counted else [] if shown else ["Nothing waiting"]
-    extras = (_noise_line(conn, since, capped=limit is not None), _unread_line(conn, now), _surface_line(conn))
-    return [*head, *shown, *[line for line in extras if line]]
+    told = [line for line in (_noise_line(conn, since, capped=limit is not None), _unread_line(conn, now)) if line]
+    surface = _surface_line(conn)
+    return [*head, *shown, *told, *([surface] if surface else [])], not (counted or shown or told)
 
 
-def section(conn: sqlite3.Connection, since: str) -> tuple[str, list[str]] | None:
-    """The one-pager's section, or None when the tables aren't there yet: `missing_migrations` says so."""
+def section(conn: sqlite3.Connection, since: str) -> tuple[str, list[str], bool] | None:
+    """The one-pager's section and whether it is quiet, or None when the tables aren't there yet:
+    `missing_migrations` says so."""
     try:
-        return SECTION, lines(conn, since)
+        return SECTION, *_read(conn, since)
     except sqlite3.OperationalError as error:
         if "no such" in str(error):
             return None

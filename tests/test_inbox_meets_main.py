@@ -7,6 +7,7 @@ Through the seams they are read at: rows in a real database, `/growth pending` a
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sqlite3
 from datetime import timedelta
@@ -18,10 +19,13 @@ import approval_world as aw
 import picture_world as world
 import sweep
 from jura_growth import agents, backup, caps, config, digest, discord, headless, one_pager, paths, picture, privacy, remote as remote_mod, runner, slots, timeutil
-from jura_growth.agents.inbox import kinds, store
+from jura_growth import cli as cli_mod
+from jura_growth.agents.inbox import kinds, one_pager as one_pager_section, store
 from jura_growth.cli import cli
 from jura_growth.origin import Origin
-from test_inbox_replies_waiting import HOURS_AGO, card, clock, item, jobs, known_contact, snapshot  # noqa: F401 - fixtures too
+from discord_double import discord_double  # noqa: F401 - a fixture
+from test_inbox_replies_waiting import HOURS_AGO, card, clock, item, jobs, known_contact, snapshot, surface  # noqa: F401 - fixtures too
+from test_one_pager_post import stub_grid  # noqa: F401 - a fixture
 
 WORDS = "We retype every invoice by hand."
 WHO = "Priya Nair"
@@ -201,8 +205,8 @@ def test_an_open_card_counts_as_one_to_decide_and_carries_no_words_or_name(conn,
     found = snapshot(jobs)
     assert picture.verdict(found).startswith("1 to decide")
     assert "email reply 1" in one_pager.summary(found)
-    for surface in (picture.html(found), one_pager.summary(found)):
-        assert WORDS not in surface and WHO not in surface and "Priya" not in surface
+    page = picture.html(found)
+    assert WORDS not in page and WHO not in page and "Priya" not in page
 
 
 @pytest.mark.parametrize("promised", [False, True])
@@ -211,9 +215,8 @@ def test_what_only_he_can_move_counts_and_carries_no_words_or_name(conn, jobs, p
     conn.commit()
     found = snapshot(jobs)
     assert "1 to answer by hand" in picture.verdict(found)
-    assert "Answer by hand: 1. Send `/growth inbox list`." in one_pager.summary(found)
-    for surface in (picture.html(found), one_pager.summary(found)):
-        assert WORDS not in surface and WHO not in surface and "Priya" not in surface
+    page = picture.html(found)
+    assert WORDS not in page and WHO not in page and "Priya" not in page
 
 
 def test_the_count_is_the_selection_replies_waiting_lists(conn, jobs):
@@ -223,7 +226,6 @@ def test_the_count_is_the_selection_replies_waiting_lists(conn, jobs):
     conn.commit()
     found = snapshot(jobs)
     assert "to answer by hand" not in picture.verdict(found)
-    assert "Answer by hand" not in one_pager.summary(found)
 
 
 def test_the_inbox_row_counts_cards_and_hand_replies_with_many_slots_a_day():
@@ -253,7 +255,6 @@ def test_a_quiet_day_adds_no_figure_and_no_words(conn, jobs):
     conn.commit()
     found = snapshot(jobs)
     assert "inbox_to_answer" not in found.morning.figures
-    assert "Answer by hand" not in one_pager.summary(found)
 
 
 def test_a_digest_that_failed_cant_read_as_all_clear(conn, jobs, monkeypatch):
@@ -295,6 +296,132 @@ def test_a_section_that_breaks_another_way_is_still_one_line(conn, jobs, monkeyp
     found = snapshot(jobs)
     assert found.db_state == "ok"
     assert found.plugin_sections == (("From inbox", ("This section couldn't be read (ValueError).",)),)
+
+
+# --- the message posted with the picture --------------------------------------------------------------
+
+
+def posted(conn, double) -> list:
+    """The morning's post through the job's own command and the Discord double."""
+    conn.commit()
+    result = CliRunner().invoke(cli, ["one-pager"])
+    assert result.exit_code == 0, result.output
+    return double.posts("mission-control")
+
+
+def test_a_waiting_reply_is_in_the_message_beside_the_picture(conn, discord_double, stub_grid):  # noqa: F811
+    found = item(conn, state=store.NEEDS_HAND_REPLY, text=WORDS)
+    (post,) = posted(conn, discord_double)
+    assert [name.endswith(".png") for name, _ in post.files] == [True]
+    lines = post.content.splitlines()
+    assert lines.index("**Replies waiting**") > next(n for n, line in enumerate(lines) if line.startswith("`/growth status`"))
+    assert WORDS in post.content and f"`/growth inbox done {store.label(found)}`" in post.content
+    assert post.content.count("**Replies waiting**") == 1
+
+
+def test_an_open_card_is_listed_there_with_where_to_decide(conn, discord_double, stub_grid, monkeypatch):  # noqa: F811
+    found = item(conn, state=store.WAITING, text=WORDS)
+    card(conn, found, 412)
+    monkeypatch.setattr(cli_mod, "_approval_upkeep", lambda conn, *, post: None)  # the row has no real draft behind it
+    (post,) = posted(conn, discord_double)
+    assert "**A-0412**" in post.content and "Approve or skip in #approvals" in post.content and WORDS in post.content
+
+
+def test_nothing_waiting_leaves_mains_message_exactly_as_it_was(conn, discord_double, stub_grid, jobs):  # noqa: F811
+    conn.commit()
+    found = snapshot(jobs)
+    assert found.plugin_sections == (("Replies waiting", ("Nothing waiting",)),)
+    assert one_pager.summary(found) == one_pager.summary(dataclasses.replace(found, plugin_sections=(), quiet_sections=()))
+    (post,) = posted(conn, discord_double)
+    assert "Replies waiting" not in post.content and "Nothing waiting" not in post.content
+
+
+def test_a_surfaces_last_good_read_alone_doesnt_lengthen_it(conn, jobs):
+    surface(conn, "instagram-primary", HOURS_AGO[1])
+    conn.commit()
+    found = snapshot(jobs)
+    assert any("Last good read" in line for _, lines in found.plugin_sections for line in lines)
+    assert "Replies waiting" in one_pager.text(found)
+    assert "Replies waiting" not in one_pager.summary(found)
+
+
+def test_noise_alone_is_told_since_this_line_is_its_only_sign(conn, jobs):
+    """R2 and S16: nothing can be silently swallowed, and a cold reply in Junk has only this line."""
+    item(conn, state=store.NOISE, domain="vendor.example", text="")
+    conn.commit()
+    summary = one_pager.summary(snapshot(jobs))
+    assert "**Replies waiting**" in summary and "vendor.example" in summary
+
+
+def test_a_section_that_couldnt_be_read_says_so_in_the_message(conn, jobs, monkeypatch):
+    """Never a quiet message over a section nobody could read."""
+    module = next(m for m in agents.plugins() if getattr(m, "NAME", "") == "inbox")
+    conn.commit()
+
+    def broken(conn, since):
+        raise ValueError("their words")
+
+    monkeypatch.setattr(module, "one_pager_section", broken)
+    summary = one_pager.summary(snapshot(jobs))
+    assert "This section couldn't be read (ValueError)." in summary and "their words" not in summary
+
+
+def test_a_plug_in_that_doesnt_say_quiet_is_told(conn, jobs, monkeypatch):
+    module = next(m for m in agents.plugins() if getattr(m, "NAME", "") == "inbox")
+    conn.commit()
+    monkeypatch.setattr(module, "one_pager_section", lambda conn, since: ("Spy", ["fine"]))
+    assert "**Spy**\nfine" in one_pager.summary(snapshot(jobs))
+
+
+def test_the_message_stays_plain_masked_and_the_picture_holds_only_counts(conn, discord_double, stub_grid, monkeypatch):  # noqa: F811
+    """B3: the conversation class is for cards and R1. A planted phone, address and learned name stay masked,
+    and nothing on this path asks for the class: the masks before the post would otherwise hide that it had."""
+    known_contact(conn)
+    item(conn, state=store.NEEDS_HAND_REPLY, name=sweep.PERSON, text=f"{sweep.PERSON} at {sweep.NAMED_ADDRESS}, {sweep.PHONE}: {WORDS[:10]}")
+    real, asked = privacy.for_discord, []
+
+    def spy(text, *args, **kwargs):
+        asked.append(kwargs.get("conversation"))
+        return real(text, *args, **kwargs)
+
+    monkeypatch.setattr(privacy, "for_discord", spy)
+    (post,) = posted(conn, discord_double)
+    assert asked and not any(asked)
+    assert "**Replies waiting**" in post.content
+    for value in (sweep.PERSON, sweep.NAMED_ADDRESS, sweep.PHONE):
+        assert value not in post.content
+    (page,) = paths.one_pager_dir().glob("picture-*.html")
+    written = page.read_text(encoding="utf-8")
+    assert "1 to answer by hand" in written
+    for value in (sweep.PERSON, sweep.NAMED_ADDRESS, sweep.PHONE, WORDS[:10]):
+        assert value not in written
+
+
+def test_a_persons_link_cant_go_live_in_the_message(conn, discord_double, stub_grid):  # noqa: F811
+    item(conn, state=store.NEEDS_HAND_REPLY, text="[Approve here](https://evil.example/x) @everyone")
+    (post,) = posted(conn, discord_double)
+    assert "](https://evil.example" not in post.content and "@everyone" not in post.content
+
+
+def test_a_long_section_splits_at_lines_and_keeps_the_picture_on_the_last_piece(conn, discord_double, stub_grid):  # noqa: F811
+    long_words = "We retype every invoice by hand and would like to know more. " * 4
+    target = "https://www.facebook.com/jura/posts/" + "1" * 120
+    for n in range(14):
+        item(conn, state=store.NEEDS_HAND_REPLY, source="facebook-comment", name=f"Person Number {n} " + "x" * 30, text=long_words, target=target)
+    for n in range(20):
+        item(conn, state=store.NOISE, domain=f"vendor{n}.example", text="")
+    found = posted(conn, discord_double)
+
+    assert len(found) >= 2
+    assert all(len(post.content) <= discord.MAX_CONTENT for post in found)
+    assert [bool(post.files) for post in found] == [False] * (len(found) - 1) + [True]
+    assert found[0].content.startswith("**") and "**Replies waiting**" in "".join(post.content for post in found)
+    whole = "\n".join(post.content for post in found)
+    assert "1 to answer by hand" not in whole and "14 to answer by hand" in whole
+    assert "and 4 more: `/growth inbox list`" in whole
+    assert sum(line.startswith("- **I-") for line in whole.splitlines()) == one_pager_section.LINES_SHOWN
+    # Split at a line: every line stands whole, with what to do at its end.
+    assert all(line.endswith("`.") for line in whole.splitlines() if line.startswith("- **I-"))
 
 
 # --- what both sides left in the runner and the backup ------------------------------------------------

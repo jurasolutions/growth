@@ -292,9 +292,10 @@ What a surface's first good read found, except a message known to be under 48 ho
 hasn't answered. It is stored and never told.
 
 **Replies waiting**:
-The one-pager's section for open inbox items, between Needs you and Approvals waiting, in its long text.
-`/growth inbox list` shows the same on request, with nothing capped, and `/growth pending` lists its lines.
-The morning picture has only their counts. Its count of reactions counts people writing: a rise in counts
+The one-pager's section for open inbox items, between Needs you and Approvals waiting in its long text,
+and after the message that carries the morning picture whenever there is something to tell. `/growth inbox
+list` shows the same on request, with nothing capped, and `/growth pending` lists its lines. The picture
+itself has only their counts. Its count of reactions counts people writing: a rise in counts
 or an app opened gets its own report, and isn't in that number.
 
 **Closed**:

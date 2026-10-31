@@ -194,8 +194,9 @@ conversation: who wrote, where, how long ago, an excerpt and what Ting Yu must d
 first, then anything high priority. Under the lines are the noise it filtered and each surface's last good
 read. It reads on the read model's read-only connection through the plug-in hook `one_pager_section(conn,
 since)`, and calls no kind's `content()`. `/growth inbox list` shows the same on request. The 09:00 post is
-the morning picture and a short message, so this section reaches Discord only when the picture can't be
-drawn: the picture carries counts, with no name or words. A card waiting is one of "to decide", and what only
+the morning picture and its message. The message carries this section, plain-masked, after its own lines whenever
+something is waiting, happened or was filtered, and stays as it was on a quiet morning. Past 2,000 characters it
+splits at a line, with the picture on the last piece. The picture itself carries counts, with no name or words. A card waiting is one of "to decide", and what only
 he can move is "to answer by hand", on the verdict and on its Inbox row, which owns the two reply kinds. `/growth pending` lists the same lines through the plug-in's `pending(conn)` hook,
 plain-masked and read-only: a promised reply or a hand reply under Waiting for you with what to send, and what is
 being read or sent under Growth is on it. A card still to decide is the core's own line there.
@@ -283,7 +284,7 @@ imports it by name. The module may define:
 | `REQUIRED_SETTINGS` | The `.env` settings the agent needs, by name. Each one not set is a setup gap in `jura-growth status` and the one-pager |
 | `setup_gaps()` | `[health.Gap(name, ok=...)]` in place of `REQUIRED_SETTINGS`: names and booleans only, never a value. `Gap(name, ok=..., must_be_unset=True)` is a setting that must *not* be set (the publish job's `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`), shown as "set, and must not be" |
 | `health(conn)` | Extra "Needs you" lines for the one-pager. `conn` is the read model's read-only connection, so a write raises |
-| `one_pager_section(conn, since)` | The plug-in's own section of the one-pager, `(name, lines)` or `None`, between Needs you and Approvals waiting. `conn` is the same read-only connection, and `since` is when the last one-pager went out. It may not call a kind's `content()`. An exception shows as one line naming its type |
+| `one_pager_section(conn, since)` | The plug-in's own section of the one-pager, `(name, lines)`, `(name, lines, quiet)` or `None`, between Needs you and Approvals waiting. The morning's message carries it too, unless it says it is `quiet`. `conn` is the same read-only connection, and `since` is when the last one-pager went out. It may not call a kind's `content()`. An exception shows as one line naming its type |
 | `retention(conn)` | Called first by the nightly backup, so tonight's copy doesn't hold what it removed: remove what the plug-in may no longer keep, and return counts for the backup's event. An exception is logged and the backup goes on |
 | `pending(conn)` | What the agent has unfinished, for `jura-growth pending`: `[agents.PendingItem(holder, text, order)]`, where `holder` is `agents.YOU`, `agents.GROWTH` or `agents.UNREAD` (a source that couldn't be read), and `order` places the line among its holder's: `agents.NEXT_STEP` (the default), `LISTED`, `COUNT` or `BACKLOG`, most urgent first. `conn` is the same read-only connection. An exception shows as one line saying what couldn't be read |
 

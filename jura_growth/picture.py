@@ -112,7 +112,7 @@ def _to_post_by_hand(snapshot: mission.Snapshot) -> int | None:
     return (snapshot.morning.figures if snapshot.morning else {}).get("social_drafts_by_hand")
 
 
-def to_answer_by_hand(snapshot: mission.Snapshot) -> int:
+def _to_answer_by_hand(snapshot: mission.Snapshot) -> int:
     """Conversations only Ting Yu can move: a promised reply, one needing a hand reply, and what lapsed,
     failed or stayed uncertain, as Replies waiting lists them. A count only: nobody's name or words reach
     the picture. A reply with a card waiting is already one of "to decide". The plug-in records no figure
@@ -145,7 +145,7 @@ def verdict(snapshot: mission.Snapshot) -> str:
         *([f"{n} to decide"] if (n := len(waiting(snapshot))) else []),
         *([f"{n} to fix"] if (n := len(fixes(snapshot))) else []),
         *([f"{by_hand} to post by hand"] if by_hand else []),
-        *([f"{n} to answer by hand"] if (n := to_answer_by_hand(snapshot)) else []),
+        *([f"{n} to answer by hand"] if (n := _to_answer_by_hand(snapshot)) else []),
         *([f"{health.plural(replies, 'reply', 'replies')} to read"] if replies else []),
     ]
     if parts:

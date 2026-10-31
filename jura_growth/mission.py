@@ -121,6 +121,7 @@ class Snapshot:
     gaps: tuple[health.Gap, ...] = ()
     plugin_lines: tuple[str, ...] = ()  # plug-ins' own "Needs you" lines (their health(conn) hook)
     plugin_sections: tuple[tuple[str, tuple[str, ...]], ...] = ()  # (name, lines) from their one_pager_section hook
+    quiet_sections: tuple[str, ...] = ()  # the names of those with nothing to tell: the long text only, not the morning's message
     broken: tuple[str, ...] = ()  # plug-ins that failed to load
     yesterday: Yesterday | None = None
     spend_today: float = 0.0
@@ -356,7 +357,7 @@ def _from_db(
     if "approvals" in tables:
         facts["approvals"] = _requests(conn, now, last_one_pager=last)
     facts["plugin_lines"] = _plugin_lines(conn)
-    facts["plugin_sections"] = _plugin_sections(conn, since)
+    facts["plugin_sections"], facts["quiet_sections"] = _plugin_sections(conn, since)
     return facts
 
 
@@ -445,12 +446,14 @@ def _plugin_lines(conn: sqlite3.Connection) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def _plugin_sections(conn: sqlite3.Connection, since: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+def _plugin_sections(conn: sqlite3.Connection, since: str) -> tuple[tuple[tuple[str, tuple[str, ...]], ...], tuple[str, ...]]:
     """Each plug-in's own section of the one-pager (`one_pager_section(conn, since) -> (name, lines)
-    | None`), given the read-only connection and when the last one-pager went out. Its error's name
+    | (name, lines, quiet) | None`), given the read-only connection and when the last one-pager went
+    out, and the names of those that say they are `quiet`. Its error's name
     only: an exception's words could hold what the section was reading. A lock raises out, as it does
     from `_plugin_lines`: the snapshot then says so, and the post waits for it."""
     sections: list[tuple[str, tuple[str, ...]]] = []
+    quiet: list[str] = []
     for module in agents.plugins():
         hook = getattr(module, "one_pager_section", None)
         if not callable(hook):
@@ -459,12 +462,14 @@ def _plugin_sections(conn: sqlite3.Connection, since: str) -> tuple[tuple[str, t
             found: Any = hook(conn, since)
             if found:
                 sections.append((_clean(str(found[0])), tuple(_clean(str(line)) for line in found[1])))
+                if len(found) > 2 and found[2]:
+                    quiet.append(sections[-1][0])
         except Exception as error:  # noqa: BLE001 - one plug-in never breaks the one-pager
             if _is_lock(error):
                 raise
             name = _clean(str(getattr(module, "NAME", "a plug-in")))
             sections.append((f"From {name}", (f"This section couldn't be read ({type(error).__name__}).",)))
-    return tuple(sections)
+    return tuple(sections), tuple(quiet)
 
 
 def one_pager_times(now: datetime, jobs: Mapping[str, Mapping[str, Any]]) -> tuple[datetime, datetime]:
