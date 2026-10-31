@@ -155,7 +155,7 @@ def test_an_email_queued_by_the_morning_run_gets_its_card_ahead_of_the_send_wind
     [post] = card_posts(discord_double)
     assert post.content.startswith(f"**{queued.approval} · outreach email** · decide by Tue 10 Nov, 16:30 SGT")
     assert queued.send_after == "2026-11-06"
-    send.send_due(conn)  # 06:40 is outside the window, even for a job that ran early
+    send.send_due(conn)
     assert sent == []
     assert db.scalar(conn, "SELECT status FROM outreach_messages WHERE id = ?", (queued.message_id,)) == "queued"
 

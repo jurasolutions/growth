@@ -161,7 +161,8 @@ def test_control_discord_user_id_is_a_core_gap(tmp_path, monkeypatch):
 
 # --- jura-growth status ------------------------------------------------------
 
-# `jura-growth status` on crew/mission-control at 8e3d9b4, before the gap lines.
+# `jura-growth status` on crew/mission-control at 8e3d9b4, before the gap lines, with its
+# times following the morning brief PRD.
 # TMP is the test's temp folder; {channels} is however many Discord channels
 # settings.yaml lists, which parallel tickets add to.
 STATUS_GOLDEN = """\
