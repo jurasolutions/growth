@@ -121,6 +121,7 @@ OLD_TIMES = [
     ("07:00", ["docs/social.md", "prompts/social.md", "config/social.yaml", "jura_growth/agents/social"]),
     ("07:30", ["docs/community.md", "prompts/community.md", "jura_growth/agents/community"]),
     ("09:00", ["prompts/scout.md", "config/scout.yaml", "jura_growth/agents/scout"]),
+    ("08:00", [".env.example", ".scratch/mission-control/setup/discord.md"]),
 ]
 
 
@@ -129,6 +130,7 @@ def test_a_moved_jobs_own_files_no_longer_name_its_old_time(old, places):
     stale = []
     for place in places:
         root = paths.REPO_ROOT / place
+        assert root.exists(), f"{place} is gone, so this search proves nothing"
         for path in [root] if root.is_file() else sorted(root.rglob("*.py")):
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 if old in line:
@@ -141,6 +143,12 @@ def test_the_scout_guide_gives_research_its_new_time():
     assert "**06:30 `scout-research`**" in text
     assert "**08:30 `outreach-requests`**" in text
     assert "09:00 `scout-research`" not in text
+
+
+def test_the_discord_guide_says_the_post_carries_the_morning_picture():
+    guide = (paths.REPO_ROOT / ".scratch" / "mission-control" / "setup" / "discord.md").read_text(encoding="utf-8")
+    assert "14-day grid" not in guide
+    assert guide.count("morning picture") == 2
 
 
 def test_the_one_pager_runs_at_09_00_in_the_setup_guide():
