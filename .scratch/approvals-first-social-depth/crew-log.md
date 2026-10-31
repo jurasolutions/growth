@@ -31,3 +31,21 @@ decisions: a card's "carousel": false is refused on a carousel theme (qa-lead's 
 decisions: its 11 approval and privacy guard rewrites stay strict; 26 fixture-only failures are fixed in one place
 questions: -
 evidence:  reviews/test-strategy.md read by the developers through their briefs
+
+## 2026-10-31T20:40+0800 developer (ticket 03, appended by the conductor)
+status:    done
+persona:   developer
+ticket:    03
+artifacts: crew/approvals-first-social-depth-03-schedule-drift 19d6465 d33135a; jura_growth/health.py, jura_growth/mission.py, tests/test_schedule_drift.py
+decisions: largest agreeing group; on time means within DRIFT_TOLERANCE; a bad stamp is dropped and never breaks the one-pager
+questions: -
+evidence:  target files -> 161 passed; uv run pytest -> 41 failed (same list as baseline), 4006 passed; pyright -> 0 errors
+
+## 2026-10-31T20:41+0800 reviewer (ticket 03)
+status:    done
+persona:   reviewer
+ticket:    03
+artifacts: reviews/code-review-03.md
+decisions: approve, four should-fixes, all applied in the fix round. Live rows through mission.read gave "about 9 hours off"; a simulated restart clears it
+questions: -
+evidence:  see reviews/code-review-03.md
