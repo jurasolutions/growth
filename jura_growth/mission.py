@@ -33,7 +33,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
-from jura_growth import agents, discord, health, paths, privacy, schedule, slots, timeutil
+from jura_growth import agents, db, discord, health, paths, privacy, schedule, slots, timeutil
 from jura_growth.timeutil import SGT
 
 OK, MISSING, UNFINISHED_WRITE, UNREADABLE = "ok", "missing", "unfinished write", "unreadable"
@@ -64,10 +64,10 @@ NOT_MIGRATED = DbWording("growth.db isn't migrated yet ({listed}). Send `/growth
                          "Not available: growth.db isn't migrated yet")
 BUSY_TIMEOUT = 2  # seconds: scout-send writes every 10 minutes, so reads stay short
 # Seconds: how long the one-pager's post waits for a lock, and how often it asks. Dispatch gives
-# `/growth one-pager` 60 seconds, and one-pagers aren't deduplicated, so a post that goes out after
-# Dispatch has reported a failure gets asked for again and posts twice.
-LOCK_PATIENCE, LOCK_RETRY = 45, 5
-_BUSY = {"SQLITE_READONLY_ROLLBACK", "SQLITE_BUSY", "SQLITE_LOCKED"}
+# `/growth one-pager` 60 seconds for this and for four short waits on write connections, and
+# one-pagers aren't deduplicated, so a post that goes out after Dispatch has reported a failure gets
+# asked for again and posts twice.
+LOCK_PATIENCE, LOCK_RETRY = 30, 5
 
 
 @dataclass(frozen=True)
@@ -277,11 +277,11 @@ def _connect(path: Path) -> tuple[sqlite3.Connection | None, str, str | None]:
 
 def _is_lock(error: Exception) -> bool:
     """A lock or a hot journal: a passing state, which raises out to `db_state` and the retry."""
-    return isinstance(error, sqlite3.Error) and _state_of(error) == UNFINISHED_WRITE
+    return db.is_lock(error)
 
 
 def _state_of(error: sqlite3.Error) -> str:
-    return UNFINISHED_WRITE if _error_name(error) in _BUSY or "locked" in str(error) else UNREADABLE
+    return UNFINISHED_WRITE if db.is_lock(error) else UNREADABLE
 
 
 def _error_name(error: sqlite3.Error) -> str:
@@ -316,8 +316,6 @@ def _tables(conn: sqlite3.Connection) -> set[str]:
 
 
 def _missing_migrations(conn: sqlite3.Connection, tables: set[str]) -> tuple[str, ...]:
-    from jura_growth import db  # the migration list only; never db's connections
-
     done = {row[0] for row in conn.execute("SELECT id FROM schema_migrations")} if "schema_migrations" in tables else set()
     expected = [f"{owner}/{file.name}" for owner, folder in db.migration_sets() for file in sorted(folder.glob("*.sql"))]
     return tuple(m for m in expected if m not in done)
