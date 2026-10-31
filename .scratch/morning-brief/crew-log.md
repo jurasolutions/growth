@@ -64,3 +64,13 @@ decisions: an unknown count says "Nothing to decide or fix, but some figures cou
 decisions: "Didn't run" also skipped when not installed; message Fix lines cut at 360 characters
 questions: -
 evidence:  pytest -> 4181 passed, 0 skipped; 22 mutants, 21 caught; real fonts worst 1548 px, before the last edits, QA re-records
+
+## 2026-10-31T21:05+0800 developer and conductor
+status:    done
+persona:   developer, then conductor
+ticket:    02
+artifacts: branch crew/morning-brief-02-the-morning-order up to b08777e, merged into crew/morning-brief
+decisions: conductor read the fix-round diff in place of a second review round: narrow, matches every requested change; the final review covers it again
+decisions: S3 (glossary clause) and morning-brief.md:8 wait for ticket 01's merge; S4 waits for the rebase
+questions: -
+evidence:  full pytest -> 13 failed (ticket 01's), 4054 passed; pyright on slots.py, outreach/cli.py -> 0 errors

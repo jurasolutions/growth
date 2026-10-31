@@ -106,7 +106,7 @@ def raise_due_cmd() -> str | None:
         raised = approval.raise_due(conn)
         if not approval.raising_problem(conn):
             approval.post_cards(conn)
-    summary =f"raised {count(len(raised), 'approval request')}" if raised else None
+    summary = f"raised {count(len(raised), 'approval request')}" if raised else None
     click.echo(summary or "no requests raised")
     return summary
 
