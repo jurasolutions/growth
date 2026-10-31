@@ -67,6 +67,8 @@ The database stays in rollback-journal mode, not WAL, because it lives in OneDri
 | `jura-growth status` | Pauses, last runs, schedule, Discord setup and setup gaps (the same list as the one-pager's) |
 | `jura-growth approvals [kind]` | Pending approval requests, the 15 soonest to lapse first. Decisions come only from `#approvals`, through Dispatch (ADR 0004) |
 | `jura-growth remote …` | Control commands from Discord, reached only through Dispatch's SSH forced command (`bin/growth-remote`) and refused anywhere else. See `docs/dispatch-contract.md` |
+| `jura-growth help` | List the control commands you can send from Discord, each with a one-line summary. Also `/growth help` |
+| `jura-growth pending` | Growth's unfinished work, by who holds the next step, and what to send next. It reads only, and a source it couldn't read gets its own line. Also `/growth pending` |
 | `jura-growth one-pager [--no-post] [--grid]` | Post the morning picture to `#mission-control` with a short message: the verdict, Decide, Fix, This morning, Yesterday and Later today. It writes the approval lapses that are due first, unless `growth.db` is locked, then reads `growth.db` read-only and never repairs it (ADR 0002). When the picture can't be drawn, the long text goes instead and says why. `--no-post` only prints the long text. `--grid` only draws the 14-day grid to a file and prints its path |
 | `jura-growth run <job>` | Run a scheduled job now. `--dry-run` prints the command, `--ignore-schedule` runs on a weekend or holiday |
 | `jura-growth schedule list\|render\|install\|uninstall [jobs]` | launchd jobs |
@@ -198,6 +200,7 @@ imports it by name. The module may define:
 | `REQUIRED_SETTINGS` | The `.env` settings the agent needs, by name. Each one not set is a setup gap in `jura-growth status` and the one-pager |
 | `setup_gaps()` | `[health.Gap(name, ok=...)]` in place of `REQUIRED_SETTINGS`: names and booleans only, never a value. `Gap(name, ok=..., must_be_unset=True)` is a setting that must *not* be set (the publish job's `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`), shown as "set, and must not be" |
 | `health(conn)` | Extra "Needs you" lines for the one-pager. `conn` is the read model's read-only connection, so a write raises |
+| `pending(conn)` | What the agent has unfinished, for `jura-growth pending`: `[agents.PendingItem(holder, text)]`, where `holder` is `agents.YOU`, `agents.GROWTH` or `agents.UNREAD` (a source that couldn't be read). `conn` is the same read-only connection. An exception shows as one line saying what couldn't be read |
 
 Every hook except `NAME` is optional and found with `getattr`. Its prompt goes in
 `prompts/<job>.md`, its settings in `config/<name>.yaml`, and its hard limits in `caps.py`.

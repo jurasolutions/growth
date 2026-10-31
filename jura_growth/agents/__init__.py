@@ -81,6 +81,13 @@ core. A plug-in module may define any of:
         connection (`mission.py`, ADR 0002), so a write raises; an
         exception shows as one line saying the check failed.
 
+    pending(conn) -> list[PendingItem]
+        What this agent has unfinished, for `jura-growth pending`: who holds the
+        next step and its text, in the words of Discord (`/growth …`). `conn` is
+        the read model's read-only connection, so a write raises, and a hook
+        takes no lock. An exception shows as one line saying what couldn't be
+        read, and a lock makes the whole answer say so: never "nothing pending".
+
 The optional hooks are found with `getattr`, like `digest()`, so a plug-in
 that defines none of them still loads.
 """
@@ -90,6 +97,7 @@ from __future__ import annotations
 import importlib
 import pkgutil
 import sys
+from dataclasses import dataclass
 from functools import lru_cache
 from types import ModuleType
 
@@ -97,6 +105,22 @@ from types import ModuleType
 class NothingToDo(str):
     """What a precheck returns for a run that found nothing to do. The
     runner records it as a quiet run; any other string is a skip."""
+
+
+# Who holds the next step of a `PendingItem`. `UNREAD` holds nothing: it says a source couldn't be
+# read, so the answer can't say "nothing pending".
+YOU, GROWTH, UNREAD = "you", "growth", "unread"
+
+
+@dataclass(frozen=True)
+class PendingItem:
+    """One line of `jura-growth pending`. `order` places it among its holder's items: lower first,
+    and equal keep the order the plug-ins gave them. 0 is a next step or work under way, 1 a list
+    of items, 2 a count and 3 a backlog line."""
+
+    holder: str
+    text: str
+    order: int = 0
 
 
 BROKEN: dict[str, str] = {}

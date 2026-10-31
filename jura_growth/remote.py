@@ -60,11 +60,12 @@ class Refusal(Exception):
 
 @dataclass(frozen=True)
 class Entry:
-    """One control command: how Ting Yu types it, and how it becomes the real
-    command's arguments. `decision` commands answer from the closed enum."""
+    """One control command: how Ting Yu types it, how it becomes the real command's arguments, and
+    `summary`, its one plain line in `help`. `decision` commands answer from the closed enum."""
 
     usage: str
     argv: Callable[[list[str], str | None], list[str]]
+    summary: str
     decision: bool = False
 
 
@@ -167,7 +168,7 @@ def _requeue_shadow(words: list[str], ref: str | None) -> list[str]:
     return argv
 
 
-def _with_options(usage: str) -> Entry:
+def _with_options(usage: str, summary: str) -> Entry:
     """The entry for a command typed as its usage says: one id, then each `--option <…>` of the
     usage exactly once, as `--option value` or `--option=value`, in any order. The values go over as
     `--option=value`, so none of them is ever read as an option of its own, and the id goes after
@@ -199,29 +200,31 @@ def _with_options(usage: str) -> Entry:
             raise Refusal(f"say it as `{usage}`, each option once")
         return [*name.split(), *(f"{option}={given[option]}" for option in options), "--", ids[0]]
 
-    return Entry(usage, build)
+    return Entry(usage, build, summary)
 
 
 # Sorted by command, one entry per line, so tickets 09, 12 and browser-publishing#03 each add
 # their rows in a hunk of their own. `docs/dispatch-contract.md` lists them in the same order.
 ALLOWLIST: dict[str, Entry] = {
-    "approvals": Entry("approvals [kind]", _positional("approvals", 0, 1)),
-    "approve": Entry("approve <A-nnnn> [key=value …] [note]", _decision("approve"), decision=True),
-    "apps built": _with_options("apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>"),
-    "apps handoffs": Entry("apps handoffs", _none("apps handoffs")),
-    "apps idea": Entry("apps idea <text>", _idea),
-    "apps release-plan": Entry("apps release-plan <APP-NNN>", _positional("apps release-plan", 1, 1)),
-    "apps released": _with_options("apps released <APP-NNN> --task <T-nnnn>"),
-    "community removed": Entry("community removed <group-id>", _positional("community removed", 1, 1)),
-    "one-pager": Entry("one-pager", _none("one-pager")),
-    "outreach requeue-shadow": Entry("outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]", _requeue_shadow),
-    "pause": Entry("pause <agent|all> [reason]", _pause),
-    "publish queue": Entry("publish queue", _none("publish queue")),
-    "publish resolve": Entry("publish resolve <A-nnnn> posted --url <url> | not-posted", _publish_resolve),
-    "resume": Entry("resume <agent|all>", _positional("resume", 1, 1)),
-    "skip": Entry("skip <A-nnnn> [note]", _decision("skip"), decision=True),
-    "social skip": Entry("social skip <date> <platform>", _positional("social skip", 2, 2)),
-    "status": Entry("status", _none("status")),
+    "approvals": Entry("approvals [kind]", _positional("approvals", 0, 1), "List the requests waiting for you, soonest to lapse first."),
+    "approve": Entry("approve <A-nnnn> [key=value …] [note]", _decision("approve"), "Approve a request.", decision=True),
+    "apps built": _with_options("apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>", "Dispatch sends this, to report a build and ask for its release."),
+    "apps handoffs": Entry("apps handoffs", _none("apps handoffs"), "Dispatch sends this, to list the builds waiting for a builder."),
+    "apps idea": Entry("apps idea <text>", _idea, "Add your own idea to the app backlog."),
+    "apps release-plan": Entry("apps release-plan <APP-NNN>", _positional("apps release-plan", 1, 1), "Claim an approved release and get its merge."),
+    "apps released": _with_options("apps released <APP-NNN> --task <T-nnnn>", "Record a release once main holds it."),
+    "community removed": Entry("community removed <group-id>", _positional("community removed", 1, 1), "Mark a group as removed, for good."),
+    "help": Entry("help", _none("help"), "List these commands."),
+    "one-pager": Entry("one-pager", _none("one-pager"), "Post the morning picture to #mission-control."),
+    "outreach requeue-shadow": Entry("outreach requeue-shadow [--since YYYY-MM-DD] [--dry-run]", _requeue_shadow, "Queue shadow emails again, each with a request."),
+    "pause": Entry("pause <agent|all> [reason]", _pause, "Stop an agent, or all of them."),
+    "pending": Entry("pending", _none("pending"), "List what is unfinished, and what to send next."),
+    "publish queue": Entry("publish queue", _none("publish queue"), "List every publish item and its state."),
+    "publish resolve": Entry("publish resolve <A-nnnn> posted --url <url> | not-posted", _publish_resolve, "Settle a publish item whose outcome is unknown."),
+    "resume": Entry("resume <agent|all>", _positional("resume", 1, 1), "Start an agent again, or all of them."),
+    "skip": Entry("skip <A-nnnn> [note]", _decision("skip"), "Skip a request.", decision=True),
+    "social skip": Entry("social skip <date> <platform>", _positional("social skip", 2, 2), "Leave out a platform's post, today or tomorrow."),
+    "status": Entry("status", _none("status"), "Show pauses, last runs, the schedule and setup gaps."),
 }
 
 
@@ -238,6 +241,15 @@ def match(words: list[str]) -> tuple[str, Entry, list[str]]:
 
 def _short(text: str, limit: int = 60) -> str:
     return discord.shortened(text, limit)
+
+
+HELP_INTRO = "Send each as `/growth <command>`, or as a plain message in #control."
+
+
+def help_text() -> str:
+    """`help`: built from `ALLOWLIST`, so the list can't go stale. It fits `TEXT_LIMIT` with no cut
+    (`tests/test_remote_help.py`), so keep each summary to one short line."""
+    return "\n".join([HELP_INTRO, *(f"`{entry.usage}`: {entry.summary}" for entry in ALLOWLIST.values())])
 
 
 # --- the answer ---------------------------------------------------------------------------------
@@ -459,6 +471,11 @@ def _record(words: list[str], actor: str | None, ref: str | None, reply: Reply, 
 
 
 def register(cli: click.Group) -> None:
+    @cli.command("help")
+    def help_command() -> None:
+        """List the control commands you can send from Discord."""
+        click.echo(help_text())
+
     @cli.command("remote", context_settings={"allow_interspersed_args": False, "ignore_unknown_options": True})
     @click.option("--actor", help="Who sent it: discord:<id> (attribution).")
     @click.option("--ref", help="Dispatch's delivery reference: <message id>:<delivery id>.")
@@ -469,8 +486,9 @@ def register(cli: click.Group) -> None:
         """A control command from Discord, through Dispatch's SSH forced command only."""
         words = list(words)
         # The one-pager's post path has Dispatch's 60 seconds for everything, and has used most of
-        # them if growth.db is locked: its answer can't wait another 30 on each of these.
-        wait = db.SHORT_WAIT if words[:1] == ["one-pager"] else None
+        # them if growth.db is locked: its answer can't wait another 30 on each of these. `pending`
+        # and `help` only read, and an answer saying growth.db is locked must get back in time.
+        wait = db.SHORT_WAIT if words[:1] in (["one-pager"], ["pending"], ["help"]) else None
         reply = _masked(handle(ctx, words, actor=actor, ref=ref), wait)
         _record(words, actor, ref, reply, wait)
         click.echo(payload(reply) if as_json else reply.text)

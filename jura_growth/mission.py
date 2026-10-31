@@ -214,7 +214,7 @@ def read(source: Source) -> Snapshot:
     days = tuple(now.date() - timedelta(days=n) for n in reversed(range(source.days)))
     scheduled, following = one_pager_times(now, source.jobs)
     installs = health.install_states(source.jobs, source.installed)
-    conn, state, error = _connect(Path(source.db))
+    conn, state, error = connect(Path(source.db))
     try:
         last, facts = scheduled, {}
         if conn is None:
@@ -225,7 +225,7 @@ def read(source: Source) -> Snapshot:
                 last = _last_one_pager(conn, now, scheduled)
                 facts = _from_db(conn, source, now, days, installs, last)
             except sqlite3.Error as failure:
-                last, facts, state, error = scheduled, {}, _state_of(failure), _error_name(failure)
+                last, facts, state, error = scheduled, {}, state_of(failure), error_name(failure)
         return Snapshot(
             now,
             state,
@@ -259,19 +259,19 @@ def read_patiently(source: Source, *, sleep: Callable[[float], None] = time.slee
         waited += LOCK_RETRY + BUSY_TIMEOUT  # each read may itself wait for the lock
 
 
-def _connect(path: Path) -> tuple[sqlite3.Connection | None, str, str | None]:
+def connect(path: Path) -> tuple[sqlite3.Connection | None, str, str | None]:
     """The read-only connection, already past its first query, or why not."""
     if not path.exists():
         return None, MISSING, None
     try:
         conn = open_read_only(path)
     except sqlite3.Error as error:
-        return None, _state_of(error), _error_name(error)
+        return None, state_of(error), error_name(error)
     try:
         conn.execute("SELECT count(*) FROM sqlite_master").fetchone()  # a hot journal or a lock shows here
     except sqlite3.Error as error:
         conn.close()
-        return None, _state_of(error), _error_name(error)
+        return None, state_of(error), error_name(error)
     return conn, OK, None
 
 
@@ -280,11 +280,11 @@ def _is_lock(error: Exception) -> bool:
     return db.is_lock(error)
 
 
-def _state_of(error: sqlite3.Error) -> str:
+def state_of(error: sqlite3.Error) -> str:
     return UNFINISHED_WRITE if db.is_lock(error) else UNREADABLE
 
 
-def _error_name(error: sqlite3.Error) -> str:
+def error_name(error: sqlite3.Error) -> str:
     return getattr(error, "sqlite_errorname", None) or type(error).__name__
 
 

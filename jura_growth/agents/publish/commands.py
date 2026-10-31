@@ -27,6 +27,7 @@ from pathlib import Path
 import click
 
 from jura_growth import approvals, caps, db, discord, log, pause, timeutil
+from jura_growth.agents import GROWTH, YOU, PendingItem
 from jura_growth.agents.publish import claim, fixture, hosts, items, kinds, outcomes
 from jura_growth.agents.publish import text as text_mod
 
@@ -321,6 +322,37 @@ def _request_word(conn: sqlite3.Connection, found: items.Item) -> tuple[approval
         return used, "claimed"
     latest = items.latest_request(conn, found)
     return latest, (latest.status if latest else "no request")
+
+
+PENDING_SHOWN = 5  # open items `pending` lists before "and N more"
+
+
+def pending_items(conn: sqlite3.Connection) -> list[PendingItem]:
+    """`pending`'s lines for the open items, on the read model's read-only connection. An item whose
+    outcome is unknown, or a claim no run will close, is Ting Yu's to settle; the rest are growth's."""
+    rows = [items.Item.from_row(r) for r in conn.execute(
+        "SELECT * FROM publish_items WHERE state IN ('unknown', 'ready', 'claimed') ORDER BY day, id")]
+    found, open_lines = [], []
+    for item in rows:
+        record, word = _request_word(conn, item)
+        if item.state == "unknown" or items.stale_claim(conn, item):
+            found.append(PendingItem(YOU, _settle_line(item, record)))
+        else:
+            open_lines.append(f"{_where(item)}: ready (request {word})" if item.state == "ready" else f"{_where(item)}: {item.state}")
+    found += [PendingItem(GROWTH, line, order=1) for line in open_lines[:PENDING_SHOWN]]
+    if len(open_lines) > PENDING_SHOWN:
+        found.append(PendingItem(GROWTH, f"and {len(open_lines) - PENDING_SHOWN} more: send `/growth publish queue`", order=1))
+    return found
+
+
+def _settle_line(item: items.Item, record: approvals.Approval | None) -> str:
+    why = "the outcome is unknown" if item.state == "unknown" else "no run will finish its claim"
+    if record is None:
+        return f"{_where(item)}: {why}, and it has no request on record."
+    not_posted = f"`/growth publish resolve {record.id} not-posted`"
+    if item.kind not in POSTS:  # `publish resolve` takes only not-posted for a join
+        return f"{_where(item)}: {why}. Check the group, then send {not_posted}."
+    return f"{_where(item)}: {why}. Check the page, then send `/growth publish resolve {record.id} posted --url <url>` or {not_posted}."
 
 
 @publish.command()

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import click
 
-from jura_growth import brand_check, cards, db, discord, log, timeutil
+from jura_growth import agents, brand_check, cards, db, discord, log, timeutil
 from jura_growth.agents.community import group_rules
 from jura_growth.agents.community import groups as groups_mod
 from jura_growth.agents.community import plan as plan_mod
@@ -89,6 +89,13 @@ def precheck(job: str, conn: sqlite3.Connection) -> str | None:
             log.event(conn, "community.group.rules_pass_error", {"error": f"{type(error).__name__}: {error}"},
                       level="warning", agent=NAME)
     return None
+
+
+def pending(conn: sqlite3.Connection) -> list:
+    """`jura-growth pending`: the posts planned for today onward."""
+    planned = db.scalar(conn, "SELECT count(*) FROM community_posts WHERE kind = 'post' AND status = 'planned' AND planned_day >= ?",
+                        (timeutil.today_str(),)) or 0
+    return [agents.PendingItem(agents.GROWTH, f"{planned} community post{'s' if planned != 1 else ''} planned for today onward.", order=2)] if planned else []
 
 
 def digest(conn: sqlite3.Connection, day: str) -> dict:
