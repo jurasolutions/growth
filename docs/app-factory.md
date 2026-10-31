@@ -154,16 +154,18 @@ Going to production is a second approval, bound to the exact commit (`agents/app
 MC §5.7 `app-release` row, §5.9 steps 3 and 4).
 
 1. **Built.** The builder pushes the task branch, based on `main`, and Cloudflare Pages gives it a
-   preview. Protecting previews with Cloudflare Access is still to do: it is Ting Yu's setup step
-   (Dispatch D8, ticket 16), and until then a preview link works for anyone who has it. `apps
+   preview. Previews are public, by Ting Yu's decision on 2026-10-31: anyone with the link can open
+   one with no sign-in, before the release is approved. That goes for every branch of the landing
+   page, not only app builds, and a preview runs the real Functions with the project's Preview
+   settings. Cloudflare asks search engines not to index previews, but that doesn't hide them. `apps
    built` records the task, the branch, its full head SHA and the preview on the build's
    `app_builds` row, and raises an `app-release` request over the app id, task id, branch, SHA and
    preview link. The card shows the preview link as plain text, the short SHA, and a reminder that
    the preview follows the branch's latest push while the release is that one commit. Refused: a
    build that was never handed off, a short SHA, a SHA `main` already contains, and any preview
    other than a bare `https://<branch>.<pages_project>.pages.dev` link, where `pages_project` in
-   `config/apps.yaml` names the landing page's Pages project, `landing-page` (unset, every preview
-   is refused). A
+   `config/apps.yaml` is the `pages.dev` name of the landing page's Pages project,
+   `landing-page-eq7` (unset, every preview is refused). A
    commit pushed later, or another preview link, needs its own request: reporting it supersedes the
    old one.
 2. **Approve.** Nothing happens yet. The approval has 14 days to be used.
