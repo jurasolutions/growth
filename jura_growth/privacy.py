@@ -22,6 +22,13 @@ Secrets, phone numbers, prospects' named addresses and every learned name
 drops an outreach draft that greets a person or names the person behind a
 named address, so an email preview shows its draft exactly.
 
+**A conversation (inbox watch PRD §4).** A builder names what a person wrote to
+Jura, their display name, and a draft answering them with `conversation`. That
+is `own_copy` without the name matcher: a registered body, a learned name and
+Ting Yu's own address are left as written, while phone numbers, prospects'
+named addresses, secrets and the finance rule still mask. Only inbox reports
+and inbox cards use it; everywhere else the rules above stand.
+
 **What the process knows.** A name or a reply body can't be recognised by its
 shape, so the process says what it knows:
 
@@ -108,12 +115,14 @@ _kept_names: set[str] = set()  # names that are not a prospect's (Ting Yu's own)
 _owner: set[str] = set()  # Ting Yu's addresses, lower-cased
 
 
-def for_discord(text: str, *, own_copy: Iterable[str] = ()) -> str:
+def for_discord(text: str, *, own_copy: Iterable[str] = (), conversation: Iterable[str] = ()) -> str:
     """`text` as it may appear in Discord: secrets masked, then personal data.
 
-    `own_copy` names substrings of `text` that are Jura's own outgoing text."""
+    `own_copy` names substrings of `text` that are Jura's own outgoing text,
+    `conversation` the substrings a person wrote to Jura or that answer them."""
     text = config.redact(text)
     own = [config.redact(c) for c in own_copy if c and c.strip()]
+    talk = [config.redact(c) for c in conversation if c and c.strip()]
     groups = set(_name_groups)
     for match in EMAIL_RE.finditer(text):
         address = _plain(match.group(0))
@@ -122,7 +131,7 @@ def for_discord(text: str, *, own_copy: Iterable[str] = ()) -> str:
             if parts:
                 groups.add(frozenset(parts))
     names = _NameMatcher(groups, _companies | _kept_names)
-    return "".join(_mask(part, is_own, names) for part, is_own in _split(text, own))
+    return "".join(_mask(part, kind, names) for part, kind in _split(text, own, talk))
 
 
 def _bare(value: str) -> str:
@@ -275,16 +284,20 @@ config.on_reset(reset)
 # --- masking -------------------------------------------------------------------
 
 
-def _mask(text: str, own: bool, names: "_NameMatcher") -> str:
-    if not own:
+# What a piece of a message is, which decides how it is masked.
+_PLAIN, _OWN, _CONVERSATION = "plain", "own", "conversation"
+
+
+def _mask(text: str, kind: str, names: "_NameMatcher") -> str:
+    if kind == _PLAIN:
         for value in sorted(_never, key=len, reverse=True):
             # Any spacing: two spaces or a line break between the words still matches.
             words = r"\s+".join(re.escape(w) for w in value.split())
             text = re.sub(words, REMOVED, text, flags=re.I)
     text = FINANCE_LINE_RE.sub(FINANCE, text)
-    text = EMAIL_RE.sub(lambda m: _address(m.group(0), own), text)
+    text = EMAIL_RE.sub(lambda m: _address(m.group(0), kind != _PLAIN), text)
     text = _mask_phones(text)
-    return _outside_urls(text, names.mask)
+    return text if kind == _CONVERSATION else _outside_urls(text, names.mask)
 
 
 def _address(written: str, own: bool) -> str:
@@ -352,17 +365,19 @@ def _name_parts(email: str) -> set[str]:
     return parts - NOT_NAMES
 
 
-def _split(text: str, own: list[str]) -> list[tuple[str, bool]]:
-    """`text` cut into (piece, is Jura's own copy) by where each own-copy string occurs."""
-    if not own:
-        return [(text, False)]
-    pattern = re.compile("|".join(re.escape(c) for c in sorted(set(own), key=len, reverse=True)))
+def _split(text: str, own: list[str], conversation: list[str] = ()) -> list[tuple[str, str]]:
+    """`text` cut into (piece, kind) by where each own-copy or conversation string occurs.
+    Longest first; words named in both read as conversation."""
+    kinds = {c: _OWN for c in own} | {c: _CONVERSATION for c in conversation}
+    if not kinds:
+        return [(text, _PLAIN)]
+    pattern = re.compile("|".join(re.escape(c) for c in sorted(kinds, key=len, reverse=True)))
     out, last = [], 0
     for match in pattern.finditer(text):
-        out += [(text[last : match.start()], False), (match.group(0), True)]
+        out += [(text[last : match.start()], _PLAIN), (match.group(0), kinds[match.group(0)])]
         last = match.end()
-    out.append((text[last:], False))
-    return [(piece, is_own) for piece, is_own in out if piece]
+    out.append((text[last:], _PLAIN))
+    return [(piece, kind) for piece, kind in out if piece]
 
 
 def _outside_urls(text: str, change: Callable[[str], str]) -> str:
