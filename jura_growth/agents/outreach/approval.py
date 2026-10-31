@@ -82,6 +82,7 @@ class OutreachEmail:
 
     name = KIND
     feed_approved = "It goes out on a send run, inside the send window and the day's caps."
+    needs_card = True  # no card, no approval (`on_approve`)
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         from jura_growth.agents.outreach import queue

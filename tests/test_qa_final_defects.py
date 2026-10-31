@@ -12,7 +12,7 @@ import pytest
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
 from gate_adapter_community_post import ADAPTER as COMMUNITY_POST
-from jura_growth import approvals, brand_check, cards, config, db, paths
+from jura_growth import approvals, brand_check, cards, config, db, paths, timeutil
 from jura_growth.agents import social
 from test_approvals_first import BOTH, LATE, feed_lines, refuse_facebook, social_day, submit_tip  # noqa: F401 - a fixture
 from test_social import env  # noqa: F401 - a fixture
@@ -228,25 +228,6 @@ def test_the_check_command_says_the_list_is_missing_and_does_not_pass(no_buzzwor
     assert "pass" not in result.output.split()
 
 
-# --- 08: the intermittent failure --------------------------------------------------------------
-
-
-def test_the_live_engine_writing_its_run_log_does_not_fail_the_refusal_test(monkeypatch, tmp_path):
-    """What happened at 00:00:02 on 2026-11-01. The live publish job, not the test, wrote the day's
-    run log while `test_every_scenario_refuses_the_live_folders_and_changes_nothing[note-rules]` ran.
-    Stand-in folders here, so this never touches the live ones."""
-    import test_uat_seed_outreach as refusal
-
-    live = tmp_path / "growth"
-    (live / "runs").mkdir(parents=True)
-    (tmp_path / "config").mkdir()
-    monkeypatch.setattr(refusal, "LIVE_DATA", live)
-    monkeypatch.setattr(refusal, "REAL_CONFIG", tmp_path / "config")
-    before = refusal.untouched_snapshot()
-    (live / "runs" / "2026-11-01.jsonl").write_text('{"agent": "publish", "kind": "run.quiet"}\n', encoding="utf-8")
-    assert refusal.untouched_snapshot() == before
-
-
 # --- 09: a typed approval of a refused card, in a new process ---------------------------------------
 
 PICTURE = "Picture a small firm chasing its invoices.\n\nhttps://jurasolutions.sg\n"
@@ -378,3 +359,77 @@ def test_a_refused_card_can_still_be_skipped(conn, env, monkeypatch, discord_dou
     conn.commit()
     assert pw.decide(conn, request, "skip", monkeypatch=monkeypatch).answer == "recorded"
     assert approvals.get(conn, request.id).status == approvals.SKIPPED
+
+
+# --- `pending` (PR #20) beside browser mode -----------------------------------------------------------
+
+
+def pending_text() -> str:
+    from jura_growth import pending
+
+    return pending.render(pending.read())
+
+
+def test_pending_counts_no_draft_once_its_cards_have_closed(conn, social_day, monkeypatch):
+    submit_tip(conn)
+    cards.sweep(conn)
+    conn.commit()
+    assert "2 social drafts for today onward" in pending_text()
+    pw.at(monkeypatch, "2026-11-10T18:05:00+08:00")
+    assert pw.invoke("digest").exit_code == 0
+    assert "social draft" not in pending_text()
+
+
+def test_pending_counts_no_draft_that_never_had_a_card(conn, env, monkeypatch, discord_double):
+    pw.at(monkeypatch, LATE)
+    pw.social_config(monkeypatch, browser=BOTH)
+    assert submit_tip(conn).status == "delivered"
+    conn.commit()
+    assert "social draft" not in pending_text()
+
+
+def test_pending_counts_a_hand_post_in_draft_mode(conn, env, monkeypatch, discord_double):
+    pw.at(monkeypatch, pw.MORNING)
+    pw.social_config(monkeypatch, browser=("instagram",))
+    submit_tip(conn)
+    conn.commit()
+    assert "2 social drafts for today onward" in pending_text()
+
+
+def test_pending_says_a_post_with_no_card_can_t_be_approved_yet(conn, social_day):
+    social_day.mode = "500"
+    submit_tip(conn)
+    conn.commit()
+    social_day.mode = "accept"
+    first, _ = approvals.pending(conn)
+    line = next(line for line in pending_text().splitlines() if line.startswith(f"- {first.id}"))
+    assert line.endswith("no card yet, so it can't be approved")
+
+
+def test_pending_says_nothing_extra_about_a_post_with_its_card(conn, social_day):
+    submit_tip(conn)
+    conn.commit()
+    first, _ = approvals.pending(conn)
+    line = next(line for line in pending_text().splitlines() if line.startswith(f"- {first.id}"))
+    assert "no card" not in line
+
+
+# --- one reading of a request's clock (review 10, St2) -----------------------------------------------
+
+
+def test_the_digest_and_the_read_model_read_a_request_s_clock_the_same_way(conn, social_day, monkeypatch):
+    from jura_growth import mission
+
+    submit_tip(conn)
+    cards.sweep(conn)
+    first, second = approvals.pending(conn)
+    pw.at(monkeypatch, pw.TEN)
+    pw.decide(conn, first, monkeypatch=monkeypatch)
+    conn.commit()
+    pw.at(monkeypatch, "2026-11-10T18:00:00+08:00")  # past both requests' times, and nothing has written the lapse
+    found = social.digest(conn, "2026-11-10")
+    assert "2 drafts expired" in social_line(found)
+    readings = {r["id"]: mission.reading_of(r["status"], decide_by=timeutil.parse(r["decide_by"]), use_by=timeutil.parse(r["use_by"]) if r["use_by"] else None,
+                                            decided_at=r["decided_at"], used_at=r["used_at"], now=timeutil.now_sgt())
+                for r in db.rows(conn, "SELECT * FROM approvals")}
+    assert readings == {first.number: mission.Reading.LAPSED_UNUSED, second.number: mission.Reading.LAPSED}

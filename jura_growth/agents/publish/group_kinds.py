@@ -267,9 +267,7 @@ class _GroupKind:
         held = _held_back(conn, item, found)
         if held:
             return f"It can't go out yet: {held}. If that stands, this lapses {timeutil.when(end)}."
-        latest = items.latest_request(conn, item)
-        decided = timeutil.parse(latest.decided_at) if latest and latest.decided_at else timeutil.now_sgt()
-        if decided >= limits.last_run_on(end.date()):
+        if items.no_run_left(conn, item, end.date()):
             return f"No publish run is left, so this lapses {timeutil.when(end)}."
         return items.unless_paused(conn, "It goes out on a publish run, inside the posting window.")
 

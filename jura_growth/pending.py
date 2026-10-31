@@ -62,7 +62,7 @@ def _requests(conn: sqlite3.Connection) -> list[PendingItem]:
     try:
         waiting = approvals_cli.waiting(conn, None)[0]
         registry = approvals.kinds()
-        items = [PendingItem(YOU, f"{request.id} · {_title(conn, request, registry)} · decide by {timeutil.when(due)}")
+        items = [PendingItem(YOU, f"{request.id} · {_title(conn, request, registry)} · decide by {timeutil.when(due)}{_no_card(request, registry)}")
                  for request, due in waiting[:REQUESTS_SHOWN]]
     except Exception as error:  # noqa: BLE001 - the plug-ins' lines still go out
         if db.is_lock(error):
@@ -71,6 +71,14 @@ def _requests(conn: sqlite3.Connection) -> list[PendingItem]:
     if len(waiting) > REQUESTS_SHOWN:
         items.append(PendingItem(YOU, f"and {len(waiting) - REQUESTS_SHOWN} more: send `/growth approvals`"))
     return [*items, PendingItem(YOU, DECIDE)] if items else []
+
+
+def _no_card(request: approvals.Approval, registry: dict) -> str:
+    """A kind that needs its card out before a yes (`needs_card`) can't take the typed approval the
+    line below offers until then."""
+    registered = registry.get(request.kind)
+    needs = registered is not None and getattr(registered.kind, "needs_card", False)
+    return " · no card yet, so it can't be approved" if needs and request.posted_at is None else ""
 
 
 def _title(conn: sqlite3.Connection, request: approvals.Approval, registry: dict) -> str:

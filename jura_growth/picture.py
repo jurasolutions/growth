@@ -158,7 +158,7 @@ def short_reason(reason: str | None) -> str:
     return trimmed.split(". ")[0].rstrip(".")
 
 
-def _sentence(text: str) -> str:
+def sentence(text: str) -> str:
     return text[:1].upper() + text[1:] if text else text
 
 
@@ -404,8 +404,8 @@ def _decide(snapshot: mission.Snapshot) -> str:
     if not found:
         return '<p class="empty">Nothing waiting for you.</p>'
     items = "".join(
-        f'<li><span class="clamp one"><span class="name">{escape(_sentence(cards.label(r.kind)))}</span> {_inline(r.id)}</span>'
-        f'<span class="clamp one detail">{_inline(_sentence(r.reason))}</span>'
+        f'<li><span class="clamp one"><span class="name">{escape(sentence(cards.label(r.kind)))}</span> {_inline(r.id)}</span>'
+        f'<span class="clamp one detail">{_inline(sentence(r.reason))}</span>'
         f'<span class="by">Decide by {escape(by_when(r.decide_by, snapshot.now))}</span></li>'
         for r in found[:DECIDE_SHOWN]
     )

@@ -403,6 +403,13 @@ def requests_by_platform(conn: sqlite3.Connection, day: str) -> dict[str, approv
     return found
 
 
+def no_run_left(conn: sqlite3.Connection, item: Item, day: date) -> bool:
+    """Whether the item's request was decided after the last publish run on `day` started."""
+    latest = latest_request(conn, item)
+    decided = timeutil.parse(latest.decided_at) if latest and latest.decided_at else timeutil.now_sgt()
+    return decided >= limits.last_run_on(day)
+
+
 def unless_paused(conn: sqlite3.Connection, promise: str) -> str:
     """A kind's next step (`feed.py`), which says so if the publish agent is paused."""
     if pause.is_paused(conn, AGENT):

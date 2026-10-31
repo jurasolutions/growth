@@ -40,15 +40,23 @@ def channels() -> dict:
 
 
 def pending(conn: sqlite3.Connection) -> list:
-    """`jura-growth pending`: drafts for today onward. Only the platforms switched on count, as in
-    the digest: a draft for one switched off is never going out."""
+    """`jura-growth pending`: drafts for today onward that something is still going to happen to,
+    read as the digest reads them. Only the platforms switched on count: a draft for one switched
+    off is never going out."""
     from jura_growth import agents, db, timeutil
 
     from jura_growth.agents.social.settings import load
 
-    on = {p.name for p in load().enabled_platforms()}
-    rows = db.rows(conn, "SELECT platform FROM social_posts WHERE status = 'draft' AND date >= ?", (timeutil.today_str(),))
-    drafts = sum(1 for row in rows if row["platform"] in on)
+    platforms = load().enabled_platforms()
+    on = {p.name for p in platforms}
+    browser = {p.name for p in platforms if p.browser}
+    rows = db.rows(conn, "SELECT date, platform FROM social_posts WHERE status = 'draft' AND date >= ? ORDER BY platform", (timeutil.today_str(),))
+    days: dict[str, list[str]] = {}
+    for row in rows:
+        if row["platform"] in on:
+            days.setdefault(row["date"], []).append(row["platform"])
+    # A closed card, a refused one or a draft that never had a card is going nowhere, so it isn't pending.
+    drafts = sum(len(_where_they_are(conn, day, names, browser)[1]) for day, names in days.items())
     return [agents.PendingItem(agents.GROWTH, f"{drafts} social draft{'s' if drafts != 1 else ''} for today onward.", order=agents.COUNT)] if drafts else []
 
 
@@ -130,24 +138,23 @@ def _place(conn: sqlite3.Connection, request, browser: bool) -> tuple[str, bool]
     """Where a draft is, from its newest request, and whether anything is still going to happen to
     it. A closed card isn't "no card", and a card the sweep refused will never go out. A card
     Discord hasn't taken yet still waits: the heartbeat posts it."""
-    from jura_growth import approvals, cards, timeutil
+    from jura_growth import cards, mission, timeutil
 
     if request is None:  # never a card: too late, no image, or from before browser mode
         return (_NO_CARD, False) if browser else (_BY_HAND, True)
-    now = timeutil.now_sgt()
-    if request.status == approvals.PENDING:
-        if timeutil.parse(request.decide_by) <= now:
-            return _EXPIRED, False  # closed, whether or not this read may write the lapse
-        if request.posted_at:
-            return _ON_A_CARD, True
-        return _NO_CARD, cards.refusal(conn, request.id) is None
-    if request.status != approvals.APPROVED:
-        return (_EXPIRED if request.status == approvals.EXPIRED else _CLOSED), False
-    if request.used_at:
+    reading = mission.reading_of(
+        request.status, decide_by=timeutil.parse(request.decide_by), use_by=timeutil.parse(request.use_by) if request.use_by else None,
+        decided_at=request.decided_at, used_at=request.used_at, now=timeutil.now_sgt(),
+    )
+    if reading == mission.Reading.WAITING:
+        return (_ON_A_CARD, True) if request.posted_at else (_NO_CARD, cards.refusal(conn, request.id) is None)
+    if reading == mission.Reading.APPROVED:
+        return (_APPROVED, True) if browser else (_HELD, False)
+    if reading == mission.Reading.USED:
         return _CLAIMED, False
-    if request.use_by and timeutil.parse(request.use_by) <= now:
-        return _EXPIRED, False
-    return (_APPROVED, True) if browser else (_HELD, False)
+    if reading in (mission.Reading.LAPSED, mission.Reading.LAPSED_UNUSED):
+        return _EXPIRED, False  # closed, whether or not this read may write the lapse
+    return _CLOSED, False
 
 
 RUN_UPDATE_DISCORD_CHANNEL = "social-drafts"

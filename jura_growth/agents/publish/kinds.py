@@ -164,6 +164,7 @@ class SocialPost:
 
     name = KIND
     used_word = "claimed by a publish run"
+    needs_card = True  # no card, no approval (`on_approve`)
 
     def feed_approved(self, conn: sqlite3.Connection, subject: str) -> str:
         """What happens next, kept true: the decide-by leaves a slot, and a pause holds it back. A
@@ -175,10 +176,10 @@ class SocialPost:
         _, end = limits.window_on(day)
         off = self.switched_off(conn, subject)
         if off:
-            return f"{off[:1].upper()}{off[1:]}, and this lapses at {end:%H:%M} SGT."
-        latest = items.latest_request(conn, item)
-        decided = timeutil.parse(latest.decided_at) if latest and latest.decided_at else timeutil.now_sgt()
-        if decided >= limits.last_run_on(day):
+            from jura_growth.picture import sentence
+
+            return f"{sentence(off)}, and this lapses at {end:%H:%M} SGT."
+        if items.no_run_left(conn, item, day):
             return f"No publish run is left today, so this lapses at {end:%H:%M} SGT."
         return items.unless_paused(conn, f"It goes out on a publish run today, by {end:%H:%M} SGT. "
                                          "The run's update here gives the post's address.")

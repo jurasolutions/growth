@@ -534,20 +534,24 @@ def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: dateti
                  for request in (_request(row, now) for row in rows))
 
 
+def reading_of(status: str, *, decide_by: datetime, use_by: datetime | None, decided_at: str | None, used_at: str | None, now: datetime) -> str:
+    """How a request reads at `now`, by its clock as well as its row: a request past its time has
+    closed, whether or not anything has written the lapse yet."""
+    if status == "pending":
+        return Reading.WAITING if now < decide_by else Reading.LAPSED
+    if status == "approved" and used_at:
+        return Reading.USED
+    if status == "approved":
+        return Reading.APPROVED if use_by is None or now < use_by else Reading.LAPSED_UNUSED
+    if status == "expired":
+        return Reading.LAPSED_UNUSED if decided_at else Reading.LAPSED  # expired after a yes, or unanswered
+    return Reading.SKIPPED if status == "skipped" else Reading.SUPERSEDED
+
+
 def _request(row: sqlite3.Row, now: datetime) -> Request:
     decide_by = timeutil.parse(row["decide_by"]).astimezone(SGT)
     use_by = timeutil.parse(row["use_by"]).astimezone(SGT) if row["use_by"] else None
-    status = row["status"]
-    if status == "pending":
-        reading = Reading.WAITING if now < decide_by else Reading.LAPSED
-    elif status == "approved" and row["used_at"]:
-        reading = Reading.USED
-    elif status == "approved":
-        reading = Reading.APPROVED if use_by is None or now < use_by else Reading.LAPSED_UNUSED
-    elif status == "expired":
-        reading = Reading.LAPSED_UNUSED if row["decided_at"] else Reading.LAPSED  # expired after a yes, or unanswered
-    else:
-        reading = Reading.SKIPPED if status == "skipped" else Reading.SUPERSEDED
+    reading = reading_of(row["status"], decide_by=decide_by, use_by=use_by, decided_at=row["decided_at"], used_at=row["used_at"], now=now)
     return Request(
         id=f"A-{row['id']:04d}",
         kind=_clean(row["kind"]),

@@ -206,6 +206,16 @@ def test_an_email_whose_card_went_out_can_be_approved_and_sends(conn, monkeypatc
     assert len(sent) == 1
 
 
+def test_pending_says_an_email_with_no_card_can_t_be_approved_yet(conn, lead_233):
+    from jura_growth import pending
+
+    request = approvals.get(conn, lead_233.approval)
+    conn.commit()
+    answer = pending.render(pending.read())
+    line = next(line for line in answer.splitlines() if line.startswith(f"- {request.id}"))
+    assert line.endswith("no card yet, so it can't be approved")
+
+
 def test_send_due_edits_the_card_to_claimed_after_the_send(conn, monkeypatch, discord_double, lead_233):
     request = approvals.get(conn, lead_233.approval)
     at(monkeypatch, "2026-11-10T10:00:00+08:00")
