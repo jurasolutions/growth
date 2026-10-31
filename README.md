@@ -41,7 +41,7 @@ jurasolutions/data/growth/
   runs/YYYY-MM-DD.jsonl       every event, one JSON line each
   transcripts/YYYY-MM-DD/     full stream-json transcript of each headless run (30 days)
   backups/                    nightly copies of growth.db (14 days)
-  one-pager/                  the one-pager's grid PNG, grid-YYYY-MM-DD.png, one a day (14 days)
+  one-pager/                  the morning picture, picture-YYYY-MM-DD.png and .html, one set a day, and any grid drawn on request (14 days)
   discord-outbox/             messages Discord didn't take: no webhook yet, or unreachable
   daily-summary.json          what the digest and the morning brief read
   work/<job>/                 scratch space a headless run may write drafts into
@@ -67,7 +67,7 @@ The database stays in rollback-journal mode, not WAL, because it lives in OneDri
 | `jura-growth status` | Pauses, last runs, schedule, Discord setup and setup gaps (the same list as the one-pager's) |
 | `jura-growth approvals [kind]` | Pending approval requests, the 15 soonest to lapse first. Decisions come only from `#approvals`, through Dispatch (ADR 0004) |
 | `jura-growth remote …` | Control commands from Discord, reached only through Dispatch's SSH forced command (`bin/growth-remote`) and refused anywhere else. See `docs/dispatch-contract.md` |
-| `jura-growth one-pager [--no-post]` | Post the one-pager to `#mission-control`: Needs you, approvals waiting, today's slots, yesterday's figures, and the 14-day grid as a PNG. It writes the approval lapses that are due first, then reads `growth.db` read-only and never repairs it (ADR 0002). `--no-post` only prints it |
+| `jura-growth one-pager [--no-post] [--grid]` | Post the morning picture to `#mission-control` with a short message: the verdict, Decide, Fix, This morning, Yesterday and Later today. It writes the approval lapses that are due first, then reads `growth.db` read-only and never repairs it (ADR 0002). When the picture can't be drawn, the long text goes instead and says why. `--no-post` only prints the long text. `--grid` only draws the 14-day grid to a file and prints its path |
 | `jura-growth run <job>` | Run a scheduled job now. `--dry-run` prints the command, `--ignore-schedule` runs on a weekend or holiday |
 | `jura-growth schedule list\|render\|install\|uninstall [jobs]` | launchd jobs |
 | `jura-growth heartbeat` | Post a heartbeat to `#daily-digest` |

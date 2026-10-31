@@ -17,7 +17,7 @@ SETUP = paths.REPO_ROOT / ".scratch" / "mission-control" / "setup"
 def test_the_morning_brief_guide_tells_ting_yu_to_remove_the_line():
     text = (SETUP / "morning-brief.md").read_text(encoding="utf-8")
     assert "Remove the Jura growth line" in text
-    assert "#mission-control" in text and "08:00" in text
+    assert "#mission-control" in text and "09:00" in text
 
 
 def test_the_discord_guide_names_both_new_channels_and_approvals_notifies_on_all_messages():

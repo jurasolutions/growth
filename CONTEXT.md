@@ -81,13 +81,24 @@ page.
 _Avoid_: dashboard, admin
 
 **One-pager**:
-The single Discord message in `#mission-control`, daily at 08:00 SGT and on request, that says
-whether everything ran and what needs Ting Yu: the health strip, approvals waiting, today's slots,
-yesterday's figures, and a 14-day grid as an image.
+The single Discord post in `#mission-control`, daily at 09:00 SGT and on request, that says whether
+everything ran and what needs Ting Yu: the morning picture and a short message to act on from a
+phone. When the picture can't be drawn, the long text goes instead: the health strip, approvals
+waiting, today's slots and yesterday's figures. `--no-post` prints that long text, and `--grid`
+draws the 14-day grid to a file; the grid is no longer posted.
 _Avoid_: report, summary, dashboard (the 17:30 digest is a separate message)
 
+**Morning picture**:
+The image the one-pager posts: a verdict in words, then Decide, Fix, This morning, Yesterday and
+Later today. It is drawn from one read-model snapshot, as tall as its content up to 1,600 px, and
+its page is saved beside it as `.html` to open on the Mac. It shows only what the engine recorded:
+a figure it can't read is a dash, never a guessed zero.
+_Avoid_: morning brief (that is the AI OS brief, a different thing at 08:00), brief, dashboard
+
 **Health strip**:
-The "Needs you" section at the top of the one-pager: the PAUSE file, paused agents, recent
+The "Needs you" section at the top of the long text, and "Fix" on the morning picture, which words
+each item on one line with the action first and adds any growth agent whose slot passed with no
+trace. It holds: the PAUSE file, paused agents, recent
 failures, missed slots, undelivered Discord posts, unposted approval requests, approved emails that
 lapsed unsent, jobs not installed or out of date, setup gaps, build handoffs waiting for a builder,
 built apps not yet released (left on their preview, approved and waiting for `release-plan`, or
