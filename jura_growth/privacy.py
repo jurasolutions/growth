@@ -88,6 +88,16 @@ MIN_NAME_PART = 2
 
 NAME = "[name removed]"
 PHONE = "[phone removed]"
+ADDRESS = "[address removed]"
+# A person named with a title: "Ms Tan Mei Ling", "Mr Lim's", "Dr. Wong", "Mdm Siti".
+# Title case only: upper-case "MS" and "DR" are MS Excel and DR forms, not people.
+HONORIFIC_NAME_RE = re.compile(
+    r"\b(?:Mr|Mrs|Ms|Mdm|Miss|Madam|Mister|Dr|Prof)\b\.?\s+"
+    r"(?P<name>[A-Z][\w'’-]*(?:\s+[A-Z][\w'’-]*){0,3})"
+)
+# Software that follows a title-like word ("Ms Excel"): never a person (re-review R3).
+PRODUCT_WORDS = frozenset({"excel", "word", "teams", "office", "outlook", "powerpoint", "access", "project",
+                           "dynamics", "sharepoint", "onenote", "visio", "publisher", "forms", "365", "windows"})
 REMOVED = "[removed]"
 FINANCE = "[removed: personal finance]"
 
@@ -113,6 +123,39 @@ def for_discord(text: str, *, own_copy: Iterable[str] = ()) -> str:
                 groups.add(frozenset(parts))
     names = _NameMatcher(groups, _companies | _kept_names)
     return "".join(_mask(part, is_own, names) for part, is_own in _split(text, own))
+
+
+def _bare(value: str) -> str:
+    return re.sub(r"['’]s$", "", value.strip()).lower()
+
+
+def titled_names(text: str, keep: Iterable[str] = ()) -> list[re.Match]:
+    """Every person named with a title in `text` ("Ms Tan Mei Ling", "Mr Lim's"),
+    leaving out software ("Ms Excel") and the names in `keep`: a company whose own
+    name starts with a title ("Dr Aircon"), or the sender's own name."""
+    kept = [k.strip().lower() for k in keep if k and k.strip()]
+    found = []
+    for match in HONORIFIC_NAME_RE.finditer(text):
+        name = _bare(match.group("name"))
+        if name.split()[0] in PRODUCT_WORDS:
+            continue
+        whole = _bare(match.group(0))
+        if any(whole in k or name == k for k in kept):
+            continue
+        found.append(match)
+    return found
+
+
+def strip_personal(text: str, keep: Iterable[str] = ()) -> tuple[str, bool]:
+    """`text` with any titled person's name, phone number and email address
+    replaced by a placeholder, and whether anything was removed. For text taken
+    from a job posting (scout PRD §5.2a point 5), which is stored and posted.
+    Names in `keep` (the company's own) stay."""
+    out = EMAIL_RE.sub(ADDRESS, text)
+    for match in reversed(titled_names(out, keep)):
+        out = out[: match.start()] + NAME + out[match.end():]
+    out = _mask_phones(out)
+    return out, out != text
 
 
 def masked_address(email: str) -> str:

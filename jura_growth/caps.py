@@ -29,6 +29,11 @@ OUTREACH_RETRY_WINDOW_HOURS = 23
 OUTREACH_WARMUP = ((7, 5), (14, 10))
 OUTREACH_WORDS_MAX = 150  # scout PRD §5.6a: under 150, without the signature and footer
 
+# Scout research (scout PRD §5.2a). Keeping more leads never means sending
+# more: the outreach caps above still decide what goes out.
+SCOUT_CANDIDATES_PER_RUN = 40  # candidates one research run may compare
+SCOUT_SHORTLIST_PER_DAY = 10  # leads kept a day, the best by score
+
 # Social and community
 SOCIAL_POSTS_PER_PLATFORM_PER_DAY = 1
 COMMUNITY_GROUPS_PER_WEEK = 3

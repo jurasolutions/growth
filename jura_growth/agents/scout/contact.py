@@ -9,6 +9,9 @@
   usual obfuscation: HTML entities, `mailto:` links (percent-encoded too),
   "info [at] acme [dot] sg" and its variants, and Cloudflare's email
   protection (`data-cfemail` and `/cdn-cgi/l/email-protection#<hex>`).
+- Job boards, recruiters and job ads (a careers page on the company's own
+  site included) are hiring evidence only (PRD §5.2a point 6): never a lead's
+  website, never the page a contact address or form comes from.
 - Addresses are classified as role (info@, sales@, ...) or named.
 - The mail domain must have an MX record. Nothing else is probed: no SMTP
   checks, no guessing.
@@ -17,7 +20,9 @@
 from __future__ import annotations
 
 import html
+import posixpath
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import unquote, urlsplit
 
@@ -64,8 +69,76 @@ NOT_OWN_SITE = (
     "carousell.sg", "carousell.com", "shopee.sg", "lazada.sg", "wa.me", "whatsapp.com",
     "hipages.com.sg", "renopedia.sg", "qanvast.com", "streetdirectory.com", "timable.com",
     "companies.sg", "sgcompany.sg", "dnb.com", "zoominfo.com", "apollo.io", "rocketreach.co",
-    "crunchbase.com", "glassdoor.com", "jobstreet.com", "indeed.com", "mycareersfuture.gov.sg",
+    "crunchbase.com",
 )
+
+# Job boards and the hosted job-ad pages of applicant tracking systems (scout
+# PRD §5.2a). Their pages are hiring evidence only: never a lead's website and
+# never the source of a contact address.
+JOB_BOARDS = (
+    "mycareersfuture.gov.sg", "mycareersfuture.sg", "jobstreet.com", "jobstreet.com.sg", "indeed.com",
+    "indeed.com.sg", "linkedin.com", "glassdoor.com", "glassdoor.sg", "jobsdb.com", "fastjobs.sg",
+    "foundit.sg", "monster.com.sg", "careerjet.sg", "jora.com", "jooble.org", "grabjobs.co",
+    "jobscentral.com.sg", "hiredly.com", "efinancialcareers.sg", "gumtree.sg", "nodeflair.com",
+    "lever.co", "greenhouse.io", "workable.com", "myworkdayjobs.com", "smartrecruiters.com",
+    "recruitee.com", "breezy.hr", "bamboohr.com", "zohorecruit.com", "careers-page.com",
+    "glints.com", "stjobs.sg", "adzuna.sg", "kalibrr.com", "ashbyhq.com", "jobvite.com",
+    "teamtailor.com", "personio.com", "personio.de", "manatal.com", "applytojob.com", "jazzhr.com",
+)
+# Recruitment agencies: an ad they place names their own inbox, never the
+# hiring company's, so a recruiter's site is never the contact source for
+# another company. A recruiter may still be a lead in its own right (its own
+# enquiry address, on its own contact page). Any host with "recruit" in its
+# name counts as a recruiter too.
+RECRUITERS = (
+    "recruitexpress.com.sg", "kellyservices.com.sg", "persolkelly.com.sg", "persolsingapore.com",
+    "adecco.com.sg", "adecco.com", "randstad.com.sg", "manpower.com.sg", "manpowergroup.sg",
+    "hays.com.sg", "michaelpage.com.sg", "pagepersonnel.com.sg", "robertwalters.com.sg",
+    "roberthalf.com.sg", "gmprecruit.com", "trustrecruit.com.sg", "theoneglobal.com.sg",
+    "achieversresources.com", "staffinggroup.sg",
+)
+NOT_OWN_SITE += JOB_BOARDS
+
+# A careers or job-ad page, read from the words of its decoded, case-folded
+# path, query and fragment (code review P1): any word starting with one of
+# these stems, "job"/"jobs" (but not "job sheets" and the like), "join us",
+# "join our team" and "work with us".
+JOB_AD_STEMS = ("career", "vacanc", "recruit", "hiring", "viewjob", "joinus", "jobopening", "joblisting",
+                "jobvacanc", "jobpost", "jobboard", "opportunit", "openings", "internship", "karriere", "kerjaya")
+# Chinese jobs-page words, matched in the decoded text: recruitment, position, join us.
+JOB_AD_CJK = ("招聘", "职位", "職位", "招募", "加入我们", "加入我們")
+JOB_WORDS = frozenset({"job", "jobs"})
+# "job" next to one of these is field-service paperwork or booking, not hiring:
+# job sheets, job cards, a job request, book a job, our jobs (re-review R2).
+JOB_PAPERWORK = frozenset({"sheet", "sheets", "card", "cards", "order", "orders", "ticket", "tickets", "costing",
+                           "costs", "site", "sites", "report", "reports", "request", "requests", "quote", "quotes",
+                           "booking", "bookings", "status", "tracking", "gallery"})
+JOB_BEFORE_PAPERWORK = frozenset({"book", "our", "completed", "past", "recent", "submit"})
+# Hire means rental in Singapore English: equipment hiring, car hiring.
+RENTAL_WORDS = frozenset({"equipment", "car", "cars", "van", "vans", "lorry", "lorries", "truck", "trucks", "tool",
+                          "tools", "crane", "cranes", "bus", "buses", "coach", "boat", "boats", "event", "party", "tent",
+                          "tents", "machine", "machinery", "plant", "scaffold", "scaffolding", "generator", "venue"})
+# "Vacancies" is read as employment unless a property word sits next to it
+# (office vacancies, vacancies/units). The safer reading: a bare /vacancies is
+# far more often a jobs page than a unit listing (re-review R2).
+PROPERTY_WORDS = frozenset({"office", "offices", "unit", "units", "shop", "shops", "retail", "property", "properties",
+                            "space", "spaces", "room", "rooms", "rental", "rentals", "lease", "industrial", "warehouse",
+                            "tenancy", "tenant", "tenants", "commercial", "residential", "apartment", "apartments",
+                            "condo", "condos", "flat", "flats"})
+# Business, not employment: franchise opportunities, store openings.
+NOT_HIRING_BEFORE = {"opportunit": frozenset({"business", "franchise", "partnership", "partner", "investment",
+                                              "sponsorship"}),
+                     "openings": frozenset({"store", "shop", "outlet", "branch", "grand"})}
+JOB_AD_PHRASES = (("join", "us"), ("join", "our"), ("join", "the", "team"), ("work", "with", "us"), ("work", "for", "us"),
+                  ("jawatan", "kosong"))
+# "Join us for dinner" is an invitation, not a careers page.
+NOT_AFTER_JOIN_US = frozenset({"for", "at", "on", "in", "to"})
+# A host label is a careers label if any of its words is one of these, or starts
+# with "career" or "recruit" (careers-sg., career-portal., jobs2.). `apply.` alone
+# is not: application portals take admissions and loan enquiries too.
+JOB_AD_LABEL_WORDS = frozenset({"careers", "career", "jobs", "job", "hiring", "recruit", "recruitment", "talent",
+                                "karriere", "kerjaya", "vacancies"})
+EVIDENCE_ONLY = "job boards, recruiters and job ads are evidence only, never a contact source"
 
 
 class ContactError(ValueError):
@@ -110,9 +183,124 @@ def on_domain(url: str, domain: str) -> bool:
     return bool(host and domain) and (host == domain or host.endswith("." + domain))
 
 
-def is_third_party_host(domain: str) -> bool:
+def _under(domain: str, hosts) -> bool:
+    domain = domain.lower().strip(".")
+    return any(domain == h or domain.endswith("." + h) for h in hosts)
+
+
+def is_recruiter(domain: str) -> bool:
     domain = domain.lower()
-    return any(domain == h or domain.endswith("." + h) for h in NOT_OWN_SITE)
+    return _under(domain, RECRUITERS) or "recruit" in domain.removesuffix(".sg").removesuffix(".com")
+
+
+def is_job_board(domain: str) -> bool:
+    return _under(domain, JOB_BOARDS)
+
+
+def is_third_party_host(domain: str) -> bool:
+    return _under(domain, NOT_OWN_SITE)
+
+
+def _decoded(value: str) -> str:
+    """Percent-decoded until it stops changing (so %2563 is "c" too), NFKC-normalised
+    (full-width letters become plain ones) and case-folded."""
+    for _ in range(5):
+        decoded = unquote(value)
+        if decoded == value:
+            break
+        value = decoded
+    return unicodedata.normalize("NFKC", value).casefold()
+
+
+def _page_text(url: str) -> str:
+    """The decoded path (dot segments resolved), query and fragment."""
+    parts = _split(url)
+    path = _decoded(parts.path)
+    if path:
+        path = posixpath.normpath(path)
+    return " ".join([path, _decoded(parts.query), _decoded(parts.fragment)])
+
+
+def _label_is_careers(label: str) -> bool:
+    words = [re.sub(r"\d+$", "", w) for w in re.split(r"[^0-9a-z]+", _decoded(label)) if w]
+    return any(w in JOB_AD_LABEL_WORDS or w.startswith(("career", "recruit")) for w in words)
+
+
+def _company_labels(host: str, domain: str | None) -> list[str]:
+    """The host's labels left of the company's domain (or of the last two labels)."""
+    if domain and on_domain(f"https://{host}", domain):
+        rest = host[: -len(domain.lower().removeprefix("www."))].rstrip(".")
+        return rest.split(".") if rest else []
+    return host.split(".")[:-2]
+
+
+def _job_word_is_hiring(words: list[str], i: int) -> bool:
+    before = words[i - 1] if i else ""
+    two_before = words[i - 2] if i > 1 else ""
+    after = words[i + 1] if i + 1 < len(words) else ""
+    if after in JOB_PAPERWORK or before in JOB_BEFORE_PAPERWORK:
+        return False
+    return not (before == "a" and two_before in {"book", "request", "submit"})
+
+
+def _stem_is_hiring(words: list[str], i: int, stem: str) -> bool:
+    before = words[i - 1] if i else ""
+    after = words[i + 1] if i + 1 < len(words) else ""
+    if stem == "hiring" and before in RENTAL_WORDS:
+        return False
+    if stem == "vacanc" and (before in PROPERTY_WORDS or after in PROPERTY_WORDS):
+        return False
+    return before not in NOT_HIRING_BEFORE.get(stem, ())
+
+
+def is_job_ad_page(url: str, domain: str | None = None) -> bool:
+    """A careers or job-ad page by any host label or its words, however it is spelled:
+    careers-sg.acme.sg, /%63areers/, /careers.html, /jobs.php, /join-our-team,
+    ?page=careers, /招聘, /jawatan-kosong ... Field-service and rental pages such as
+    /book-a-job, /job-request and /equipment-hiring are not."""
+    host = host_of(url)
+    if host and any(_label_is_careers(label) for label in _company_labels(host, domain)):
+        return True
+    text = _page_text(url)
+    if any(word in text for word in JOB_AD_CJK):
+        return True
+    words = [w for w in re.split(r"[^0-9a-z]+", text) if w]
+    for i, word in enumerate(words):
+        stem = next((s for s in JOB_AD_STEMS if word.startswith(s)), None)
+        if stem and _stem_is_hiring(words, i, stem):
+            return True
+        if word in JOB_WORDS and _job_word_is_hiring(words, i):
+            return True
+        for phrase in JOB_AD_PHRASES:
+            if tuple(words[i : i + len(phrase)]) == phrase:
+                follows = words[i + len(phrase)] if i + len(phrase) < len(words) else ""
+                if phrase != ("join", "us") or follows not in NOT_AFTER_JOIN_US:
+                    return True
+    return False
+
+
+def job_ad_problem(url: str, domain: str | None = None) -> str | None:
+    """Why `url` may not be the page a contact address or form comes from, or
+    None (§5.2a point 6). The one rule for add-lead, `scout shortlist` and
+    `scout check-contact`, applied to the submitted page and again to the page
+    the code actually read after redirects:
+
+    - a job board or an applicant tracking system;
+    - a recruiter's site, unless the recruiter is the lead itself (`domain`);
+    - a careers or job-ad page on any site, the company's own included.
+
+    It refuses only the contact source: a lead whose site has a careers section
+    is fine, as long as the address comes from another page."""
+    host = host_of(url)
+    if not host:
+        return None
+    if is_job_board(host):
+        return f"{url} is on a job board: {EVIDENCE_ONLY}"
+    if is_recruiter(host) and not (domain and on_domain(url, domain)):
+        return f"{url} is on a recruiter's site: {EVIDENCE_ONLY}"
+    if is_job_ad_page(url, domain):
+        return f"{url} is a careers or job-ad page: {EVIDENCE_ONLY}"
+    return None
 
 
 def mail_domain(email: str) -> str:

@@ -9,7 +9,7 @@ from pathlib import Path
 import click
 
 from jura_growth import db, timeutil
-from jura_growth.agents.scout import icp, leads, registry, settings
+from jura_growth.agents.scout import icp, leads, registry, scoring, settings
 
 
 def _echo_json(value) -> None:
@@ -31,7 +31,7 @@ def scout_group() -> None:
 @scout_group.command("today")
 @click.option("--json", "as_json", is_flag=True)
 def today(as_json) -> None:
-    """Today's industries, lead target, threshold, queue room and tools."""
+    """Today's industries, candidates, shortlist, threshold, weights, queue room and tools."""
     from jura_growth.agents.outreach import sync
 
     with db.session() as conn:
@@ -40,14 +40,16 @@ def today(as_json) -> None:
         unqueued = len(leads.recent(conn, days=14, status="new"))
         follow_ups = len(sync.follow_ups_due(conn))
     tools, problem = registry.load()
-    target = settings.daily_target()
+    shortlist = settings.shortlist()
     info = {
         "date": timeutil.today_str(),
         "industries": icp.todays_industries(),
-        "daily_target": target,
-        "added_today": added,
-        "remaining": max(0, target - added),
+        "candidates": settings.candidates(),
+        "shortlist": shortlist,
+        "kept_today": added,
+        "remaining": max(0, shortlist - added),
         "score_threshold": settings.score_threshold(),
+        "weights": dict(scoring.WEIGHTS),
         "queue": {"queued": queued, "max_queue": settings.max_queue(), "room": max(0, settings.max_queue() - queued)},
         "leads_waiting_for_an_email": unqueued,
         "follow_ups_due": follow_ups,
@@ -62,7 +64,8 @@ def today(as_json) -> None:
         return
     click.echo(f"date              {info['date']}")
     click.echo(f"industries        {', '.join(info['industries']) or 'none (check the ICP)'}")
-    click.echo(f"leads             {added} added today, target {target}, {info['remaining']} to go")
+    click.echo(f"candidates        about {info['candidates']} to compare")
+    click.echo(f"shortlist         {added} kept today, up to {shortlist}, {info['remaining']} to go")
     click.echo(f"score threshold   {info['score_threshold']}")
     click.echo(f"queue             {queued} queued, room for {info['queue']['room']}")
     click.echo(f"waiting for email {unqueued} recent leads with an address and no email yet")
@@ -131,6 +134,78 @@ def add_lead(file_, as_json) -> None:
     else:
         click.echo("rejected: " + "; ".join(outcome.reasons))
     sys.exit(0 if outcome.status == "added" else 1)
+
+
+@scout_group.command("check-contact")
+@click.option("--website", required=True, help="The company's own home page.")
+@click.option("--email", required=True, help="The address its site publishes for enquiries.")
+@click.option("--source", required=True, help="The page on its own site that lists the address.")
+@click.option("--enquiry-contact", is_flag=True, help="A named address the site publishes as its enquiry contact.")
+@click.option("--json", "as_json", is_flag=True)
+def check_contact(website, email, source, enquiry_contact, as_json) -> None:
+    """Would this address pass the contact rules? Changes nothing. Exit 1 if not.
+
+    The same check `scout shortlist` runs: the code fetches the source page and
+    finds the address on it, checks it belongs to the business, the do-not-contact
+    and suppression lists, and its MX record. Use it before the day's batch, so
+    a candidate isn't lost to an address that doesn't verify.
+    """
+    with db.session() as conn:
+        verdict = leads.check_contact(conn, website=website, email=email, source=source, enquiry_contact=enquiry_contact)
+    if as_json:
+        _echo_json(verdict)
+    elif verdict["ok"]:
+        click.echo(f"ok: {verdict['email']} ({verdict['kind']}), listed on {verdict['source_url']}")
+        for note in verdict["notes"]:
+            click.echo(f"  note: {note}")
+    else:
+        click.echo(f"refused: {verdict['reason']}")
+    sys.exit(0 if verdict["ok"] else 1)
+
+
+@scout_group.command("shortlist")
+@click.option("--file", "file_", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help='Every candidate researched this run, as {"candidates": [<lead>, ...]}.')
+@click.option("--json", "as_json", is_flag=True)
+def shortlist_command(file_, as_json) -> None:
+    """Submit the run's candidates; the code ranks them and keeps the best (PRD §5.2a).
+
+    \b
+    {"candidates": [
+      {<the add-lead fields>,
+       "score_breakdown": {"industry_fit": 18, "size_fit": 12, "hiring_signals": 24,
+                           "paperwork_signals": 14, "specific_observations": 4, "enquiry_address": 10},
+       "hiring_evidence": [{"url": "https://www.mycareersfuture.gov.sg/job/...",
+                            "title": "Admin assistant", "seen": "2026-10-30",
+                            "duties": ["key in delivery orders", "prepare invoices"]}],
+       "comparison": "The only candidate hiring twice this month for order entry"},
+      ...]}
+
+    Every candidate at or above the threshold is kept, highest score first, up
+    to today's shortlist; the rest are remembered as researched for 12 months.
+    Hiring evidence is evidence only: the contact must come from the company's
+    own site. Exit 0 when the batch was ranked (even if none was kept).
+    """
+    from jura_growth.agents.scout import shortlist
+
+    data = _read_json(file_)
+    with db.session() as conn:
+        try:
+            batch = shortlist.submit(conn, data)
+        except leads.LeadError as error:
+            raise click.UsageError(str(error)) from None
+    if as_json:
+        _echo_json(batch.as_dict())
+        return
+    click.echo(f"kept {len(batch.kept)} of {len(batch.candidates)} (shortlist {batch.shortlist}, threshold {batch.threshold})")
+    for entry in batch.candidates:
+        rank = f"#{entry['rank']}" if entry["rank"] else "-"
+        line = f"{rank:>4} {entry['score']:>3} {entry['status']:9} {entry['company'][:36]:36} {entry['domain']}"
+        if entry["lead_id"]:
+            line += f" (lead {entry['lead_id']})"
+        click.echo(line)
+        for reason in entry["reasons"]:
+            click.echo(f"       {reason}")
 
 
 @scout_group.command("leads")

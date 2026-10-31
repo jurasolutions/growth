@@ -19,7 +19,8 @@ OTHER_ROLES = (
     "frontdesk", "front.desk", "admissions", "enrol", "enroll", "hr", "careers", "jobs",
 )
 # Shared inboxes that are not for enquiries: system senders and policy desks.
-NOT_FOR_ENQUIRIES = ("careers", "jobs", "hr", "privacy", "dpo", "abuse", "noreply", "no-reply", "donotreply", "postmaster", "webmaster")
+NOT_FOR_ENQUIRIES = ("careers", "career", "jobs", "job", "hr", "recruit", "recruitment", "recruiting", "talent",
+                     "hiring", "apply", "resume", "resumes", "cv", "privacy", "dpo", "abuse", "noreply", "no-reply", "donotreply", "postmaster", "webmaster")
 
 
 def local_part(email: str) -> str:
@@ -44,8 +45,10 @@ def is_enquiry_role(email: str) -> bool:
 
 
 def not_for_enquiries(email: str) -> bool:
+    """The word whole, or before a separator or number (careers2@, jobs.sg@), so a
+    business name that starts with one (cvlogistics@, talentdance@) is still an address."""
     local = local_part(email)
-    return any(local == word or local.startswith(word) for word in NOT_FOR_ENQUIRIES)
+    return any(re.fullmatch(rf"{re.escape(word)}(?:[\d._+-].*)?", local) for word in NOT_FOR_ENQUIRIES)
 
 
 def is_shared_inbox(email: str) -> bool:

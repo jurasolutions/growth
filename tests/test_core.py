@@ -301,8 +301,26 @@ def test_claude_command_is_locked_down(monkeypatch):
     finally:
         prompt.unlink()
     joined = " ".join(argv)
-    for flag in ("--permission-mode dontAsk", "--strict-mcp-config", "--setting-sources project", "--max-budget-usd"):
+    for flag in ("--permission-mode dontAsk", "--strict-mcp-config", "--setting-sources project"):
         assert flag in joined
+    # Runs use Ting Yu's Claude subscription, not API billing: no spending ceiling.
+    assert "--max-budget-usd" not in argv
+
+
+def test_no_claude_job_has_a_spending_ceiling():
+    """Growth's headless runs use Ting Yu's Claude subscription. No job, and no default,
+    sets a budget, and a stray `max_budget_usd` key is never passed on."""
+    settings = config.settings()
+    assert "max_budget_usd" not in settings["claude"]
+    claude_jobs = {name: spec for name, spec in settings["jobs"].items() if spec["kind"] == "claude"}
+    assert claude_jobs
+    for name, spec in claude_jobs.items():
+        assert "max_budget_usd" not in spec, name
+        argv, _ = runner.claude_command(name, spec)
+        assert "--max-budget-usd" not in argv, name
+    stray = {**claude_jobs["scout-research"], "max_budget_usd": 5.0}
+    argv, _ = runner.claude_command("scout-research", stray)
+    assert "--max-budget-usd" not in argv
     assert "Bash(jura-growth:*)" not in argv  # only the job's own commands (test_headless.py)
     assert "Bash(jura-growth resume:*)" in argv  # disallowed
     assert not any(a == "Bash" or a.startswith("Bash(*") for a in argv)

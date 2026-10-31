@@ -13,11 +13,14 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
 
 ## How a day runs (SGT, business days)
 
-1. **09:00 `scout-research`** (headless Claude, US$5 ceiling). Refuses to start when
-   `inputs/icp.md` is missing, today's lead target is met, or `max_queue` emails are already
-   waiting. The session asks `jura-growth scout today` for its industries, researches companies
-   one at a time with web search and fetch, records each with `jura-growth scout add-lead`,
-   and queues an email with `jura-growth outreach queue`. New leads post to `#scout-leads`.
+1. **09:00 `scout-research`** (headless Claude, no spending ceiling). Refuses to start when
+   `inputs/icp.md` is missing, today's candidates are already ranked, today's shortlist is
+   already kept, or `max_queue` emails are already waiting. The session asks
+   `jura-growth scout today` for its industries, researches about 20 candidates with web search
+   and fetch (job boards are a key source, see "Shortlist research" below), submits them all
+   with `jura-growth scout shortlist`, and queues an email for each kept lead with
+   `jura-growth outreach queue`. Kept leads post to `#scout-leads`. WebSearch and WebFetch are
+   allowed for this job with no domain restriction, so job boards are reachable.
 2. **09:30–16:30 `scout-send`** every 10 minutes (quiet: no run row when nothing happens).
    `jura-growth outreach send-due` sends at most one email per run.
 3. **16:45 `scout-sync`**. `jura-growth outreach sync`: D1 suppression sync, bounces and
@@ -28,9 +31,11 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
 
 | Command | Does |
 |---|---|
-| `scout today [--json]` | Today's industries, target, threshold, queue room, live tools, follow-ups due |
-| `scout check <domain\|address\|name>` | Exit 1 if already a lead, contacted, suppressed or on the do-not-contact list |
-| `scout add-lead --file <json> [--json]` | Record a lead; every contact rule is checked here (exit 1 = rejected) |
+| `scout today [--json]` | Today's industries, candidates, shortlist, threshold, weights, queue room, live tools, follow-ups due |
+| `scout check <domain\|address\|name>` | Exit 1 if already a lead, contacted, suppressed or on the do-not-contact list; `looked_at_before` shows a recent rejection and its score |
+| `scout check-contact --website W --email E --source URL [--enquiry-contact] [--json]` | The contact rules alone, changing nothing (exit 1 = refused) |
+| `scout shortlist --file <json> [--json]` | Submit the day's candidates; the code ranks them and keeps the best (the research run's only way to add leads) |
+| `scout add-lead --file <json> [--json]` | Record one lead by hand; every contact rule is checked here (exit 1 = rejected). Not available to the research run |
 | `scout leads [--days N] [--status S] [--json]` | Recent leads |
 | `scout insights --days N --json` | `{"industries": {name: count}, "observations": [...]}` (the app factory reads it) |
 | `scout tools [--json]` | Live tools from the site registry, with D1 usage counts when configured |
@@ -52,14 +57,37 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
 1. Incomplete records: company, website, industry, 1–3 observations, source URLs (one on the
    company's own site), a 0–100 score with written reasons.
 2. Websites that are social profiles, directories, marketplaces or job boards
-   (`contact.NOT_OWN_SITE`), government domains (`.gov.sg`, `.mil.sg`), and a website with a
-   path or query: `https://directory.sg/acme` is a listing, not the company's home page.
+   (`contact.NOT_OWN_SITE`, which includes `JOB_BOARDS`), government domains (`.gov.sg`,
+   `.mil.sg`), and a website with a path or query: `https://directory.sg/acme` is a listing,
+   not the company's home page. A recruitment agency may be a lead in its own right.
 3. Anything already known: a lead with the domain (or the address's domain), a domain in
    `contacted_domains`, a suppressed address or domain, or a row in
    `inputs/do-not-contact.csv` (company name as whole words, or domain and its subdomains).
 4. Scores below 60 (config may raise the threshold, never lower it).
-5. More than the day's target (15; code ceiling 30).
-6. The address: it must be an enquiry address (not careers@, noreply@ ...), it must belong
+5. More than the day's shortlist (`research.shortlist`, 10; code ceiling 10 in `caps.py`).
+6. The address: its source page (and a contact form) may never be on a job board or an
+   applicant tracking system, on a recruiter's site (`RECRUITERS`, or "recruit" in the host)
+   unless the recruiter is the lead itself, or a careers or job-ad page on any site, the
+   company's own included (`contact.job_ad_problem`, one rule for add-lead, `scout shortlist`
+   and `scout check-contact`). It reads every host label left of the company's domain
+   (`careers.`, `www.careers.`, `careers-sg.`, `career-portal.`, `jobs2.`) and the
+   percent-decoded, NFKC-normalised, case-folded path (dot segments resolved), query and
+   fragment, word by word. So `/%63areers/`, `/careers.html`, `/careers-2/`, `/jobs.php`,
+   `/join-our-team`, `/work-for-us`, `/we-are-hiring`, `/opportunities`, `/openings`,
+   `/internship`, `/招聘`, `/职位`, `/kerjaya`, `/jawatan-kosong` and `?page=careers` are all
+   careers pages. Field-service, rental and invitation pages are not: `/services/job-sheets`,
+   `/book-a-job`, `/job-request`, `/request-a-job-quote`, `/our-jobs`, `/equipment-hiring`,
+   `/join-us-for-dinner`, nor franchise opportunities or store openings. Two judgement calls,
+   both taking the safer reading: a bare `/vacancies` is a jobs page (far more SME sites use it
+   for jobs than for units), and is read as property only with a property word next to it
+   (`/office-vacancies`, `/vacancies/units`); an `apply.` host alone is not a careers page,
+   because admissions and loan portals use it too (a job word in its path still is). The rule
+   is applied to the submitted page and again to the page the code read after any redirect. It
+   refuses only the contact source: a lead whose site has a careers section is fine, as long as
+   the address comes from another page. It must be an enquiry address (not careers@, jobs@,
+   hr@, recruit@, talent@, hiring@, apply@, cv@, noreply@ ..., each matched as the whole local
+   part or before a separator or number, so `cvlogistics@gmail.com` is still an address), it
+   must belong
    to the business (on the website's domain or a subdomain of it, or at one of the free-mail
    providers in `free_mail_contacts`: gmail.com, outlook.com, hotmail.com, yahoo.com,
    icloud.com, singnet.com.sg; config may shorten that list, never add to it), its source
@@ -74,9 +102,84 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
 7. A contact form only gives `channel = form`: never emailed, listed in the digest.
 
 Rejections for exclusions, low scores, suppression, contacted domains and the do-not-contact
-list are remembered in `scout_rejections` (domain and company name only) for 12 months, so
-`scout check` can say "looked at before". Duplicates and address failures are not. Event logs
-never carry a full address (`…@domain`); addresses live only in `contacts`.
+list, and candidates passed over for rank, are remembered in `scout_rejections` (domain,
+company name, score and reason) for 12 months, so `scout check` can say "looked at before" and
+`scout shortlist` skips them. Duplicates and address failures are not, so a fixable address
+can be tried again on a later day. Event logs never carry a full address (`…@domain`);
+addresses live only in `contacts`.
+
+## Shortlist research, with job boards (PRD §5.2a)
+
+Each research run compares about `research.candidates` companies (20; code ceiling 40) across
+the day's industries and keeps the best of them by score, up to `research.shortlist` a day
+(10; code ceiling 10). Job boards are a key source: MyCareersFuture, JobStreet, Indeed,
+LinkedIn Jobs, Glassdoor and the company's own careers page. Hiring for admin, accounts,
+operations, data-entry, customer-service or document-processing roles is a strong sign of
+manual work.
+
+**The weights** (`scoring.WEIGHTS`, also in `scout today --json`). Every candidate in a batch
+carries `score_breakdown`, and the code checks each factor against its weight and that they add
+up to the score. Hiring points need hiring evidence; address points need a contact address.
+
+| Factor | Key | Points |
+|---|---|---|
+| Industry fit | `industry_fit` | 20 |
+| Size fit (about 5–200 staff) | `size_fit` | 15 |
+| Hiring signals from job boards and careers pages | `hiring_signals` | 30 |
+| Paperwork signals seen on the company's own site | `paperwork_signals` | 20 |
+| How specific and checkable the observations are | `specific_observations` | 5 |
+| A published enquiry address | `enquiry_address` | 10 |
+
+**Hiring evidence** is a list of postings, `{url, title, seen (a real YYYY-MM-DD date within the
+last 12 months, not in the future), duties: [...]}`, at most 10 a lead. Each URL must be http(s), with no spaces, on a
+known job board or applicant tracking system (`contact.JOB_BOARDS`) or on the company's own
+site, so the hiring points can be checked. The URLs are evidence only: the contact rule above
+still refuses a job board as a contact source. **The comparison** is one line, at most 280
+characters, on why the lead ranks where it does; every candidate at or above the threshold
+needs one. A titled person's name ("Ms Tan Mei Ling"), a phone number or an email address in
+a posting's title or duties, or in a comparison, is replaced on intake with "[name removed]",
+"[phone removed]" or "[address removed]" (`privacy.strip_personal`), so it is never stored or
+posted, and the result notes it. Upper-case "MS" and "DR" are not titles (MS Excel, DR
+forms), software after a title ("Ms Excel") is not a person, and the company's own name stays
+("Dr Aircon"). A name with no title ("Tan Mei Ling resigned", "Encik Ahmad") can't be told from
+ordinary words by a pattern, so it is not caught: the prompt forbids copying names, and Ting
+Yu approves every email.
+
+**`scout shortlist`**, in order:
+
+1. The whole batch is checked first: every candidate's record (as add-lead checks it), a
+   breakdown on each, a comparison at or above the threshold, no company twice, at most
+   `research.candidates`. Any bad candidate refuses the batch, the refusal lists every reason
+   at once, and nothing is recorded.
+2. A day is ranked once (`scout_rankings`). A kept lead can't be taken back, so a second batch
+   could only keep the best of itself, never the best of the day; it is refused. The research
+   precheck also skips a day already ranked.
+3. A company in `scout_rejections` from the last 12 months is skipped.
+4. The rest are ranked by score, highest first; ties keep the submitted order.
+5. In rank order, each goes through every add-lead rule while the shortlist has room. One refused
+   on its contact or as already known gives its place to the next. Once the shortlist is full,
+   each remaining candidate at or above the threshold is recorded as "researched, not kept:
+   ranked N of M; today's shortlist of 10 was full", with its score. A weak day keeps fewer; it
+   never pads.
+6. All or nothing: steps 3 to 5 decide with nothing written (the page fetches and MX lookups
+   happen here), then every lead, contact, rejection and the `scout_rankings` row are written
+   in one short transaction, and the `#scout-leads` posts go out after it commits. A batch cut
+   off part-way records nothing and leaves the day open, so the next submission ranks it in
+   full. Two candidates with the same address can't both be kept, and the shortlist is counted
+   again inside the transaction, so a lead added by hand meanwhile never takes the day past it.
+
+`scout check-contact` runs the same contact rules with no side effects, so the session can
+confirm an address before the batch rather than lose a candidate to it.
+
+Kept leads store `hiring_evidence_json`, `comparison` and `score_breakdown_json`. Their
+`#scout-leads` post adds "Why kept: <comparison>" and "Hiring: <strongest posting>" (the most
+recently seen, then the one naming the most duties). The digest adds the day's ranking and one
+line per kept lead with the same two facts.
+
+**Keeping more never sends more.** The send caps (warm-up, daily ceiling, rolling caps), the
+window, random spacing, the bounce and complaint auto-pause, Ting Yu's approval of each live
+email and the `max_queue` research skip are unchanged. `tests/test_scout_shortlist.py` keeps
+and queues ten leads and shows the first live day still sends five.
 
 ## Block 2: the email
 
@@ -118,7 +221,17 @@ jurasolutions.sg only) adds these checks to the core rules:
   rules 5 and 8);
 - a first line that names the company (its name or first distinctive word) or uses a keyword
   from its observations (follow-ups may instead refer back to the first email);
-- no unsubscribe text in the body itself.
+- no unsubscribe text in the body itself;
+- no guesses about the company's people or workload: staffing words anywhere
+  ("short-staffed", "overworked", "high turnover", "your last admin left"), workload words
+  about "you" or "your" people ("your team is stretched", "you must be swamped"), and "busy"
+  with a staffing subject ("your team looks busy"). Courtesy is not a guess: a general sentence
+  ("Many teams struggle with paper delivery orders"), a conditional ("If you're busy, a reply
+  next week is fine", "If your team is stretched at month-end, ...") and "the busy season" all
+  pass;
+- no person named with a title ("Ms Tan", "Mr Lim's", "Dr. Wong"), other than the sender and
+  the company's own name ("Dr Aircon"). Software is not a person ("MS Excel", "Ms Excel"). A
+  public job posting may be mentioned as a plain fact, never linked (PRD §5.2a point 5).
 
 The gate sees the footer with the recipient's site masked as "its website", because the email
 channel allows jurasolutions.sg links only and the site name is code-generated from the
@@ -302,7 +415,9 @@ a failed suppression sync. `jura-growth resume outreach` restarts it.
 ### Digest figures
 
 `emails_sent`, `emails_shadow`, `replies`, `unsubscribes`, `bounces`, `complaints`,
-`emails_queued`, `leads_added`, `leads_form_only`, and a line listing today's form-only leads.
+`emails_queued`, `leads_added`, `leads_form_only`, a line listing today's form-only leads, the
+day's ranking ("Scout ranked 20 candidates and kept 7 (shortlist 10)") and one line per kept
+lead with its comparison and strongest hiring evidence.
 
 ## Setup
 

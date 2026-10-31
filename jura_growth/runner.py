@@ -9,8 +9,10 @@ headless Claude Code (`claude -p`) with the job's prompt file and a tight tool
 allowlist: read anything under jurasolutions/ except secret files, run the
 job's own `jura-growth` commands (headless.py), write only in the job's
 scratch folder, plus the job's own tools (web search and fetch).
-No MCP servers, no user settings, a per-run spending ceiling, and the full
-stream-json transcript kept for audit.
+No MCP servers, no user settings, and the full stream-json transcript kept
+for audit. No spending ceiling: the runs use Ting Yu's Claude subscription,
+not API billing, so `--max-budget-usd` is never passed. The timeout and each
+job's own caps (leads, posts, emails) still hold.
 
 Three failed runs in a row pause the agent (pause.check_auto_pause).
 
@@ -283,7 +285,6 @@ def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
         *commands_disallowed,
         *spec.get("disallowed_tools", []),
     ]
-    budget = spec.get("max_budget_usd", settings.get("max_budget_usd", 3.0))
     argv = [
         settings.get("binary", "claude"),
         "-p",
@@ -296,7 +297,6 @@ def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
         # A browser job adds only its own scratch folder, where its image copies are, so the Chrome upload
         # tool may read them (rehearsal R1, 2026-10-30); every other job adds JURA_ROOT.
         "--add-dir", str(work) if browser else str(paths.JURA_ROOT),
-        "--max-budget-usd", str(budget),
         "--allowedTools", *allowed,
         "--disallowedTools", *disallowed,
     ]

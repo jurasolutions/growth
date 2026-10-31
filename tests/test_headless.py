@@ -87,6 +87,7 @@ FILE_COMMANDS = [
     ("community", "add-group", "--file", "{f}"),
     ("community", "plan-add", "--file", "{f}"),
     ("scout", "add-lead", "--file", "{f}"),
+    ("scout", "shortlist", "--file", "{f}"),
     ("outreach", "queue", "--lead", "1", "--file", "{f}"),
     ("apps", "submit-prd", "{f}"),
     ("social", "render", "{f}", "--out", "{d}"),

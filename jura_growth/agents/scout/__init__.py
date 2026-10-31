@@ -26,13 +26,15 @@ def register(cli) -> None:
 
 def permissions(job: str):
     """The `jura-growth` commands `prompts/scout.md` uses. Sending, syncing,
-    requeueing and unsubscribe links stay with code and Ting Yu."""
+    requeueing and unsubscribe links stay with code and Ting Yu. Leads come in
+    only as a ranked batch (`scout shortlist`, PRD §5.2a), so the code picks the
+    day's best; `scout add-lead` stays for Ting Yu in Terminal."""
     if job != "scout-research":
         return None
     from jura_growth.headless import Permissions
 
     return Permissions(commands=(
-        "scout today", "scout tools", "scout check", "scout add-lead", "scout leads",
+        "scout today", "scout tools", "scout check", "scout check-contact", "scout shortlist", "scout leads",
         "outreach status", "outreach follow-ups-due", "outreach queue",
     ))
 
@@ -40,14 +42,17 @@ def permissions(job: str):
 def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     if job != "scout-research":
         return None
-    from jura_growth.agents.scout import icp, leads, settings
+    from jura_growth.agents.scout import icp, leads, settings, shortlist as ranking
 
     missing = icp.missing_reason()
     if missing:
         return missing
-    target = settings.daily_target()
-    if leads.added_today(conn) >= target:
-        return f"today's target of {target} new leads is already met"
+    done = ranking.ranked_today(conn)
+    if done:
+        return f"today's candidates are already ranked ({done['kept']} kept of {done['candidates']})"
+    shortlist = settings.shortlist()
+    if leads.added_today(conn) >= shortlist:
+        return f"today's shortlist of {shortlist} leads is already kept"
     queued = db.scalar(conn, "SELECT count(*) FROM outreach_messages WHERE status = 'queued'") or 0
     if queued >= settings.max_queue():
         return f"{queued} emails are already queued (max_queue {settings.max_queue()}); research waits for the queue to drain"
@@ -65,7 +70,38 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     if forms:
         listed = ", ".join(f"{r['company']} ({r['form_url']})" for r in forms[:10])
         lines.append(f"Form-only leads to contact by hand if you want to: {listed}")
+    lines += _shortlist_lines(conn, day)
     return {"figures": {"leads_added": added, "leads_form_only": len(forms)}, "lines": lines, "brief": brief}
+
+
+def _shortlist_lines(conn: sqlite3.Connection, day: str) -> list[str]:
+    """The day's ranking (PRD §5.2a) and, for each kept lead, why it was kept
+    and its strongest hiring evidence."""
+    import json
+
+    from jura_growth.agents.scout import scoring, settings
+
+    lines = []
+    ranking = db.one(conn, "SELECT candidates, kept FROM scout_rankings WHERE day = ?", (day,))
+    if ranking:
+        lines.append(
+            f"Scout ranked {ranking['candidates']} candidates and kept {ranking['kept']} (shortlist {settings.shortlist()})"
+        )
+    kept = db.rows(
+        conn,
+        "SELECT company, score, comparison, hiring_evidence_json FROM leads WHERE substr(created_at, 1, 10) = ? "
+        "AND (comparison IS NOT NULL OR hiring_evidence_json != '[]') ORDER BY score DESC, id",
+        (day,),
+    )
+    for row in kept[:10]:
+        line = f"Kept: {row['company']} (score {row['score']})"
+        if row["comparison"]:
+            line += f": {row['comparison']}"
+        best = scoring.strongest(json.loads(row["hiring_evidence_json"] or "[]"))
+        if best:
+            line += f" · hiring: {scoring.describe(best)}"
+        lines.append(line)
+    return lines
 
 
 RUN_UPDATE_DISCORD_CHANNEL = "scout-leads"
