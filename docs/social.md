@@ -106,7 +106,9 @@ In this order. Steps 1 to 4 refuse without using up the day's regeneration.
 
 The core checker applies the house rules to everything (no exclamation marks, emoji, buzzwords,
 urgency, em-dash rhythm, "this, not that", the numbers rule, links only to jurasolutions.sg or
-declared sources). The social channels add:
+declared sources). In a sentence naming Jura, we, our or us, the numbers rule refuses any digit,
+a date, a year and a compound included, unless it is an approved claim or the channel's own
+allowance (the email's "30-minute call"). The social channels add:
 
 | Channel | Rules |
 |---|---|

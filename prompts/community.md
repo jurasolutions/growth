@@ -106,7 +106,9 @@ Otherwise:
      rules, quoting them.
    - Voice: the Jura voice from `design-system/README.md` §3: "we" for Jura, "you" for the
      reader, warm, plain, short sentences. No exclamation marks, emoji, buzzwords,
-     urgency or hashtags. No figures about Jura, in digits or in number words from two up. A
+     urgency or hashtags. No figures about Jura, in digits or in number words from two up.
+     Never put a digit in a sentence that contains "we", "our", "us" or "Jura": not a date, a year or
+     a compound either. The checker refuses any digit there. A
      statutory figure (the GST rate) needs its official .gov.sg page in the item's `"sources"`,
      and the page must not be linked in the text.
 4. **Write 2–3 reply ideas**: helpful answers (10–120 words) to common questions in those groups,

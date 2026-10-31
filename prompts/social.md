@@ -104,7 +104,8 @@ Every variant:
   about Y". Say the positive thing directly.
 - **Numbers:** no figures about Jura beyond the approved claims. Never put a digit, a number
   word from two up ("twelve", "a dozen"), or "half", "twice" or "double", in a sentence that
-  contains "we", "our", "us" or "Jura". A figure from a news story is fine in a sentence about
+  contains "we", "our", "us" or "Jura": not a date, a year or a compound either. The checker refuses
+  any digit there, unless it is an approved claim. A figure from a news story is fine in a sentence about
   that story, with the source linked.
 - Plain text only. No markdown: no `**bold**`, no `#` headings, no `[text](url)` links, no code
   fences. Write links in full (`https://...`). Lines starting with "- " are fine.

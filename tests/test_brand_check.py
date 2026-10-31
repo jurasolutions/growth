@@ -461,6 +461,18 @@ def test_a_figure_about_jura_cannot_pass_as_a_date_a_compound_or_a_year(text):
         "A third of owners agree.",
         "5 million shops use it.",
         "5-million shops use it.",
+        # Code review 01, round 2: a year's shape with a noun off the old list, and fused counts.
+        "2000 small shops use it.",
+        "1999 local owners use it.",
+        "2000 Singapore shops use it.",
+        "Over 2000 shops use it.",
+        "It runs in 2000 shops.",
+        "Used by 2000 shops.",
+        "100-plus firms use it.",
+        "50-odd firms use it.",
+        "A 500-strong client base grows.",
+        "A 500-client base grows.",
+        "A 6-figure saving.",
     ],
 )
 def test_a_figure_with_no_source_cannot_pass_as_a_date_a_compound_or_a_year(text):
@@ -496,11 +508,11 @@ def test_real_dates_and_years_still_pass(text):
     "text",
     [
         "Book a 30-minute call.",
-        "We use a 2-step handover.",
-        "We buy 3rd-party tools.",
+        "A 2-step handover works.",
+        "Buy 3rd-party tools with care.",
         "It is a 3-way match.",
-        "We offer a 30-day trial.",
-        "Our 45-minute call maps one process.",
+        "Start with a 30-day trial.",
+        "A 45-minute call maps one process.",
         "Pick 3, then test them.",
         "A 2 in 1 laptop works.",
         "Ask a third party to check it.",
@@ -521,3 +533,119 @@ def test_a_statutory_rate_with_a_source_still_passes_with_a_compound_beside_it()
     text = f"GST is charged at 9% on a 30-day invoice (source: {source})."
     result = check(text, channel_name="news", sources=[source])
     assert result.passed, result.reasons()
+
+
+# In a sentence about Jura, any digit fails unless it is an approved claim or the channel's own
+# allowance. There are no shapes to enumerate: a date, a year, a compound and a name are refused
+# with the rest, and the writer is told the same (prompts/social.md). A false refusal costs one
+# rewrite, and a miss is a made-up client count.
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Code review 01, round 2, must fail.
+        "We helped 2000 small shops.",
+        "Jura served 1999 local owners.",
+        "Our 2000 happy owners stay.",
+        "We served 2000 retail shops in Singapore.",
+        "Our 2000 Singapore shops stay.",
+        "We served 100-plus firms.",
+        "We served 50-odd firms.",
+        "Our 500-strong client base grows.",
+        "We have a 500-client base.",
+        "We deliver 6-figure savings.",
+        # A year gets no exemption here. The review listed the first three as passing; the
+        # conductor's decision on that review refuses them.
+        "We updated the 2026 tax rates.",
+        "Our 2026 tax rates guide is free.",
+        "We can look at your 2026 business plan.",
+        "We wrote our 2026 plans.",
+        "We opened in 2026.",
+        # Nor a compound, a date, a time or a name.
+        "Our 45-minute call maps one process.",
+        "We offer a 30-day trial.",
+        "We use a 2-step handover.",
+        "We buy 3rd-party tools.",
+        "We met on 5 March 2026.",
+        "Our office closes on 1 May.",
+        "We open at 9:30am.",
+        "We use GPT-5.",
+        "Jura works 24/7.",
+        "Tell us about step 1.",
+        "We keep it for 30 days.",
+        # The prompt's own wording: an approved claim doesn't excuse the rest of the sentence.
+        "We automate 80%+ of the manual steps for 62 firms.",
+    ],
+)
+def test_any_digit_in_a_sentence_about_jura_fails(text):
+    assert "numbers" in rules(check(text)), check(text).reasons()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "We automate 80%+ of the manual steps in a process.",
+        "Jura helps you automate 80%+ of the manual steps.",
+        "We read more at https://jurasolutions.sg/apps/a1 on the site.",
+        "Write to us at team1@jurasolutions.sg for a copy.",
+        "We take the nine-to-five admin off your plate.",
+        "The two of us will call.",
+    ],
+)
+def test_an_approved_claim_or_a_link_in_a_sentence_about_jura_passes(text):
+    assert "numbers" not in rules(check(text)), check(text).reasons()
+
+
+def test_a_sentence_about_jura_is_read_alone():
+    """The next sentence may carry a date of its own."""
+    assert "numbers" not in rules(check("We read every answer. It closes on 30 May."))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "We'd be glad to hear how it works on a 30-minute call.",
+        "We could talk it through on a 30-minute intro call.",
+        "Our 30-minute chat is a good start.",
+    ],
+)
+def test_the_email_channel_allows_its_call_and_no_other_channel_does(text):
+    assert "numbers" not in rules(check(text, channel_name="email")), check(text, channel_name="email").reasons()
+    assert "numbers" in rules(check(text))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "We helped 62 firms on a 30-minute call.",
+        "We offer a 45-minute call.",
+        "We offer a 30-day trial.",
+        "We helped 2000 small shops.",
+    ],
+)
+def test_the_email_channels_allowance_is_only_its_call(text):
+    assert "numbers" in rules(check(text, channel_name="email")), check(text, channel_name="email").reasons()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Code review 01, round 2, must pass: none is about Jura.
+        "Your 2026 business plan is due.",
+        "The 2026 rates apply to you.",
+        "In 2026 prices rose.",
+        "Budget 2026 grants open soon.",
+        "Plan your 2026 sales target.",
+        "Book a 30-minute call.",
+        # R2-S2: a position in a list, or a rate over time, is no share.
+        "Step 2 out of 3.",
+        "Page 2 of 3 is next.",
+        "It sends one in five minutes.",
+    ],
+)
+def test_a_year_or_a_position_not_about_jura_still_passes(text):
+    assert "numbers" not in rules(check(text)), check(text).reasons()
+
+
+def test_a_share_with_a_list_word_elsewhere_in_the_sentence_is_still_a_share():
+    assert "numbers" in rules(check("Each step shows nine in ten owners agree."))
+

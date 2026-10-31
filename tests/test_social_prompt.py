@@ -169,6 +169,13 @@ def test_item_titles_follow_the_headlines_rules():
     assert "`proper_nouns`: names the sentence-case check should accept in the headline and the item titles" in FLAT
 
 
+@pytest.mark.parametrize("prompt", ["social.md", "scout.md", "community.md", "app-factory.md"])
+def test_every_writing_prompt_says_a_digit_never_sits_beside_jura(prompt):
+    text = re.sub(r"\s+", " ", (paths.REPO_ROOT / "prompts" / prompt).read_text(encoding="utf-8"))
+    assert 'in a sentence that contains "we", "our", "us" or "Jura"' in text
+    assert "not a date, a year or a compound" in text
+
+
 def test_the_prompt_warns_of_the_other_ways_to_fail_the_gate():
     assert '"half", "twice" or "double"' in FLAT
     assert "reads as a web address" in FLAT

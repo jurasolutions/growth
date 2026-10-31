@@ -167,6 +167,13 @@ def test_a_figure_anywhere_else_on_the_card_must_be_in_the_post_too(env, conn, v
         ("Forty firms saved hours.", "Forty"),
         ("Two-thirds of firms tried it.", "Two-thirds"),
         ("Twice as fast as before.", "Twice"),
+        # Code review 01, round 2.
+        ("2000 small shops use it.", "2000"),
+        ("1999 local owners use it.", "1999"),
+        ("100-plus firms use it.", "100-plus"),
+        ("50-odd firms use it.", "50-odd"),
+        ("A 500-strong client base.", "500-strong"),
+        ("A 6-figure saving.", "6-figure"),
     ],
 )
 def test_a_figure_in_any_form_is_tied_to_the_post(env, conn, detail, figure):
