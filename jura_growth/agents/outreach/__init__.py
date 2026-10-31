@@ -1,7 +1,7 @@
 """Outreach: queues, checks and sends the scout's emails (scout PRD §5.3–5.8).
 
-Jobs `scout-send` (every 10 minutes, quiet) and `scout-sync` (16:45) run as
-agent `outreach`, so `jura-growth pause outreach` / `resume outreach` stop and
+Jobs `outreach-requests` (08:30, quiet), `scout-send` (every 10 minutes, quiet)
+and `scout-sync` (16:45) run as agent `outreach`, so `jura-growth pause outreach` / `resume outreach` stop and
 start sending without touching research. Settings: `config/scout.yaml`
 (`mode: shadow` by default). Hard limits: `caps.py`.
 """
@@ -51,7 +51,28 @@ def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     return None
 
 
+# The morning picture stops at the first line, which fits its three rows. The message and the long
+# text carry the first problem, and `outreach status` lists them all.
+LIVE_BLOCKED_LINE = "Run `jura-growth outreach status`: {things} live outreach, so no email is asked for.\n{problem}."
+
+
+def health(conn: sqlite3.Connection) -> list[str]:
+    """Live mode with something stopping it: no request is raised and no email goes, and until
+    now the first word of it was the 09:30 alert. Reads settings only."""
+    from jura_growth.agents.outreach import send
+    from jura_growth.agents.scout import settings
+
+    if settings.mode() != "live":
+        return []
+    problems = send.live_problems()
+    if not problems:
+        return []
+    things = "1 thing stops" if len(problems) == 1 else f"{len(problems)} things stop"
+    return [LIVE_BLOCKED_LINE.format(things=things, problem=problems[0])]
+
+
 def digest(conn: sqlite3.Connection, day: str) -> dict:
+    from jura_growth.agents.outreach import replies as replies_mod
     from jura_growth.agents.scout import settings
 
     def count(sql: str) -> int:
@@ -95,6 +116,7 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
             "emails_sent": sent,
             "emails_shadow": shadow,
             "replies": replies,
+            "reply_detection": replies_mod.enabled(),  # off, `replies` can't tell a quiet day from an unread one
             "unsubscribes": unsubscribes,
             "bounces": bounces,
             "complaints": complaints,

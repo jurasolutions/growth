@@ -16,23 +16,34 @@ from typing import Callable, Iterator
 from jura_growth import agents, paths, timeutil
 
 CORE_MIGRATIONS = Path(__file__).parent / "migrations"
+BUSY_SECONDS = 30  # how long a connection waits for a lock
+# The one-pager's post path, which has Dispatch's 60 seconds for everything and can go on without
+# a write connection: a lock costs it a record, never the post.
+SHORT_WAIT = 2
+_BUSY = {"SQLITE_READONLY_ROLLBACK", "SQLITE_BUSY", "SQLITE_LOCKED"}
 
 
-def connect(path: Path | None = None, *, migrate_now: bool = True) -> sqlite3.Connection:
+def is_lock(error: BaseException) -> bool:
+    """A lock or a hot journal: a passing state of growth.db, not something wrong with it."""
+    return isinstance(error, sqlite3.Error) and (getattr(error, "sqlite_errorname", None) in _BUSY or "locked" in str(error))
+
+
+def connect(path: Path | None = None, *, migrate_now: bool = True, wait: float | None = None) -> sqlite3.Connection:
+    seconds = BUSY_SECONDS if wait is None else wait
     target = paths.writable(path or paths.db_path())
-    conn = sqlite3.connect(target, timeout=30, isolation_level=None)
+    conn = sqlite3.connect(target, timeout=seconds, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = DELETE")
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute(f"PRAGMA busy_timeout = {int(seconds * 1000)}")
     if migrate_now:
         migrate(conn)
     return conn
 
 
 @contextmanager
-def session(path: Path | None = None) -> Iterator[sqlite3.Connection]:
-    conn = connect(path)
+def session(path: Path | None = None, *, wait: float | None = None) -> Iterator[sqlite3.Connection]:
+    conn = connect(path, wait=wait)
     try:
         yield conn
     finally:

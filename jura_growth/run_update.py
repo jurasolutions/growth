@@ -14,7 +14,7 @@ never a skip, a quiet run or the lock skip). The message goes to the agent
 plug-in's `RUN_UPDATE_DISCORD_CHANNEL`, or the channel its optional
 `run_update_channel(conn, run)` names for that run:
 
-    **social** · ok · 07:00 SGT · 4m 12s · US$0.41 · run 1287
+    **social** · ok · 07:30 SGT · 4m 12s · US$0.41 · run 1287
     > Drafted Facebook and Instagram for "PayNow QR for small shops".
     Produced: 2 drafts, 2 images
     Waiting for you: A-0153, A-0154 (social posts)

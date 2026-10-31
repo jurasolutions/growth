@@ -28,7 +28,7 @@ from typing import Iterator
 
 import httpx
 
-from jura_growth import config, images, log, paths, privacy, timeutil
+from jura_growth import config, db, images, log, paths, privacy, timeutil
 
 MAX_CONTENT = 2000
 MAX_FILES = 10
@@ -122,6 +122,11 @@ def _engine_file(path: Path) -> bool:
     return False
 
 
+def shortened(text: str, limit: int) -> str:
+    """`text`, or as much as fits in `limit` characters with an ellipsis."""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def split(content: str, limit: int = MAX_CONTENT) -> list[str]:
     """Break a long message at line boundaries into Discord-sized pieces."""
     if len(content) <= limit:
@@ -201,8 +206,7 @@ def post(
     url = webhook(channel)
     if not url:
         _outbox(channel, content, saved, username)
-        _record(conn, channel, digest, delivered=False)
-        log.event(conn, "discord.outbox", {"channel": channel, "chars": len(content)}, level="warning")
+        _noted(conn, channel, digest, False, "discord.outbox", {"channel": channel, "chars": len(content)}, "warning")
         return PostResult(channel, delivered=False, reason=f"{env_name(channel)} not set; saved to outbox")
 
     pieces = split(content)
@@ -217,12 +221,10 @@ def post(
                     message_ids.append(_message_id(response))
     except DiscordError as error:
         _outbox(channel, content, saved, username)
-        _record(conn, channel, digest, delivered=False)
-        log.event(conn, "discord.error", {"channel": channel, "error": str(error)}, level="error")
+        _noted(conn, channel, digest, False, "discord.error", {"channel": channel, "error": str(error)}, "error")
         return PostResult(channel, delivered=False, reason=f"{error}; saved to outbox")
 
-    _record(conn, channel, digest, delivered=True)
-    log.event(conn, "discord.post", {"channel": channel, "chars": len(content), "files": len(uploads)})
+    _noted(conn, channel, digest, True, "discord.post", {"channel": channel, "chars": len(content), "files": len(uploads)}, "info")
     return PostResult(
         channel, delivered=True, messages=len(pieces), message_ids=message_ids, pieces=pieces if wait else []
     )
@@ -384,6 +386,18 @@ def _posted_today(conn: sqlite3.Connection, channel: str, digest: str) -> bool:
         (channel, digest, timeutil.today_str()),
     ).fetchone()
     return row is not None
+
+
+def _noted(conn: sqlite3.Connection | None, channel: str, digest: str, delivered: bool, kind: str, payload: dict, level: str) -> None:
+    """Record what became of a message. It has already gone or been saved, so a lock here costs
+    the record and never the answer: reporting a failure would get it asked for, and posted, again."""
+    try:
+        _record(conn, channel, digest, delivered=delivered)
+        log.event(conn, kind, payload, level=level)
+    except sqlite3.Error as error:
+        if not db.is_lock(error):
+            raise
+        log.event(None, kind, {**payload, "not_recorded": "growth.db was locked"}, level=level)
 
 
 def _record(conn: sqlite3.Connection | None, channel: str, digest: str, *, delivered: bool) -> None:

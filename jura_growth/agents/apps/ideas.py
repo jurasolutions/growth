@@ -28,7 +28,7 @@ NAME_WORDS = 5  # the factory's name rule allows a few plain words; the factory 
 NAME_MAX = 60
 SLUG_MAX = 60  # `validate_factory`'s slug limit
 REASON_MAX = 300
-NAME_MARK = ": "  # a colon and a space, so a web address or a time (06:30) doesn't name it
+NAME_MARK = ": "  # a colon and a space, so a web address or a time (07:00) doesn't name it
 _EDGE = " \t\r\n.,;:!?\"'"
 _LATIN = re.compile(r"[A-Za-z]")
 BUSY = "refused: the backlog is busy (another command is writing it); try again in a minute"
@@ -131,9 +131,9 @@ def reply(added: Added) -> str:
     ]
     if added.ahead:
         count = f"{added.ahead} older idea{'s' if added.ahead != 1 else ''} of yours come{'s' if added.ahead == 1 else ''}"
-        lines.append(f"{count} first; the app factory writes at most one PRD a day at 06:30 SGT, oldest first.")
+        lines.append(f"{count} first; the app factory writes at most one PRD a day at 07:00 SGT, oldest first.")
     else:
-        lines.append("The app factory picks it at its next run (06:30 SGT).")
+        lines.append("The app factory picks it at its next run (07:00 SGT).")
     lines.append("Its PRD comes to #approvals as an app-build request; nothing is built before you approve it.")
     return "\n".join(lines)
 

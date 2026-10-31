@@ -11,7 +11,7 @@ build step).
 
 ## How a day goes
 
-1. **06:30 SGT**, launchd runs `jura-growth run app-factory`.
+1. **07:00 SGT**, launchd runs `jura-growth run app-factory`.
 2. `precheck` first raises an `app-build` request for any factory PRD in `prd/pending/apps/`
    that has never had one (the catch-up pass, which `submit-prd` also runs: it gives each PRD
    filed before requests existed exactly one request, and does nothing once each has one). Then it skips the run before Claude starts when:

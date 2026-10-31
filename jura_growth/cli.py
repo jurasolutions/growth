@@ -8,6 +8,7 @@ flags) live in code where a prompt can't talk its way past them.
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import traceback
 from pathlib import Path
@@ -391,13 +392,44 @@ def heartbeat() -> str:
     return "heartbeat posted" if result.delivered else f"heartbeat not posted: {result.reason}"
 
 
+def _upkeep_unless_locked() -> None:
+    """Write the lapses that are due, unless growth.db is locked: the read judges them by the clock
+    anyway (ADR 0002), and the morning post can't wait on it. Lapsed cards are edited (edits don't
+    notify); new cards wait for the heartbeat or a raising command, and the one-pager lists them."""
+    try:
+        with db.session(wait=db.SHORT_WAIT) as conn:
+            _approval_upkeep(conn, post=False)
+    except sqlite3.Error as error:
+        if not db.is_lock(error):
+            raise
+        log.event(None, "one_pager.upkeep_skipped", {"error": str(error)}, level="warning")
+
+
+def _post_past_a_lock(snapshot: mission.Snapshot) -> discord.PostResult:
+    """The post, with no write connection when growth.db is locked: it only records with one. A
+    raised lock means nothing went out, because `discord.post` keeps a lock after that to itself."""
+    try:
+        with db.session(wait=db.SHORT_WAIT) as conn:
+            return one_pager_mod.post(conn, snapshot)
+    except sqlite3.Error as error:
+        if not db.is_lock(error):
+            raise
+    return one_pager_mod.post(None, snapshot)
+
+
 @cli.command("one-pager")
-@click.option("--no-post", is_flag=True, help="Print the one-pager instead of posting it.")
-def one_pager_cmd(no_post) -> str | None:
-    """Post the one-pager to #mission-control, with the 14-day grid.
+@click.option("--no-post", is_flag=True, help="Print the long form instead of posting.")
+@click.option("--grid", is_flag=True, help="Draw the 14-day grid to a file and print its path. Posts nothing.")
+def one_pager_cmd(no_post, grid) -> str | None:
+    """Post the morning picture to #mission-control.
 
     First write the approval lapses that are due (MC §4.2, A17), then build
-    from growth.db read-only. With --no-post, only print it: nothing is written."""
+    from growth.db read-only. With --no-post, only print the long form: nothing
+    is written. With --grid, only draw the 14-day grid."""
+    if grid:
+        png, problem = one_pager_mod.grid_png(mission.read(mission.Source.here()))
+        click.echo(png if png else f"The grid couldn't be drawn: {problem}")
+        return None
     if no_post:
         pieces = one_pager_mod.messages(mission.read(mission.Source.here()))
         for index, piece in enumerate(pieces):
@@ -405,13 +437,13 @@ def one_pager_cmd(no_post) -> str | None:
                 click.echo(f"\n(message {index + 1} of {len(pieces)})\n")
             click.echo(piece)
         return None
-    with db.session() as conn:
-        # Lapsed cards are edited (edits don't notify); new cards wait for the
-        # heartbeat or a raising command, and the one-pager lists them.
-        _approval_upkeep(conn, post=False)
-    snapshot = mission.read(mission.Source.here())
-    with db.session() as conn:
-        result = one_pager_mod.post(conn, snapshot)
+    try:
+        _upkeep_unless_locked()
+        snapshot = mission.read_patiently(mission.Source.here())
+        result = _post_past_a_lock(snapshot)
+    except Exception as error:  # noqa: BLE001 - nothing went out, so it must leave a trace of why
+        log.event(None, "one_pager.not_posted", {"error": f"{type(error).__name__}: {error}"}, level="error")
+        raise
     answer = f"posted to #{result.channel}" if result.delivered else f"not posted to #{result.channel}: {result.reason}"
     click.echo(answer)
     return answer

@@ -9,9 +9,10 @@ from pathlib import Path
 import click
 
 from jura_growth import config, db, suppression, timeutil
-from jura_growth.agents.outreach import compose, queue as queue_mod, send, store, sync
+from jura_growth.agents.outreach import approval, compose, queue as queue_mod, send, store, sync
 from jura_growth.agents.scout import contact as contact_rules
 from jura_growth.agents.scout import settings
+from jura_growth.run_update import count
 
 
 def _echo_json(value) -> None:
@@ -96,6 +97,18 @@ def send_due() -> str | None:
         result = send.send_due(conn)
     click.echo(result.note)
     return result.summary
+
+
+@outreach_group.command("raise-due")
+def raise_due_cmd() -> str | None:
+    """Raise requests for queued emails due today, up to today's room, and post their cards. Sends nothing."""
+    with db.session() as conn:
+        raised = approval.raise_due(conn)
+        if not approval.raising_problem(conn):
+            approval.post_cards(conn)
+    summary = f"raised {count(len(raised), 'approval request')}" if raised else None
+    click.echo(summary or "no requests raised")
+    return summary
 
 
 @outreach_group.command("sync")
