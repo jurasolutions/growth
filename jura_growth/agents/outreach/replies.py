@@ -472,6 +472,17 @@ def naming_our_mail(conn: sqlite3.Connection, known: Contacts, sender: str, head
     return contact
 
 
+def answering(conn: sqlite3.Connection, known: Contacts, sender: str, headers: Message) -> tuple[dict | None, bool]:
+    """(the lead this answers, whether only a message id says so). A match by id counts as the lead's
+    reply (F2) and never suppresses or unsubscribes: whoever holds an id could write in anyone's name
+    (code review 03, SEC-4). It is reported, and Ting Yu can act by hand."""
+    contact = known.match(sender, headers)
+    if contact is not None:
+        return contact, False
+    named = naming_our_mail(conn, known, sender, headers)
+    return named, named is not None
+
+
 def sent_subjects(conn: sqlite3.Connection, lead_id: int) -> set[str]:
     """The subjects Jura sent this lead, as `bare_subject` reads them."""
     rows = db.rows(conn, "SELECT DISTINCT subject FROM outreach_messages WHERE lead_id = ? AND sent_at IS NOT NULL", (lead_id,))
@@ -586,7 +597,7 @@ def _batch(conn, imap, numbers: list[bytes], known: Contacts, result: Result) ->
         result.checked += 1
         headers = found.message
         sender = parseaddr(str(headers.get("From", "")))[1].strip().lower()
-        contact = known.match(sender, headers) or naming_our_mail(conn, known, sender, headers)
+        contact, by_id = answering(conn, known, sender, headers)
         if contact is None:
             continue
         received = received_at(headers)
@@ -601,8 +612,8 @@ def _batch(conn, imap, numbers: list[bytes], known: Contacts, result: Result) ->
             continue
 
         ours = sent_subjects(conn, contact["lead_id"])
-        wants_out = bool(opt_out_reason(subject, "", ours))
-        if not wants_out and found.size <= MAX_BODY_BYTES:
+        wants_out = not by_id and bool(opt_out_reason(subject, "", ours))
+        if not by_id and not wants_out and found.size <= MAX_BODY_BYTES:
             body = body_of(imap, found.number, expected=headers)
             if body is None:
                 continue  # refused or shifted: the next check reads it, so an opt-out isn't lost

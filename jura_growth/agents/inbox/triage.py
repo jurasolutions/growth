@@ -49,6 +49,8 @@ ALWAYS_HIGH = frozenset({"complaint", "data-request"})
 # These are never answered, so an earlier open draft doesn't force one (E2, E6). Not `noise`: it can be
 # steered, and a question would lose its draft to it (F8).
 NOT_ANSWERED_WHATEVER_CAME_BEFORE = frozenset({"opt-out", "not-interested", "spam"})
+# Said by the person themselves, these stop every draft to that address, under any subject (E2; P-1).
+CLOSES_THEIR_DRAFTS = frozenset({"opt-out", "not-interested"})
 PRIORITIES = ("normal", "high")
 LANGUAGES = ("English", "Chinese", "Malay", "Tamil", "Hindi", "Indonesian", "Tagalog", "Thai", "Vietnamese", "Japanese", "Korean",
              "French", "German", "Spanish", "Other")
@@ -325,7 +327,7 @@ def _without_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], k
     newest = items[-1]
     with db.transaction(conn):
         if kind == "opt-out":
-            if json.loads(newest["thread_json"] or "{}").get("own_sender"):
+            if store.thread_of(newest).get("own_sender"):
                 replies.honour_opt_out(conn, newest["sender_address"], newest["lead_id"], newest["key"])
                 note = _OPTED_OUT
             else:
@@ -333,6 +335,8 @@ def _without_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], k
         else:
             note = _NOTE[kind]
         _close(conn, items, store.REPORTED, note=note, kind=kind, priority=payload.get("priority", "normal"))
+        if kind in CLOSES_THEIR_DRAFTS and (store.thread_of(newest).get("own_sender") or newest["source"] == "enquiry"):
+            kinds.close_drafts_to(conn, newest)  # never on a forged sender's word (SEC-6)
         log.event(conn, "inbox.triaged", {"item": newest["id"], "class": kind}, agent=AGENT)
 
 

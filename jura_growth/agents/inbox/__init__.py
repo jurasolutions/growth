@@ -99,15 +99,7 @@ def setup_gaps() -> list:
     from jura_growth import health
     from jura_growth.agents.inbox import mail
 
-    return [health.Gap(name, ok=False) for name in [*mail.setup_gaps(), *_sending_gaps()]]
-
-
-def _sending_gaps() -> list[str]:
-    """No Resend key means no reply can go, and so no card is raised: the draft waits, which would
-    otherwise look like nothing to do. The sender's other settings are outreach's to report."""
-    from jura_growth import config
-
-    return [] if config.is_set("RESEND_API_KEY_OUTREACH") else ["RESEND_API_KEY_OUTREACH"]
+    return [health.Gap(name, ok=False) for name in mail.setup_gaps()]
 
 
 def health(conn: sqlite3.Connection) -> list[str]:

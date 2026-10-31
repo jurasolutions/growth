@@ -7,7 +7,14 @@
   in it: it is derived from the subject and the claim, and says nothing to the person.
 - **Gone** (`content` is None) means a reply mustn't go: they wrote again with words in it (a sticker
   isn't an answer to anything, so it leaves the draft standing), the address is suppressed, or the
-  stored recipient doesn't hold up.
+  stored recipient doesn't hold up. Suppression is by address, so that holds across conversations.
+- **Held** (`held_by_newer`) is for a newer message from the same address under another subject, which
+  triage hasn't read yet. It might be an opt-out or a change of mind, so no claim is made until triage
+  has settled it. An opt-out or a "not now" then closes the draft (`close_drafts_to`). Anything else
+  lets it go at the next slot (code review 03, P-1).
+- **The subject** is on the card whole, because the card shows exactly what goes out. A subject the card
+  couldn't show byte for byte, or that the draft's link rule would refuse, is sent as a safe one instead
+  (code review 03, SEC-1, SEC-2).
 - **Deadlines:** decide by 3 days after asking, use by 2 days after approval. Either passing lapses the
   item, which then reads "answer by hand".
 
@@ -26,8 +33,8 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from jura_growth import approval_settings, approvals, config, db, discord, log, pause, privacy, suppression, timeutil
-from jura_growth.agents.inbox import mail, report, settings, store
+from jura_growth import approval_settings, approvals, caps, config, db, discord, log, pause, privacy, suppression, timeutil
+from jura_growth.agents.inbox import checks, mail, report, settings, store
 from jura_growth.agents.outreach import replies
 from jura_growth.agents.outreach import send as outreach_send
 from jura_growth.agents.scout import settings as scout_settings
@@ -42,7 +49,6 @@ SIGNATURE = (
 ENQUIRY_SUBJECT = "Your enquiry to Jura Solutions"  # S3: the form's own subject is one she never saw
 NO_SUBJECT = "Your message to Jura Solutions"
 REFERENCES_SENT = 20
-SUBJECT_SHOWN = 80
 # What `cards.build` puts around a preview, past its title and reason: the header and the answer line,
 # as an edited card's header is longest. A card never splits, so this is counted before the quote is.
 CARD_FRAME = 150
@@ -67,10 +73,6 @@ def _item(conn: sqlite3.Connection, subject: str) -> dict | None:
     return store.get(conn, item_id) if item_id is not None else None
 
 
-def _thread(item: dict) -> dict:
-    return json.loads(item["thread_json"] or "{}")
-
-
 def opted_out_earlier(reason: str) -> str:
     return f"They opted out earlier ({reason}) and wrote again. The engine won't send. Answer by hand if it's right."
 
@@ -83,10 +85,16 @@ def language_line(language: str | None) -> str:
     return f"They wrote in {language}. This draft is English."
 
 
+def addresses_of(item: dict) -> list[str]:
+    """Each address this person is known by here: the one they wrote from, and the one to answer."""
+    found = (item["sender_address"], store.thread_of(item).get("reply_to"))
+    return [address for address in dict.fromkeys(found) if address]
+
+
 def suppressed_because(conn: sqlite3.Connection, item: dict) -> str | None:
     """Why this person gets no email, whichever of their addresses it is: From, or the one to answer."""
-    for address in (item["sender_address"], _thread(item).get("reply_to")):
-        reason = suppression.is_suppressed(conn, address) if address else None
+    for address in addresses_of(item):
+        reason = suppression.is_suppressed(conn, address)
         if reason:
             return reason
     return None
@@ -97,6 +105,26 @@ def wrote_again(conn: sqlite3.Connection, item: dict) -> bool:
     sticker must not cancel the answer (code review 02, P-2)."""
     return any(other["id"] > item["id"] and other["text"] and other["state"] != store.NOISE
                for other in store.in_conversation(conn, item["conversation"]))
+
+
+def held_by_newer(conn: sqlite3.Connection, item: dict) -> bool:
+    """A newer message with words in it from the same address, in another conversation, that triage
+    hasn't settled. People don't keep to a thread, and this may be the one that says not to answer (P-1).
+    One in the same conversation doesn't hold: `wrote_again` has already made the draft gone."""
+    theirs = set(addresses_of(item))
+    return any(other["id"] > item["id"] and other["conversation"] != item["conversation"] and other["text"]
+               and theirs & set(addresses_of(other))
+               for other in store.waiting_for_triage(conn))
+
+
+def close_drafts_to(conn: sqlite3.Connection, newest: dict) -> None:
+    """They opted out or said not now, under whatever subject: no other draft to that address goes (E2).
+    Call it inside the caller's transaction. Its approval supersedes at the next read."""
+    theirs = set(addresses_of(newest))
+    for state in (store.TRIAGED, store.WAITING):
+        for item in store.with_state(conn, state):
+            if item["id"] < newest["id"] and item["source"] in store.MAIL_SOURCES and theirs & set(addresses_of(item)):
+                store.set_item_state(conn, item["id"], store.SUPERSEDED, note="They wrote again, so this draft is closed.")
 
 
 # --- what goes out ------------------------------------------------------------------------------
@@ -125,28 +153,30 @@ class Reply:
     def text(self) -> str:
         return f"{self.draft}\n\n{SIGNATURE}\n"
 
-    def bytes(self) -> bytes:
+    def content_bytes(self) -> bytes:
         """No Unicode normalisation: two drafts with different bytes never hash alike (ADR 0003)."""
         value = {"to": self.to, "subject": self.subject, "body": self.draft, "in_reply_to": self.in_reply_to,
                  "references": list(self.references), "bcc": self.bcc, "frame": frame_fingerprint()}
         return json.dumps(value, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
     def content_hash(self) -> str:
-        return approvals.content_hash(self.bytes())
+        return approvals.content_hash(self.content_bytes())
 
 
 def _reply_subject(item: dict) -> str:
     if item["source"] == "enquiry":
         return ENQUIRY_SUBJECT
     bare = store.clean_line(replies.SUBJECT_PREFIX_RE.sub("", item["subject"] or ""))
-    return f"Re: {bare}" if bare else NO_SUBJECT
+    if not bare or len(bare) > caps.INBOX_REPLY_SUBJECT_CHARS or checks.holds_a_link(bare) or not report.shows_as_written(bare):
+        return NO_SUBJECT
+    return f"Re: {bare}"
 
 
 def reply_of(item: dict) -> Reply | None:
     """The reply this inbox item would send, read again from the row: None when its recipient doesn't
     hold up, whatever put it there (A8). An enquiry starts its own thread, because the form's message
     is one she never saw (S3)."""
-    thread = _thread(item)
+    thread = store.thread_of(item)
     to = mail.valid_recipient(thread.get("reply_to"))
     if to is None or not item["draft"]:
         return None
@@ -181,12 +211,20 @@ def _unanswered(conn: sqlite3.Connection, item: dict) -> list[dict]:
 
 
 def _recipient_lines(item: dict, reply: Reply) -> list[str]:
-    """A9, SEC-6: a forged sender can bring its own `Reply-To`, so the card names who really gets it."""
+    """A9, SEC-6: a forged sender can bring its own `Reply-To`, so the card names who really gets it, and
+    says when the mail's own claim to be from there doesn't hold up (code review 03, SEC-3)."""
+    thread = store.thread_of(item)
     goes_to = suppression.domain_of(reply.to)
-    claimed = _thread(item).get("from_domain") or item["sender_domain"]
+    claimed = thread.get("from_domain")
     lines = [f"Goes to {privacy.masked_address(reply.to)}."]
-    if item["source"] != "enquiry" and claimed != goes_to:
+    if item["source"] == "enquiry":
+        return lines
+    if not claimed:
+        lines.append(f"Its From couldn't be read as one address, so nothing shows who wrote it. The reply goes to {goes_to}: check that is right before you approve.")
+    elif claimed != goes_to:
         lines.append(f"It says it is from {claimed}, but the reply goes to {goes_to}: check that is right before you approve.")
+    if thread.get("forged"):
+        lines.append("The receiving server says this may not be from that address, so approving may answer someone who never wrote.")
     return lines
 
 
@@ -209,7 +247,7 @@ def _card_lines(conn: sqlite3.Connection, item: dict, reply: Reply, record: appr
     draft = "\n".join(f"> {line}" if line else ">" for line in reply.draft.split("\n"))
     # No address on these lines: the signature's is Levi's own.
     after = [
-        f"Subject: {reply.subject[:SUBJECT_SHOWN]}",
+        f"Subject: {reply.subject}",
         "Draft, exactly as it goes out, with Levi's signature under it:",
         draft,
         f"Template: {FRAME_VERSION}, frame {frame_fingerprint()[:8]}: sent as {scout_settings.SENDER_NAME}, BCC to his mailbox.",
@@ -224,19 +262,15 @@ def _reason(item: dict) -> str:
     return f"{store.label(item['id'])}, {item['class'] or 'a message'}"
 
 
-def _masked_length(text: str) -> int:
-    return len(privacy.for_discord(text, conversation=[text]))
-
-
 def _room_for_quote(item: dict, before: list[str], after: list[str]) -> int:
     """What a quote may take: a card is always one message, and the draft is never what gives way (B8).
     Measured masked, because masking can lengthen text."""
-    return discord.MAX_CONTENT - CARD_FRAME - _masked_length("\n".join([_title(item), f"Why: {_reason(item)}", *before, *after]))
+    return discord.MAX_CONTENT - CARD_FRAME - report.masked_length("\n".join([_title(item), f"Why: {_reason(item)}", *before, *after]))
 
 
 def card_fits(conn: sqlite3.Connection, item: dict, reply: Reply) -> bool:
     before, after = _card_lines(conn, item, reply, None)
-    return _room_for_quote(item, before, after) >= _masked_length(report.quoted(report.CUT_NOTE))
+    return _room_for_quote(item, before, after) >= report.masked_length(report.quoted(report.CUT_NOTE))
 
 
 # --- the kind ------------------------------------------------------------------------------------
@@ -259,7 +293,7 @@ class EmailReply:
         reply = reply_of(item)
         if reply is None or wrote_again(conn, item) or suppressed_because(conn, item):
             return None
-        return reply.bytes()
+        return reply.content_bytes()
 
     def preview(self, conn: sqlite3.Connection, subject: str) -> approvals.Preview:
         """D1: what they said, who and where, the draft exactly as it goes out, and each answer's next step."""

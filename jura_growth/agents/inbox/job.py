@@ -21,8 +21,7 @@ T = TypeVar("T")
 
 def in_window() -> bool:
     """PRD §4: launchd can fire early until the Mac restarts, so the hours are checked here too."""
-    start, end = caps.INBOX_CHECK_WINDOW
-    return start <= timeutil.now_sgt().strftime("%H:%M") <= end
+    return timeutil.within(caps.INBOX_CHECK_WINDOW)
 
 
 def _guarded(conn: sqlite3.Connection, step: str, work: Callable[[], T], otherwise: T) -> T:

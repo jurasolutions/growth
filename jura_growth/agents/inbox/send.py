@@ -4,18 +4,29 @@ Every 10 minutes, 08:00 to 22:00 SGT, with no model. In order, for each approved
 
 1. **A fresh read (F9).** The mail intake runs first, outside any transaction, so a message they wrote a
    minute ago supersedes the draft rather than being answered over. A read that failed or didn't finish
-   isn't clean, and nothing is claimed on it: the next slot tries again. D1's suppression list is synced
-   once a run first, so someone who clicked unsubscribe gets no email (E2).
-2. **The claim (ADR 0003).** One `BEGIN IMMEDIATE` transaction re-reads the item, builds the reply from
+   isn't clean, and nothing is claimed on it: the next slot tries again.
+2. **The suppression list (E2).** The website's D1 is asked about this reply's addresses, so someone who
+   clicked unsubscribe gets no email. Reading is all it does: it moves no sync cursor and acts on no
+   event, because bounces, complaints and pausing outreach belong to outreach's own sync. If D1 can't
+   answer, nothing goes to an address that can't be checked: this slot's replies are held and Ting Yu is
+   told once a day. This job never pauses any agent but its own (code review 03, P-2).
+3. **The claim (ADR 0003).** One `BEGIN IMMEDIATE` transaction re-reads the item, builds the reply from
    that row, claims the approval (which checks its hash against what the kind computes now), counts the
    attempt and keeps the outgoing `Message-ID`. It commits before Resend is called, and only the reply
    built here is sent.
-3. **Resend**, under `Idempotency-Key: jura-inbox-reply-<id>`.
+4. **Resend**, under `Idempotency-Key: jura-inbox-reply-<id>`.
 
-A claimed reply Resend errored on, or that the process lost before the mark, is retried under the same
-key with no second claim, while it still hashes to what was approved and inside whichever comes first:
-`caps.OUTREACH_RETRY_WINDOW_HOURS` from the claim, or the use-by. Past either it may already have gone out,
-so it is marked `unknown` and never sent again (N13).
+What Resend says follows `send.classify`:
+
+- **`fail`**, a definite refusal the first time: `failed`, and it didn't go.
+- **`retry`** and **`pause`**: the claim stays, to be retried under the same key with no second claim, and
+  the run stops, so no other reply is claimed against a Resend that isn't taking them. They stay approved
+  and unclaimed. A `pause` (a refused key, a used-up quota) alerts once a day and doesn't pause `inbox`.
+  An outage alerts once a day after two hours.
+- A retry goes while the reply still hashes to what was approved, inside whichever comes first:
+  `caps.OUTREACH_RETRY_WINDOW_HOURS` from the claim, or the use-by. Past either it may already have gone out,
+  so it is marked `unknown` and never sent again (N13). Claims past their time are closed before anything
+  else in a run, so a failing read or sync can't keep him from hearing (code review 03, P-4).
 
 A failed send never counts toward auto-pause: this job shares the `inbox` flag with the mail watch, and
 three Resend errors must not stop anyone being seen (technical review B5). So nothing here raises. A
@@ -34,34 +45,39 @@ from dataclasses import dataclass
 
 import httpx
 
-from jura_growth import approvals, caps, cards, db, discord, locks, log, pause, timeutil
+from jura_growth import approvals, caps, cards, cloudflare, db, discord, locks, log, pause, suppression, timeutil
 from jura_growth.agents.inbox import kinds, mail, report, settings, store
 from jura_growth.agents.outreach import send as outreach_send
-from jura_growth.agents.outreach import sync
 from jura_growth.agents.scout import settings as scout_settings
 
 AGENT = "inbox"
 LOCK = "inbox-send-due"  # the job's own lock is the runner's; this one holds for a run by hand too
-RETRIES = 3  # attempts at one claim, as outreach has it
-_FAILURE = "send"  # the label a crash goes under on the health strip
-_REFUSED = "resend"  # and one where Resend refuses the account
+_CRASH = "send"  # the label a crash goes under on the health strip
+_RESEND = "resend"  # and one where Resend isn't taking replies
+_SUPPRESSION = "suppression"  # and one where the suppression list can't be read
 _MAY_HAVE_GONE = "It may have gone out: check the copy in Levi's mailbox before answering by hand. It won't be sent again."
+_DIDNT_GO = "Resend refused it, so it didn't go, and it won't be tried again. Answer by hand if it still matters."
+_STOPS_THE_RUN = ("will retry", "refused by Resend")
+
+
+class _ResendUnavailable(Exception):
+    """Resend isn't answering. A name for the health strip: nothing raises this."""
 
 
 def in_window() -> bool:
     """PRD §4: launchd can fire early until the Mac restarts, so the hours are checked here too."""
-    start, end = caps.INBOX_SEND_WINDOW
-    return start <= timeutil.now_sgt().strftime("%H:%M") <= end
+    return timeutil.within(caps.INBOX_SEND_WINDOW)
 
 
 def due(conn: sqlite3.Connection) -> list[dict]:
-    """Replies Ting Yu approved: unclaimed, or claimed and not finished. High priority first."""
+    """Replies Ting Yu approved: unclaimed, or claimed and not finished. A claim comes first, so a refused
+    key is found on the one already in flight before another is claimed. Then high priority."""
     return db.rows(
         conn,
         "SELECT i.* FROM inbox_items i JOIN approvals a ON a.kind = ? AND a.subject = 'inbox_item:' || i.id AND a.status = 'approved' "
         "WHERE (i.state = ? AND a.used_at IS NULL) OR (i.state = ? AND a.used_at IS NOT NULL) "
-        "ORDER BY COALESCE(i.priority, '') = 'high' DESC, i.id",
-        (kinds.KIND, store.WAITING, store.SENDING),
+        "ORDER BY i.state = ? DESC, COALESCE(i.priority, '') = 'high' DESC, i.id",
+        (kinds.KIND, store.WAITING, store.SENDING, store.SENDING),
     )
 
 
@@ -75,11 +91,13 @@ def send_due(conn: sqlite3.Connection, *, client: httpx.Client | None = None) ->
             return ""
         try:
             summary = _send_due(conn, client)
-            mail.cleared(conn, _FAILURE)
+            mail.cleared(conn, _CRASH)
         except Exception as error:  # noqa: BLE001 - see the module's docstring
-            log.event(None, "inbox.send_error", {"error": type(error).__name__}, level="error", agent=AGENT)
-            mail.failed(conn, _FAILURE, error)
-            summary = f"the send run stopped on {type(error).__name__}"
+            what = type(error).__name__
+            log.event(None, "inbox.send_error", {"error": what}, level="error", agent=AGENT)
+            mail.failed(conn, _CRASH, error, line=f"The email reply send has been failing for over {mail.OVERDUE_HOURS} hours, so approved "
+                                                  f"replies may be waiting. The last error was {what}.")
+            summary = f"the send run stopped on {what}"
         _tell_safely(conn)
     cards.sweep_safely(conn)
     return summary
@@ -93,32 +111,54 @@ def _clean_read(conn: sqlite3.Connection) -> bool:
     return not found.failed and not found.unfinished
 
 
+def _suppressed_in_d1(conn: sqlite3.Connection, item: dict) -> bool:
+    """E2: ask D1 about this reply's addresses, and copy any it names to the local list, which is what
+    the claim reads. True if D1 could answer, or isn't set up, in which case the local list is all there is.
+    Outreach's own sync still sees the same events and acts on them, because no cursor moved here."""
+    if not cloudflare.configured():
+        return True
+    addresses = {suppression.email_hash(address): address for address in kinds.addresses_of(item)}
+    marks = ", ".join("?" for _ in addresses)
+    try:
+        rows = cloudflare.query(f"SELECT email_hash, reason, source FROM suppression WHERE email_hash IN ({marks})", list(addresses))
+    except Exception as error:  # noqa: BLE001 - any failure means this address can't be checked
+        held = len(due(conn))
+        mail.problem(conn, _SUPPRESSION, f"The suppression list can't be read, so {held} approved repl{'y is' if held == 1 else 'ies are'} held. "
+                                         "Nothing goes to an address that can't be checked. They go when it can be read, or lapse at their use-by.",
+                     type(error).__name__)
+        log.event(conn, "inbox.suppression_unread", {"error": type(error).__name__, "held": held}, level="warning", agent=AGENT)
+        return False
+    for row in rows:
+        address = addresses.get(row.get("email_hash"))
+        if address:
+            suppression.add(conn, email=address, reason=row["reason"], source=f"d1:{row.get('source')}")
+    mail.cleared(conn, _SUPPRESSION)
+    return True
+
+
 def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> str:
     if pause.is_paused(conn, AGENT):
         return ""
     kinds.refresh_open(conn)
     kinds.settle_waiting(conn)
     kinds.raise_due(conn)
-    if not in_window() or kinds.switched_off():
-        return ""
-    waiting = due(conn)
-    if not waiting:
-        return ""
-    d1 = sync.sync_suppression(conn)
-    if d1.configured and not d1.ok:
-        return "not sending: the suppression list couldn't be synced"
-    done = {"sent": 0, "failed": 0, "uncertain": 0, "will retry": 0}
-    for item in waiting:
-        if item["state"] == store.WAITING and store.sent_on(conn, timeutil.today_str()) >= settings.limit("email_replies_per_day"):
-            log.event(conn, "inbox.daily_cap", {"item": item["id"]}, agent=AGENT)
-            continue
-        if not _clean_read(conn):
-            log.event(conn, "inbox.not_a_clean_read", {"item": item["id"]}, level="warning", agent=AGENT)
-            break
-        word = _send_one(conn, item["id"], client)
-        if word:
-            done[word] += 1
-    kinds.settle_waiting(conn)
+    done = {"sent": 0, "failed": 0, "uncertain": _close_expired_claims(conn), "will retry": 0, "refused by Resend": 0}
+    if in_window() and not kinds.switched_off():
+        for item in due(conn):
+            if item["state"] == store.WAITING and store.sent_on(conn, timeutil.today_str()) >= settings.limit("email_replies_per_day"):
+                log.event(conn, "inbox.daily_cap", {"item": item["id"]}, agent=AGENT)
+                continue
+            if not _clean_read(conn):
+                log.event(conn, "inbox.not_a_clean_read", {"item": item["id"]}, level="warning", agent=AGENT)
+                break
+            if not _suppressed_in_d1(conn, item):
+                break
+            word = _send_one(conn, item["id"], client)
+            if word:
+                done[word] += 1
+            if word in _STOPS_THE_RUN:
+                break
+        kinds.settle_waiting(conn)
     return ", ".join(f"{count} {word}" for word, count in done.items() if count)
 
 
@@ -143,12 +183,13 @@ def _claim(conn: sqlite3.Connection, item_id: int) -> _Claimed | None:
     try:
         with db.transaction(conn):
             item = store.get(conn, item_id)
-            if item is None:
+            if item is None or item["state"] not in (store.SENDING, store.WAITING):
+                return None
+            if kinds.held_by_newer(conn, item):
+                log.event(conn, "inbox.claim_held", {"item": item_id}, agent=AGENT)
                 return None
             if item["state"] == store.SENDING:
                 return _retry(conn, item, subject)
-            if item["state"] != store.WAITING:
-                return None
             reply = kinds.reply_of(item)
             try:
                 used = approvals.use(conn, kinds.KIND, subject, run_id=log.current_run_id())
@@ -172,21 +213,32 @@ def _in_flight(conn: sqlite3.Connection, item: dict, reply: kinds.Reply, subject
     return _Claimed(reply, message_id, item["send_attempts"] + 1, bool(item["promised"]))
 
 
+def _mark_unknown(conn: sqlite3.Connection, item_id: int) -> None:
+    store.set_item_state(conn, item_id, store.UNKNOWN, note="It may have gone out, and it won't be sent again.")
+    log.event(conn, "inbox.send_unknown", {"item": item_id}, level="warning", agent=AGENT)
+
+
+def _close_expired_claims(conn: sqlite3.Connection) -> int:
+    """Claims past their retry time, whatever else is failing: he is told, and nothing more goes out."""
+    closed = 0
+    for item in store.with_state(conn, store.SENDING):
+        earlier = approvals.latest(conn, kinds.KIND, kinds.subject_of(item["id"]))
+        if earlier is None or not earlier.used_at or outreach_send.retry_closed(earlier, timeutil.now_sgt()):
+            with db.transaction(conn):
+                _mark_unknown(conn, item["id"])
+            closed += 1
+    return closed
+
+
 def _retry(conn: sqlite3.Connection, item: dict, subject: str) -> _Claimed | None:
-    """The same action instance, with no second claim, unless it may no longer go: they wrote again,
-    it changed, or the retry's time is up. Then whether it went is unknowable, and it never goes again."""
+    """The same action instance, with no second claim, unless it may no longer go: they wrote again, it
+    changed, or the retry's time is up. Then whether it went is unknowable, and it never goes again."""
     earlier = approvals.latest(conn, kinds.KIND, subject)
     reply = kinds.reply_of(item)
     now_says = kinds.EmailReply().content(conn, subject)
-    if earlier is None or not earlier.used_at:
-        closed = "its claim can't be found"
-    elif now_says is None or reply is None or approvals.content_hash(now_says) != earlier.content_hash:
-        closed = "what would go out changed after it was claimed"
-    else:
-        closed = outreach_send.retry_closed(earlier, timeutil.now_sgt())
-    if closed or reply is None or earlier is None:
-        store.set_item_state(conn, item["id"], store.UNKNOWN, note="It may have gone out, and it won't be sent again.")
-        log.event(conn, "inbox.send_unknown", {"item": item["id"]}, level="warning", agent=AGENT)
+    if earlier is None or reply is None or now_says is None or not earlier.used_at or approvals.content_hash(now_says) != earlier.content_hash \
+            or outreach_send.retry_closed(earlier, timeutil.now_sgt()):
+        _mark_unknown(conn, item["id"])
         return None
     return _in_flight(conn, item, reply, subject, earlier)
 
@@ -220,12 +272,18 @@ def _send_one(conn: sqlite3.Connection, item_id: int, client: httpx.Client | Non
     code = next(iter(re.findall(r"^\d{3}", detail)), None)
     log.event(conn, "inbox.send_failed", {"item": item_id, "outcome": outcome, "status": code}, level="warning", agent=AGENT)
     if outcome == "pause":
-        mail.problem(conn, _REFUSED, "Resend refused the account, so approved replies aren't going out. Check its key, quota and domain.",
+        mail.problem(conn, _RESEND, "Resend refused the account, so approved replies are held. Nothing went. Check its key, quota and domain.",
                      code or outcome)
-    if outcome != "fail" and claimed.attempts < RETRIES:
+        return "refused by Resend"
+    if outcome == "retry":
+        mail.failed(conn, _RESEND, _ResendUnavailable(), line=f"Resend hasn't taken an approved reply for over {mail.OVERDUE_HOURS} hours. "
+                                                              "They are held, and the one under way retries under its one key.")
         return "will retry"
-    store.set_item_state(conn, item_id, store.FAILED, note="The send failed. It may have gone out, and it won't be sent again.")
-    return "failed"
+    if claimed.attempts == 1 and code and code.startswith("4"):
+        store.set_item_state(conn, item_id, store.FAILED, note="Resend refused it, so it didn't go.")
+        return "failed"
+    _mark_unknown(conn, item_id)  # an earlier try may have gone, or Resend's answer doesn't say
+    return "uncertain"
 
 
 def _mark_sent(conn: sqlite3.Connection, item_id: int, claimed: _Claimed, resend_id: str) -> None:
@@ -238,14 +296,10 @@ def _mark_sent(conn: sqlite3.Connection, item_id: int, claimed: _Claimed, resend
         else:
             store.set_item_state(conn, item_id, store.SENT)
         log.event(conn, "inbox.sent", {"item": item_id}, agent=AGENT, run_id=log.current_run_id())
-    mail.cleared(conn, _REFUSED)
+    mail.cleared(conn, _RESEND)
 
 
 # --- what Ting Yu hears --------------------------------------------------------------------------
-
-
-def _clock(stamp: str) -> str:
-    return timeutil.parse(stamp).astimezone(timeutil.SGT).strftime("%H:%M")
 
 
 def _tell(conn: sqlite3.Connection, item: dict) -> bool:
@@ -258,7 +312,7 @@ def _tell(conn: sqlite3.Connection, item: dict) -> bool:
             return False
         if item["sent_at"]:
             name = report.shown_name(item["sender_name"])
-            text = f"{number} sent to {name or item['sender_domain']}, {_clock(item['sent_at'])} SGT ({label})."
+            text = f"{number} sent to {name or item['sender_domain']}, {cards.clock(item['sent_at'])} SGT ({label})."
             if item["state"] == store.NEEDS_HAND_REPLY:
                 text += f" It promises a personal reply, so {label} stays open until `/growth inbox done {label}`."
             own = (name,) if name else ()
@@ -268,8 +322,8 @@ def _tell(conn: sqlite3.Connection, item: dict) -> bool:
                             conversation=own).delivered
     if not discord.webhook_set("alerts"):
         return False
-    what = "failed" if item["state"] == store.FAILED else "can't be confirmed"
-    return discord.alert(conn, f"{number}: the reply to {label} ({item['sender_domain']}) {what}. {_MAY_HAVE_GONE}", agent=AGENT).delivered
+    said = (f"failed. {_DIDNT_GO}" if item["state"] == store.FAILED else f"can't be confirmed. {_MAY_HAVE_GONE}")
+    return discord.alert(conn, f"{number}: the reply to {label} ({item['sender_domain']}) {said}", agent=AGENT).delivered
 
 
 def tell_outcomes(conn: sqlite3.Connection) -> int:

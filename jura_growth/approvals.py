@@ -139,6 +139,8 @@ class ApprovalKind(Protocol):
             outreach-email.
         used_word: str  how a decision on a used request names the use
             ("A-0412 was already sent at 10:40 SGT"); "used" by default
+        conversation_card: bool  its card holds a person's words and the answer
+            to them, so `cards` passes it as the conversation class (`privacy.py`)
     """
 
     name: str

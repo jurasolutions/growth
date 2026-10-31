@@ -18,13 +18,15 @@ import approval_world as aw
 import publish_fake
 from discord_double import discord_double  # noqa: F401
 from inbox_world import DKIM_FAIL, NOW, enquiry_mail, mailbox_env, raw_mail, trust_servers
-from jura_growth import approvals, caps, cards, config, db, discord, headless, pause, paths, privacy, runner, suppression
+from jura_growth import approvals, caps, cards, config, db, discord, headless, health, pause, paths, privacy, runner, suppression
+from jura_growth.agents import inbox
 from jura_growth.agents.inbox import kinds, mail, report, send, store, triage
 from jura_growth.agents.outreach import replies
+from jura_growth.agents.outreach import send as outreach_send
 from jura_growth.cli import cli
 from click.testing import CliRunner
 from test_outreach_sync import live_sends
-from test_scout_support import at, buttons, decide, fake_d1, fake_resend, live_ready, scout_env  # noqa: F401
+from test_scout_support import approve_due, at, buttons, decide, fake_d1, fake_resend, live_ready, scout_env, seed  # noqa: F401
 
 LEVI = "levi@jurasolutions.sg"
 DRAFT = "We help with invoices and the copying between systems that follows.\n\nThe first step is a short discovery call."
@@ -220,6 +222,54 @@ def test_iw_a5_their_text_cant_pass_as_the_card_or_change_the_draft(conn, box, d
     assert all(line.startswith(">") for line in card.content[start:end].strip().split("\n"))
     assert "](https://evil.test" not in card.content and "```" not in card.content
     assert card.allowed_mentions == {"parse": []}
+
+
+SAFE_SUBJECTS = {
+    "a masked link": "[Confirm at jurasolutions.sg](https://evil.test) now",
+    "a bare link": "Quick question buy now https://evil.test/phish",
+    "a domain": "See evil.test for details",
+    "a long subject hiding a link": "Quick question " + "x" * 170 + " buy now https://evil.test/phish",
+    "a long subject": "A question " + "word " * 40,
+    "a fence": "Look ``` here",
+    "a spoiler": "Look ||hidden|| here",
+    "a mention": "Ping @everyone now",
+    "a phone": "Call me on 9123 4567",
+    "an address": "Write to jane.tan@acme.example",
+}
+
+
+@pytest.mark.parametrize("subject", SAFE_SUBJECTS.values(), ids=SAFE_SUBJECTS)
+def test_iw_a5_a7_a_subject_the_card_couldnt_show_goes_as_a_safe_one_shown_byte_for_byte(conn, box, monkeypatch, discord_double, sent, subject):  # noqa: F811
+    """IW-A5, IW-A7, code review 03 SEC-1 and SEC-2: he approves what he sees, and a stranger's link
+    doesn't go out signed by Levi past the draft's link rule."""
+    _, record = approved(conn, box, monkeypatch, raw_mail(subject=subject))
+
+    lines = card_of(discord_double, record).content.split("\n")
+    assert f"Subject: {kinds.NO_SUBJECT}" in lines
+    assert not [line for line in lines if line.startswith("Subject:") and "evil.test" in line]
+    assert "](https://evil.test" not in "\n".join(lines)
+
+    send.send_due(conn)
+    assert bodies(sent)[0]["subject"] == kinds.NO_SUBJECT
+
+
+def test_iw_a7_the_whole_subject_is_on_the_card_exactly_as_it_goes_out(conn, box, monkeypatch, discord_double, sent):  # noqa: F811
+    """IW-A7, SEC-1: at the limit, every character of what Resend gets is on the line."""
+    subject = ("Automating supplier invoices and the follow up " * 3)[:caps.INBOX_REPLY_SUBJECT_CHARS].strip()
+    _, record = approved(conn, box, monkeypatch, raw_mail(subject=subject))
+
+    assert f"Subject: Re: {subject}" in card_of(discord_double, record).content.split("\n")
+    send.send_due(conn)
+    assert bodies(sent)[0]["subject"] == f"Re: {subject}"
+
+
+def test_iw_a7_a_jura_link_in_a_subject_is_kept(conn, box, monkeypatch, sent):
+    """IW-A7: the draft's rule, not a stricter one."""
+    approved(conn, box, monkeypatch, raw_mail(subject="About jurasolutions.sg/apps"))
+
+    send.send_due(conn)
+
+    assert bodies(sent)[0]["subject"] == "Re: About jurasolutions.sg/apps"
 
 
 def test_iw_a14_a_phone_and_an_address_are_masked_on_the_card(conn, box, discord_double, sent):  # noqa: F811
@@ -668,6 +718,157 @@ def test_iw_e2_a_failed_sync_claims_nothing(conn, box, monkeypatch, sent):
     assert sent == [] and aw.get(conn, record.id).used_at is None
 
 
+def test_iw_p2_a_failed_suppression_read_holds_replies_and_pauses_nobody(conn, box, monkeypatch, discord_double, sent):  # noqa: F811
+    """Code review 03 P-2: at every slot of an outage, one alert a day naming what's held, on the health
+    strip too, and the next good read sends. `inbox-send` never pauses another agent."""
+    _, record = approved(conn, box, monkeypatch)
+    fake_d1(monkeypatch, lambda request: httpx.Response(500, json={"success": False}))
+
+    for _ in range(3):
+        assert runner.run("inbox-send").status == "ok"
+
+    assert not pause.is_paused(conn, "outreach") and not pause.is_paused(conn, "inbox")
+    alerts = [text for text in lines_in(discord_double, "alerts") if "suppression list" in text]
+    assert len(alerts) == 1 and "1 approved reply is held" in alerts[0]
+    assert [line for line in inbox.health(conn) if "suppression list" in line]
+    assert aw.events(conn, "approval.used") == [] and sent == []
+    assert not [text for text in lines_in(discord_double, "alerts") if "Paused" in text]
+
+    fake_d1(monkeypatch, [])
+    runner.run("inbox-send")
+
+    assert len(sent) == 1 and not [line for line in inbox.health(conn) if "suppression list" in line]
+
+
+def test_iw_p2_the_read_moves_no_cursor_and_acts_on_nothing_of_outreachs(conn, box, monkeypatch, sent):
+    """P-2: a complaint read here suppresses this address and leaves outreach's own sync to act on it,
+    because this read neither pauses anyone nor uses the event up."""
+    _, record = approved(conn, box, monkeypatch)
+    fake_d1(monkeypatch, [{"id": 7, "email_hash": suppression.email_hash(PRIYA), "reason": "complaint", "source": "resend",
+                           "resend_email_id": None, "created_at": "2026-10-26T09:59:00Z"},
+                          {"id": 8, "email_hash": suppression.email_hash("someone@else.example"), "reason": "complaint", "source": "resend",
+                           "resend_email_id": None, "created_at": "2026-10-26T09:59:00Z"}])
+
+    send.send_due(conn)
+
+    assert sent == [] and suppression.is_suppressed(conn, PRIYA) == "complaint"
+    assert not suppression.is_suppressed(conn, "someone@else.example"), "only what it asked about"
+    assert not pause.is_paused(conn, "outreach")
+    assert db.rows(conn, "SELECT * FROM sync_cursors") == []
+
+
+def test_iw_p4_an_expired_claim_is_told_even_while_the_list_cant_be_read(conn, box, monkeypatch, discord_double):  # noqa: F811
+    """Code review 03 P-4: the 23-hour bound doesn't sit behind the sync and the read."""
+    sent = fake_resend(monkeypatch, lambda request: httpx.Response(500, json={"message": "down"}))
+    item, record = approved(conn, box, monkeypatch)
+    send.send_due(conn)
+    fake_d1(monkeypatch, lambda request: httpx.Response(500, json={"success": False}))
+    box.fail_at["login"] = OSError("no network")
+
+    at(monkeypatch, "2026-10-27T09:00:00+08:00")
+    send.send_due(conn)
+
+    assert store.get(conn, item["id"])["state"] == store.UNKNOWN and len(sent) == 1
+    assert [text for text in lines_in(discord_double, "alerts") if record.id in text and "may have gone out" in text]
+
+
+# --- P-1: a person's newer message under a new subject -----------------------------------------------
+
+
+def _under_a_new_subject(box, body: str, **rest) -> bytes:
+    raw = raw_mail("Priya Nair <priya@clinic.example>", subject="Something else", body=body, when="2026-10-26T09:55:00+08:00", **rest)
+    box.messages.append(raw)
+    return raw
+
+
+def _newest(conn) -> dict:
+    return db.rows(conn, "SELECT * FROM inbox_items ORDER BY id DESC LIMIT 1")[0]
+
+
+def test_iw_f9_a_newer_message_under_a_new_subject_holds_the_claim_until_triage_settles_it(conn, box, monkeypatch, sent):
+    """IW-F9, code review 03 P-1: hold, don't supersede. A different topic lets the reply go next slot."""
+    item, record = approved(conn, box, monkeypatch, raw_mail(subject="Pricing"))
+    _under_a_new_subject(box, "One more thing, do you do payroll?")
+
+    send.send_due(conn)
+
+    assert sent == [] and aw.get(conn, record.id).used_at is None and aw.get(conn, record.id).status == "approved"
+    assert store.get(conn, item["id"])["state"] == store.WAITING
+
+    triaged(conn, _newest(conn), draft="We can look at payroll in a short discovery call.")
+    send.send_due(conn)
+
+    assert len(sent) == 1 and bodies(sent)[0]["subject"] == "Re: Pricing"
+
+
+@pytest.mark.parametrize("kind, body", [("opt-out", "We have gone elsewhere, take me off whatever you have."),
+                                        ("not-interested", "We have gone with another vendor. Please ignore my question.")])
+def test_iw_f9_e2_an_opt_out_or_a_not_now_under_a_new_subject_closes_the_draft(conn, box, monkeypatch, discord_double, sent, kind, body):  # noqa: F811
+    """IW-F9, IW-E2, code review 03 P-1: suppression is by address, so this crosses conversations."""
+    item, record = approved(conn, box, monkeypatch, raw_mail(subject="Pricing"))
+    cards.sweep(conn)
+    _under_a_new_subject(box, body)
+    send.send_due(conn)
+    assert sent == []
+
+    outcome = triage.submit(conn, {"id": store.label(_newest(conn)["id"]), "class": kind})
+    assert outcome.exit_code == 0, outcome.text()
+
+    assert store.get(conn, item["id"])["state"] == store.SUPERSEDED, "at once"
+    assert kinds.EmailReply().content(conn, kinds.subject_of(item["id"])) is None
+    send.send_due(conn)
+
+    assert sent == [] and aw.get(conn, record.id).status == "superseded" and aw.get(conn, record.id).used_at is None
+    if kind == "opt-out":
+        assert suppression.is_suppressed(conn, PRIYA)
+        assert [r for r in discord_double.requests if r.method == "PATCH" and "Superseded: address suppressed" in r.content]
+
+
+def test_iw_e2_content_is_gone_once_the_address_is_suppressed_in_any_conversation(conn, box, monkeypatch, sent):
+    """IW-E2, P-1: an opt-out in the words of a mail the intake reads alone closes the other draft too."""
+    item, record = approved(conn, box, monkeypatch, raw_mail(subject="Pricing"))
+    other, _ = carded(conn, box, raw_mail(subject="Something else", body="Also payroll?", when="2026-10-26T09:40:00+08:00"))
+    suppression.add(conn, email=PRIYA, reason="unsubscribe", source="reply")
+
+    assert kinds.EmailReply().content(conn, kinds.subject_of(item["id"])) is None
+    assert kinds.EmailReply().content(conn, kinds.subject_of(other["id"])) is None
+
+
+def test_iw_p1_a_forged_opt_out_under_a_new_subject_doesnt_close_their_draft(conn, box, monkeypatch, sent):
+    """SEC-6: someone forging their address can't cancel their answer. It holds, triage reads it, it goes."""
+    item, record = approved(conn, box, monkeypatch, raw_mail(subject="Pricing"))
+    _under_a_new_subject(box, "Please remove me.", Authentication_Results=DKIM_FAIL.replace("jurasolutions.sg", "clinic.example"))
+    send.send_due(conn)
+    assert sent == []
+
+    assert triage.submit(conn, {"id": store.label(_newest(conn)["id"]), "class": "opt-out"}).exit_code == 0
+
+    assert store.get(conn, item["id"])["state"] == store.WAITING and not suppression.is_suppressed(conn, PRIYA)
+    send.send_due(conn)
+    assert len(sent) == 1
+
+
+def test_iw_p1_a_newer_message_with_no_words_under_a_new_subject_doesnt_hold(conn, box, monkeypatch, sent):
+    """P-2 of code review 02, across conversations too: a sticker has nothing to read."""
+    item, _ = approved(conn, box, monkeypatch, raw_mail(subject="Pricing"))
+    store.record(conn, store.Reaction(source="email", key="sticker-2", conversation="elsewhere", sender_address=PRIYA,
+                                      sender_domain="clinic.example", text="", thread={"reply_to": PRIYA}))
+
+    send.send_due(conn)
+
+    assert len(sent) == 1
+
+
+def test_iw_p1_someone_elses_newer_message_holds_nothing(conn, box, monkeypatch, sent):
+    """P-1: only the same address."""
+    approved(conn, box, monkeypatch, raw_mail(subject="Pricing"))
+    box.messages.append(raw_mail("Someone <someone@other.example>", subject="Hello", when="2026-10-26T09:55:00+08:00"))
+
+    send.send_due(conn)
+
+    assert len(sent) == 1
+
+
 def test_iw_e2_a_suppressed_person_never_gets_a_card(conn, box, sent):
     """IW-E2, IW-F14: suppressed between hand-out and submit, and between submit and the card."""
     item = arrives(conn, box, raw_mail())
@@ -806,18 +1007,46 @@ def test_iw_d5_they_wrote_again_after_the_claim_it_is_unknown_and_never_sent_aga
     assert triage.hand_out(conn)["conversations"][0]["id"] == store.label(newest["id"])
 
 
-def test_iw_f15_three_tries_and_a_refusal_each_end_failed(conn, box, monkeypatch, discord_double):  # noqa: F811
-    """IW-F15, `send.classify`: a retryable error is tried three times under the one key."""
-    sent = fake_resend(monkeypatch, lambda request: httpx.Response(500, json={"message": "down"}))
+def test_iw_f15_a_half_hour_outage_doesnt_end_a_reply_because_it_retries_to_the_bound(conn, box, monkeypatch, discord_double):  # noqa: F811
+    """IW-F15, code review 03 P-5: the key makes more tries safe, and the 23-hour limit is the ticket's."""
+    answers = iter([httpx.Response(500, json={"message": "down"})] * 6 + [httpx.Response(200, json={"id": "re-7"})])
+    sent = fake_resend(monkeypatch, lambda request: next(answers))
     item, record = approved(conn, box, monkeypatch)
 
-    for _ in range(3):
+    for _ in range(7):
         send.send_due(conn)
+
+    assert len({r.headers["Idempotency-Key"] for r in sent}) == 1 and len(sent) == 7
+    assert store.get(conn, item["id"])["state"] == store.SENT and len(aw.events(conn, "approval.used")) == 1
+    assert not [text for text in lines_in(discord_double, "alerts") if record.id in text]
+
+
+def test_iw_f15_an_outage_of_over_two_hours_is_told_once(conn, box, monkeypatch, discord_double):  # noqa: F811
+    """IW-F15, P-5: he isn't left guessing, and nothing else is claimed against a Resend that's down."""
+    fake_resend(monkeypatch, lambda request: httpx.Response(500, json={"message": "down"}))
+    approved(conn, box, monkeypatch)
+    send.send_due(conn)
+    assert not [text for text in lines_in(discord_double, "alerts") if "Resend hasn't taken" in text]
+
+    for clock in ("12:01", "12:11"):
+        at(monkeypatch, f"2026-10-26T{clock}:00+08:00")
+        send.send_due(conn)
+
+    assert len([text for text in lines_in(discord_double, "alerts") if "Resend hasn't taken" in text]) == 1
+
+
+def test_iw_f15_a_failure_after_an_unconfirmed_try_or_an_answer_with_no_id_is_unknown(conn, box, monkeypatch, discord_double):  # noqa: F811
+    """IW-F15: "it didn't go" is only for a first refusal. An earlier try may have gone."""
+    answers = iter([httpx.Response(500, json={"message": "down"}), httpx.Response(409, json={"name": "conflict", "message": "no"})])
+    fake_resend(monkeypatch, lambda request: next(answers))
+    item, record = approved(conn, box, monkeypatch)
+
+    send.send_due(conn)
     send.send_due(conn)
 
-    assert len(sent) == 3 and store.get(conn, item["id"])["state"] == store.FAILED
+    assert store.get(conn, item["id"])["state"] == store.UNKNOWN
     [line] = [text for text in lines_in(discord_double, "alerts") if record.id in text]
-    assert "may have gone out" in line.lower() and "before answering by hand" in line
+    assert "may have gone out" in line and "before answering by hand" in line
 
 
 def test_iw_f15_a_refused_send_fails_at_once_and_keeps_their_words_and_resends_out_of_it(conn, box, monkeypatch, discord_double):  # noqa: F811
@@ -828,6 +1057,8 @@ def test_iw_f15_a_refused_send_fails_at_once_and_keeps_their_words_and_resends_o
     runner.run("inbox-send")
 
     assert store.get(conn, item["id"])["state"] == store.FAILED
+    [line] = [text for text in lines_in(discord_double, "alerts") if record.id in text]
+    assert "so it didn't go" in line and "may have gone out" not in line, "after a definite refusal"
     everything = [*lines_in(discord_double, "alerts"), *[r["payload_json"] for r in db.rows(conn, "SELECT payload_json FROM events")],
                   *[str(r["summary"]) for r in db.rows(conn, "SELECT summary FROM runs")]]
     assert not [text for text in everything if PRIYA in text or "My words here" in text]
@@ -866,6 +1097,31 @@ def test_iw_b5_a_refused_account_alerts_once_and_keeps_the_mail_watching(conn, b
     assert not pause.is_paused(conn, "inbox")
     assert len([text for text in lines_in(discord_double, "alerts") if "Resend refused the account" in text]) == 1
     assert store.get(conn, item["id"])["state"] == store.SENDING
+
+
+@pytest.mark.parametrize("refusal", [httpx.Response(401, json={"name": "unauthorized", "message": "bad key"}),
+                                     httpx.Response(429, json={"name": "rate_limit", "message": "daily quota reached"})], ids=["401", "quota"])
+def test_iw_p3_a_refused_account_stops_the_batch_and_every_other_reply_stays_unclaimed(conn, box, monkeypatch, discord_double, refusal):  # noqa: F811
+    """Code review 03 P-3: nothing is used up. Only the one in flight is tried, once a slot, and once the
+    key is fixed all of them go, under one claim each."""
+    sent = fake_resend(monkeypatch, lambda request: refusal)
+    made = [approved(conn, box, monkeypatch, raw_mail(f"P{n} <p{n}@clinic{n}.example>", subject=f"Case {n}")) for n in range(3)]
+
+    for _ in range(3):
+        send.send_due(conn)
+
+    assert len(sent) == 3 and {json.loads(r.content)["tags"][1]["value"] for r in sent} == {str(made[0][0]["id"])}
+    assert [store.get(conn, item["id"])["state"] for item, _ in made] == [store.SENDING, store.WAITING, store.WAITING]
+    assert [bool(aw.get(conn, record.id).used_at) for _, record in made] == [True, False, False]
+    assert [aw.get(conn, record.id).status for _, record in made] == ["approved"] * 3
+    [line] = [text for text in lines_in(discord_double, "alerts") if "Resend refused the account" in text]
+    assert "Nothing went" in line and "may have gone out" not in " ".join(lines_in(discord_double, "alerts"))
+
+    fixed = fake_resend(monkeypatch)
+    send.send_due(conn)
+
+    assert len(fixed) == 3 and [store.get(conn, item["id"])["state"] for item, _ in made] == [store.SENT] * 3
+    assert len(aw.events(conn, "approval.used")) == 3
 
 
 # --- F15, F10: what he hears -----------------------------------------------------------------------
@@ -1071,18 +1327,36 @@ def test_iw_sec6_a_forged_sender_with_its_own_reply_to_shows_on_the_card(conn, b
     assert "m***@evil.test" in card.content and "It says it is from clinic.example, but the reply goes to evil.test" in card.content
 
 
+def test_iw_sec3_a_verdict_of_forged_reaches_the_card(conn, box, discord_double, sent):  # noqa: F811
+    """Code review 03 SEC-3: approving would answer the person whose address was forged."""
+    _, record = carded(conn, box, raw_mail("Victim <victim@bank.example>", Authentication_Results=DKIM_FAIL.replace("jurasolutions.sg", "bank.example")))
+
+    card = card_of(discord_double, record)
+    assert "v***@bank.example" in card.content and "may not be from that address" in card.content
+
+
+def test_iw_sec3_a_from_that_isnt_one_address_warns_on_the_card(conn, box, discord_double, sent):  # noqa: F811
+    """SEC-3: with no readable From, the fallback mustn't compare the recipient with itself."""
+    _, record = carded(conn, box, raw_bytes("From: Priya <priya@clinic.example>, x@y.test", "Reply-To: m@evil.test", "Subject: Hi", "Message-ID: <s3@x.example>"))
+
+    card = card_of(discord_double, record)
+    assert "m***@evil.test" in card.content and "Its From couldn't be read as one address" in card.content
+
+
 def test_iw_a9_an_ordinary_reply_doesnt_warn(conn, box, discord_double, sent):  # noqa: F811
     """IW-A9: the line means something only if it isn't always there."""
     _, record = carded(conn, box, raw_mail("Priya Nair <priya@clinic.example>"))
 
-    assert "It says it is from" not in card_of(discord_double, record).content
+    card = card_of(discord_double, record)
+    assert "It says it is from" not in card.content and "may not be from" not in card.content and "couldn't be read" not in card.content
 
 
 def test_iw_a9_a_signed_enquiry_doesnt_warn_though_it_came_through_juras_domain(conn, box, discord_double, sent):  # noqa: F811
     """IW-A9: the form always sends from Jura's domain, for the person in its `Reply-To`."""
     _, record = carded(conn, box, enquiry_mail(), draft="Hi Jane,\n\nThanks for writing.")
 
-    assert "It says it is from" not in card_of(discord_double, record).content
+    card = card_of(discord_double, record)
+    assert "It says it is from" not in card.content and "may not be from" not in card.content and "couldn't be read" not in card.content
 
 
 # --- S6 of the PRD: pause, and the command -------------------------------------------------------------
@@ -1124,6 +1398,96 @@ def test_iw_f2_our_reply_to_a_lead_keeps_its_id_with_that_lead(conn, box, monkey
 
     assert store.lead_of_outgoing(conn, [outgoing]) == lead["lead_id"]
     assert replies.message_ids(outgoing) == [outgoing]
+
+
+# --- F2 and SEC-4: what a message id may do, and P-6: outreach sends carry none ----------------------
+
+
+def _lead_with_a_kept_id(conn, monkeypatch) -> tuple[dict, str]:
+    """A lead Jura wrote to, and an id of a reply Jura sent them."""
+    seeded, _ = live_sends(conn, monkeypatch, 1)
+    store.remember_outgoing(conn, "<kept@jurasolutions.sg>", lead_id=seeded[0]["lead_id"])
+    return seeded[0], "<kept@jurasolutions.sg>"
+
+
+def _status_of(conn, lead: dict) -> str:
+    return db.scalar(conn, "SELECT status FROM leads WHERE id = ?", (lead["lead_id"],))
+
+
+def test_iw_p6_an_outreach_send_carries_no_message_id_and_keeps_none(conn, scout_env, monkeypatch):  # noqa: F811
+    """Code review 03 P-6, reversing 01 R-3: the live path says and carries what it did."""
+    at(monkeypatch, "2026-10-26T08:00:00+08:00")
+    seeded = seed(conn, 1)
+    live_ready(monkeypatch)
+    captured = fake_resend(monkeypatch)
+    approve_due(conn, monkeypatch)
+    at(monkeypatch, "2026-10-26T10:00:00+08:00")
+    outreach_send.send_due(conn)
+
+    assert set(bodies(captured)[0]["headers"]) == {"List-Unsubscribe", "List-Unsubscribe-Post"}
+    assert db.scalar(conn, "SELECT count(*) FROM inbox_outgoing") == 0 and seeded["message_id"]
+
+
+def test_iw_f2_someone_elsewhere_answering_our_reply_is_that_leads_reply_at_1645(conn, scout_env, monkeypatch):  # noqa: F811
+    """IW-F2, ticket: `_batch` uses the lookup too, so a paused inbox doesn't lose it."""
+    lead, kept = _lead_with_a_kept_id(conn, monkeypatch)
+    mailbox_env(monkeypatch, [raw_mail("Their agency <helper@agency.example>", when="2026-10-26T11:00:00+08:00", body="Answering for them.", In_Reply_To=kept)])
+    at(monkeypatch, "2026-10-26T16:45:00+08:00")
+
+    found = replies.check(conn)
+
+    assert [r["lead_id"] for r in found.replies] == [lead["lead_id"]] and _status_of(conn, lead) == "replied"
+
+
+@pytest.mark.parametrize("sender, extra", [
+    ("Mailer <mailer-daemon@agency.example>", {}),
+    ("Their agency <helper@agency.example>", {"Authentication_Results": "mx.example.test; dkim=fail; spf=fail; dmarc=fail"}),
+    ("Levi <levi@jurasolutions.sg>", {}),
+], ids=["a bounce", "a stated failure", "our own copy"])
+def test_iw_f2_naming_our_mail_isnt_enough_for_mail_no_person_there_wrote(conn, scout_env, monkeypatch, sender, extra):  # noqa: F811
+    """IW-F2, code review 01 P-2 and S-4: a bounce quotes the id too, and so does our own BCC copy."""
+    lead, kept = _lead_with_a_kept_id(conn, monkeypatch)
+    trust_servers(monkeypatch)
+    mailbox_env(monkeypatch, [raw_mail(sender, when="2026-10-26T11:00:00+08:00", body="Delivery failed.", References=kept, **extra)])
+    at(monkeypatch, "2026-10-26T16:45:00+08:00")
+
+    found = replies.check(conn)
+
+    assert found.replies == [] and _status_of(conn, lead) != "replied"
+
+
+def test_iw_sec4_an_id_alone_never_suppresses_at_1645(conn, scout_env, monkeypatch):  # noqa: F811
+    """Code review 03 SEC-4: it counts as their reply. Whoever holds an id can't take a third party off."""
+    lead, kept = _lead_with_a_kept_id(conn, monkeypatch)
+    mailbox_env(monkeypatch, [raw_mail("Victim <victim@third.example>", subject="unsubscribe", when="2026-10-26T11:00:00+08:00", body="unsubscribe", In_Reply_To=kept)])
+    at(monkeypatch, "2026-10-26T16:45:00+08:00")
+
+    replies.check(conn)
+
+    assert not suppression.is_suppressed(conn, "victim@third.example")
+    assert _status_of(conn, lead) == "replied"
+
+
+def test_iw_sec4_an_id_alone_never_suppresses_at_intake_or_on_triages_word(conn, scout_env, monkeypatch):  # noqa: F811
+    """SEC-4: reported with a note, and triage's `opt-out` reads as unproven too."""
+    lead, kept = _lead_with_a_kept_id(conn, monkeypatch)
+    mailbox_env(monkeypatch, [raw_mail("Victim <victim@third.example>", subject="Hello", when="2026-10-26T11:00:00+08:00", body="unsubscribe", In_Reply_To=kept)])
+    at(monkeypatch, "2026-10-26T11:15:00+08:00")
+
+    mail.intake(conn)
+
+    item = _newest(conn)
+    assert item["lead_id"] == lead["lead_id"] and _status_of(conn, lead) == "replied"
+    assert "only a message id ties this address" in item["note"] and item["state"] == store.NEW
+    assert triage.submit(conn, {"id": store.label(item["id"]), "class": "opt-out"}).exit_code == 0
+    assert not suppression.is_suppressed(conn, "victim@third.example") and _status_of(conn, lead) == "replied"
+
+
+def test_iw_s3_a_setup_gap_is_listed_once(scout_env, monkeypatch):  # noqa: F811
+    """Code review 03 S-3: outreach declares the Resend key, so the inbox doesn't again."""
+    names = [gap.name for gap in health.setup_gaps()]
+
+    assert len([name for name in names if "RESEND_API_KEY_OUTREACH" in name]) == 1
 
 
 # --- The whole mail path, through both jobs ------------------------------------------------------------

@@ -85,6 +85,7 @@ INBOX_SUBMIT_BYTES = 64_000  # one `inbox submit` file: a class and a draft
 # Each channel also limits words. A long word is still long, and an inbox card is one message (B8).
 INBOX_EMAIL_DRAFT_CHARS = 1200
 INBOX_EMAIL_DRAFT_LINES = 30  # each line takes a quote mark on the card
+INBOX_REPLY_SUBJECT_CHARS = 120  # longer and a reply goes under a safe subject: the card shows all of what goes out
 INBOX_SOCIAL_DRAFT_CHARS = 600
 # SGT, both ends inclusive. Launchd can fire early until the Mac restarts, so the code checks too.
 INBOX_CHECK_WINDOW = ("07:00", "23:59")

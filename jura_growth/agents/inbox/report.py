@@ -74,7 +74,7 @@ def _extras(item: dict) -> list[str]:
     names = json.loads(item["attachments_json"] or "[]")
     if names:
         extras.append("(attached, not opened: " + ", ".join(names) + ")")
-    copied = json.loads(item["thread_json"] or "{}").get("copied") or 0
+    copied = store.thread_of(item).get("copied") or 0
     if copied:
         extras.append(f"(they copied {copied} other{'s' if copied != 1 else ''}: reply by hand if they need it)")
     return extras
@@ -115,16 +115,26 @@ def _fit(items: list[dict], over_by: Callable[[str], int]) -> str:
         cuts[longest] = True
 
 
+def masked_length(text: str) -> int:
+    """How long `text` is as a conversation piece on Discord: masking can lengthen it."""
+    return len(privacy.for_discord(text, conversation=[text]))
+
+
 def card_quote(items: list[dict], room: int) -> str:
     """What they said, for a card: cut to fit `room` characters as masked, because a card is always
     one message and its draft is never the part that gives way (technical review B8)."""
-    block = _fit(items, lambda block: len(privacy.for_discord(block, conversation=[block])) - room)
-    return block if len(privacy.for_discord(block, conversation=[block])) <= room else quoted(CUT_NOTE)
+    block = _fit(items, lambda block: masked_length(block) - room)
+    return block if masked_length(block) <= room else quoted(CUT_NOTE)
 
 
 def shown_name(name: str) -> str:
     """A display name outside a quote block, unable to restyle anything or ping anyone."""
     return _neutral(store.clean_line(name))[:NAME_SHOWN]
+
+
+def shows_as_written(text: str) -> bool:
+    """Whether `text` reaches a card byte for byte: nothing to neutralise, and nothing to mask."""
+    return _neutral(text) == text and privacy.for_discord(text, conversation=[text]) == text
 
 
 def _build(items: list[dict]) -> tuple[str, str]:

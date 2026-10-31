@@ -291,7 +291,9 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
 
     reply_to = _recipient(headers, sender)
     ours = replies.sent_subjects(conn, contact["lead_id"]) if contact else set()
-    wants_out = replies.opt_out_reason(subject, own, ours) if contact else None
+    asked_out = replies.opt_out_reason(subject, own, ours) if contact else None
+    by_id = bool(contact and contact["by_id"])
+    wants_out = None if by_id else asked_out
     # A stated failure means it may not be from this address. An emailed contact's own opt-out words are
     # still honoured: a real one lost is worse than a forged one honoured, which R1 shows and can be
     # undone (code review 01, S-4). Only a model's reading of it needs better proof (`own_sender`).
@@ -307,6 +309,9 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
         notes.append("It says it came from the website form, but it isn't signed by Jura.")
     if forged and not from_form:
         notes.append("The receiving server says this may not be from this address.")
+    if by_id and asked_out:
+        notes.append("It asks to be removed, but only a message id ties this address to the lead, so nothing is suppressed. "
+                     "Do it by hand if it's right.")
     if wants_out:
         state = store.REPORTED
         notes.append(f"They asked to be removed ({wants_out}): the address is suppressed and no reply will be drafted.")
@@ -334,10 +339,11 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
             "reply_to": reply_to,
             # The domain the mail claims to be from, whoever gets the answer: the card compares them (A9).
             "from_domain": suppression.domain_of(sender) if sender else "",
+            "forged": forged and not from_form,
             "copied": _copied(headers),
             # Whether `who` is this mail's own sender, and so whether triage may suppress it. Not an
             # address typed on the form, nor a `Reply-To` standing in for a From it can't read (SEC-2).
-            "own_sender": bool(sender) and who == sender and not from_form and not forged,
+            "own_sender": bool(sender) and who == sender and not from_form and not forged and not by_id,
         },
         attachments=attachments,
         lead_id=contact["lead_id"] if contact else None,
@@ -436,13 +442,14 @@ def _signed_by_jura(headers: Message) -> bool:
 
 
 def _contact_of(check: _Check, sender: str, headers: Message, received: datetime | None, subject: str) -> dict | None:
-    """The lead this message answers (W6, F2), or None: the same two ways the 16:45 check looks."""
-    if received is None or replies.is_automatic(headers, subject):
+    """The lead this message answers (W6, F2), or None: the same two ways the 16:45 check looks. Its
+    `by_id` says only a message id ties it to the lead, which never suppresses anyone (SEC-4)."""
+    if received is None or replies.is_automatic(headers, subject) or not sender:
         return None
-    contact = (check.known.match(sender, headers) or replies.naming_our_mail(check.conn, check.known, sender, headers)) if sender else None
+    contact, by_id = replies.answering(check.conn, check.known, sender, headers)
     if contact is None or received < timeutil.parse(contact["first_sent"]):
         return None
-    return contact
+    return {**contact, "by_id": by_id}
 
 
 def _noise_evidence(headers: Message, sender: str) -> str | None:
@@ -471,9 +478,9 @@ def _attachment_names(message: Message) -> tuple[str, ...]:
 # --- when a check can't do its job -------------------------------------------------
 
 
-def failed(conn: sqlite3.Connection, label: str, error: Exception) -> None:
+def failed(conn: sqlite3.Connection, label: str, error: Exception, *, line: str | None = None) -> None:
     """B5 rule 1, P-5: logged every time, and alerted once a day after two hours of it, so a real
-    bug is seen and a flap is not a failed run."""
+    bug is seen and a flap is not a failed run. `line` is what to say, if this isn't the mail check."""
     what = type(error).__name__
     since_key = f"{store.FAILING_SINCE}{label}"
     since = store.get_state(conn, since_key)
@@ -482,8 +489,8 @@ def failed(conn: sqlite3.Connection, label: str, error: Exception) -> None:
         store.set_state(conn, since_key, since)
     log.event(conn, "inbox.mail_failed", {"mailbox": label, "error": what}, level="warning", agent=AGENT)
     if timeutil.now() - timeutil.parse(since) >= timedelta(hours=OVERDUE_HOURS):
-        problem(conn, label, f"The {label} mail check hasn't worked for over {OVERDUE_HOURS} hours, so new mail isn't being "
-                              f"seen. The last error was {what}.", what)
+        problem(conn, label, line or f"The {label} mail check hasn't worked for over {OVERDUE_HOURS} hours, so new mail isn't being "
+                                     f"seen. The last error was {what}.", what)
 
 
 def problem(conn: sqlite3.Connection, label: str, line: str, what: str, *, at_once: bool = False) -> None:

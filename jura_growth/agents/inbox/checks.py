@@ -93,6 +93,11 @@ def _links(text: str, ctx: dict) -> list[Issue]:
     return found
 
 
+def holds_a_link(text: str) -> bool:
+    """Whether the draft's link rule would refuse `text` (S1): a subject the card and Resend both carry."""
+    return bool(_links(text, {}))
+
+
 def _figures(text: str, ctx: dict) -> list[Issue]:
     # Their own figure is let through here so a small count can be said back to them. The core rule
     # still refuses anything larger, so the prompt doesn't offer this.

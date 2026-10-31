@@ -184,9 +184,16 @@ gets the reply, the draft exactly as it goes out, and what each answer does. It 
 what they said is cut to fit and the draft never is. `inbox-send` (every 10 minutes, 08:00 to 22:00 SGT,
 with no model) reads the mail first, so a newer message supersedes the draft rather than being answered
 over, then claims the approval and sends exactly what was approved: threaded, from Levi, with one BCC to
-his mailbox. Only a clean read is claimed. A failed retry stops at 23 hours under the one idempotency key,
-and past that it is marked unknown and never sent again. Ting Yu hears one line on each outcome. A failed
-send doesn't count toward auto-pause, because the job shares the `inbox` flag with the mail watch.
+his mailbox. Only a clean read is claimed. A newer message from the same address under another subject holds
+the claim until triage has read it, and an opt-out or a "not now" there closes the draft. The whole subject is
+on the card, and one the card couldn't show as written, or holding someone else's link, goes as a safe one.
+
+Before each claim it asks the website's D1 about that reply's addresses. It only reads: if D1 can't answer the
+slot's replies are held and Ting Yu is told once a day, and this job never pauses any agent but its own. A
+retry stops at 23 hours under the one idempotency key, and past that it is marked unknown and never sent
+again. A refused Resend account or an outage stops the run, so every other approved reply stays unclaimed.
+Ting Yu hears one line on each outcome. A failed send doesn't count toward auto-pause, because the job shares
+the `inbox` flag with the mail watch.
 
 ## Kill switches
 

@@ -59,7 +59,7 @@ class CardRefused(ValueError):
 # --- the text -------------------------------------------------------------------
 
 
-def _clock(stamp: str | None) -> str:
+def clock(stamp: str | None) -> str:
     return timeutil.parse(stamp).astimezone(timeutil.SGT).strftime("%H:%M") if stamp else "?"
 
 
@@ -77,10 +77,10 @@ def status_line(conn: sqlite3.Connection, approval: approvals.Approval) -> str:
     if shown == approvals.PENDING:
         return f"decide by {timeutil.when(approval.decide_by)}"
     if shown in (approvals.APPROVED, CLAIMED):
-        line = f"Approved by {APPROVER}, {_clock(approval.decided_at)} SGT"
-        return line + (f" · claimed at {_clock(approval.used_at)} SGT" if shown == CLAIMED else "")
+        line = f"Approved by {APPROVER}, {clock(approval.decided_at)} SGT"
+        return line + (f" · claimed at {clock(approval.used_at)} SGT" if shown == CLAIMED else "")
     if shown == approvals.SKIPPED:
-        return f"Skipped by {APPROVER}, {_clock(approval.decided_at)} SGT"
+        return f"Skipped by {APPROVER}, {clock(approval.decided_at)} SGT"
     if shown == approvals.EXPIRED:
         return f"Expired: {approval.close_reason}"
     newer = approvals.successor(conn, approval)
