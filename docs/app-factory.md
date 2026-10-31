@@ -138,10 +138,10 @@ one byte supersedes it and raises a new one.
   with the PRD's path and SHA-256 and the request's id and date, in one transaction. Nothing is
   written into the PRD, so its hash stays the one Ting Yu saw. Dispatch polls
   `apps handoffs --json` and builds the app in `repos/landing-page` on its own task branch from
-  `main` (Dispatch D6). Until `approvals.dispatch_builds` is set to `true`, the decision's answer
-  and the one-pager say how to build it by hand: "Build it: open Claude Code in `jurasolutions/`
-  and say: build the approved PRD `<path>` (approval A-nnnn)". The handoff is listed until the
-  build is reported with `apps built`.
+  `main` (Dispatch D6). While `approvals.dispatch_builds` is `true`, the decision's answer and the
+  line in #app-factory say Dispatch is building it. With it off, they and the one-pager say how to
+  build it by hand: "Build it: open Claude Code in `jurasolutions/` and say: build the approved PRD
+  `<path>` (approval A-nnnn)". The handoff is listed until the build is reported with `apps built`.
 - **Skip.** The PRD moves to `prd/skipped/apps/` with "Skipped by Ting Yu on <date>" at the top,
   and the backlog idea is dropped for good.
 - **No answer for 7 days.** The PRD moves to `prd/skipped/apps/` with "Expired unanswered on
@@ -166,7 +166,8 @@ MC §5.7 `app-release` row, §5.9 steps 3 and 4).
    is refused). A
    commit pushed later, or another preview link, needs its own request: reporting it supersedes the
    old one.
-2. **Approve.** Nothing happens yet. The approval has 14 days to be used.
+2. **Approve.** Nothing happens yet, and the line in #app-factory names the next step,
+   `/growth apps release-plan APP-NNN`. The approval has 14 days to be used.
 3. **Release plan.** `apps release-plan` claims the approval, stamps the row, and only then prints
    the commands: fetch the task branch, merge exactly the approved SHA into `main` (never the
    branch, whose head may have moved), push, then `apps released`. Run again while the build is

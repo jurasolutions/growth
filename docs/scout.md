@@ -25,7 +25,7 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
    `jura-growth outreach send-due` sends at most one email per run.
 3. **16:45 `scout-sync`**. `jura-growth outreach sync`: D1 suppression sync, bounces and
    complaints, reply detection (optional), follow-ups due, retention.
-4. **17:30 digest** includes the scout and outreach figures.
+4. **18:05 digest** includes the scout and outreach figures.
 
 ## Commands
 

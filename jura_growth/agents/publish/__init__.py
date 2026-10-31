@@ -24,8 +24,9 @@ Modules:
 - `commands`: `jura-growth publish next | done | stopped | queue | resolve`.
 
 The scheduled `publish` job (BP-03, `prompts/publish.md`) drives Chrome through Claude in Chrome,
-every 20 minutes from 09:00 to 17:40 SGT, posting to the Facebook Page in this build.
-See docs/social.md.
+every 20 minutes from 09:00 to 17:40 SGT, posting to the Facebook Page and Instagram, and to
+Facebook groups as the Page when `community.browser` is on. What became of each request goes to
+the agent's feed (`feed.py`). See docs/social.md.
 """
 
 from __future__ import annotations

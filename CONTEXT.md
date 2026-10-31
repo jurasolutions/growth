@@ -84,7 +84,7 @@ _Avoid_: dashboard, admin
 The single Discord message in `#mission-control`, daily at 08:00 SGT and on request, that says
 whether everything ran and what needs Ting Yu: the health strip, approvals waiting, today's slots,
 yesterday's figures, and a 14-day grid as an image.
-_Avoid_: report, summary, dashboard (the 17:30 digest is a separate message)
+_Avoid_: report, summary, dashboard (the 18:05 digest is a separate message)
 
 **Health strip**:
 The "Needs you" section at the top of the one-pager: the PAUSE file, paused agents, recent
@@ -205,9 +205,33 @@ join or post is skipped.
 _Avoid_: account, login
 
 **Posting window**:
-09:00 to 18:00 SGT, when the publish job may act (`caps.PUBLISH_WINDOW`). A post's decide-by and
-use-by are the end of the posting window on its day.
+09:00 to 18:00 SGT, when the publish job may act (`caps.PUBLISH_WINDOW`). A social post's decide-by
+is an hour before the end of the posting window on its day, 17:00 SGT, so an approval always has a
+publish slot left, and its use-by is the end of the window.
 _Avoid_: "publish window", alongside the outreach "send window"
+
+**Approval card**:
+The message in #approvals for one approval request.
+_Avoid_: bare "card"
+
+**Agent feed**:
+The Discord channel where an agent reports what became of its work: its run updates and one line
+per decision. #approvals asks; the feed says what happened.
+_Avoid_: drafts channel
+
+**Feed line**:
+The one message an agent feed gets when a request that had an approval card is approved, skipped,
+expired or closed with nothing replacing it. Sent silently, at most once by design. It isn't a run
+update.
+_Avoid_: notification
+
+**Image card**:
+The rendered picture attached to a post, specified in `card.json`. A carousel is several.
+_Avoid_: bare "card"
+
+**Visual**:
+The diagram on an image card: a flow, a compare or a figure, drawn from the post's own facts.
+_Avoid_: picture (in specs), illustration, photo
 
 **Stop signal**:
 Anything on a page that makes a publish run stop at once without clicking further: a login wall, a
