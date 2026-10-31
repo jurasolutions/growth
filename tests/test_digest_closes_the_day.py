@@ -27,6 +27,9 @@ def test_the_1805_digest_closes_an_unanswered_card_and_counts_it(conn, social_da
     assert all(line.endswith("Not approved in time.") and HEADLINE in line for line in feed_lines(social_day))
     summary = json.loads((paths.data_dir() / "daily-summary.json").read_text(encoding="utf-8"))
     assert summary["figures"]["publish_expired"] == 2
+    assert summary["figures"]["social_drafts_waiting"] == 0
+    assert "waiting" not in summary["brief_line"]
+    assert any(line.startswith("Social: 2 drafts expired (facebook, instagram)") for line in summary["lines"])
     assert "2 expired" in result.output
     assert db.rows(conn, "SELECT * FROM approvals WHERE used_at IS NOT NULL") == []
 

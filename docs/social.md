@@ -465,9 +465,20 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
 `social.digest(conn, day)` gives `social_drafts_waiting`, `social_skipped` and
 `social_published` (published by `published_at` day), a `#daily-digest` line, and a brief
 fragment such as "3 social drafts waiting" or "no social draft today". The line says where each
-draft is: waiting in `#approvals` on a pending card, waiting in `#social-drafts` in `draft` mode, or
-with no card (too late to ask, from before the platform moved to `browser` mode, or a card that has
-closed).
+draft really is, from its newest request:
+
+- waiting in `#approvals` on a pending card, or in `#social-drafts` in `draft` mode;
+- approved, waiting on a publish run, or claimed by one;
+- approved, held by draft mode, when the platform went back to `draft` after the approval;
+- with no card: too late to ask, no image, from before the platform moved to `browser` mode, a card
+  the sweep refused, or one Discord hasn't taken yet;
+- expired or closed, once its card has closed. A card past its deadline reads as expired even on a
+  read that doesn't write the lapse.
+
+`social_drafts_waiting` and the brief count only what something is still going to happen to: a
+pending card, a card Discord hasn't taken yet, an approved post with a run to come, and a hand post in
+`draft` mode. A closed card, a refused card and a draft that never had a card don't count, so the
+next morning's brief doesn't call them waiting.
 
 `publish.digest(conn, day)` adds the day's publish items: `publish_posted`, `publish_skipped`,
 `publish_expired` and `publish_stopped`, and a "Publishing: …" line, on days that had items.

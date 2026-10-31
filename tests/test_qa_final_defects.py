@@ -9,8 +9,114 @@ import sys
 
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, cards, config
+from jura_growth import approvals, cards, config, paths
+from jura_growth.agents import social
+from test_approvals_first import BOTH, LATE, feed_lines, refuse_facebook, social_day, submit_tip  # noqa: F401 - a fixture
 from test_social import env  # noqa: F401 - a fixture
+
+
+def summary() -> dict:
+    return json.loads((paths.data_dir() / "daily-summary.json").read_text(encoding="utf-8"))
+
+
+def social_line(found: dict) -> str:
+    return next(line for line in found["lines"] if line.startswith("Social:"))
+
+
+# --- 05: the digest after a card closes ----------------------------------------------------------
+
+
+def test_cards_nobody_answered_are_not_called_no_card_or_waiting_at_the_1805_digest(conn, social_day, monkeypatch):
+    submit_tip(conn)
+    cards.sweep(conn)
+    pw.at(monkeypatch, "2026-11-10T18:05:00+08:00")
+    conn.commit()
+    assert pw.invoke("digest").exit_code == 0
+    found = summary()
+    assert found["figures"]["publish_expired"] == 2
+    assert "2 drafts expired (facebook, instagram)" in social_line(found)
+    assert "no card" not in social_line(found)
+    assert "waiting" not in found["brief_line"]
+    assert found["figures"]["social_drafts_waiting"] == 0
+
+
+def test_a_digest_that_writes_no_lapse_still_calls_a_past_decide_by_expired(conn, social_day, monkeypatch):
+    """`digest --no-post` and the morning read write nothing, and the card has closed all the same."""
+    submit_tip(conn)
+    cards.sweep(conn)
+    conn.commit()
+    pw.at(monkeypatch, "2026-11-10T18:05:00+08:00")
+    found = social.digest(conn, "2026-11-10")
+    assert "2 drafts expired" in social_line(found)
+    assert found["figures"]["social_drafts_waiting"] == 0
+
+
+def test_a_post_claimed_by_a_run_is_not_called_a_draft_with_no_card(conn, social_day, monkeypatch):
+    submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    pw.at(monkeypatch, pw.TEN)
+    pw.decide(conn, first, monkeypatch=monkeypatch)
+    pw.run(conn, monkeypatch=monkeypatch)
+    assert pw.next_item(conn).item is not None
+    conn.commit()
+    found = social.digest(conn, "2026-11-10")
+    line = social_line(found)
+    assert "with no card (facebook" not in line
+    assert "1 draft claimed by a publish run (facebook)" in line
+    assert found["figures"]["social_drafts_waiting"] == 1  # Instagram's card still waits
+
+
+def test_an_approved_post_waits_on_a_publish_run(conn, social_day, monkeypatch):
+    submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    pw.at(monkeypatch, pw.TEN)
+    pw.decide(conn, first, monkeypatch=monkeypatch)
+    conn.commit()
+    found = social.digest(conn, "2026-11-10")
+    assert "1 draft approved, waiting on a publish run (facebook)" in social_line(found)
+    assert found["figures"]["social_drafts_waiting"] == 2
+
+
+def test_a_no_images_day_says_no_card_and_nothing_waits(conn, env, monkeypatch, discord_double):
+    pw.at(monkeypatch, LATE)  # too late to ask: drafts and no card, as with no images
+    pw.social_config(monkeypatch, browser=BOTH)
+    assert submit_tip(conn).status == "delivered"
+    found = social.digest(conn, "2026-11-10")
+    assert "2 drafts with no card (facebook, instagram)" in social_line(found)
+    assert found["figures"]["social_drafts_waiting"] == 0
+    assert found["brief"] == []
+
+
+def test_a_refused_card_says_no_card_and_is_not_counted_as_waiting(conn, social_day, monkeypatch):
+    refuse_facebook(monkeypatch)
+    submit_tip(conn)
+    found = social.digest(conn, "2026-11-10")
+    assert "1 draft waiting in #approvals (instagram)" in social_line(found)
+    assert "1 draft with no card (facebook)" in social_line(found)
+    assert found["figures"]["social_drafts_waiting"] == 1
+
+
+def test_a_card_discord_has_not_taken_yet_still_waits(conn, social_day, monkeypatch):
+    """The heartbeat posts it, so it isn't lost, and he will be asked."""
+    social_day.mode = "500"
+    submit_tip(conn)
+    found = social.digest(conn, "2026-11-10")
+    assert "2 drafts with no card (facebook, instagram)" in social_line(found)
+    assert found["figures"]["social_drafts_waiting"] == 2
+
+
+def test_a_platform_moved_to_draft_mode_with_an_approved_post_says_so_and_offers_no_hand_post(conn, social_day, monkeypatch):
+    submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    pw.at(monkeypatch, pw.TEN)
+    pw.decide(conn, first, monkeypatch=monkeypatch)
+    pw.social_config(monkeypatch, browser=("instagram",))
+    conn.commit()
+    found = social.digest(conn, "2026-11-10")
+    assert "1 draft approved, held by draft mode (facebook)" in social_line(found)
+    assert "#social-drafts" not in social_line(found)
+    assert found["figures"]["social_drafts_by_hand"] == 0
+
 
 
 # --- 09: a typed approval of a refused card, in a new process ---------------------------------------

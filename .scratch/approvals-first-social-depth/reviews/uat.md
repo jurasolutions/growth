@@ -176,8 +176,7 @@ Run between 09:00 and 17:00. Cards can't be raised after 17:00, and publish runs
 
 **S5. Unanswered (must, FD1)**
 - Do: `fresh social-day --theme ai-news`, then `JURA_GROWTH_NOW="${TODAY}T18:05:00+08:00" uv run jura-growth digest`
-- Expect: both cards read "Expired: not approved in time". Two lines in #social-drafts, each `A-nnnn expired`. The digest's Publishing line in #daily-digest says "2 expired". Nothing posted.
-- Known wording gap, not a fail: the digest's Social line still says "2 drafts with no card", and its summary "2 social drafts waiting". Both drafts are over. It is logged for the quality gate.
+- Expect: both cards read "Expired: not approved in time". Two lines in #social-drafts, each `A-nnnn expired`. The digest's Publishing line in #daily-digest says "2 expired", and its Social line says "2 drafts expired (facebook, instagram)". Nothing in the digest calls them waiting. Nothing posted.
 - [ ] Pass  [ ] Fail
 
 **S6. Late in the day (must, AF2)**

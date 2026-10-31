@@ -441,7 +441,8 @@ def _draft_today(conn, platform: str) -> None:
 
 @pytest.mark.parametrize("mode, by_hand", [("draft", 1), ("browser", 0)])
 def test_only_a_draft_on_a_draft_mode_platform_is_to_post_by_hand(mode, by_hand, conn, monkeypatch):
-    """Final B2: a `browser` platform's draft goes out through its card, answered or not."""
+    """Final B2: a `browser` platform's draft goes out through its card, answered or not. With no
+    card it waits for nothing (approvals first, ticket 05), so only the hand post counts as waiting."""
     from jura_growth.agents.social import settings as social_settings
 
     real = social_settings.load()
@@ -449,7 +450,7 @@ def test_only_a_draft_on_a_draft_mode_platform_is_to_post_by_hand(mode, by_hand,
     monkeypatch.setattr(social_settings, "load", lambda: SimpleNamespace(enabled_platforms=lambda: platforms))
     _draft_today(conn, platforms[0].name)
     figures = plugin("social").digest(conn, "2026-11-10")["figures"]
-    assert figures["social_drafts_waiting"] == 1
+    assert figures["social_drafts_waiting"] == by_hand
     assert figures["social_drafts_by_hand"] == by_hand
     assert read().morning.figures["social_drafts_by_hand"] == by_hand
 

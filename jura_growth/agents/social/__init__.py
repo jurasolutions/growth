@@ -48,10 +48,11 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     # 2026-10-29) is never going out, so it isn't waiting.
     platforms = load().enabled_platforms()
     on = {p.name for p in platforms}
-    by_hand = {p.name for p in platforms if not p.browser}  # a `browser` platform's draft goes through its card
     rows = [r for r in db.rows(conn, "SELECT platform, status, published_at FROM social_posts WHERE date = ?", (day,))
             if r["platform"] in on]
-    waiting = sorted(r["platform"] for r in rows if r["status"] == "draft")
+    drafts = sorted(r["platform"] for r in rows if r["status"] == "draft")
+    browser = {p.name for p in platforms if p.browser}  # a `browser` platform's draft goes through its card
+    places, waiting = _where_they_are(conn, day, drafts, browser) if drafts else ({}, [])
     skipped_rows = {r["platform"] for r in rows if r["status"] == "skipped"}
     skips = {
         r["platform"] for r in db.rows(conn, "SELECT platform FROM social_skips WHERE date = ?", (day,))
@@ -71,14 +72,17 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
 
     figures = {
         "social_drafts_waiting": len(waiting),
-        "social_drafts_by_hand": sum(1 for platform in waiting if platform in by_hand),
+        "social_drafts_by_hand": len(places.get(_BY_HAND, [])),
         "social_skipped": skipped,
         "social_published": published,
     }
     lines, brief = [], []
     if waiting:
-        lines.append(f"Social: {_where_they_wait(conn, day, waiting)}, {skipped} skipped, {published} published")
         brief.append(f"{len(waiting)} social draft{'s' if len(waiting) != 1 else ''} waiting")
+    if places:
+        said = ", ".join(f"{len(names)} draft{'s' if len(names) != 1 else ''} {place} ({', '.join(names)})"
+                         for place, names in places.items())
+        lines.append(f"Social: {said}, {skipped} skipped, {published} published")
     elif rows or skipped or published:
         lines.append(f"Social: no drafts waiting, {skipped} skipped, {published} published")
     if no_draft and not rows:
@@ -88,19 +92,49 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     return {"figures": figures, "lines": lines, "brief": brief}
 
 
-def _where_they_wait(conn: sqlite3.Connection, day: str, waiting: list[str]) -> str:
-    """Where each draft really is: on a pending card in #approvals, in #social-drafts for a platform
-    in draft mode, or nowhere, for a browser draft that got no card or whose card has closed."""
-    from jura_growth.agents.publish import items
-    from jura_growth.agents.social.settings import load
+_ON_A_CARD, _BY_HAND, _NO_CARD = "waiting in #approvals", "waiting in #social-drafts", "with no card"
+_APPROVED, _HELD, _CLAIMED = "approved, waiting on a publish run", "approved, held by draft mode", "claimed by a publish run"
+_EXPIRED, _CLOSED = "expired", "closed"
+_PLACES = (_ON_A_CARD, _BY_HAND, _APPROVED, _HELD, _CLAIMED, _NO_CARD, _EXPIRED, _CLOSED)
 
-    carded = items.platforms_on_a_card(conn, day)
-    platforms = load().platforms
-    places = {"waiting in #approvals": [n for n in waiting if n in carded],
-              "waiting in #social-drafts": [n for n in waiting if n not in carded and not platforms[n].browser],
-              "with no card": [n for n in waiting if n not in carded and platforms[n].browser]}
-    return ", ".join(f"{len(names)} draft{'s' if len(names) != 1 else ''} {where} ({', '.join(names)})"
-                     for where, names in places.items() if names)
+
+def _where_they_are(conn: sqlite3.Connection, day: str, drafts: list[str], browser: set[str]) -> tuple[dict[str, list[str]], list[str]]:
+    """Each place a draft really is, in `_PLACES` order, and the drafts still waiting."""
+    from jura_growth.agents.publish import items
+
+    requests = items.requests_by_platform(conn, day)
+    found: dict[str, list[str]] = {}
+    waiting = []
+    for name in drafts:
+        place, waits = _place(conn, requests.get(name), name in browser)
+        found.setdefault(place, []).append(name)
+        if waits:
+            waiting.append(name)
+    return {place: found[place] for place in _PLACES if place in found}, waiting
+
+
+def _place(conn: sqlite3.Connection, request, browser: bool) -> tuple[str, bool]:
+    """Where a draft is, from its newest request, and whether anything is still going to happen to
+    it. A closed card isn't "no card", and a card the sweep refused will never go out. A card
+    Discord hasn't taken yet still waits: the heartbeat posts it."""
+    from jura_growth import approvals, cards, timeutil
+
+    if request is None:  # never a card: too late, no image, or from before browser mode
+        return (_NO_CARD, False) if browser else (_BY_HAND, True)
+    now = timeutil.now_sgt()
+    if request.status == approvals.PENDING:
+        if timeutil.parse(request.decide_by) <= now:
+            return _EXPIRED, False  # closed, whether or not this read may write the lapse
+        if request.posted_at:
+            return _ON_A_CARD, True
+        return _NO_CARD, cards.refusal(conn, request.id) is None
+    if request.status != approvals.APPROVED:
+        return (_EXPIRED if request.status == approvals.EXPIRED else _CLOSED), False
+    if request.used_at:
+        return _CLAIMED, False
+    if request.use_by and timeutil.parse(request.use_by) <= now:
+        return _EXPIRED, False
+    return (_APPROVED, True) if browser else (_HELD, False)
 
 
 RUN_UPDATE_DISCORD_CHANNEL = "social-drafts"

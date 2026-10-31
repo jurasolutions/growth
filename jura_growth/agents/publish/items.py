@@ -392,12 +392,15 @@ def raise_request(conn: sqlite3.Connection, item: Item, *, run_id: int | None) -
     return approvals.request(conn, APPROVAL_KINDS[item.kind], item.subject, reason=reason, run_id=run_id)
 
 
-def platforms_on_a_card(conn: sqlite3.Connection, day: str) -> set[str]:
-    """The platforms whose social post for `day` waits on a pending approval card that went out."""
+def requests_by_platform(conn: sqlite3.Connection, day: str) -> dict[str, approvals.Approval]:
+    """Each platform's newest request over its social post for `day`."""
     rows = conn.execute("SELECT * FROM publish_items WHERE day = ? AND kind = ?", (day, SOCIAL_ITEM)).fetchall()
-    found = (Item.from_row(row) for row in rows)
-    return {item.platform for item in found
-            if (latest := latest_request(conn, item)) and latest.status == approvals.PENDING and latest.posted_at}
+    found: dict[str, approvals.Approval] = {}
+    for item in map(Item.from_row, rows):
+        latest = latest_request(conn, item)
+        if latest and (item.platform not in found or latest.number > found[item.platform].number):
+            found[item.platform] = latest
+    return found
 
 
 def unless_paused(conn: sqlite3.Connection, promise: str) -> str:
