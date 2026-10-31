@@ -119,13 +119,14 @@ def test_p2_the_address_we_emailed_is_still_their_reply_whatever_its_headers(con
     assert lead_status(conn, lead["lead_id"]) == "replied"
 
 
-# --- P-3: if Resend rewrites the Message-ID we kept, the domain match still covers a colleague ---
+# --- P-3: outreach mail keeps no Message-ID, so the domain match covers it -----------------
 
 
 def test_p3_a_colleague_answering_outreach_is_covered_by_the_domain_with_no_kept_id(conn, monkeypatch):
-    """P-3: they name an id we never kept, as they would if Resend rewrote ours, and F2 still holds."""
+    """P-3: nothing writes `inbox_outgoing` for outreach, and F2 still holds for its colleagues."""
     seeded, _ = live_sends(conn, monkeypatch, 1)
     lead = seeded[0]
+    assert db.scalar(conn, "SELECT count(*) FROM inbox_outgoing") == 0
     mailbox_env(monkeypatch, [raw_mail(f"Jane <jane@{lead['domain']}>", when="2026-10-26T11:00:00+08:00", body="Tell me more.",
                                        In_Reply_To="<whatever-resend-gave-it@amazonses.example>")])
     at(monkeypatch, "2026-10-26T11:15:00+08:00")
@@ -151,9 +152,9 @@ def test_p3_someone_elsewhere_answering_outreach_is_still_reported(conn, monkeyp
 
 
 def test_p3_the_gap_is_stated_where_a_reader_finds_the_table():
-    """P-3: the table's doc says who writes it, and what covers outreach if Resend rewrites the id."""
+    """P-3: a table with no writer yet says so, and says what covers outreach meanwhile."""
     doc = store.remember_outgoing.__doc__
-    assert "claim" in doc and "UAT" in doc and "domain" in doc
+    assert "ticket 03" in doc and "domain" in doc
 
 
 # --- P-4: nothing is silently swallowed today -----------------------------------------------

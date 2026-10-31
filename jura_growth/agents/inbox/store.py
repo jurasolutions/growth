@@ -145,6 +145,11 @@ def get(conn: sqlite3.Connection, item_id: int) -> dict | None:
     return db.one(conn, "SELECT * FROM inbox_items WHERE id = ?", (item_id,))
 
 
+def thread_of(item: dict) -> dict:
+    """What its source kept for answering it. `record` doesn't read it, and an empty one is fine."""
+    return json.loads(item["thread_json"] or "{}")
+
+
 def label(item_id: int) -> str:
     """An inbox item's id, which Ting Yu sees on its report and types to act on it."""
     return f"I-{item_id:04d}"
@@ -329,12 +334,14 @@ def outgoing_id(seed: str, domain: str) -> str:
 
 def remember_outgoing(conn: sqlite3.Connection, message_id: str, *, lead_id: int | None = None) -> None:
     """Keep the `Message-ID` of a message Jura sent, so its copy is recognised (F4) and an answer
-    naming it finds its lead (F2). Inbox replies and outreach sends write it in their claim, before
-    Resend is called, so a copy that lands first is still known.
+    naming it finds its lead (F2). Inbox replies write it in their claim, before Resend is called, so a
+    copy that lands first is still known.
 
-    Whether Resend keeps a `Message-ID` it is given is for UAT Part B to confirm. If it rewrites it, the
-    lookup finds nothing: a colleague on the lead's domain still counts (`replies.Contacts.match`),
-    someone elsewhere is reported as a stranger, and copies are dropped by sender domain, so F4 holds.
+    Outreach sends set no `Message-ID`, by decision in ticket 03's code review: Resend may override the
+    header, and a refusal would fail live outreach. So answers to outreach have nothing to look up, and
+    F2's domain match is what covers them (`replies.Contacts.match`): a colleague on the lead's domain
+    counts, and someone elsewhere is reported as a stranger. Copies are dropped by sender domain, so F4
+    holds whether or not Resend keeps an id. UAT Part B checks that it takes the header on an inbox reply.
     """
     conn.execute(
         "INSERT OR IGNORE INTO inbox_outgoing (message_key, lead_id, recorded_at) VALUES (?, ?, ?)",
