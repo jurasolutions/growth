@@ -163,15 +163,27 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
 ## The inbox watch
 
 `inbox-check` (every 15 minutes, 07:00 to 23:45 SGT) reads the `OUTREACH_IMAP_*` mailbox, and
-`ENQUIRY_IMAP_*` if it is set, read-only, with no model. Each person who wrote gets one message in
-`#mission-control`, with what they said and their phone numbers and addresses masked. A lead's reply
-also does what the 16:45 check would, which then counts nothing again. Mail with evidence in its headers
-that no person wrote it (a mailing list, a no-reply sender, a platform's notice), and everything in the
-Junk folder, is noise: no message of its own, and counted in the digest. A report Discord refused goes
-again on the next check. `jura-growth pause inbox` stops all of it, and the 16:45 check carries on.
+`ENQUIRY_IMAP_*` if it is set, read-only, with no model. A lead's reply also does what the 16:45 check
+would, which then counts nothing again. Mail with evidence in its headers that no person wrote it (a
+mailing list, a no-reply sender, a platform's notice), and everything in the Junk folder, is noise: no
+message of its own, and counted in the digest.
+
+When someone wrote, Claude starts for triage (`prompts/inbox-check.md`). A person's words are hostile
+input, so triage starts in an empty folder, reads only that and its scratch folder, has no web, and its
+Bash runs two commands: `inbox pending` and `inbox submit --file`. It gives each conversation a class and,
+where one is merited, a draft that has to pass the `inbox-email` or `inbox-social` brand channel. It answers
+only what its run was handed, and an opt-out read beside other people's words is read again alone before
+it suppresses anyone, only ever the mail's own sender. It can't hide anyone: whatever it does, each
+conversation gets one message in `#mission-control`, with what they wrote as stored and their phone
+numbers and addresses masked. A conversation it hasn't dealt with after two tries needs a hand reply and
+is reported anyway, and a failed triage run alerts once without counting toward auto-pause.
+
+A report Discord refused goes again on the next check. `jura-growth pause inbox` stops all of it, and the
+16:45 check carries on.
 
 `inbox-watch` (hourly, 09:05 to 21:05 SGT, plug-in `inbox-browser`) reads Facebook and Instagram through
-Chrome and records what people said with `inbox observe --file`. It can't click: `computer`, `form_input`,
+Chrome and records what people said with `inbox observe --file`. It starts in an empty folder as triage does,
+and what it recorded goes on to triage once it has been checked. It can't click: `computer`, `form_input`,
 `file_upload` and `upload_image` are denied by name (ADR 0006), and its transcript is audited as
 `read_only`. It must record every surface, so a surface it can't read shows as failed, and goes to
 Needs you after 3 of its hours. A message whose text wasn't in what Chrome returned to that run is

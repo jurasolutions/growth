@@ -515,6 +515,12 @@ def _without_exempt(text: str) -> str:
     return text
 
 
+def figures(text: str) -> list[str]:
+    """Every figure in digits left in `text` once dates, times, links, identifiers and the approved
+    claims are gone: for a channel stricter than rule 7, where nothing cites a source."""
+    return [m.group(0).strip().rstrip("+").strip(",") for m in FIGURE_RE.finditer(_without_exempt(text))]
+
+
 def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
     links = find_links(text) + list(sources)
     third_party = [link for link in links if not is_jura(link)]

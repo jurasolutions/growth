@@ -7,6 +7,7 @@ a page), IW-W3 and F12 (B3), IW-S4 (B4), IW-A10 (B5). The should-fix items follo
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -15,10 +16,11 @@ import publish_fake
 import publish_transcripts as t
 import sweep
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import caps, db, locks, paths, pause, runner, transcripts
-from jura_growth.agents.inbox import report, store, watch
+from jura_growth import caps, config, db, locks, paths, pause, runner, transcripts
+from jura_growth.agents.inbox import report, store, triage, watch
 from jura_growth.agents.inbox_browser import scope
 from jura_growth.agents.publish import audit
+from runner_support import settings_with
 
 
 @pytest.fixture
@@ -194,10 +196,10 @@ def test_iw_f12_b3_on_the_first_read_only_a_fresh_unanswered_message_is_told(con
     assert items(conn)[0]["state"] == store.BASELINE
 
 
-def test_iw_f12_b3_a_fresh_unanswered_message_on_the_first_run_is_told(conn, fake, discord_double):
+def test_iw_f12_b3_a_fresh_unanswered_message_on_the_first_run_goes_to_triage(conn, fake, discord_double):
     fake.scenario(w.good_watch([w.dm(age_hours=47)]))
     run()
-    assert w.SAID in discord_double.contents("mission-control")[0]
+    assert [item["text"] for item in store.waiting_for_triage(conn)] == [w.SAID]
 
 
 # --- B4: a group's page isn't a stop signal ------------------------------------------------------
@@ -508,3 +510,131 @@ def test_iw_r1_a_report_of_a_run_message_stays_counts_and_fixed_words(conn, disc
     report.report_due(conn)
     posted = discord_double.contents("mission-control")
     assert len(posted) == 1 and "refund" not in posted[0]
+
+
+# --- the merge with ticket 02: what triage may read, what is owed a report, where a run starts --------
+
+
+def _item(conn, text: str, state: str, *, reported: bool = False, conversation: str = "c1") -> int:
+    key = store.text_key("test", conversation, text)
+    return store.record(conn, store.Reaction(source="instagram-dm", key=key, conversation=conversation, sender_name="Priya",
+                                             sender_domain="instagram.com", text=text, target=w.THREAD, state=state,
+                                             reported=reported)).item_id
+
+
+@pytest.mark.parametrize("state", [store.OBSERVED, store.UNVERIFIED, store.BASELINE, store.OWN, store.NOISE])
+def test_iw_s1_triage_reads_nothing_held_unverified_baseline_or_own_as_history(conn, monkeypatch, state):
+    _item(conn, "PLANTED words", state)
+    _item(conn, "How much is it?", store.NEW)
+    handed = triage.hand_out(conn)
+    said = json.dumps(handed["conversations"])
+    assert "How much is it?" in said and "PLANTED" not in said
+
+
+@pytest.mark.parametrize("state", [store.OBSERVED, store.UNVERIFIED, store.BASELINE, store.OWN])
+def test_iw_e4_their_words_for_a_draft_leave_out_what_isnt_proved_theirs(conn, state):
+    """A first name in a draft must be in what they wrote. Words a run invented don't license one."""
+    _item(conn, "Call me Marmaduke", state)
+    newest = store.get(conn, _item(conn, "How much is it?", store.NEW))
+    assert [item["text"] for item in store.history(conn, newest["conversation"])] == ["How much is it?"]
+
+
+@pytest.mark.parametrize("state, owed", [
+    (store.NOISE, False), (store.NEW, False), (store.OBSERVED, False), (store.UNVERIFIED, True),
+    (store.REPORTED, True), (store.NEEDS_HAND_REPLY, True), (store.TRIAGED, True),
+])
+def test_iw_r2_what_is_owed_a_report(conn, state, owed):
+    _item(conn, "Hello", state)
+    assert bool(store.unreported(conn)) is owed
+    assert store.open_counts(conn)["unreported"] == int(owed)
+
+
+def test_iw_r1_a_watched_message_goes_through_triage_before_it_is_told(conn, fake, discord_double):
+    w.baseline(conn)
+    fake.scenario(w.good_watch([w.dm()]))
+    assert run().status == "ok"
+    assert items(conn)[0]["state"] == store.NEW
+    assert discord_double.contents("mission-control") == []
+    assert store.waiting_for_triage(conn)
+
+
+def test_iw_r1_a_triaged_social_message_reports_with_its_link_and_fixed_words(conn, discord_double):
+    item_id = _item(conn, "", store.NEEDS_HAND_REPLY)
+    conn.execute("UPDATE inbox_items SET thread_json = ? WHERE id = ?", (json.dumps({"attachment": "voice-note"}), item_id))
+    report.report_due(conn)
+    posted = discord_double.contents("mission-control")[0]
+    assert "Instagram message" in posted and f"<{w.THREAD}>" in posted and "sent a voice note, see thread" in posted
+
+
+def test_iw_r1_a_run_message_still_posts_after_the_conversation_reports(conn, discord_double):
+    watch.record_run_message(conn, 5, ["P-0001 on Facebook: 2 new reactions, now 3."])
+    assert report.report_due(conn) == 1
+    assert "From the watch" in discord_double.contents("mission-control")[0]
+
+
+@pytest.mark.parametrize("job", ["inbox-watch", "inbox-reply"])
+def test_sec1_the_inbox_browser_jobs_start_in_an_empty_folder(job):
+    assert job in caps.CLEAN_CWD_JOBS
+    folder = runner.claude_cwd(job)
+    assert list(folder.iterdir()) == []
+    assert not paths.is_within(folder, paths.REPO_ROOT)
+    assert folder != paths.work_dir(job) and not paths.is_within(folder, paths.work_dir(job))
+
+
+def test_sec1_publish_stays_where_it_is_until_its_follow_up():
+    assert "publish" not in caps.CLEAN_CWD_JOBS
+    assert runner.claude_cwd("publish") == paths.REPO_ROOT
+
+
+def test_sec1_the_watch_really_starts_there_and_its_reads_are_fenced(conn, tmp_path, monkeypatch):
+    w.pw.at(monkeypatch, w.TEN)
+    script = tmp_path / "pwd-claude"
+    script.write_text(f"#!/bin/sh\ncat > /dev/null\npwd > {tmp_path}/started-in.txt\n")
+    script.chmod(0o755)
+    settings_with(monkeypatch, binary=str(script))
+    run()
+    assert (tmp_path / "started-in.txt").read_text().strip() == str(runner.claude_cwd("inbox-watch").resolve())
+    built, _ = runner.claude_command("inbox-watch", config.settings()["jobs"]["inbox-watch"])
+    assert json.loads(built[built.index("--settings") + 1])["permissions"]["blockReadsOutsideWorkingDirectories"] is True
+
+
+def test_sec1_the_watch_can_write_nothing_where_it_starts():
+    built, _ = runner.claude_command("inbox-watch", config.settings()["jobs"]["inbox-watch"])
+    assert str(runner.claude_cwd("inbox-watch")) not in " ".join(built)
+
+
+def test_sec1_from_the_clean_folder_a_scratch_file_goes_by_its_full_path(conn, fake, discord_double):
+    """A real run through the path guard, in a child that starts in the clean folder."""
+    w.baseline(conn)
+    fake.scenario([*w.opening(), *w.page_says(w.SAID), {"write": "seen.json", "text": json.dumps([w.dm()])},
+                   {"cli": ["inbox", "observe", "--file", "seen.json"]},
+                   {"cli": ["inbox", "observe", "--file", "{WORK}/seen.json"]},
+                   *w.browser(t.closed())])
+    run()
+    relative, absolute = fake.cli
+    assert relative["exit"] != 0
+    assert absolute["exit"] == 0 and json.loads(absolute["output"])["recorded"] == 1
+
+
+def test_sec1_the_prompt_says_to_use_the_full_path():
+    assert "full path" in PROMPT
+
+
+def test_sec1_inbox_reply_can_reach_its_scratch_and_image_copies_by_absolute_path(monkeypatch):
+    """Ticket 06 builds the job. What its upload needs holds already: `--add-dir` is its scratch folder
+    by full path, away from where it starts, and a copy there passes the guard from the clean folder."""
+    settings_with(monkeypatch, jobs={"inbox-reply": {"agent": "inbox-browser", "kind": "claude", "prompt": "inbox-watch.md",
+                                                     "browser": True}})
+    built, _ = runner.claude_command("inbox-reply", config.settings()["jobs"]["inbox-reply"])
+    added = Path(built[built.index("--add-dir") + 1])
+    assert added.is_absolute() and added == paths.work_dir("inbox-reply")
+    start = runner.claude_cwd("inbox-reply")
+    assert not paths.is_within(added, start)
+    copy = added / "A-0001" / "1.png"
+    copy.parent.mkdir(parents=True)
+    copy.write_bytes(b"png")
+    monkeypatch.chdir(start)
+    monkeypatch.setenv("JURA_GROWTH_JOB", "inbox-reply")
+    assert paths.guard(str(copy)) == copy.resolve()
+    with pytest.raises(paths.PathRefused):
+        paths.guard("A-0001/1.png")

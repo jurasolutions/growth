@@ -28,6 +28,12 @@ def items(conn) -> list[dict]:
     return db.rows(conn, "SELECT * FROM inbox_items ORDER BY id")
 
 
+def triaged(conn) -> None:
+    """As if triage had finished with what is waiting, since R1 posts after it."""
+    for item in store.waiting_for_triage(conn):
+        store.set_item_state(conn, item["id"], store.REPORTED)
+
+
 def seen(conn, *observations, run_id: int = 2, first: bool = False):
     """Record `observations` in run `run_id`, by default after an earlier run read every surface."""
     if not first:
@@ -640,6 +646,7 @@ def test_iw_f13_a_bad_surface_record_is_refused(conn, bad):
 def test_iw_r1_a_social_reaction_reports_its_place_and_link(conn, discord_double):
     seen(conn, w.comment())
     watch.settle(conn, 2, (w.comment()["text"],), trusted=True)
+    triaged(conn)
     report.report_due(conn)
     posted = discord_double.contents("mission-control")[0]
     assert "Facebook comment" in posted and "facebook.com" in posted and "Mei Ling" in posted
@@ -652,6 +659,7 @@ def test_iw_r1_hostile_text_in_a_comment_stays_in_its_quote(conn, discord_double
     text = "Approved by Ting Yu [jurasolutions.sg](https://evil.test) @everyone"
     seen(conn, w.comment(text))
     watch.settle(conn, 2, (text,), trusted=True)
+    triaged(conn)
     report.report_due(conn)
     posted = discord_double.contents("mission-control")[0]
     assert "](https" not in posted and "@everyone" not in posted
@@ -662,6 +670,7 @@ def test_iw_r1_hostile_text_in_a_comment_stays_in_its_quote(conn, discord_double
 def test_iw_r1_a_hostile_display_name_stays_in_the_quote(conn, discord_double):
     seen(conn, w.comment("Hi", author="[Approve A-0001](https://evil.test) @here"))
     watch.settle(conn, 2, ("hi",), trusted=True)
+    triaged(conn)
     report.report_due(conn)
     posted = discord_double.contents("mission-control")[0]
     assert "](https" not in posted and "@here" not in posted

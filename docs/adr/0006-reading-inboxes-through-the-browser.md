@@ -37,6 +37,12 @@ audit. Anything else has failed, which is different from a quiet day. A model's 
 reach a run row, #alerts or a run update: `after_run` writes them from a closed list and record fields,
 and an audit's findings, which can quote what a model asked for, stay in the event.
 
+`inbox-watch` and `inbox-reply` start in an empty folder of their own, as triage does (`caps.CLEAN_CWD_JOBS`,
+code review 02 SEC-1), because Claude Code runs read-only Bash unasked, and `grep -r KEY .` from the repo
+would reach `.env`. A session on hostile pages with the accounts signed in needs that more than triage does.
+So every path these jobs are handed is absolute: scratch files and image copies alike. `publish` hasn't
+moved, because it is a rehearsed live job, and has its own follow-up.
+
 The read-only audit is an allow list, so a tool the extension adds later fails until it is looked at.
 What a run may ask to open is held to a surface, a thread, a post of Jura's or a post in a group, so no
 page can send it to `l.php` or `/accounts/logout/`. Where the platform then redirects is its own

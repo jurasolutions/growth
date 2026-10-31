@@ -11,6 +11,7 @@ import sqlite3
 import pytest
 
 from discord_double import discord_double  # noqa: F401
+from inbox_world import triage_all
 from inbox_world import DKIM_PASS, NOW, StrictIMAP, enquiry_mail, mailbox_env, raw_mail, trust_servers
 from jura_growth import caps, config, db, discord, pause, privacy, runner, suppression
 from jura_growth.agents import inbox
@@ -492,6 +493,7 @@ def test_s1_the_forged_enquiry_keeps_its_warning(conn, monkeypatch, discord_doub
     mailbox_env(monkeypatch, [enquiry_mail(visitor="attacker@evil.test", authentication=forged)])
 
     mail.intake(conn)
+    triage_all(conn)
     report.report_due(conn)
 
     [post] = discord_double.contents("mission-control")
@@ -538,6 +540,7 @@ def test_s3_a_subject_cant_blank_the_senders_domain(conn, monkeypatch, discord_d
     mailbox_env(monkeypatch, [raw_mail("A <a@evil.example>", subject="evil.example", body="Hello there")])
 
     mail.intake(conn)
+    triage_all(conn)
     report.report_due(conn)
 
     [post] = discord_double.contents("mission-control")
@@ -552,6 +555,7 @@ def test_s3_their_words_cant_blank_a_warning_or_an_alert(conn, monkeypatch, disc
     warning = "isn't signed by Jura"
     fake = mailbox_env(monkeypatch, [enquiry_mail(visitor="a@evil.example", authentication=DKIM_FAIL, message=warning)])
     mail.intake(conn)
+    triage_all(conn)
     report.report_due(conn)
     fake.fail_at["login"] = replies.imaplib.IMAP4.error("refused")
     mail.intake(conn)
@@ -567,10 +571,11 @@ def test_s3_a_named_address_in_their_text_teaches_the_frame_nothing(conn, monkey
     mailbox_env(monkeypatch, [raw_mail(body="Write to next.email@evil.example please")])
 
     mail.intake(conn)
+    triage_all(conn)
     report.report_due(conn)
 
     [post] = discord_double.contents("mission-control")
-    assert post.startswith("**I-0001 · Email**") and "\nNext:" in post
+    assert post.startswith("**I-0001 · Email**") and "\nNo reply needed" in post
     assert "n***@evil.example" in post
 
 

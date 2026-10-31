@@ -104,7 +104,7 @@ def test_iw_w1_the_double_refuses_anything_that_would_change_the_mailbox():
 def test_iw_w1_the_window_is_checked_in_code(monkeypatch, conn, moment, reads):
     """IW-W1, PRD §4: launchd can fire early, so an early run just skips."""
     at(monkeypatch, moment)
-    fake = mailbox_env(monkeypatch, [raw_mail(when="2026-10-26T01:00:00+08:00")])
+    fake = mailbox_env(monkeypatch, [raw_mail(when="2026-10-26T01:00:00+08:00", List_Id="<news.vendor.example>")])
 
     outcome = runner.run("inbox-check")
 
@@ -120,9 +120,9 @@ def test_iw_w1_the_schedule_is_every_15_minutes_from_0700_to_2345():
 
 
 def test_iw_w1_a_quiet_check_leaves_a_trace_and_no_run_row(conn, monkeypatch):
-    """IW-W1, ADR 0001: nothing to triage in this ticket, so it never starts Claude."""
+    """IW-W1, ADR 0001: nothing waits for triage, so it never starts Claude."""
     at(monkeypatch, NOW)
-    mailbox_env(monkeypatch, [raw_mail()])
+    mailbox_env(monkeypatch, [raw_mail(List_Id="<news.vendor.example>")])
 
     outcome = runner.run("inbox-check")
 
@@ -552,7 +552,7 @@ def test_iw_f3_a_person_with_no_bulk_headers_is_reported(conn, monkeypatch):
 
     [item] = items(conn)
     assert item["state"] == store.NEW
-    assert [i["id"] for i in store.unreported(conn)] == [item["id"]]
+    assert [i["id"] for i in store.waiting_for_triage(conn)] == [item["id"]]
 
 
 def test_iw_f3_a_precedence_of_something_else_is_no_evidence(conn, monkeypatch):

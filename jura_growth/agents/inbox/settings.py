@@ -20,6 +20,7 @@ _HARD = {
     "look_back_days": caps.INBOX_LOOK_BACK_DAYS,
     "old_after_hours": caps.INBOX_OLD_AFTER_HOURS,
     "observations_per_run": caps.INBOX_OBSERVATIONS_PER_RUN,
+    "triage_per_run": caps.INBOX_TRIAGE_PER_RUN,
 }
 
 # The website form's sender (`landing-page/functions/submit.js`, W8).

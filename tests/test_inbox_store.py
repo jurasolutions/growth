@@ -157,7 +157,7 @@ def test_inbox_status_shows_counts_and_never_a_person(conn, monkeypatch):
     from jura_growth.cli import cli
 
     monkeypatch.setenv("JURA_GROWTH_NOW", "2026-10-26T10:00:00+08:00")
-    store.record(conn, reaction(sender_address="priya@clinic.example"))
+    store.record(conn, reaction(sender_address="priya@clinic.example", state=store.REPORTED))
     store.record(conn, reaction(key="key-2", state=store.NOISE, sender_domain="vendor.example", subject="Weekly note"))
     store.set_state(conn, "mail.last_success.levi", "2026-10-26T09:45:00+08:00")
 

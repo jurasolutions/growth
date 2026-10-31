@@ -1,21 +1,24 @@
 """Inbox watch: every reaction to Jura reported, every reply approved
 (prd/pending/prd-jura-inbox-watch-2026-10-31.md).
 
-So far this agent sees mail and reports it, with no model:
+So far this agent sees mail, triages it and reports it:
 
 - `store`: the record of every reaction, and `store.record`, the one way in.
 - `mail`: the mail intake. Read-only IMAP, the noise filter, a lead's reply recorded as the 16:45
   check would, website enquiries, Jura's own mail dropped.
-- `report`: one message per reaction in #mission-control, retried until delivered.
+- `triage`: what the model may do, and everything that holds whatever it does.
+- `checks`: the brand channels for a reply, `inbox-email` and `inbox-social`.
+- `report`: one message per conversation in #mission-control, retried until delivered.
 - `watch`: what a watch run may record, and what its records come to. The jobs that drive the browser
   belong to the `inbox_browser` plug-in, which has its own pause flag. Its commands are here, because
   a second `inbox` click group would silently replace this one.
 - `job`: the job's precheck.
-- `commands`: `jura-growth inbox status`, and a watch run's `watch-targets`, `observe` and `stopped`.
+- `commands`: `jura-growth inbox status | pending | submit`, and a watch run's `watch-targets`, `observe`
+  and `stopped`.
 - `settings`: the limits in `caps.py`, tightened by `config/inbox.yaml`.
 
-Job `inbox-check` runs every 15 minutes, 07:00 to 23:45 SGT. Its precheck does all of the above
-and starts no Claude.
+Job `inbox-check` runs every 15 minutes, 07:00 to 23:45 SGT. Its precheck reads the mail and reports
+what needs no model. Claude starts only when something waits for triage (`prompts/inbox-check.md`).
 """
 
 from __future__ import annotations
@@ -25,12 +28,26 @@ from pathlib import Path
 
 NAME = "inbox"
 MIGRATIONS = Path(__file__).parent / "migrations"
+# Claude Code runs these unasked (its permissions page, "read-only commands"), and a Read rule doesn't
+# stop `grep -r`. Triage's Bash only ever runs `jura-growth`, so it can do without every one of them.
+_READ_COMMANDS = ("cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "find", "ls", "tree", "wc", "which", "diff", "stat", "du",
+                  "cd", "git", "sed", "awk", "sort", "uniq", "cut", "tr", "strings", "xxd", "od", "file", "less", "more", "env",
+                  "printenv", "ps", "pwd", "echo", "python", "python3", "sqlite3", "curl", "wget")
+# Under `data/growth/`. Not a blanket `**`: a deny would hit triage's own scratch folder.
+_NOT_FOR_TRIAGE = ("growth.db*", "transcripts/**", "backups/**", "discord-outbox/**", "runs/**", "launchd/**", "one-pager/**",
+                   "work/publish/**", "work/inbox-watch/**", "work/inbox-reply/**")
 
 
 def register(cli) -> None:
     from jura_growth.agents.inbox.commands import inbox_group
 
     cli.add_command(inbox_group)
+
+
+def channels() -> dict:
+    from jura_growth.agents.inbox import checks
+
+    return checks.channels()
 
 
 def precheck(job: str, conn: sqlite3.Connection):
@@ -42,22 +59,35 @@ def precheck(job: str, conn: sqlite3.Connection):
 
 
 def permissions(job: str):
-    """What the prompt uses. There is nothing else for a model to do yet."""
+    """Triage's two commands, and the rules around what it could read (technical review, B4; code
+    review 02, SEC-1). The runner starts it in an empty folder, adds only its scratch folder, and
+    fences its file tools to those two. These are the second layer: its Bash needs none of the
+    commands that read, and the data it must not see is named. None of this is proved on a double:
+    `reviews/uat.md` has the canary row for the real model. With `--strict-mcp-config` and no
+    `--chrome` it has no MCP tools to deny."""
     if job != "inbox-check":
         return None
-    from jura_growth import headless
+    from jura_growth import headless, paths
 
-    return headless.Permissions(commands=("inbox status",))
+    denied = [f"Read(/{paths.data_dir()}/{place})" for place in _NOT_FOR_TRIAGE]
+    return headless.Permissions(
+        commands=("inbox pending", "inbox submit"),
+        disallowed_tools=("WebSearch", "WebFetch", *denied, f"Read(/{paths.outputs_dir()}/**)",
+                          *(f"Bash({command}:*)" for command in _READ_COMMANDS)),
+    )
 
 
-def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome) -> None:
-    """A report Discord refused goes again here as well as in the precheck (B7)."""
+def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
+    """Triage's last word, failing closed: the runner keeps a run's own outcome when this raises, and
+    that outcome holds the model's words. So any exception here ends in a fixed outcome of ours."""
     if job != "inbox-check":
         return None
-    from jura_growth.agents.inbox import report
+    from jura_growth.agents.inbox import triage
 
-    report.report_due(conn)
-    return None
+    try:
+        return triage.after_run(conn, run_id, outcome)
+    except Exception as error:  # noqa: BLE001 - see the docstring
+        return triage.failed_closed(conn, run_id, outcome, error)
 
 
 def setup_gaps() -> list:

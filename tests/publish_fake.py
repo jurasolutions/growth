@@ -16,7 +16,7 @@ The fake, started by `runner.run("publish")`:
     the child (`JURA_GROWTH_DISCORD=off`), so its alerts land in the outbox. After
     `publish next --json` it opens growth.db read-only and records, in `claims.json`, whether the
     approval was already used and the item claimed when the command returned (G21);
-  - `{"write": name, "text": "..."}`: a file in the publish scratch folder, as the Write tool;
+  - `{"write": name, "text": "..."}`: a file in the job's scratch folder, as the Write tool;
   - `{"tamper": path}`: makes `path` writable and overwrites it, as a run that rewrote an image
     copy would;
 - ends with the scenario's `result` text.
@@ -46,7 +46,7 @@ home = Path(os.environ["FAKE_CLAUDE_HOME"])
 (home / "stdin.txt").write_text(sys.stdin.read())
 (home / "run-id.txt").write_text(os.environ.get("JURA_GROWTH_RUN_ID", ""))
 scenario = json.loads((home / "scenario.json").read_text())
-work = Path(os.environ["JURA_GROWTH_DATA_DIR"]) / "work" / os.environ.get("JURA_GROWTH_JOB", "publish")
+work = Path(os.environ["JURA_GROWTH_DATA_DIR"]) / "work" / os.environ["JURA_GROWTH_JOB"]
 values = {"{WORK}": str(work)}
 counter = [0]
 

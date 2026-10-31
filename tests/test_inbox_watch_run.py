@@ -18,7 +18,7 @@ import publish_transcripts as t
 import sweep
 from discord_double import discord_double  # noqa: F401 - a fixture
 from jura_growth import backup, caps, config, db, headless, locks, paths, pause, runner, schedule, slots, timeutil
-from jura_growth.agents.inbox import store, watch
+from jura_growth.agents.inbox import report, store, triage, watch
 from jura_growth.agents.inbox_browser import scope
 
 
@@ -186,9 +186,15 @@ def test_iw_w2_a_clean_watch_records_reports_and_keeps_the_models_words_out(conn
     assert f"{len(watch.SURFACES)} of {len(watch.SURFACES)} surfaces" in row["summary"]
     found = items(conn)
     assert [i["state"] for i in found] == ["new"]
+    assert discord_double.contents("mission-control") == []  # R1 posts when triage finishes
+
+    submitted = triage.submit(conn, {"id": store.label(found[0]["id"]), "class": "thanks", "priority": "normal", "language": "English"})
+    assert submitted.exit_code == 0, submitted.text()
+    report.report_due(conn)
     posted = discord_double.contents("mission-control")
     assert len(posted) == 1
     assert "Instagram message" in posted[0] and w.SAID in posted[0] and "Priya Nair" in posted[0]
+    assert f"<{w.THREAD}>" in posted[0]
     assert alerts(discord_double) == []
     assert not pause.is_paused(conn, "inbox-browser")
 

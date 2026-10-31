@@ -76,8 +76,8 @@ above isn't one either. Record what you find, and carry on: a post that has gone
    and open only the threads with something new, by the address the list gives. If the `start` address
    doesn't lead there, look for a link to it in the page you reached with `read_page`, and go there with
    `navigate`. Record after each thread you open, because opening it clears its unread mark: write what
-   you read to a file in your scratch folder and run `jura-growth inbox observe --file <the file>` straight
-   away. A run can die part-way, and whatever is already recorded stays recorded.
+   you read to a file in your scratch folder and run `jura-growth inbox observe --file <its full path>`
+   straight away, with the whole path from the run context, because you start in another folder. A run can die part-way, and whatever is already recorded stays recorded.
 5. Read each post in `posts`: `navigate` to its `url`, and record its counts and the comments you can
    read as the page first shows them. You can't load more. That's fine: the page's own comment count
    tells Ting Yu how many you couldn't read.
