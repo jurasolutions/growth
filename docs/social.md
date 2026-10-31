@@ -1,8 +1,10 @@
 # Social content agent
 
-Daily drafts for Jura's Facebook Page and Instagram, with branded image cards, delivered to
-`#social-drafts`. A platform in `draft` mode is posted by Ting Yu by hand; a platform in `browser`
-mode is posted through Chrome once he approves that day's post in `#approvals`.
+Daily posts for Jura's Facebook Page and Instagram, each with something to read and a picture: a
+branded image card that draws a diagram of the post's own facts (Ting Yu, 2026-10-31: "more
+detailed insights", "no pictures ... so it looks dull"). A platform in `browser` mode is posted
+through Chrome once he approves that day's post in `#approvals`. A platform in `draft` mode is the
+way back: he posts it himself from `#social-drafts`.
 
 **LinkedIn was dropped on 2026-10-29** (Ting Yu: "drop the linkedin updates. No need to work on
 linkedin anymore."). It is switched off with `platforms.linkedin.enabled: false` in
@@ -27,11 +29,13 @@ the Posts API, `publish_mode: auto` and the two-hour skip window are dropped. `p
    today's drafts are already in, every platform is skipped, "No draft today" was already posted,
    or it's a weekend and `weekends: false`.
 2. Headless Claude follows `prompts/social.md`: `jura-growth social today`, research (web search
-   and fetch only), one core post adapted per platform, a file per platform switched on plus
+   and fetch only), one core post with insight (what happened, why now, what changes for a small
+   business with an example, one thing to do this week), adapted per platform, a file per platform switched on plus
    `sources.md` and `card.json` in `data/growth/work/social/YYYY-MM-DD/`, then
    `jura-growth social submit`.
 3. `submit` enforces the rules in code (below), renders the cards, writes
-   `outputs/growth/social/YYYY-MM-DD/`, logs `social_posts` and posts to `#social-drafts`.
+   `outputs/growth/social/YYYY-MM-DD/`, logs `social_posts` and delivers each platform's post by
+   its `publish_mode`.
 4. For a platform in `draft` mode, Ting Yu copies the post, or skips it, and can record that it
    went out. For a platform in `browser` mode, see "Publishing through the browser" below.
 
@@ -39,7 +43,7 @@ the Posts API, `publish_mode: auto` and the two-hour skip window are dropped. `p
 
 | Command | Does |
 |---|---|
-| `jura-growth social today [--date D] [--json]` | Today's theme and fallbacks, platform rules, the 14-day history (story URLs, tools, themes), the toolbox's newest and most-used tools, and the scratch folder |
+| `jura-growth social today [--date D] [--json]` | Today's theme and fallbacks with the word range and card needs of each, platform rules, the 14-day history (story URLs, tools, themes), the toolbox's newest and most-used tools, the icons a card may use, and the scratch folder |
 | `jura-growth social submit <dir> [--theme ID]` | Check, render, save, log and post the drafts in `<dir>` |
 | `jura-growth social render <spec.json> --out <dir> [--size NAME\|WxH ...] [--carousel N] [--source URL ...]` | Render a card on its own, after a brand check of its words. Default sizes: each platform switched on (facebook, instagram); any named size still renders with `--size` |
 | `jura-growth social skip <date> <platform\|all> [--reason]` | Don't post that draft. Works before the draft exists too (`tomorrow` is accepted). `all` is every platform switched on |
@@ -68,8 +72,20 @@ In this order. Steps 1 to 4 refuse without using up the day's regeneration.
 
 1. **Platforms to draft:** enabled, not skipped, not already drafted today (one post per platform
    per day, `caps.SOCIAL_POSTS_PER_PLATFORM_PER_DAY`, held by a unique index).
-2. **The folder:** the variant files, a valid card spec, and what the theme needs: source counts,
-   dates (news within `max_source_age_days`), the tool card for `from-the-toolbox`.
+2. **The folder:** the variant files, a valid card spec, and what the theme needs:
+   - source counts, and `ai-news`'s two different sites (`min_hosts`), which compare without `www.`.
+     Independence itself stays a prompt rule, and Ting Yu's eye on the card;
+   - dates (news within `max_source_age_days`);
+   - the theme's own layout, and the tool card for `from-the-toolbox`;
+   - `min_items` card items with a detail, an icon on every item and, on the headline layout, a
+     `visual` (`needs_visual`);
+   - no `"carousel": false` on a theme that goes out as a carousel;
+   - **what the picture says, tied to the post:** a figure's value and any other number on the
+     card, in digits or in words past a small count ("forty", "nine in ten", "two-thirds", "twice"),
+     appear the same way in every variant, read as the numbers rule reads them, so a date or a link
+     in the post doesn't count. A `source` label on a figure or an item is
+     the publisher on a line of `sources.md`. This doesn't prove a figure true. It means the
+     picture says nothing the post and its sources don't, and Ting Yu reads those on the card.
 3. **No repeats:** no story URL and no tool used in the last 14 days (`caps.NO_REPEAT_DAYS`).
    A story used on the 10th is free again on the 25th. URLs compare without scheme, `www.`,
    tracking parameters, fragment or trailing slash. Drafts count whatever became of them.
@@ -90,14 +106,29 @@ In this order. Steps 1 to 4 refuse without using up the day's regeneration.
 
 The core checker applies the house rules to everything (no exclamation marks, emoji, buzzwords,
 urgency, em-dash rhythm, "this, not that", the numbers rule, links only to jurasolutions.sg or
-declared sources). The social channels add:
+declared sources). In a sentence naming Jura, we, our or us, the numbers rule refuses any digit,
+a date, a year and a compound included, unless it is an approved claim or the channel's own
+allowance (the email's "30-minute call"). The social channels add:
 
 | Channel | Rules |
 |---|---|
-| `social-facebook` | 60–120 words; 0–2 hashtags on the last line; at least one link; every source in `sources.md` linked; no undeclared third-party links |
+| `social-facebook` | The theme's word range (below); 0–2 hashtags on the last line; at least one link; every source in `sources.md` linked; no undeclared third-party links |
 | `social-linkedin` | Not used while LinkedIn is switched off; kept for `jura-growth check` and for switching it back on. 120–220 words; up to 3 hashtags, all on the last line; links as Facebook |
-| `social-instagram` | 50–120 words; up to 8 hashtags on the last line; no URL or domain at all; says "Link in bio" |
-| `social-card` | The card's words: no links, no hashtags, no markdown. Headline and item titles are checked as headings (sentence case, not a question) |
+| `social-instagram` | The theme's word range (below); up to 5 hashtags on the last line; at most 2200 characters; no URL or domain at all; says "Link in bio" |
+| `social-card` | The card's words, every word on the picture included: no links, no hashtags, no markdown. Headline and item titles are checked as headings (sentence case, not a question) |
+
+A word-range miss is a brand-gate failure, so it uses the regeneration. Instagram's hashtag and
+character limits are set low on purpose: neither is confirmed from Meta, lowering them costs
+nothing, and a caption the composer cut short would read back as a mismatch and pause publishing.
+
+| Themes | Facebook | Instagram |
+|---|---|---|
+| `ai-news`, `ai-this-week`, `ai-finding` | 160–280 | 130–240 |
+| `ai-fun-facts`, `ai-good-read`, `automation-tip` | 120–220 | 110–200 |
+| `from-the-toolbox`, and any check with no theme | 90–180 | 80–160 |
+
+`jura-growth check --channel social-facebook` has no theme, so it uses the last row. `prompts/social.md`
+holds no ranges: the run reads them from `social today`, which reads this config.
 
 And on all three post channels:
 
@@ -123,14 +154,17 @@ Words are counted without links and hashtags.
   "subtitle": "What changed, and what it means for a small team.",
   "caption": "",
   "items": [
-    {"title": "IMDA opens a programme for smaller firms trying AI", "detail": "It starts with documents.", "source": "IMDA"},
-    "A plain string works too"
+    {"title": "IMDA opens a programme for smaller firms trying AI", "detail": "It starts with documents.", "source": "IMDA", "icon": "landmark"},
+    "A plain string works too, on a theme with no card items to meet"
   ],
+  "visual": {"type": "flow", "caption": "How it runs", "steps": [{"icon": "inbox", "label": "It comes in"}, {"icon": "search", "label": "It gets read"}, {"icon": "send", "label": "It goes out"}]},
   "tool": "quote-builder",
   "carousel": true,
   "proper_nouns": ["Acme"]
 }
 ```
+
+(That lists every key. A real card uses `visual` on the headline layout and `tool` on the tool layout.)
 
 | Key | Notes |
 |---|---|
@@ -139,10 +173,31 @@ Words are counted without links and hashtags.
 | `headline` | At most 90 characters; a statement in sentence case. The tool layout defaults it to the tool's name |
 | `subtitle` | At most 150 characters. The tool layout defaults it to the tool's description |
 | `caption` | Optional mono line under the subtitle, at most 60 characters (for example "Source: IMDA") |
-| `items` | Strings, or `{title, detail, source}` (90, 220 and 40 characters at most) |
+| `items` | Strings, or `{title, detail, source, icon}` (90, 220 and 40 characters at most). A `source` is a publisher on a line of `sources.md` |
+| `visual` | The picture, on the headline layout: see below |
 | `tool` | A live slug from the site registry (`repos/landing-page/src/apps/registry.json`) |
-| `carousel` | `false` turns Instagram's Monday and Thursday carousel off for this card |
+| `carousel` | `false` turns Instagram's Monday and Thursday carousel off for this card. It is refused on a theme with `carousel: true`, which is all but `from-the-toolbox` |
 | `proper_nouns` | Capitalised names the sentence-case check should accept |
+
+### The picture
+
+`visual` draws a small diagram of the post's own facts (`agents/social/visuals.py`). `design-system/README.md`
+§4 rules out stock illustration and scenes drawn in SVG, and says diagrams are fine, so a post has
+no photograph. Each theme with `needs_visual` on the headline layout must have one; a list theme's
+items carry their icons instead.
+
+| `type` | Keys | Draws |
+|---|---|---|
+| `flow` | `steps`: 3 to 4 `{icon, label}` | Steps joined by a line, the last in the brand green |
+| `compare` | `left`, `right`: `{icon, label, points}`, 2 to 3 points | Two columns, the right one tinted green |
+| `figure` | `value`, `label`, `source` | One number from a source, what it counts and who says so. A percentage up to 100, 5 characters at most, sits in a ring |
+
+All take an optional `caption`. The limits are `visuals.LIMITS`: labels 32 characters, points 60,
+`caption` 60, `value` 12, a figure's `label` 90 and `source` 40. A figure's value has a digit in it.
+
+Icons are Lucide (the design system's one set), at its 1.75 stroke, vendored with their licence in
+`templates/icons/`. Only a name in that folder is accepted, read from the folder's listing, so a name
+can't be a path. `social today` lists them. To add one, copy the SVG from Lucide into the folder.
 
 ### Sizes
 
@@ -150,7 +205,7 @@ Words are counted without links and hashtags.
 |---|---|---|
 | `linkedin` | 1200×627 | LinkedIn post (LinkedIn is switched off: rendered only when asked for by name) |
 | `facebook` | 1200×630 | Facebook post |
-| `instagram` | 1080×1350 | Instagram post; on Mondays and Thursdays a carousel of up to 5: the card, then one slide per item |
+| `instagram` | 1080×1350 | Instagram post. A carousel of up to 5, the card then one slide per item, on any day for a theme with `carousel: true`, and otherwise on Monday and Thursday if the card has items |
 | `profile` | 1080×1080 | Profile picture (mark only; `profile-green` is the white mark on the deep green) |
 | `linkedin-cover` | 1128×191 | LinkedIn page cover (not in `setup-images` while LinkedIn is switched off) |
 | `facebook-cover` | 1640×624 | Facebook Page cover (phones crop the sides, so the words stay central) |
@@ -161,7 +216,8 @@ Any `WIDTHxHEIGHT` works with `render --size`.
 
 `jura_growth/agents/social/templates/` holds `headline.html`, `list.html` and `tool.html`, plus
 `card.css` (layout only) and `card.js` (shrinks the type in small steps until nothing overflows,
-after the web fonts load). Each template links `design-system/styles.css` by `file://` URL, so
+after the web fonts load), and the `icons/` folder. A card takes its own size from the body, because
+headless Chrome's window is shorter than `--window-size` when `card.js` measures. Each template links `design-system/styles.css` by `file://` URL, so
 every colour, font, weight, radius and space is a design-system token; there are no raw colour
 values in the templates (a test checks). The logo is the design system's own SVG, inlined.
 
@@ -172,6 +228,11 @@ from its header and must match exactly. Before rendering, one `--dump-dom` pass 
 fonts loaded (`qa.json`, `fonts_loaded`); if Outfit, DM Sans or IBM Plex Mono didn't, the Discord
 post says the images use fallback fonts. `--offline` blocks the network (the tests use it).
 
+`tests/test_social_cards_real_chrome.py` draws every kind of card at 1200×630 and 1080×1350 with
+each field at its limit, in real Chrome, and measures every element against the footer. That test
+runs on fallback fonts, because the suite stays off the network. Rerun `tests/card_probe.py` with
+`offline=False` after a change to the layout, to check the same cards with the web fonts.
+
 ## Settings: `config/social.yaml`
 
 | Key | Default | |
@@ -179,8 +240,8 @@ post says the images use fallback fonts. `--offline` blocks the network (the tes
 | `weekends` | `true` | `false` makes the 07:00 job skip Saturday and Sunday (PRD open question 2) |
 | `rhythm` | PRD §5.2 (amended 2026-10-30) | Weekday to theme. Fallbacks are the following days' themes, in order |
 | `theme_gap_days` | 2 | A theme posted in the last this many days (not counting today) is unavailable in `today` and refused by `submit`, without using the regeneration, so the same kind of post never runs two days in a row. `0` switches it off |
-| `themes.<id>` | | `label`, `brief`, `layout`, `news`, `min_sources`, `max_sources`, `max_source_age_days`, `needs_tool` |
-| `platforms.<name>` | PRD §5.3 | `label`, `enabled` (`false` switches the platform off everywhere, whatever its `publish_mode`; LinkedIn since 2026-10-29), `words`, `hashtags_max`, `links` (`post` or `bio`), `image`, `carousel`, `publish_mode` (`draft` or `browser`), `page_url` (the page a browser run posts to; `https://` on the platform's own host; for LinkedIn the company page, `/company/<page>/`, and for Instagram the account's profile, `/<account>/`), `identity` (the posting identity the run must see; defaults to the Jura Solutions page or account) |
+| `themes.<id>` | | `label`, `brief`, `layout`, `news`, `min_sources`, `max_sources`, `min_hosts` (different sites its sources sit on), `max_source_age_days`, `needs_tool`, `words` (by platform, over the platform's own), `carousel` (Instagram posts it as a carousel on any day), `min_items` (card items with a detail), `needs_visual` (a `visual` on the headline layout, an icon on every item) |
+| `platforms.<name>` | PRD §5.3 | `label`, `enabled` (`false` switches the platform off everywhere, whatever its `publish_mode`; LinkedIn since 2026-10-29), `words`, `hashtags_max`, `chars_max`, `links` (`post` or `bio`), `image`, `carousel`, `publish_mode` (`draft` or `browser`), `page_url` (the page a browser run posts to; `https://` on the platform's own host; for LinkedIn the company page, `/company/<page>/`, and for Instagram the account's profile, `/<account>/`), `identity` (the posting identity the run must see; defaults to the Jura Solutions page or account) |
 | `eligibility_line` | "Check the official page for current eligibility." | |
 | `max_quote_words` | 12 | |
 | `blocked_topics` | elections, parties, tragedies | Whole words or phrases |
@@ -194,15 +255,18 @@ Every post is about AI or automation, and each day has its own kind of post (Tin
 new toolbox tools, AI fun facts, findings and good reads, and AI news, varied). It replaced the
 industry pattern, the explainer and the weekend question.
 
-| Day | Theme | Card | Sources |
-|---|---|---|---|
-| Mon | `ai-this-week`: 2–3 developments that matter to a small business | list (Instagram carousel) | 2–3, news, last 7 days |
-| Tue | `ai-finding`: one result from a published AI study or survey | headline | 1–2, dated, last 30 days |
-| Wed | `from-the-toolbox`: a toolbox tool, newest first | tool | none |
-| Thu | `ai-fun-facts`: 3–4 short, true, surprising facts about AI | list (Instagram carousel) | 1–4 |
-| Fri | `ai-news`: one AI story from the last few days | headline | 1–2, news, last 3 days |
-| Sat | `ai-good-read`: a newsletter, report, podcast or long read about AI | headline | exactly 1 |
-| Sun | `automation-tip`: one small thing to automate, with AI or without | headline | optional, up to 2 |
+| Day | Theme | Card | Card items, at least | Sources |
+|---|---|---|---|---|
+| Mon | `ai-this-week`: 2–3 developments that matter to a small business | list | 2 | 2–3, news, last 7 days |
+| Tue | `ai-finding`: one result from a published AI study or survey | headline with a visual | 3 | 1–2, dated, last 30 days |
+| Wed | `from-the-toolbox`: a toolbox tool, newest first | tool | none | none |
+| Thu | `ai-fun-facts`: 3–4 short, true, surprising facts about AI | list | 3 | 1–4 |
+| Fri | `ai-news`: one AI story from the last few days | headline with a visual | 3 | 2–3 on two different sites, news, last 3 days |
+| Sat | `ai-good-read`: a newsletter, report, podcast or long read about AI | headline with a visual | 2 | exactly 1 |
+| Sun | `automation-tip`: one small thing to automate, with AI or without | headline with a visual | 2 | optional, up to 2 |
+
+Every theme but `from-the-toolbox` goes out on Instagram as a carousel, whatever the day: the card,
+then one slide per item.
 
 The 48 hours before 07:00 on a Monday are a weekend, so "AI this week" accepts stories from the
 last 7 days (`max_source_age_days: 7`), newest first.
@@ -245,10 +309,9 @@ per-platform weekend switch.
 1. `social submit` makes a **publish item** for each platform in `browser` mode whose variant
    passed the brand gate, and raises one `social-post` approval request for it. The card in
    `#approvals` shows the A-id, the page and its URL, the day, the exact text, the image, the
-   links in the text, the brand-gate result and "decide by <day>, 18:00 SGT". That platform's
-   `#social-drafts` message points at the card instead of repeating the post. Drafts written
+   links in the text, the brand-gate result and "decide by <day>, 18:00 SGT". Drafts written
    before a platform moved to `browser` mode get no item. A platform in `browser` mode without
-   `page_url` set is posted by hand as before, with a note.
+   `page_url` set gets a note in `#social-drafts` saying why, and no card.
 2. Ting Yu approves or skips in `#approvals`. A skip, until the item is claimed, withdraws it and
    records `social skip <date> <platform>`. Unanswered or unclaimed by the end of the posting
    window (18:00 SGT on its day), the request expires and the draft stays as it is.
@@ -259,7 +322,7 @@ per-platform weekend switch.
 4. The run then records `publish done <A-id> --url <url> --live-text-file <f>`, which marks the
    draft published with its URL, or `publish stopped <A-id> --reason <r>` on a stop signal.
 
-On Instagram's carousel days (Monday and Thursday) the item carries every slide, and the card
+When Instagram's post is a carousel, the item carries every slide, and the card
 says "N images attached, posted in this order". The approval covers each slide's bytes in that
 order, so changing any slide, or their order, raises a new card.
 
@@ -393,10 +456,6 @@ the tools; otherwise tools are ranked by newest.
 
 ## Known issues
 
-- **"were", "well" and "wed" count as "we" in the core numbers rule.** `brand_check.JURA_SELF_RE`
-  makes the apostrophe optional (`we'?re`, `we'?ll`, `we'?d`), so a news sentence such as "86%
-  were using AI" is read as a figure about Jura and fails. The prompt tells the run to avoid
-  those words next to digits until the core pattern requires the apostrophe.
 - **Source addresses with brackets** (for example IRAS's `goods-services-tax-(gst)`) are cut at
   the bracket by the core link finder, so `submit` refuses them and asks for another address.
 - **Instagram "Link in bio"** points at jurasolutions.sg, not the article; Instagram news captions

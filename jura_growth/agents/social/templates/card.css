@@ -23,8 +23,11 @@ body {
   --fit: 1;
   box-sizing: border-box;
   position: relative;
-  width: 100vw;
-  height: 100vh;
+  /* The picture's own size, set on the body, and not the window's. Headless Chrome's window
+     is shorter than --window-size when card.js measures, so 100vh would shrink the type for a
+     page that never reaches the picture. */
+  width: var(--card-width, 100vw);
+  height: var(--card-height, 100vh);
   display: flex;
   flex-direction: column;
   padding: var(--pad);
@@ -35,6 +38,7 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  padding-bottom: var(--gap);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -143,8 +147,8 @@ body {
   --site-size: 25px;
   --logo-h: 64px;
   --foot-pad: var(--space-6);
-  --headline-measure: 16ch;
-  --subtitle-measure: 34ch;
+  --headline-measure: 22ch;
+  --subtitle-measure: 50ch;
   --visual-pad: var(--space-7);
   --step-tile: 124px;
   --step-size: 30px;
@@ -182,7 +186,7 @@ body {
   display: flex;
   align-items: baseline;
   gap: var(--space-4);
-  padding: var(--space-4) 0;
+  padding: calc(var(--space-4) * var(--fit)) 0;
   border-top: var(--border-hairline);
   font-size: calc(var(--item-size) * var(--fit));
   line-height: var(--leading-snug);
@@ -195,7 +199,7 @@ body {
 .items .num {
   flex: 0 0 auto;
   font-family: var(--font-mono);
-  font-size: 0.68em;
+  font-size: max(0.68em, 12px);
   letter-spacing: var(--tracking-overline);
   color: var(--green-600);
 }
@@ -212,7 +216,7 @@ body {
 .layout-list.fmt-portrait .main { justify-content: center; }
 .layout-list.fmt-portrait .items { margin-top: var(--space-4); }
 
-.items .tile { --tile: calc(var(--item-size) * 1.7); align-self: center; }
+.items .tile { --tile: calc(var(--item-size) * 1.7 * var(--fit)); align-self: center; }
 
 /* --- the picture: a diagram, framed like the design system's MotionPanel --- */
 
@@ -277,7 +281,9 @@ body {
   line-height: var(--leading-snug);
   color: var(--neutral-800);
   padding: 0 var(--space-2);
-  overflow-wrap: break-word;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
 }
 /* The line from each step to the next, with its arrowhead. */
 .step:not(:last-child)::after {
@@ -314,7 +320,7 @@ body {
 }
 .fmt-landscape .step:not(:last-child)::before { display: none; }
 
-.compare { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-4); }
 .column {
   display: flex;
   flex-direction: column;
@@ -329,6 +335,8 @@ body {
 .column-head { display: flex; align-items: center; gap: var(--space-3); }
 .column-head .tile { --tile: var(--column-tile); }
 .column-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--font-display);
   font-weight: var(--weight-semibold);
   font-size: calc(var(--step-size) * var(--fit));
@@ -345,10 +353,11 @@ body {
   font-size: calc(var(--point-size) * var(--fit));
   line-height: var(--leading-snug);
   color: var(--neutral-700);
+  overflow-wrap: anywhere;
 }
 
 .figure { display: flex; align-items: center; gap: var(--space-6); }
-.figure-text { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.figure-text { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; overflow-wrap: anywhere; }
 .figure-ring { position: relative; flex: 0 0 auto; width: calc(var(--ring-size) * var(--fit)); height: calc(var(--ring-size) * var(--fit)); display: flex; align-items: center; justify-content: center; }
 .ring { position: absolute; inset: 0; width: 100%; height: 100%; }
 .ring circle { fill: none; stroke-width: 9; }
@@ -357,12 +366,13 @@ body {
 .figure-value {
   font-family: var(--font-display);
   font-weight: var(--weight-semibold);
-  font-size: var(--figure-size);
+  font-size: calc(var(--figure-size) * var(--fit));
   line-height: 1;
   letter-spacing: var(--tracking-display);
   color: var(--brand);
 }
 .figure-with-ring .figure-value { font-size: calc(var(--ring-size) * 0.26 * var(--fit)); }
+.figure-with-ring .figure-value-tight { font-size: calc(var(--ring-size) * 0.2 * var(--fit)); }
 .figure-label { font-size: calc(var(--step-size) * var(--fit)); line-height: var(--leading-snug); font-weight: var(--weight-medium); color: var(--neutral-800); }
 .figure-source { font-family: var(--font-mono); font-size: var(--caption-size); letter-spacing: 0.04em; color: var(--neutral-500); }
 
@@ -370,7 +380,7 @@ body {
 .has-visual .subtitle { font-size: calc(var(--subtitle-size) * 0.92 * var(--fit)); }
 .layout-headline.has-visual.fmt-landscape .main {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   column-gap: var(--space-7);
   align-items: center;
 }
@@ -379,9 +389,12 @@ body {
 .layout-headline.has-visual.fmt-landscape .column { padding: var(--space-3); gap: var(--space-3); }
 
 /* A carousel slide leads with its icon. */
-.has-tile .intro > .tile { --tile: var(--slide-tile); margin-bottom: var(--space-3); }
+.has-tile { --headline-measure: 28ch; --subtitle-measure: 60ch; }
+.has-tile .intro > .tile { --tile: calc(var(--slide-tile) * var(--fit)); margin-bottom: var(--space-3); }
 .has-tile .main { justify-content: center; }
-.fmt-portrait.has-tile .subtitle { font-size: calc(var(--subtitle-size) * 1.2 * var(--fit)); max-width: 30ch; }
+.fmt-portrait.has-tile { --subtitle-measure: 40ch; }
+.fmt-landscape.has-tile { --headline-size: 44px; --subtitle-size: 24px; --headline-measure: 40ch; --subtitle-measure: var(--measure-prose); --slide-tile: 56px; --gap: var(--space-3); }
+.fmt-portrait.has-tile .subtitle { font-size: calc(var(--subtitle-size) * 1.2 * var(--fit)); }
 
 /* --- tool card ---------------------------------------------------------- */
 

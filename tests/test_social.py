@@ -48,9 +48,15 @@ If chasing payments takes up more of your week than it should, we're happy to lo
 
 #SmallBusiness #Automation #Invoicing
 """,
-    "facebook.md": """Chasing late invoices by hand? Your accounting software can send the first reminder for you.
+    "facebook.md": """Chasing late invoices yourself? Your accounting software can send the first reminder for you.
 
 Xero and QuickBooks both let you set an automatic reminder a few days after the due date. Write the message once, include the invoice number and a payment link, and it goes out for every unpaid invoice. Your team still decides who follows up by phone.
+
+The setting is already in the software you pay for, so there is nothing new to buy and nothing to install.
+
+Picture a small trading firm where the office manager spends Friday afternoon writing the same polite email. With the reminder on, those emails go out on their own, and Friday goes back to the customers who need a real conversation.
+
+This week, write one reminder in your own voice and switch it on for a single group of customers. Read what went out at the end of the week, then widen it.
 
 More small automations like this: https://jurasolutions.sg
 
@@ -60,9 +66,15 @@ More small automations like this: https://jurasolutions.sg
 
 Xero and QuickBooks both let you set an automatic reminder a few days after the due date. You write the message once, add the invoice number and a payment link, and it goes out for every unpaid invoice. Your team still decides when to pick up the phone.
 
+The setting is already in the software you pay for, so there is nothing new to buy.
+
+Picture a small trading firm where the office manager spends Friday afternoon writing the same polite email. With the reminder on, Friday goes back to the customers who need a real conversation.
+
+This week, write one reminder in your own voice and switch it on for a single group of customers.
+
 Link in bio for more small automations.
 
-#SmallBusiness #Automation #Invoicing #Xero #QuickBooks #Singapore
+#SmallBusiness #Automation #Invoicing #Singapore
 """,
     "sources.md": "",
     "card.json": json.dumps(
@@ -70,6 +82,19 @@ Link in bio for more small automations.
             "layout": "headline",
             "headline": "Let your accounting software send the first invoice reminder",
             "subtitle": "Write the message once. It goes out for every unpaid invoice.",
+            "visual": {
+                "type": "flow",
+                "caption": "How the first reminder runs",
+                "steps": [
+                    {"icon": "file-text", "label": "The invoice falls due"},
+                    {"icon": "clock", "label": "A few days pass"},
+                    {"icon": "mail", "label": "The reminder goes out"},
+                ],
+            },
+            "items": [
+                {"title": "Write the message once", "detail": "Add the invoice number and a payment link, so the customer can pay in one step.", "icon": "pen-line"},
+                {"title": "Keep the phone call for your team", "detail": "Decide who follows up when a reminder goes unanswered.", "icon": "phone"},
+            ],
         }
     ),
 }
@@ -89,11 +114,13 @@ If you'd like a second pair of eyes on where to begin, that's the work we do at 
 """,
     "facebook.md": f"""Two AI updates worth knowing about this week.
 
-IMDA has opened a programme to help smaller firms try AI on everyday work: {IMDA}
+IMDA has opened a programme to help smaller firms try AI on everyday work, starting with document handling and customer replies. The official page sets out who can apply and what help is on offer: {IMDA}
 
-Sheets can now suggest a formula from a plain sentence, according to Example News: {SHEETS}
+Sheets can now suggest a formula from a plain sentence, according to Example News. You describe the sum you want and it drafts the formula for you to check: {SHEETS}
 
-Small, low-risk ways to start with AI keep appearing. Pick the task your team repeats most often and try it there first, on your own data. More ideas at https://jurasolutions.sg
+Both arrive as more firms ask where to begin, and both make that first step smaller. Picture a small clinic that keeps its monthly claims in a spreadsheet. The person who closes the month can describe the total in plain words and check the answer, with nothing touching the accounts. You stay in charge, because the person who knows the work reads every answer before it goes anywhere else.
+
+This week, pick the task your team repeats most often and try it there first, on your own data. More ideas at https://jurasolutions.sg
 
 #AI #SmallBusiness
 """,
@@ -104,6 +131,10 @@ IMDA has opened a programme to help smaller firms try AI on everyday work, start
 Example News reports that Sheets can now suggest a formula from a plain sentence.
 
 The first step into automation keeps getting smaller. You can try a narrow task on your own data before anything touches your customers.
+
+Picture a small clinic that keeps its monthly claims in a spreadsheet. The person who closes the month can describe the total in plain words and check the answer. You stay in charge, because the person who knows the work reads every answer first.
+
+This week, pick the task your team repeats most often and try it there first.
 
 Link in bio for both stories.
 
@@ -116,8 +147,8 @@ Link in bio for both stories.
             "headline": "Two AI updates worth a look this week",
             "subtitle": "What changed, and what it means for a small team.",
             "items": [
-                {"title": "IMDA opens a programme for smaller firms trying AI", "detail": "It starts with documents and customer replies.", "source": "IMDA"},
-                {"title": "Sheets suggests formulas from a plain sentence", "detail": "Describe the sum you want and it drafts the formula.", "source": "Example News"},
+                {"title": "IMDA opens a programme for smaller firms trying AI", "detail": "It starts with documents and customer replies.", "source": "IMDA", "icon": "landmark"},
+                {"title": "Sheets suggests formulas from a plain sentence", "detail": "Describe the sum you want and it drafts the formula.", "source": "Example News", "icon": "file-check"},
             ],
         }
     ),
@@ -373,9 +404,9 @@ def test_news_variants_pass_with_their_sources(platform):
 
 def test_word_ranges():
     assert any("120–220 words" in m for m in channel_messages(check("Short post. https://jurasolutions.sg", "linkedin")))
-    assert any("60–120 words" in m for m in channel_messages(check(LI, "facebook")))
+    assert any("90–180 words" in m for m in channel_messages(check("Short post. https://jurasolutions.sg", "facebook")))
     long_caption = IG.replace("Link in bio", " ".join(["Your team keeps the credentials."] * 20) + " Link in bio")
-    assert any("50–120 words" in m for m in channel_messages(check(long_caption, "instagram")))
+    assert any("80–160 words" in m for m in channel_messages(check(long_caption, "instagram")))
 
 
 def test_word_count_skips_links_and_hashtags():
@@ -386,9 +417,10 @@ def test_hashtag_limits_and_position():
     too_many = LI.replace("#SmallBusiness #Automation #Invoicing", "#SmallBusiness #Automation #Invoicing #Xero")
     assert any("at most 3 hashtags" in m for m in channel_messages(check(too_many, "linkedin")))
     assert any("at most 2 hashtags" in m for m in channel_messages(check(FB.replace("#Automation", "#Automation #Xero"), "facebook")))
-    nine = IG.replace("#Singapore", "#Singapore #A #B #C")
-    assert any("at most 8 hashtags" in m for m in channel_messages(check(nine, "instagram")))
-    assert check(IG.replace("#Singapore", "#Singapore #Admin #Finance"), "instagram").passed  # exactly 8
+    # Instagram's cap fell from 8 to 5 (reviews/technical.md N9).
+    too_many_tags = IG.replace("#Singapore", "#Singapore #A #B")
+    assert any("at most 5 hashtags" in m for m in channel_messages(check(too_many_tags, "instagram")))
+    assert check(IG.replace("#Singapore", "#Singapore #Admin"), "instagram").passed  # exactly 5
     middle = LI.replace("This week, try", "This week #Automation, try")
     assert any("last line" in m for m in channel_messages(check(middle, "linkedin")))
 
@@ -523,7 +555,8 @@ def test_submit_delivers_everything(env, conn, linkedin_on):
     for name in ("linkedin.md", "facebook.md", "instagram.md", "card.json", "qa.json"):
         assert (out / name).exists(), name
     sizes = {p: [render.png_size(f) for f in files] for p, files in outcome.images.items()}
-    assert sizes == {"linkedin": [(1200, 627)], "facebook": [(1200, 630)], "instagram": [(1080, 1350)]}
+    # Instagram carries the card and one slide per item, on any day (DP3).
+    assert sizes == {"linkedin": [(1200, 627)], "facebook": [(1200, 630)], "instagram": [(1080, 1350)] * 3}
 
     rows = db.rows(conn, "SELECT * FROM social_posts ORDER BY platform")
     assert [r["platform"] for r in rows] == ["facebook", "instagram", "linkedin"]

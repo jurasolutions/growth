@@ -214,7 +214,9 @@ unsubscribe link. Do not write any of those yourself, and don't sign off with a 
   urgency, no em dashes, no "this, not that" constructions.
 - **The numbers rule:** no figures about Jura or about results. A number word from two up
   ("twelve businesses") is a figure too. No client counts, hours saved, percentages or "go live
-  in N days". "A 30-minute call" is fine; avoid other figures if you can.
+  in N days". Never put a digit in a sentence that contains "we", "our", "us" or "Jura": not a date, a
+  year or a compound either. The checker refuses any digit there, except "a 30-minute call". Avoid
+  other figures if you can.
 
 Reference shape (write your own each time; never copy it):
 

@@ -13,7 +13,8 @@ Three kinds, set under `"visual"` in `card.json`:
     compare  two columns of 2 to 3 short points, each with an icon and a label.
              Before and after, or what changes and what doesn't.
     figure   one figure from a source, with what it counts and who says so. A percentage gets
-             a ring. The numbers rule still applies: it comes from a source the post links.
+             a ring. The numbers rule still applies: it comes from a source the post links,
+             and `drafts.theme_problems` holds its value and its source to the post.
 
 `words()` gives the brand checker every word a visual prints, so nothing on the picture skips it.
 """
@@ -33,6 +34,7 @@ POINTS = (2, 3)
 _PERCENT = re.compile(r"^(\d{1,3}(?:\.\d+)?)%$")
 _STROKE = re.compile(r'stroke-width="[^"]*"')
 RING_RADIUS = 42  # in the ring's own 100-unit box
+RING_CHARS = 5  # the longest value that still fits inside the ring: "99.5%"
 
 
 def icon_names() -> list[str]:
@@ -78,7 +80,11 @@ class Visual:
 
     def words(self) -> list[str]:
         """Every word this visual prints, for the brand checker."""
-        found = [self.caption, self.value, self.label, self.source]
+        return [word for word in [*self.statements(), self.source] if word]
+
+    def statements(self) -> list[str]:
+        """What this visual says, without the name of its source."""
+        found = [self.caption, self.value, self.label]
         found += [step.label for step in self.steps]
         for column in (self.left, self.right):
             if column:
@@ -162,6 +168,8 @@ def parse(data) -> tuple[Visual | None, list[str]]:
             if not value:
                 problems.append(f"a figure needs its {name}")
             _too_long(problems, f"visual.{name}", value, limit)
+        if visual.value and not re.search(r"\d", visual.value):
+            problems.append(f'a figure is a number, and visual.value is "{visual.value}"')
     return visual, problems
 
 
@@ -191,9 +199,9 @@ def _column(column: Column, *, solid: bool) -> str:
 
 
 def _ring(value: str) -> str:
-    """A ring for a percentage up to 100; anything else stands on its own."""
+    """A ring for a short percentage up to 100; anything else stands on its own."""
     match = _PERCENT.match(value)
-    if not match or float(match.group(1)) > 100:
+    if not match or len(value) > RING_CHARS or float(match.group(1)) > 100:
         return ""
     circumference = 2 * 3.14159 * RING_RADIUS
     filled = circumference * float(match.group(1)) / 100
@@ -207,7 +215,8 @@ def _ring(value: str) -> str:
 
 def _figure(visual: Visual) -> str:
     ring = _ring(visual.value)
-    value = f'<span class="figure-value">{_text(visual.value)}</span>'
+    tight = " figure-value-tight" if ring and len(visual.value) == RING_CHARS else ""
+    value = f'<span class="figure-value{tight}">{_text(visual.value)}</span>'
     shown = f'<span class="figure-ring">{ring}{value}</span>' if ring else value
     return (
         f'<div class="figure{" figure-with-ring" if ring else ""}">{shown}<div class="figure-text">'

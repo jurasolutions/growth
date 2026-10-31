@@ -485,4 +485,5 @@ def channel() -> brand_check.Channel:
         allow_sources=False,
         check=check_email,
         description="Outreach email: jurasolutions.sg links only, PRD §5.6 and §5.6a parts",
+        allowance=CALL_ASK_RE,
     )

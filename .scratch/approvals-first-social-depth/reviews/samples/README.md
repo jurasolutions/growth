@@ -1,0 +1,1 @@
+Sample cards only, not real posts: one flow, one compare and one figure, each at 1200×630 and 1080×1350, drawn by real Chrome with the web fonts on 2026-10-31. The 50% on the figure card is a placeholder that nobody measured.

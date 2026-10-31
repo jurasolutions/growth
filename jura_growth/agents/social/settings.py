@@ -46,7 +46,8 @@ class Theme:
     words: dict[str, tuple[int, int]] = field(default_factory=dict)  # platform: (low, high), over the platform's own
     carousel: bool = False  # Instagram posts this theme as a carousel, whatever the day
     min_items: int = 0  # the card's items that carry a detail: one carousel slide each
-    needs_visual: bool = False  # a headline card must draw a diagram, a list card an icon per item
+    needs_visual: bool = False  # on the headline layout `visual` is required; every item on any layout has an icon
+    min_hosts: int = 0  # the different sites its sources must sit on (`ai-news`: an announcement and one report)
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,7 @@ class Platform:
     publish_mode: str = "draft"
     page_url: str | None = None  # the page a browser run posts to, once Ting Yu sets it
     identity: str = ""  # the posting identity the run must see before typing
+    chars_max: int | None = None  # the most a composer takes, links and hashtags included
 
     @property
     def not_browser(self) -> str | None:
@@ -127,13 +129,13 @@ DEFAULT_THEMES = {
         label="AI this week",
         brief="2–3 developments that matter to a small business, with links.",
         layout="list", news=True, min_sources=2, max_sources=3, max_source_age_days=7,
-        carousel=True, min_items=2, needs_visual=True,
+        words={"facebook": [160, 280], "instagram": [130, 240]}, carousel=True, min_items=2, needs_visual=True,
     ),
     "ai-finding": dict(
         label="AI finding",
         brief="One finding from a published AI study or survey: what it found, and what it means for a small business.",
         news=True, min_sources=1, max_sources=2, max_source_age_days=30,
-        carousel=True, min_items=3, needs_visual=True,
+        words={"facebook": [160, 280], "instagram": [130, 240]}, carousel=True, min_items=3, needs_visual=True,
     ),
     "from-the-toolbox": dict(
         label="From the toolbox",
@@ -143,22 +145,24 @@ DEFAULT_THEMES = {
     "ai-fun-facts": dict(
         label="AI fun facts",
         brief="3–4 short, true and surprising facts about AI: its history, how it works or how people use it.",
-        layout="list", min_sources=1, max_sources=4, carousel=True, min_items=3, needs_visual=True,
+        layout="list", min_sources=1, max_sources=4,
+        words={"facebook": [120, 220], "instagram": [110, 200]}, carousel=True, min_items=3, needs_visual=True,
     ),
     "ai-news": dict(
         label="AI news",
-        brief="One AI story from the last few days: what happened, and what it means for a small business.",
-        news=True, min_sources=2, max_sources=3, max_source_age_days=3,
-        carousel=True, min_items=3, needs_visual=True,
+        brief="One AI story from the last few days, in depth: what happened, why it matters, and what a small business should do about it.",
+        news=True, min_sources=2, max_sources=3, max_source_age_days=3, min_hosts=2,
+        words={"facebook": [160, 280], "instagram": [130, 240]}, carousel=True, min_items=3, needs_visual=True,
     ),
     "ai-good-read": dict(
         label="Worth reading",
         brief="One newsletter, report, podcast or long read about AI worth a weekend's attention, and what you get from it.",
-        min_sources=1, max_sources=1, carousel=True, min_items=2, needs_visual=True,
+        min_sources=1, max_sources=1,
+        words={"facebook": [120, 220], "instagram": [110, 200]}, carousel=True, min_items=2, needs_visual=True,
     ),
     "automation-tip": dict(
         label="Automation tip", brief="One small thing a team can automate this week, with AI or without.", max_sources=2,
-        carousel=True, min_items=2, needs_visual=True,
+        words={"facebook": [120, 220], "instagram": [110, 200]}, carousel=True, min_items=2, needs_visual=True,
     ),
 }
 DEFAULT_RHYTHM = {
@@ -172,7 +176,7 @@ DEFAULT_PLATFORMS = {
     "linkedin": dict(label="LinkedIn page", words=[120, 220], hashtags_max=3, links="post", image={"width": 1200, "height": 627}),
     "facebook": dict(label="Facebook Page", words=[90, 180], hashtags_max=2, links="post", image={"width": 1200, "height": 630}),
     "instagram": dict(
-        label="Instagram", words=[80, 160], hashtags_max=8, links="bio", image={"width": 1080, "height": 1350},
+        label="Instagram", words=[80, 160], hashtags_max=5, chars_max=2200, links="bio", image={"width": 1080, "height": 1350},
         carousel={"days": ["mon", "thu"], "max_slides": 5},
     ),
 }
@@ -202,6 +206,7 @@ def load() -> Settings:
             carousel=bool(spec.get("carousel", False)),
             min_items=int(spec.get("min_items", 0)),
             needs_visual=bool(spec.get("needs_visual", False)),
+            min_hosts=int(spec.get("min_hosts", 0)),
         )
 
     rhythm = {**DEFAULT_RHYTHM, **(raw.get("rhythm") or {})}
@@ -238,6 +243,7 @@ def load() -> Settings:
             publish_mode=mode,
             page_url=str(page_url) if page_url else None,
             identity=str(spec.get("identity") or DEFAULT_IDENTITIES[name]),
+            chars_max=int(spec["chars_max"]) if spec.get("chars_max") else None,
         )
 
     render = raw.get("render") or {}
