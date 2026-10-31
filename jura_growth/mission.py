@@ -336,7 +336,14 @@ def _failures(conn: sqlite3.Connection, now: datetime) -> tuple[Failure, ...]:
         " ORDER BY started_at, id",
         (day_ago,),
     ).fetchall()
-    return tuple(Failure(_clean(row["job"]), timeutil.parse(row["started_at"]).astimezone(SGT), _clean((row["error"] or "")[:300]) or None) for row in rows)
+    found = []
+    for row in rows:
+        try:
+            at = timeutil.parse(row["started_at"]).astimezone(SGT)
+        except ValueError:  # as in `_record`: a stamp that doesn't parse drops its row, not the one-pager
+            continue
+        found.append(Failure(_clean(row["job"]), at, _clean((row["error"] or "")[:300]) or None))
+    return tuple(found)
 
 
 def _yesterday(conn: sqlite3.Connection, now: datetime) -> tuple[Yesterday | None, float]:
@@ -397,7 +404,10 @@ def _last_one_pager(conn: sqlite3.Connection, now: datetime, scheduled: datetime
     ).fetchone()[0]
     if not found:
         return scheduled
-    ran = timeutil.parse(found).astimezone(SGT)
+    try:
+        ran = timeutil.parse(found).astimezone(SGT)
+    except ValueError:  # a stamp that doesn't parse never breaks the one-pager
+        return scheduled
     return ran if ran >= now - ONE_PAGER_LOOKBACK else scheduled
 
 

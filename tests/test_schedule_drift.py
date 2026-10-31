@@ -80,8 +80,12 @@ def test_the_line_says_how_far_off_and_what_to_do_without_stating_the_cause_as_f
     assert "If it's still off tomorrow, run `jura-growth schedule install`." in line
 
 
-def test_one_hour_off_reads_as_one_hour():
-    assert "about 1 hour off" in health.Drift("social", "07:00", "08:00", 1).line
+@pytest.mark.parametrize(
+    ("hours", "words"),
+    [(-9.0, "about 9 hours off"), (1.0, "about 1 hour off"), (-1.0, "about 1 hour off"), (0.5, "about 0.5 hours off"), (2.5, "about 2.5 hours off")],
+)
+def test_the_hours_read_as_a_person_would_say_them(hours, words):
+    assert words in health.Drift("social", "07:00", "08:00", hours).line
 
 
 # --- a Mac that woke late, and jobs that don't agree ----------------------------------
@@ -144,6 +148,23 @@ def test_an_on_time_run_before_the_drifted_runs_does_not_clear_them():
     assert found is not None and found.hours == -9
 
 
+@pytest.mark.parametrize(
+    ("woke", "still_flagged"),
+    [
+        ("06:15", True),  # the Mac's repeating 06:15 wake, 15 minutes before app-factory's slot
+        ("06:24", True),
+        ("06:25", False),  # the limit left on record: a wake this close reads as a fixed clock
+        ("06:30", False),
+        ("06:35", False),
+        ("06:36", True),
+        ("06:59", True),
+    ],
+)
+def test_a_wake_near_a_slot_during_real_drift_only_clears_it_within_the_tolerance(woke, still_flagged):
+    """Being on time is a stricter bar than not being off: launchd fires within seconds of a slot."""
+    found = drift(social=last_two("22:00"), one_pager=last_two("23:00"), app_factory=[days_ago(0, woke)])
+    assert (found is not None) == still_flagged
+
 # --- one outlier ---------------------------------------------------------------------
 
 
@@ -186,7 +207,7 @@ def test_a_run_exactly_three_days_old_still_counts():
 # --- the edges of the table -------------------------------------------------------------
 
 
-def test_29_minutes_off_is_on_time_and_30_minutes_off_is_not():
+def test_29_minutes_off_does_not_count_as_off_and_30_minutes_does():
     assert drift(social=last_two("07:29"), one_pager=[days_ago(1, "08:29"), days_ago(2, "08:29")]) is None
     found = drift(social=last_two("07:30"), one_pager=[days_ago(1, "08:30"), days_ago(2, "08:30")])
     assert found is not None and found.hours == 0.5
@@ -264,8 +285,8 @@ def growth_db_with(rows: dict[str, list[datetime]], *, status: str = "ok") -> No
     conn.close()
 
 
-def read() -> mission.Snapshot:
-    return mission.read(world.source(NOW.isoformat(), jobs=shipped_jobs()))
+def read(now: datetime = NOW) -> mission.Snapshot:
+    return mission.read(world.source(now.isoformat(), jobs=shipped_jobs()))
 
 
 def needs_you(snapshot: mission.Snapshot) -> str:
@@ -313,6 +334,21 @@ def test_the_one_pagers_own_run_clears_the_line_after_a_restart(clock):
         }
     )
     assert read().drift is None
+
+
+def test_a_one_pager_fired_by_a_late_wake_still_says_so(clock):
+    """A Mac asleep overnight with a real drift: the one-pager fires at an 08:10 wake, 10 minutes
+    past its slot. Its own run must not silence the one place the line appears."""
+    growth_db_with(
+        {
+            "digest": last_two("08:30"),
+            "backup": last_two("14:30"),
+            "social": last_two("22:00"),
+            "one-pager": [days_ago(0, "08:10")],
+        }
+    )
+    snapshot = read(days_ago(0, "08:10"))
+    assert "about 9 hours off" in needs_you(snapshot)
 
 
 def test_a_skipped_run_counts_as_a_start(clock):
@@ -369,6 +405,29 @@ def test_a_malformed_started_at_costs_the_check_and_nothing_else(clock):
     assert snapshot.db_state == mission.OK
     assert snapshot.drift is None
     assert snapshot.slots != {}
+
+
+@pytest.mark.parametrize("stamp", ["not a date", "2026-11-09T99:00:00"])  # the second is the newest stamp before now in SQL
+@pytest.mark.parametrize("job", ["social", "one-pager"])
+@pytest.mark.parametrize("status", ["ok", "failed", "skipped", "running"])
+def test_a_malformed_started_at_on_any_run_never_breaks_the_one_pager(clock, status, job, stamp):
+    growth_db_with({"social": last_two("22:00"), "one-pager": last_two("23:00")})
+    conn = db.connect()
+    with conn:
+        conn.execute("UPDATE runs SET started_at = ?, status = ? WHERE id = (SELECT max(id) FROM runs WHERE job = ?)", (stamp, status, job))
+    conn.close()
+    snapshot = read()
+    assert snapshot.db_state == mission.OK
+    assert one_pager.text(snapshot).startswith("**Tue 10 Nov")
+
+
+def test_a_failed_run_with_a_malformed_started_at_leaves_the_other_failures_showing(clock):
+    growth_db_with({"social": last_two("22:00"), "community": last_two("07:30")}, status="failed")
+    conn = db.connect()
+    with conn:
+        conn.execute("UPDATE runs SET started_at = 'not a date' WHERE id = (SELECT max(id) FROM runs WHERE job = 'social')")
+    conn.close()
+    assert [failure.job for failure in read().failures] == ["community"]
 
 
 def test_no_runs_at_all_is_no_line(clock):

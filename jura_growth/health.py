@@ -132,8 +132,8 @@ def day_label(moment: datetime) -> str:
     return f"{moment:%a} {moment.day} {moment:%b}"
 
 
-def _plural(n: int, word: str, many: str | None = None) -> str:
-    return f"{n} {word if n == 1 else many or word + 's'}"
+def _plural(n: float, word: str, many: str | None = None) -> str:
+    return f"{n:g} {word if n == 1 else many or word + 's'}"
 
 
 def previous_business_day_start(now: datetime) -> datetime:
@@ -204,8 +204,7 @@ class Drift:
 
     @property
     def line(self) -> str:
-        unit = "hour" if abs(self.hours) == 1 else "hours"
-        return (f"Scheduled jobs are running about {abs(self.hours):g} {unit} off: `{self.job}` is due at {self.due} SGT and "
+        return (f"Scheduled jobs are running about {_plural(abs(self.hours), 'hour')} off: `{self.job}` is due at {self.due} SGT and "
                 f"ran at {self.ran} SGT. Posting and sending windows are missed while this lasts. Most likely launchd kept "
                 "an old time zone. Restart the Mac once. If it's still off tomorrow, run `jura-growth schedule install`.")
 
@@ -233,9 +232,12 @@ def schedule_drift(starts: Mapping[str, list[datetime]], jobs: Mapping[str, Mapp
     It takes the largest group of jobs steadily off by the same amount, so one job off by something
     else doesn't hide it. The group needs two slots more than `DRIFT_TOLERANCE` apart. That is what
     rules out a late wake, even one at the same time every day: jobs firing together at a wake are
-    off by amounts that differ by exactly the distance between their slots. A daily job on time since
-    the group's newest run means the clock is right again, so the morning after a restart is quiet,
-    though the jobs that haven't run since still hold their last two drifted runs."""
+    off by amounts that differ by exactly the distance between their slots. A daily job within
+    `DRIFT_TOLERANCE` of its slot since the group's newest run means the clock is right again, so the
+    morning after a restart is quiet, though the jobs that haven't run since still hold their last
+    two drifted runs. launchd fires within seconds of a slot, so that narrow window is enough, and a
+    wake that merely lands near a slot doesn't silence a real drift. A run between that window and
+    `DRIFT_MINIMUM` counts as neither off nor on time."""
     off: list[_SteadilyOff] = []
     on_time: list[datetime] = []
     for job, spec in jobs.items():
@@ -245,9 +247,9 @@ def schedule_drift(starts: Mapping[str, list[datetime]], jobs: Mapping[str, Mapp
         if slot is None or not runs:
             continue
         gaps = [_gap(run, slot) for run in runs]
-        if abs(gaps[0]) < DRIFT_MINIMUM:
+        if abs(gaps[0]) <= DRIFT_TOLERANCE:
             on_time.append(runs[0])
-        elif len(gaps) == 2 and abs(gaps[1]) >= DRIFT_MINIMUM and _apart(*gaps) <= DRIFT_TOLERANCE:
+        elif len(gaps) == 2 and min(abs(gaps[0]), abs(gaps[1])) >= DRIFT_MINIMUM and _apart(*gaps) <= DRIFT_TOLERANCE:
             off.append(_SteadilyOff(job, slot, gaps[0], runs[0]))
     group = _largest_group(off)
     if not group or any(run > max(member.newest for member in group) for run in on_time):
