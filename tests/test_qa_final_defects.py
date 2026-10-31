@@ -7,10 +7,12 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
 from gate_adapter_community_post import ADAPTER as COMMUNITY_POST
-from jura_growth import approvals, cards, config, db, paths
+from jura_growth import approvals, brand_check, cards, config, db, paths
 from jura_growth.agents import social
 from test_approvals_first import BOTH, LATE, feed_lines, refuse_facebook, social_day, submit_tip  # noqa: F401 - a fixture
 from test_social import env  # noqa: F401 - a fixture
@@ -188,6 +190,42 @@ def test_a_community_post_approved_with_browser_off_says_nothing_goes_through_th
     cards.sweep(conn)
     line = _community_line(discord_double, approval)
     assert "It goes out" not in line and "community.browser is off" in line
+
+
+# --- 07: a config folder that isn't there -----------------------------------------------------------
+
+
+@pytest.fixture
+def no_buzzword_list(monkeypatch, tmp_path):
+    """A config folder with no list. `_buzzword_patterns` outlives a change of folder within one
+    process, so its cache is cleared either side."""
+    monkeypatch.setenv("JURA_GROWTH_CONFIG_DIR", str(tmp_path / "not-there"))
+    config.reset_caches()
+    brand_check._buzzword_patterns.cache_clear()
+    yield tmp_path / "not-there"
+    monkeypatch.undo()
+    config.reset_caches()
+    brand_check._buzzword_patterns.cache_clear()
+
+
+def test_a_missing_buzzword_list_stops_the_gate(no_buzzword_list):
+    """It must not read "no list" as "no buzzwords"."""
+    with pytest.raises(FileNotFoundError, match="buzzwords.txt"):
+        brand_check.check("Leverage the model", channel_name="social-card")
+
+
+def test_an_empty_buzzword_list_stops_the_gate(no_buzzword_list):
+    no_buzzword_list.mkdir()
+    (no_buzzword_list / "buzzwords.txt").write_text("# nothing here\n", encoding="utf-8")
+    with pytest.raises(FileNotFoundError, match="buzzwords.txt"):
+        brand_check.check("Leverage the model", channel_name="social-card")
+
+
+def test_the_check_command_says_the_list_is_missing_and_does_not_pass(no_buzzword_list):
+    result = pw.invoke("check", "--channel", "social-card", "Leverage the model")
+    assert result.exit_code != 0
+    assert "buzzwords.txt" in result.output
+    assert "pass" not in result.output.split()
 
 
 # --- 09: a typed approval of a refused card, in a new process ---------------------------------------

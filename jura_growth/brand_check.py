@@ -249,10 +249,17 @@ def _emoji(text: str) -> list[Issue]:
 # --- 3. buzzwords ----------------------------------------------------------
 
 
+class BuzzwordListMissing(FileNotFoundError):
+    """No list isn't no buzzwords: a gate that can't read its list stops, and says so."""
+
+
 @lru_cache(maxsize=None)
 def _buzzword_patterns() -> tuple[tuple[str, re.Pattern], ...]:
+    words = config.read_lines("buzzwords.txt")
+    if not words:
+        raise BuzzwordListMissing(f"{paths.config_dir() / 'buzzwords.txt'} is missing or empty, so the brand check can't run")
     patterns = []
-    for word in config.read_lines("buzzwords.txt"):
+    for word in words:
         parts = [re.escape(p) for p in re.split(r"[\s-]+", word.lower()) if p]
         body = r"[\s-]+".join(parts)
         patterns.append(

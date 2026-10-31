@@ -92,15 +92,18 @@ def check(text, file_, subject, headings, buttons, channel_name, sources, proper
     elif text == "-" or (text is None and not sys.stdin.isatty()):
         text = sys.stdin.read()
     text = text or ""
-    result = brand_check.check(
-        text,
-        subject=subject,
-        headings=headings,
-        buttons=buttons,
-        channel_name=channel_name,
-        sources=sources,
-        proper_nouns=proper_nouns,
-    )
+    try:
+        result = brand_check.check(
+            text,
+            subject=subject,
+            headings=headings,
+            buttons=buttons,
+            channel_name=channel_name,
+            sources=sources,
+            proper_nouns=proper_nouns,
+        )
+    except brand_check.BuzzwordListMissing as error:
+        raise click.ClickException(str(error)) from error
     if as_json:
         click.echo(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
     elif result.passed:

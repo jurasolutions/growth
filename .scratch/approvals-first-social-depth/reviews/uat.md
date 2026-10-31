@@ -97,7 +97,7 @@ Find a card's A-id on the card, in what the seed prints, or with `uv run jura-gr
 
 Your complaint was "no pictures, so it looks dull". The design system rules out stock images and drawn scenes, so the answer is a diagram of the post's own facts. **If these don't look good to you, stop here.** That's the moment to say so, or to reopen photographs (`PRD §6`, question 1).
 
-The sample words are test data. They stay in a temp folder and the number is a stand-in. `fresh base` comes first because it makes `$UAT/config`: with that folder missing the brand check has no banned words to read, and P2's second render would pass.
+The sample words are test data. They stay in a temp folder and the number is a stand-in. `fresh base` comes first because it makes `$UAT/config`: with that folder missing the brand check stops and says its word list is missing, and no render runs.
 
 ```bash
 fresh base

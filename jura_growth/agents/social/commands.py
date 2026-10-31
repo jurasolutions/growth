@@ -76,9 +76,12 @@ def render_cmd(spec_file, out_dir, sizes, carousel, sources, prefix, offline) ->
     if problems:
         click.echo("refused:\n" + "\n".join(f"  - {p}" for p in problems))
         sys.exit(2)
-    result = brand_check.check(
-        spec.body(), headings=spec.headings(), channel_name="social-card", sources=sources, proper_nouns=spec.proper_nouns
-    )
+    try:
+        result = brand_check.check(
+            spec.body(), headings=spec.headings(), channel_name="social-card", sources=sources, proper_nouns=spec.proper_nouns
+        )
+    except brand_check.BuzzwordListMissing as error:
+        raise click.ClickException(str(error)) from error
     if not result.passed:
         click.echo("refused: the card's words fail the brand check")
         for reason in result.reasons():
