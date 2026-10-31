@@ -47,6 +47,13 @@ def register(cli) -> None:
     commands.register(cli)
 
 
+def pending(conn: sqlite3.Connection) -> list:
+    """`jura-growth pending`: the open items (`commands.pending_items`)."""
+    from jura_growth.agents.publish import commands
+
+    return commands.pending_items(conn)
+
+
 def digest(conn: sqlite3.Connection, day: str) -> dict:
     """The day's posted, skipped, expired and stopped items (AC-P8.3), by the items' own day."""
     from jura_growth.agents.publish import items, kinds

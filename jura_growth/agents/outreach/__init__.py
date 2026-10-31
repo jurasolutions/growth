@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from jura_growth import db
+from jura_growth import agents, db
 
 NAME = "outreach"
 # A decision on an email is reported beside the emails that went out (`feed.py`).
@@ -71,6 +71,12 @@ def health(conn: sqlite3.Connection) -> list[str]:
         return []
     things = "1 thing stops" if len(problems) == 1 else f"{len(problems)} things stop"
     return [LIVE_BLOCKED_LINE.format(things=things, problem=problems[0])]
+
+
+def pending(conn: sqlite3.Connection) -> list:
+    """`jura-growth pending`: the emails queued to send."""
+    queued = db.scalar(conn, "SELECT count(*) FROM outreach_messages WHERE status = 'queued'") or 0
+    return [agents.PendingItem(agents.GROWTH, f"{queued} outreach email{'s' if queued != 1 else ''} queued.", order=agents.COUNT)] if queued else []
 
 
 def digest(conn: sqlite3.Connection, day: str) -> dict:

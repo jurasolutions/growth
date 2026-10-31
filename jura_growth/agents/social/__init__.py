@@ -39,6 +39,19 @@ def channels() -> dict:
     return checks.channels()
 
 
+def pending(conn: sqlite3.Connection) -> list:
+    """`jura-growth pending`: drafts for today onward. Only the platforms switched on count, as in
+    the digest: a draft for one switched off is never going out."""
+    from jura_growth import agents, db, timeutil
+
+    from jura_growth.agents.social.settings import load
+
+    on = {p.name for p in load().enabled_platforms()}
+    rows = db.rows(conn, "SELECT platform FROM social_posts WHERE status = 'draft' AND date >= ?", (timeutil.today_str(),))
+    drafts = sum(1 for row in rows if row["platform"] in on)
+    return [agents.PendingItem(agents.GROWTH, f"{drafts} social draft{'s' if drafts != 1 else ''} for today onward.", order=agents.COUNT)] if drafts else []
+
+
 def digest(conn: sqlite3.Connection, day: str) -> dict:
     from jura_growth import db
 

@@ -37,6 +37,7 @@ from datetime import datetime
 from typing import Callable
 
 from jura_growth import approvals, db, discord, log, paths, timeutil
+from jura_growth.agents import LISTED, YOU, PendingItem
 from jura_growth.agents.apps import backlog, builds, catalog
 
 KIND = "app-release"
@@ -423,41 +424,119 @@ APPROVED_LINE = "Run `jura-growth apps release-plan {app_id}` for the merge. {la
 NEVER_PRINTED = "approved, but its merge was never printed"
 
 
-def health_lines(conn: sqlite3.Connection) -> list[str]:
-    """Built apps not yet released (MC §5.4, §5.7): left on their preview by a skip, an expiry or
-    a lapse; approved and waiting for `release-plan`; or claimed and waiting for main. A request
-    still waiting for a decision is already in the approvals list. `conn` is the read model's
-    read-only connection: deadlines are judged against the clock, whether or not the lapse has
-    been written yet (ADR 0002; code review 10b, S4)."""
-    columns = {r[1] for r in conn.execute("PRAGMA table_info(app_builds)")}  # 0004's columns, not just the table
-    if "head_sha" not in columns:
-        return []
+# What a built app not yet released is waiting for: the one classification behind the one-pager and
+# `pending`, so the two can't disagree.
+WAITING, APPROVED, CLAIMED, ON_PREVIEW, NO_REQUEST = "waiting", "approved", "claimed", "on its preview", "no request"
+
+
+@dataclass(frozen=True)
+class Unreleased:
+    """One built app not yet released. `why` says what left it on its preview. `request` is None
+    only for `NO_REQUEST`."""
+
+    state: str
+    row: dict
+    label: str
+    request: approvals.Approval | None
+    why: str = ""
+
+
+def unreleased(conn: sqlite3.Connection) -> list[Unreleased]:
+    """Built apps not yet released (MC §5.4, §5.7), oldest build first: left on their preview by a
+    skip, an expiry or a lapse; approved and waiting for `release-plan`; claimed and waiting for
+    main; with a request still waiting for a decision; or with no live request at all, which
+    `apps built` shouldn't leave behind. `conn` may be the read model's read-only connection:
+    deadlines are judged against the clock, whether or not the lapse has been written yet (ADR
+    0002; code review 10b, S4)."""
     now = timeutil.now_sgt()
-    lines = []
+    found = []
     for row in db.rows(conn, "SELECT * FROM app_builds WHERE status = 'built' ORDER BY id"):
         app_id = row["app_id"]
         label = f"{app_id} {builds.app_name(conn, app_id)}".strip()
         latest = approvals.latest(conn, KIND, builds.subject(app_id))
         if latest is None or latest.status == approvals.SUPERSEDED:
+            found.append(Unreleased(NO_REQUEST, row, label, None))
             continue
-        if latest.status == approvals.PENDING:
-            if now < timeutil.parse(latest.decide_by):
-                continue
-            why = "expired unanswered"
-        elif latest.status == approvals.APPROVED and latest.used_at:
-            lines.append(MAIN_LINE.format(sha=short(row["head_sha"]), app_id=app_id, task=row["task_id"], label=label, request=latest.id))
+        state, why = _reading(latest, now)
+        found.append(Unreleased(state, row, label, latest, why))
+    return found
+
+
+def _reading(latest: approvals.Approval, now: datetime) -> tuple[str, str]:
+    if latest.status == approvals.PENDING:
+        return (WAITING, "") if now < timeutil.parse(latest.decide_by) else (ON_PREVIEW, "expired unanswered")
+    if latest.status == approvals.APPROVED and latest.used_at:
+        return CLAIMED, ""
+    if latest.status == approvals.APPROVED:
+        return (APPROVED, "") if latest.use_by is None or now < timeutil.parse(latest.use_by) else (ON_PREVIEW, NEVER_PRINTED)
+    if latest.status == approvals.SKIPPED:
+        return ON_PREVIEW, "skipped"
+    return ON_PREVIEW, NEVER_PRINTED if latest.decided_at else "expired unanswered"
+
+
+def health_lines(conn: sqlite3.Connection) -> list[str]:
+    """The one-pager's lines for `unreleased`. A request still waiting for a decision is already
+    in the approvals list, and an app with no live request has no line here."""
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(app_builds)")}  # 0004's columns, not just the table
+    if "head_sha" not in columns:
+        return []
+    lines = []
+    for app in unreleased(conn):
+        if app.request is None:
             continue
-        elif latest.status == approvals.APPROVED:
-            if latest.use_by is None or now < timeutil.parse(latest.use_by):
-                lines.append(APPROVED_LINE.format(app_id=app_id, label=label, request=latest.id))
-                continue
-            why = NEVER_PRINTED
-        elif latest.status == approvals.SKIPPED:
-            why = "skipped"
-        else:
-            why = NEVER_PRINTED if latest.decided_at else "expired unanswered"
-        lines.append(PREVIEW_LINE.format(app_id=app_id, label=label, request=latest.id, why=why, preview=row["preview_url"]))
+        row, app_id, request = app.row, app.row["app_id"], app.request.id
+        if app.state == CLAIMED:
+            lines.append(MAIN_LINE.format(sha=short(row["head_sha"]), app_id=app_id, task=row["task_id"], label=app.label, request=request))
+        elif app.state == APPROVED:
+            lines.append(APPROVED_LINE.format(app_id=app_id, label=app.label, request=request))
+        elif app.state == ON_PREVIEW:
+            lines.append(PREVIEW_LINE.format(app_id=app_id, label=app.label, request=request, why=app.why, preview=row["preview_url"]))
     return lines
+
+
+# `pending`: the same states, read in Discord, so each says what to send.
+PENDING_APPROVED = "{label} is approved ({request}){until}. Send `/growth apps release-plan {app_id}` for the merge."
+PENDING_MERGE = ("{label} waits for main: {request} is claimed at {sha}. Run the merge, then send "
+                 "`/growth apps released {app_id} --task {task}`. `/growth apps release-plan {app_id}` shows the merge again.")
+PENDING_RECORD = "{label} is on main at {sha} ({request}). Send `/growth apps released {app_id} --task {task}` to record it."
+ASK_AGAIN = "`/growth apps built {app_id} --task {task} --branch {branch} --sha {sha} --preview {preview}`"
+PENDING_PREVIEW = "{label} stays on its preview: {request} {why}. {preview} To ask again, send " + ASK_AGAIN + "."
+PENDING_NO_REQUEST = "{label} is built but has no release request on record. To ask for one, send " + ASK_AGAIN + "."
+PREVIEWS_SHOWN = 3  # at about 330 characters each, more would push other lines out of a Discord answer
+
+
+def pending_items(conn: sqlite3.Connection) -> list[PendingItem]:
+    """`pending`'s lines for `unreleased`, each holding Ting Yu's next step. A release that can still
+    go comes first. What was left on its preview comes after every other next step, newest first and
+    capped, because a skipped build stays `built` for good. A request still waiting is in the
+    approvals section, so it isn't listed twice. Without 0004's columns this raises, so `pending`
+    says what it couldn't read."""
+    conn.execute("SELECT head_sha, preview_url, task_id, branch FROM app_builds LIMIT 0")
+    apps = unreleased(conn)
+    items = [PendingItem(YOU, _pending_text(app)) for app in apps if app.state in (APPROVED, CLAIMED, NO_REQUEST)]
+    left = [app for app in reversed(apps) if app.state == ON_PREVIEW]
+    items += [PendingItem(YOU, _pending_text(app), order=LISTED) for app in left[:PREVIEWS_SHOWN]]
+    more = len(left) - PREVIEWS_SHOWN
+    if more > 0:
+        stays = "stays on its preview" if more == 1 else "stay on their previews"
+        items.append(PendingItem(YOU, f"and {more} more {stays}.", order=LISTED))
+    return items
+
+
+def _pending_text(app: Unreleased) -> str:
+    row, request = app.row, app.request
+    ask = {"app_id": row["app_id"], "task": row["task_id"], "branch": row["branch"], "sha": row["head_sha"], "preview": row["preview_url"]}
+    if request is None:
+        return PENDING_NO_REQUEST.format(label=app.label, **ask)
+    fields = {"label": app.label, "app_id": row["app_id"], "request": request.id, "task": row["task_id"]}
+    if app.state == APPROVED:
+        until = f", until {timeutil.when(request.use_by)}" if request.use_by else ""
+        return PENDING_APPROVED.format(**fields, until=until)
+    if app.state == CLAIMED:
+        # Git can't tell before the merge fetches the task branch: its commit isn't here yet.
+        line = PENDING_RECORD if on_main(row["head_sha"]) else PENDING_MERGE
+        return line.format(**fields, sha=short(row["head_sha"]))
+    return PENDING_PREVIEW.format(label=app.label, request=request.id, why=app.why, **ask)
 
 
 def claimed_release(conn: sqlite3.Connection, app_id: str) -> approvals.Approval | None:

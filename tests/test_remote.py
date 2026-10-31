@@ -196,11 +196,15 @@ def _table(conn, world):
         (["apps", "released", "APP-999", "--task", "T-0031"], 1, "APP-999"),
         (["community", "removed", str(group_id)], 0, "is now skip, permanently"),
         (["community", "removed", "999"], 1, "999"),
+        (["help"], 0, "`status`: "),  # the rest of its paths are in test_remote_help.py
+        (["help", "me"], 2, "refused:"),
         # MC-09. Discord is off here, so the one-pager waits in the outbox; AC-M1.6's
         # "posted to #mission-control" through the Discord double is in test_one_pager_post.py.
         (["one-pager"], 0, "not posted to #mission-control: DISCORD_WEBHOOK_MISSION_CONTROL not set; saved to outbox"),
         (["outreach", "requeue-shadow", "--dry-run"], 1, "live sending is ready"),
         (["pause", "all", "holiday"], 0, "paused all"),
+        (["pending"], 0, "Waiting for you"),  # the rest of its paths are in test_pending.py
+        (["pending", "now"], 2, "refused:"),
         (["publish", "queue"], 0, "no publish items"),  # browser-publishing#03
         (["publish", "resolve", "A-0999", "not-posted"], 1, "there is no approval request A-0999"),
         (["resume", "all"], 0, "resumed all"),

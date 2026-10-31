@@ -35,6 +35,7 @@ from jura_growth import (
     one_pager as one_pager_mod,
     pause as pause_mod,
     paths,
+    pending as pending_mod,
     privacy,
     remote,
     runner,
@@ -450,6 +451,12 @@ def one_pager_cmd(no_post, grid) -> str | None:
     answer = f"posted to #{result.channel}" if result.delivered else f"not posted to #{result.channel}: {result.reason}"
     click.echo(answer)
     return answer
+
+
+@cli.command("pending")
+def pending_cmd() -> None:
+    """What growth has unfinished, by who holds the next step. Reads only (ADR 0002)."""
+    click.echo(pending_mod.render(pending_mod.read()))
 
 
 @cli.command()

@@ -89,6 +89,21 @@ def when(moment: datetime | str) -> str:
     return f"{moment:%a} {moment.day} {moment:%b}, {moment:%H:%M} SGT"
 
 
+def ago(moment: datetime | str) -> str:
+    """How long before now, in words: `3 hours ago`. Takes a datetime or a stored ISO stamp."""
+    moment = parse(moment) if isinstance(moment, str) else moment
+    minutes = int((now_sgt() - moment).total_seconds() // 60)
+    if minutes < 1:
+        return "less than a minute ago"
+    if minutes < 60:
+        amount, unit = minutes, "minute"
+    elif minutes < 48 * 60:
+        amount, unit = minutes // 60, "hour"
+    else:
+        amount, unit = minutes // (24 * 60), "day"
+    return f"{amount} {unit}{'s' if amount != 1 else ''} ago"
+
+
 def midnight(day: date) -> datetime:
     """The start of an SGT day."""
     return datetime(day.year, day.month, day.day, tzinfo=SGT)

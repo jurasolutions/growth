@@ -201,6 +201,12 @@ A `jura-growth` command Ting Yu sends from Discord through Dispatch, run by `jur
 against its own allowlist, with his Discord user id recorded as the actor.
 _Avoid_: remote command, bot command
 
+**Pending work**:
+Growth's unfinished work as `jura-growth pending` lists it, by who holds the next step: waiting for
+Ting Yu, or growth is on it. It is read only, and it says "nothing pending" only when every source
+was read.
+_Avoid_: backlog (that is the app factory's list of ideas), queue, to-do
+
 **Skip**:
 Only the decision. Use **skipped run** for the slot status, **dropped** for text the brand gate
 refused, and **fit: skip** for a community group judged not worth posting in.
