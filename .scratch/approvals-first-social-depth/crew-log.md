@@ -21,3 +21,13 @@ decisions: where they differ: fence-aware split (technical B2) with images on th
 decisions: scout: no tools recommended; hashtags_max lowered to 5
 questions: -
 evidence:  reviews/technical.md, reviews/functional.md, scout/ read in full
+
+## 2026-10-31T19:40+0800 conductor (test strategy taken)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: reviews/test-strategy.md
+decisions: a card's "carousel": false is refused on a carousel theme (qa-lead's question, technical N8)
+decisions: its 11 approval and privacy guard rewrites stay strict; 26 fixture-only failures are fixed in one place
+questions: -
+evidence:  reviews/test-strategy.md read by the developers through their briefs
