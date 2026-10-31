@@ -206,12 +206,14 @@ they share the accounts, and a `publish` pause skips the watch. `jura-growth pau
 stops it and leaves the mail running. The first-run checks are in the setup guide.
 
 `inbox-reply` (every 20 minutes, 09:10 to 20:50 SGT, plug-in `inbox-browser`) posts one reply he approved, of
-kind `social-reply`, and starts no Claude when none is due. It reads first and says what it found, and
-`inbox reply-next` decides: a newer message supersedes the draft, an answer from the Page closes it, a target
-that has gone closes it, and only a clean read is claimed (`agents/inbox/reply_run.py`). The audit's `one_line`
-rule holds it to the approved text, whole, once, with one send, because Return sends in a DM. It reads the
-reply back, and a claim with no outcome is `unknown`, pauses `inbox-browser` and is never sent again. A DM's
-target must be one thread's own address, or it is an item to answer by hand.
+kind `social-reply`, and starts no Claude when none is due. It reads the one target it was handed and says what
+it found, and `inbox reply-next` decides: a newer message supersedes the draft, and only a clean read is claimed
+(`agents/inbox/reply_run.py`). It may only read until its claim and after its done word. The audit's `one_line`
+rule holds it to the approved text, whole, once, with one send, because Return sends in a DM, and to the claimed
+thread. The run's own word proves nothing. `sent` takes a transcript showing the text sent and read back on that
+thread, and a page closes an item as gone or answered only with the evidence at the target's address. A claim
+without that proof is `unknown`, pauses `inbox-browser` and is never sent again. A DM's target must be one
+thread's own address, or it needs a hand reply.
 The PRD is `prd/pending/prd-jura-inbox-watch-2026-10-31.md`.
 
 A draft for an email becomes one card in `#approvals`, of kind `email-reply`: what they said, who really

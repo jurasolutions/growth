@@ -220,10 +220,12 @@ def test_iw_b1_a_look_after_the_send_is_fine(tmp_path):
     assert found.ok, found.failures
 
 
-def test_iw_b1_after_reply_done_the_send_phase_is_over(tmp_path):
-    found = replied(tmp_path, typing(TEXT), press("Return"), t.bash("jura-growth inbox reply-done A-0001", "done"),
-                    click())
-    assert found.ok, found.failures
+def test_iw_b1_after_reply_done_a_run_may_only_read(tmp_path):
+    """Code review 06, SEC-4: a click can be Like, Hide, Delete or Block, and its work is over."""
+    done = t.bash("jura-growth inbox reply-done A-0001", "done")
+    assert replied(tmp_path, typing(TEXT), press("Return"), done, in_thread("get_page_text", {})).ok
+    assert not replied(tmp_path, typing(TEXT), press("Return"), done, click()).ok
+    assert not replied(tmp_path, typing(TEXT), press("Return"), done, press("Return")).ok
 
 
 def test_iw_b1_the_publish_rules_allow_a_click_after_posting(tmp_path):

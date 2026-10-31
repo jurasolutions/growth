@@ -23,11 +23,10 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 
-from jura_growth import approval_settings, approvals, db, log, pause, timeutil
+from jura_growth import approval_settings, approvals, caps, cards, db, pause, timeutil
 from jura_growth.agents.inbox import kinds as email_kinds
-from jura_growth.agents.inbox import report, settings, store, watch
+from jura_growth.agents.inbox import report, store, watch
 from jura_growth.agents.publish import hosts
 
 KIND = "social-reply"
@@ -39,17 +38,8 @@ _LINE_BREAK = re.compile(r"[\r\n\x0b\x0c\x85  ]")
 _WROTE_AGAIN = "they wrote again"
 _NOT_A_THREAD = "The watch couldn't keep this thread's own address, so a reply can't be bound to it. Answer by hand if it needs one."
 _TOO_LONG = "The draft and its card won't fit one Discord message, so there is no card. Answer by hand if it needs one."
-_LAPSED = "Lapsed: answer by hand if it still matters."
 # What can't count as them writing again: what isn't proved to be theirs, or what was only ever a baseline.
 _NOT_WRITING = (store.NOISE, store.UNVERIFIED, store.BASELINE, store.OWN)
-
-
-def platform_of(item: dict) -> str:
-    return item["source"].split("-", 1)[0]
-
-
-def is_dm(item: dict) -> bool:
-    return item["source"].endswith("-dm")
 
 
 def wrote_again(conn: sqlite3.Connection, item: dict) -> bool:
@@ -85,12 +75,17 @@ class Reply:
 
 def target_problem(item: dict) -> str | None:
     """Why this item's target can't take a reply: re-read from the row, whatever put it there (A10, N12)."""
-    platform = platform_of(item)
+    platform = store.platform_of(item)
     target = item["target"]
     found = watch.target_problem(platform, target)
     if found:
         return found
-    return hosts.dm_target_problem(platform, target) if is_dm(item) else None
+    if watch.clean_link(target) != target:
+        return "an address with more on it than the watch keeps"
+    page_asset = watch.pages()[platform].asset_id
+    if page_asset and hosts.asset_ids(target) not in ([], [page_asset]):
+        return "another Page's address in Business Suite"
+    return hosts.dm_target_problem(platform, target) if store.is_dm(item) else None
 
 
 def reply_of(item: dict) -> Reply | None:
@@ -99,12 +94,15 @@ def reply_of(item: dict) -> Reply | None:
         return None
     if target_problem(item):
         return None
-    platform = platform_of(item)
-    return Reply(item["id"], platform, watch.pages()[platform].name, item["target"], "dm" if is_dm(item) else "comment",
+    platform = store.platform_of(item)
+    return Reply(item["id"], platform, watch.pages()[platform].name, item["target"], "dm" if store.is_dm(item) else "comment",
                  item["sender_name"], item["text"], item["draft"], store.thread_of(item).get("surface") == REQUESTS)
 
 
 # --- the card ------------------------------------------------------------------------------------
+
+
+REPLY_HOURS = f"{caps.INBOX_REPLY_WINDOW[0]} to {caps.INBOX_REPLY_WINDOW[1]}"
 
 
 def _card_lines(item: dict, reply: Reply, record: approvals.Approval | None) -> tuple[list[str], list[str]]:
@@ -124,7 +122,7 @@ def _card_lines(item: dict, reply: Reply, record: approvals.Approval | None) -> 
         "Draft, exactly as it goes out:",
         f"> {reply.text}",
         f"Template: {FRAME_VERSION}.",
-        "Approve: posts on the next reply run, 09:10 to 20:50.",
+        f"Approve: posts on the next reply run, {REPLY_HOURS}.",
         "Skip: nothing goes out. Use this too if you've answered by hand.",
         f"Change: `/growth inbox redraft {number} <guidance>` or `/growth inbox reword {number} <your words>`.",
     ]
@@ -139,11 +137,6 @@ def card_fits(item: dict, reply: Reply) -> bool:
 # --- the kind ------------------------------------------------------------------------------------
 
 
-def _item(conn: sqlite3.Connection, subject: str) -> dict | None:
-    item_id = email_kinds.item_id_of(subject)
-    return store.get(conn, item_id) if item_id is not None else None
-
-
 def switched_off(conn: sqlite3.Connection) -> str | None:
     """Why no reply can go now."""
     if not approval_settings.switch("discord_buttons"):
@@ -155,18 +148,18 @@ def switched_off(conn: sqlite3.Connection) -> str | None:
     return "; ".join(problems) if problems else None
 
 
-class SocialReply:
+class SocialReply(email_kinds.ReplyKind):
     """The kind `approvals` asks about every social `inbox_item:<id>`."""
 
     name = KIND
+    agent = AGENT
     used_word = "posted"
-    conversation_card = True  # its card carries a person's words and the answer to them
     # Inert until approvals-first lands (technical review, "Merging"): `feed.py` reads them with getattr.
     feed_channel = "mission-control"
-    feed_approved = "It posts on the next reply run, 09:10 to 20:50."
+    feed_approved = f"It posts on the next reply run, {REPLY_HOURS}."
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
-        item = _item(conn, subject)
+        item = email_kinds.item_of(conn, subject)
         if item is None or item["state"] not in (store.WAITING, store.SENDING):
             return None
         reply = reply_of(item)
@@ -176,7 +169,7 @@ class SocialReply:
 
     def preview(self, conn: sqlite3.Connection, subject: str) -> approvals.Preview:
         """D1: what they said, who and where, the draft exactly as it goes out, and each answer's next step."""
-        item = _item(conn, subject)
+        item = email_kinds.item_of(conn, subject)
         reply = reply_of(item) if item else None
         if item is None or reply is None:
             raise LookupError(f"no reply for {subject}")
@@ -184,38 +177,20 @@ class SocialReply:
         quote = report.card_quote(email_kinds.unanswered(conn, item), email_kinds.room_for_quote(item, before, after))
         return approvals.Preview(title=email_kinds.title_of(item), reason=email_kinds.reason_of(item), text="\n".join([*before, quote, *after]))
 
-    def deadlines(self, conn: sqlite3.Connection | None, subject: str, now: datetime) -> approvals.Deadlines:
-        return approvals.Deadlines(decide_by=now + timedelta(days=settings.limit("decide_by_days")),
-                                   use_by=now + timedelta(days=settings.limit("use_by_days")))
-
     def switched_off(self, conn: sqlite3.Connection, subject: str) -> str | None:
         return switched_off(conn)
 
-    def on_skip(self, conn: sqlite3.Connection, subject: str) -> None:
-        self._closed(conn, subject, "on_skip", store.SKIPPED, "Skipped: nothing goes out.")
-
-    def on_expire(self, conn: sqlite3.Connection, subject: str) -> None:
-        self._closed(conn, subject, "on_expire", store.LAPSED, _LAPSED)
-
-    def on_lapse(self, conn: sqlite3.Connection, subject: str) -> None:
-        self._closed(conn, subject, "on_lapse", store.LAPSED, _LAPSED)
-
     def superseded_note(self, conn: sqlite3.Connection, subject: str) -> str | None:
-        item = _item(conn, subject)
+        item = email_kinds.item_of(conn, subject)
         if item is None:
             return None
         if item["state"] == store.ANSWERED_BY_HAND:
             return "answered by hand"
-        if item["state"] in (store.CLOSED, store.NEEDS_HAND_REPLY):
-            return "the target went away: answer by hand if it matters"
+        if item["state"] == store.CLOSED:
+            return "the target went away"
+        if item["state"] == store.NEEDS_HAND_REPLY:
+            return "a reply run couldn't go on: answer by hand if it matters"
         return _WROTE_AGAIN if wrote_again(conn, item) or item["state"] == store.SUPERSEDED else None
-
-    def _closed(self, conn: sqlite3.Connection, subject: str, hook: str, state: str, note: str) -> None:
-        item = _item(conn, subject)
-        if item is None:
-            return
-        store.set_item_state(conn, item["id"], state, note=note)
-        log.event(conn, "inbox.approval_closed", {"item": item["id"], "hook": hook}, agent=AGENT)
 
 
 def kinds() -> dict[str, SocialReply]:
@@ -225,8 +200,10 @@ def kinds() -> dict[str, SocialReply]:
 # --- raising and settling -----------------------------------------------------------------------
 
 
-def raise_request(conn: sqlite3.Connection, subject: str, *, reason: str) -> approvals.Approval | None:
-    return approvals.request(conn, KIND, subject, reason=reason, run_id=log.current_run_id())
+def read_again(conn: sqlite3.Connection) -> None:
+    """Judge every open request by the clock and what would go out now, and bring the cards up to date."""
+    approvals.expire_due(conn)
+    cards.sweep_safely(conn)
 
 
 def raise_due(conn: sqlite3.Connection) -> list[approvals.Approval]:
@@ -247,27 +224,14 @@ def raise_due(conn: sqlite3.Connection) -> list[approvals.Approval]:
                 store.set_item_state(conn, item["id"], store.NEEDS_HAND_REPLY, note=_TOO_LONG)
                 continue
             store.set_item_state(conn, item["id"], store.WAITING)
-            found = raise_request(conn, email_kinds.subject_of(item["id"]), reason=email_kinds.reason_of(item))
+            found = email_kinds.raise_request(conn, email_kinds.subject_of(item["id"]), reason=email_kinds.reason_of(item), kind=KIND)
             if found is not None:
                 raised.append(found)
     return raised
 
 
 def settle_waiting(conn: sqlite3.Connection) -> None:
-    """An item whose request has closed around it. If it could still go it needs asking again. If not it
-    is superseded, unless a message waits for triage, which must see this draft to answer all of it (F8)."""
-    for item in store.with_state(conn, store.WAITING):
-        if item["source"] not in store.SOCIAL_SOURCES:
-            continue
-        subject = email_kinds.subject_of(item["id"])
-        latest = approvals.latest(conn, KIND, subject)
-        if latest is None or latest.status != approvals.SUPERSEDED:
-            continue
-        with db.transaction(conn):
-            if SocialReply().content(conn, subject) is not None:
-                raise_request(conn, subject, reason=latest.reason)
-            elif not any(other["state"] in (store.NEW, store.OBSERVED) for other in store.in_conversation(conn, item["conversation"])):
-                store.set_item_state(conn, item["id"], store.SUPERSEDED)
+    email_kinds.settle_waiting(conn, SocialReply())
 
 
 # --- either kind ---------------------------------------------------------------------------------
@@ -282,10 +246,7 @@ def latest_for(conn: sqlite3.Connection, item: dict) -> approvals.Approval | Non
 
 
 def raise_for(conn: sqlite3.Connection, item: dict, *, reason: str) -> approvals.Approval | None:
-    subject = email_kinds.subject_of(item["id"])
-    if item["source"] in store.SOCIAL_SOURCES:
-        return raise_request(conn, subject, reason=reason)
-    return email_kinds.raise_request(conn, subject, reason=reason)
+    return email_kinds.raise_request(conn, email_kinds.subject_of(item["id"]), reason=reason, kind=kind_of(item))
 
 
 def card_problem(conn: sqlite3.Connection, candidate: dict) -> str | None:

@@ -1,8 +1,8 @@
 """The gate-matrix adapter for `social-reply` (inbox watch ticket 06). The contract is in
 `test_approval_gates.py`'s docstring.
 
-- The gated action is `inbox reply-next`: "went out" means it handed the reply's text out. At hand-out
-  the double reads the record on a fresh connection, as the fake `claude` does (G21).
+- The gated action is `inbox reply-due` then `inbox reply-next`: "went out" means it handed the reply's
+  text out. At hand-out the double reads the record on a fresh connection, as the fake `claude` does (G21).
 - An item is one person's direct message with a draft ready for its card, `inbox_item:<id>`, as triage
   leaves it. `reply-next` claims the first approved reply, not a named one, so `attempt` narrows what is
   due, and reports a clean read of that thread.
@@ -89,6 +89,7 @@ class SocialReplyAdapter:
         with self.monkeypatch.context() as patch:
             patch.setattr(reply_run, "due", lambda conn: [item for item in due(conn) if item["id"] == keep])
             patch.setattr(reply_run, "why_not_now", lambda conn, *, run_id: None)  # the gap is its own test
+            reply_run.hand_out(self.conn, run_id=run)
             handed = reply_run.next_reply(self.conn, self._clean_read(keep), run_id=run)
         if handed.get("due"):
             fresh = db.connect(migrate_now=False)

@@ -96,8 +96,10 @@ def no_text(item: dict) -> str:
     """Fixed words for a message with no text. No model guesses what a voice note says (F7)."""
     from jura_growth.agents.inbox import watch
 
-    kind = json.loads(item["thread_json"] or "{}").get("attachment")
-    return f"sent {watch.ATTACHMENTS.get(kind, watch.ATTACHMENTS['other'])}, see thread"
+    thread = json.loads(item["thread_json"] or "{}")
+    if thread.get("from_reply_run"):
+        return "(see thread)"
+    return f"sent {watch.ATTACHMENTS.get(thread.get('attachment'), watch.ATTACHMENTS['other'])}, see thread"
 
 
 def _block(items: list[dict], texts: list[str], cuts: list[bool]) -> str:

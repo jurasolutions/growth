@@ -194,6 +194,15 @@ def number_of(text: str) -> int:
     return int(digits) if digits.isdigit() and len(digits) <= ID_DIGITS else 0
 
 
+def platform_of(item: dict) -> str:
+    """The platform a social item came from, by its source."""
+    return item["source"].split("-", 1)[0]
+
+
+def is_dm(item: dict) -> bool:
+    return item["source"].endswith("-dm")
+
+
 def has_state(conn: sqlite3.Connection, state: str) -> bool:
     return db.one(conn, "SELECT 1 FROM inbox_items WHERE state = ? LIMIT 1", (state,)) is not None
 
@@ -418,6 +427,12 @@ def sent_on(conn: sqlite3.Connection, day: str) -> int:
     places = ", ".join("?" for _ in MAIL_SOURCES)
     return db.scalar(conn, f"SELECT count(*) FROM inbox_items WHERE substr(sent_at, 1, 10) = ? AND source IN ({places})",
                      (day, *MAIL_SOURCES)) or 0
+
+
+def mark_in_flight(conn: sqlite3.Connection, item_id: int) -> None:
+    """Its approval is claimed, in the same transaction. Any ask of his ends here."""
+    conn.execute("UPDATE inbox_items SET state = ?, send_attempts = send_attempts + 1, asked_at = NULL, guidance = NULL, updated_at = ? WHERE id = ?",
+                 (SENDING, timeutil.stamp(), item_id))
 
 
 def close_and_tell(conn: sqlite3.Connection, item_id: int, state: str, note: str) -> None:

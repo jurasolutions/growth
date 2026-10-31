@@ -1,11 +1,14 @@
 # Inbox watch: setup guide
 
-This is yours to follow after the merge, in order, once. It takes an afternoon, mostly waiting. The tests prove
-the rules with doubles. These steps prove the real mailbox, Meta's real pages, Resend, Discord and launchd,
-which no build can touch. `reviews/uat.md` Part B is the fuller script that follows, with the test messages.
+This is yours to follow after the merge, in order, once, from the checkout that runs the live jobs. It takes an
+afternoon, mostly waiting. The tests prove the rules with doubles. These steps prove the real mailbox, Meta's real
+pages, Resend, Discord, launchd and what Claude Code really does with its rules, which no build can touch.
+`reviews/uat.md` Part B is the fuller script beside this one, with the test messages, and the rows named H below
+are in it.
 
-The order matters. The browser jobs stay paused until each check has passed, because each read is more
-automated activity on the real accounts.
+The order matters. The code comes first, because the checkout you have now doesn't know these agents yet. Then
+both inbox agents stay paused until each check has passed, because a read is more automated activity on the real
+accounts, and a model should read nobody's words until its fence is proved.
 
 ## 1. Get the code and fix the clock
 
@@ -20,27 +23,41 @@ automated activity on the real accounts.
    until it does (approvals-first PRD §1). Every window here is checked in code as well, so an early run only
    skips, but until you restart, the slots on your health strip read as missed.
 
-## 2. Keep the browser jobs off, then install the schedule
+## 2. Keep both agents off, then install the schedule
 
-3. Do these two in this order. The first line is what stops the second from starting hourly reading:
+3. Do these in this order. The pauses are what stop the last line from starting to read:
 
    ```bash
+   uv run jura-growth db migrate
+   uv run jura-growth pause inbox
    uv run jura-growth pause inbox-browser
    uv run jura-growth schedule install
    ```
 
-   `inbox-check` and `inbox-send` start now, and `inbox-watch` and `inbox-reply` skip until you resume them.
+   The four new jobs are installed, and each skips until you resume its agent.
 
 ## 3. Make Discord tell you
 
 4. Set `#mission-control` to notify on **all messages**: right-click it, Notification settings, All Messages.
    Reactions land there, and neither the card nor the alert channel carries them. Set `#approvals` and `#alerts`
    the same way if they aren't already.
-5. Send `/growth status`. No setup gap should name the IMAP settings.
+5. Send `/growth status`. No setup gap should name the IMAP settings. If one names `ANTHROPIC_API_KEY` or
+   `CLAUDE_CODE_OAUTH_TOKEN`, take it out of the environment scheduled runs get: with either set, Chrome's tools
+   are hidden. An IMAP password is the mailbox's app password from Zoho or Gmail, in `.env`.
 
 ## 4. Check the mail
 
-6. Send yourself a test from a personal address to Levi's mailbox. Within 15 minutes it is reported in
+6. **Canaries H1 and H2, before any real mail reaches a model.** Follow `uat.md` H1 and H2: add the two canary
+   files, send the test message from them, then:
+
+   ```bash
+   uv run jura-growth resume inbox
+   uv run jura-growth run inbox-check --ignore-schedule
+   ```
+
+   Read that run's transcript as the row says. If a canary shows, run `uv run jura-growth pause inbox`, and stop
+   here. If not, leave `inbox` resumed. Keep the canary files for H3 and H4.
+   Then send yourself a test from a personal address to Levi's mailbox. Within 15 minutes it is reported in
    `#mission-control`, and the message in the mailbox is still unread.
 7. **Does `info@` need the second mailbox?** Send a test through the form on jurasolutions.sg. Website enquiries
    go to `info@jurasolutions.sg`. If that enquiry shows up in Levi's mailbox, `info@` forwards there and you
@@ -55,7 +72,8 @@ automated activity on the real accounts.
 
 8. **Set `auth_servers`.** Open that enquiry's raw headers ("Show original" in Gmail, "View message source" in
    Zoho) and find the line starting `Authentication-Results:`. The first word after the colon is your mail
-   server's id, such as `mx.zoho.com`. Put exactly that in `config/inbox.yaml`:
+   server's id, such as `mx.zoho.com`. Put exactly that in `config/inbox.yaml`, and commit it, because an edit
+   left in the live checkout can block a later `git pull`:
 
    ```yaml
    auth_servers: ["mx.zoho.com"]
@@ -64,7 +82,7 @@ automated activity on the real accounts.
    Until you do, every enquiry reads as unsigned: it is reported and can still be answered, with a note, and a
    sender's own header counts for nothing, because anyone can write that header. A wrong guess here would be
    trusted, so read it from the real message.
-9. **Junk.** A cold reply can land in Junk, and the watch lists those in the one-pager with the sender's domain
+9. **Junk.** A cold reply can land in Junk, and the mail check lists those in the one-pager with the sender's domain
    and subject. A message you move from Junk to the inbox stays noise: the engine has already filed it by its
    id, so answer it by hand.
 10. Your own opens count in the first app usage report, the first check after 08:00.
@@ -84,7 +102,9 @@ A build can't try real Meta pages. Do these once, with `#mission-control` open.
 
 ### One watched run
 
-13. Run it once by hand, inside its hours (09:05 to 21:05), then pause again until you've checked it:
+13. **Canary H3 goes with this run.** Have the test person leave `uat.md` H3's comment first, then run the watch once
+    by hand, inside its hours (09:05 to 21:05), and pause again until you've checked it. Read H3's row against
+    this run's transcript. If a canary shows, stay paused and stop here.
 
     ```bash
     uv run jura-growth resume inbox-browser
@@ -127,7 +147,10 @@ A build can't try real Meta pages. Do these once, with `#mission-control` open.
 18. **Thread addresses can take a reply.** A DM's target must be `/direct/t/<id>/`, `/messages/t/<id>/`, or
     Business Suite's `/latest/inbox/…` with a numeric `selected_item_id`. A DM the watch kept under any other
     address reads "answer by hand" and gets no card. If most do, the shapes in `hosts.dm_target_problem` need
-    another look.
+    another look. If Business Suite's addresses carry an `asset_id`, copy the Page's value into `pages.facebook.asset_id`
+    in `config/inbox.yaml`, so a reply can't go out as another Page under the same login. Also check that a thread's
+    page shows the name in `pages`: a reply run claims only on a page that shows who it is acting as, and anything
+    else goes to you by hand.
 19. **It said "Unverified" rarely.** A real message marked unverified means the page's text and the model's copy
     differed. A run or two is fine to look at. If most are, the prompt needs another look.
 20. **It acted as nobody.** Open the Page's activity log and Instagram's login activity. There should be no
@@ -146,11 +169,20 @@ the Levi Ting profile, because it runs the Page. Resume for this:
 uv run jura-growth resume inbox-browser
 ```
 
-22. **One comment.** Wait for the report and the card, read it, and press Approve. Within 20 minutes, during
+22. **Canary H4 is the first reply of all.** Approve H3's comment before any other card, and read H4's row against
+    that `inbox-reply` run's transcript. If triage gave it no card, ask for one with `/growth inbox draft I-nnnn`.
+    If a canary shows, run `uv run jura-growth pause inbox-browser` and stop here. If not, delete the two canary
+    files.
+    **Then one comment.** Wait for the report and the card, read it, and press Approve. Within 20 minutes, during
     09:10 to 20:50, a line reads "sent to …" in `#mission-control`, with a link. Open it and check:
     - the reply sits under that comment, not on the post;
     - it is by the Page, word for word. A platform may put `@their-handle` in front: that's allowed;
     - nothing else on the post was liked, hidden or changed, in the Page's activity log.
+
+    A real reply can read `unknown` here though it went fine. A run must prove where it went, from what Chrome
+    showed it: the reply's words on the target's address, and on a comment the Page's name right above them. If
+    Meta redirects a comment's address to another form, or lays a reply out differently, that proof fails and the
+    run pauses. That is safe and needs a look: pass the run's transcript to Claude.
 23. **One DM.** The same. The reply is in that thread, as one message. Two messages or a broken-off sentence
     would be a real fault, and the audit should already have failed the run: tell Claude.
 24. **One request.** A DM from someone who doesn't follow Jura lands in Requests, and its card says approving

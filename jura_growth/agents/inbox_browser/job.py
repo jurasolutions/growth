@@ -13,7 +13,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import timedelta
 
-from jura_growth import agents, approvals, caps, cards, db, log, pause, timeutil, transcripts
+from jura_growth import agents, caps, db, log, pause, timeutil, transcripts
 from jura_growth.agents.inbox import reply_run, report, send, settings, social, store, watch
 from jura_growth.agents.inbox_browser import scope
 from jura_growth.agents.publish import audit, fixture
@@ -42,6 +42,22 @@ def _tried(conn: sqlite3.Connection, step: str, work) -> None:
         log.event(conn, "inbox.watch_step_failed", {"step": step, "error": type(error).__name__}, level="error", agent=watch.AGENT)
 
 
+def _account_problem(conn: sqlite3.Connection, who: str) -> str | None:
+    """Why neither browser job can start now, whatever its work."""
+    held = pause.is_paused(conn, watch.PUBLISH)
+    if held:
+        return f"publish is paused, and the two share the accounts: {held}"
+    problem = publish_job.auth_problem(f"{who} needs the claude.ai login")
+    if problem:
+        return problem
+    return "; ".join(watch.page_problems()) or None
+
+
+def _no_transcript(outcome) -> audit.Audit:
+    """With no transcript a good run can't be cleared. A run that broke first says so itself."""
+    return audit.Audit(failures=["no transcript was kept, so the run can't be cleared"] if outcome.status == "ok" else [])
+
+
 def precheck(conn: sqlite3.Connection):
     """A skip reason, `NothingToDo`, or None to start the run. A fixture its guard refuses raises."""
     fixture.active()
@@ -49,15 +65,9 @@ def precheck(conn: sqlite3.Connection):
         return agents.NothingToDo("outside the watch's hours")
     if _too_soon(conn):
         return agents.NothingToDo(f"the watch read the platforms less than {caps.INBOX_WATCH_MINUTES_BETWEEN_RUNS} minutes ago")
-    held = pause.is_paused(conn, watch.PUBLISH)
-    if held:
-        return f"publish is paused, and the two share the accounts: {held}"
-    problem = publish_job.auth_problem("the watch needs the claude.ai login")
+    problem = _account_problem(conn, "the watch")
     if problem:
         return problem
-    problems = watch.page_problems()
-    if problems:
-        return "; ".join(problems)
     _tried(conn, "settle", lambda: watch.settle_orphans(conn))  # a killed run's held items
     _tried(conn, "report", lambda: report.report_due(conn))
     return None
@@ -65,9 +75,7 @@ def precheck(conn: sqlite3.Connection):
 
 def _audit(transcript: transcripts.Transcript | None, outcome) -> audit.Audit:
     if transcript is None:
-        # With no transcript a good run can't be cleared. A run that broke first says so itself.
-        failures = ["no transcript was kept, so the run can't be cleared"] if outcome.status == "ok" else []
-        return audit.Audit(failures=failures)
+        return _no_transcript(outcome)
     return audit.audit(transcript, hosts=scope.hosts(), approved=[], images=[], site=fixture.active(), rules=scope.WATCH_RULES)
 
 
@@ -97,7 +105,7 @@ def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
                                     f"No browser was connected when the inbox watch ran (run {run_id}), so nothing on "
                                     "Facebook or Instagram was read.")
     _tried(conn, "report", lambda: report.report_due(conn))
-    _tried(conn, "cards", lambda: _cards_read_again(conn))  # the Page may have answered something with a card
+    _tried(conn, "cards", lambda: social.read_again(conn))  # the Page may have answered something with a card
 
     stop = watch.stopped_reason(conn, run_id)
     errors = []
@@ -131,11 +139,6 @@ def failed_closed(conn: sqlite3.Connection, run_id: int | None, outcome, error: 
                                      paused=f"Watching and social replies are paused until you resume them: {RESUME}.")
 
 
-def _cards_read_again(conn: sqlite3.Connection) -> None:
-    approvals.expire_due(conn)
-    cards.sweep_safely(conn)
-
-
 # --- inbox-reply ------------------------------------------------------------------------------------
 
 
@@ -150,17 +153,11 @@ def reply_precheck(conn: sqlite3.Connection):
         return pause.is_paused(conn, watch.AGENT)
     if not settings.in_hours(caps.INBOX_REPLY_WINDOW):
         return agents.NothingToDo("outside the reply hours")
-    held = pause.is_paused(conn, watch.PUBLISH)
-    if held:
-        return f"publish is paused, and the two share the accounts: {held}"
-    problem = publish_job.auth_problem("the reply job needs the claude.ai login")
+    problem = _account_problem(conn, "the reply job")
     if problem:
         return problem
-    problems = watch.page_problems()
-    if problems:
-        return "; ".join(problems)
     _tried(conn, "settle", lambda: watch.settle_orphans(conn))  # a killed run's held items
-    _tried(conn, "cards", lambda: _cards_read_again(conn))
+    _tried(conn, "cards", lambda: social.read_again(conn))
     off = social.switched_off(conn)
     if off:
         return agents.NothingToDo(off)
@@ -170,42 +167,102 @@ def reply_precheck(conn: sqlite3.Connection):
     return None if reply_run.due(conn) else agents.NothingToDo("no reply is waiting")
 
 
+def _rules_for(handed: dict | None) -> audit.AuditRules:
+    if handed is None:
+        return scope.REPLY_RULES
+    return scope.reply_rules(is_dm=store.is_dm(handed), accept_request=store.thread_of(handed).get("surface") == social.REQUESTS)
+
+
 def _reply_audit(transcript: transcripts.Transcript | None, outcome, handed: dict | None, claimed: dict | None) -> audit.Audit:
     if transcript is None:
-        failures = ["no transcript was kept, so the run can't be cleared"] if outcome.status == "ok" else []
-        return audit.Audit(failures=failures)
-    platforms = (social.platform_of(handed),) if handed else watch.PLATFORMS
+        return _no_transcript(outcome)
+    platforms = (store.platform_of(handed),) if handed else watch.PLATFORMS
     approved = [claimed["draft"]] if claimed and claimed["draft"] else []
-    places = [handed["target"]] if handed and social.is_dm(handed) else []  # a comment's target is held to its host and its read-back (N12)
+    places = [handed["target"]] if handed else []  # either kind: a reply is held to its own thread or post (code review 06, SEC-1)
     return audit.audit(transcript, hosts=scope.hosts(platforms), approved=approved, images=[], site=fixture.active(), places=places,
-                       rules=scope.REPLY_RULES)
+                       rules=_rules_for(handed))
 
 
-def _read_shown(claimed: dict | None, reads: watch.PageReads) -> list[str]:
-    """Why the read it claimed on doesn't stand: a run may not claim on words its pages never returned."""
-    if claimed is None:
+# Words a page uses for what a run says it saw as an attachment, where a page says at all (code review 06, S-5).
+_ATTACHMENT_WORDS = {"voice-note": ("voice", "audio"), "sticker": ("sticker",), "photo": ("photo", "image", "picture"), "video": ("video",),
+                     "gif": ("gif",), "file": ("file", "attachment")}
+
+
+def _read_shown(transcript: transcripts.Transcript | None, claimed: dict | None) -> list[str]:
+    """Why the read it claimed on doesn't stand: it must have read the target before its claim, and the
+    message, the author and who the session is acting as must all be in what those reads returned."""
+    if claimed is None or transcript is None:
         return []
     said = store.thread_of(claimed).get("claim_read") or {}
-    if said.get("newest") and not watch.words_on_page(said["newest"], reads.results):
-        return ["the run claimed on a message its pages never showed"]
-    if said.get("author") and not watch.words_on_page(said["author"], reads.results):
-        return ["the run claimed on an author its pages never showed"]
-    return []
+    claim = audit.claim_index(transcript, scope.REPLY_RULES)
+    before = [text for index, text in audit.reads_at(transcript, claimed["target"], scope.REPLY_RULES.place_check) if claim is None or index < claim]
+    if not before:
+        return ["the run claimed without reading its target"]
+    found = []
+    for name, shown in (("a message", said.get("newest")), ("an author", said.get("author")), ("an identity", said.get("acting_as"))):
+        if shown and not watch.words_on_page(shown, before):
+            found.append(f"the run claimed on {name} its target's page never showed")
+    if not watch.words_on_page(claimed["text"], before):
+        found.append("the run claimed on a thread that didn't show the message it answers")
+    words = _ATTACHMENT_WORDS.get(said.get("attachment") or "")
+    if words and not any(word in " ".join(before).casefold() for word in words):
+        found.append("the run claimed past an attachment its target's page never showed")
+    return found
+
+
+def _went(transcript: transcripts.Transcript | None, item: dict, failures: list[str]) -> bool:
+    """P-1, SEC-1, SEC-2: what makes a reply `sent`. An audit with no failures. The whole text typed, and one
+    send. Its words on the claimed thread in a read after that send. And on a comment, the Page's or the
+    account's name beside them, because a page can show that there, and a direct message can't: who a DM
+    went as rests on `_read_shown`."""
+    if transcript is None or failures:
+        return False
+    sent = audit.send_index(transcript, item["draft"], scope.REPLY_RULES)
+    if sent is None:
+        return False
+    after = [text for index, text in audit.reads_at(transcript, item["target"], scope.REPLY_RULES.place_check) if index > sent]
+    shown = [text for text in after if watch.words_on_page(item["draft"], [text])]
+    if store.is_dm(item):
+        return bool(shown)
+    identity = watch.pages()[store.platform_of(item)].name
+    return any(watch.name_beside(identity, item["draft"], text) for text in shown)
+
+
+def _borne_out(word: str, item: dict, at_target: list[str], *, failures: list[str]) -> bool:
+    """SEC-3: a page can't close an item. It takes this run's Chrome results at the target's address: a page
+    without their words for `gone`, and for an answer, their words with the Page's name after them. On a
+    direct message a page shows no name on its own replies, so an answer there needs a hand."""
+    if failures or not at_target:
+        return False
+    if word == reply_run.GONE:
+        return not watch.words_on_page(item["text"], at_target)
+    if word == reply_run.ANSWERED:
+        identity = watch.pages()[store.platform_of(item)].name
+        return any(watch.said_on_page(identity, rest) for rest in (watch.after_words(item["text"], text) for text in at_target) if rest is not None)
+    return True
 
 
 def _typed_anything(transcript: transcripts.Transcript | None) -> bool:
+    """Any keystroke at all, or no way to tell (code review 06, S-2)."""
     if transcript is None:
         return True
-    return any(call.name == audit.CHROME + "computer" and call.input.get("action") == "type" for call in transcript.calls)
+    return any(call.name == audit.CHROME + "computer" and call.input.get("action") in ("type", "key") for call in transcript.calls)
 
 
-def _said_not_sent_but_typed(conn: sqlite3.Connection, item_id: int, transcript: transcripts.Transcript | None) -> bool:
-    item = store.get(conn, item_id)
-    return bool(item) and item["state"] == store.FAILED and _typed_anything(transcript)
+def _settle_claim(conn: sqlite3.Connection, claimed: dict | None, transcript: transcripts.Transcript | None, failures: list[str], run_id: int) -> None:
+    if claimed is None:
+        return
+    item = store.get(conn, claimed["id"])
+    if item is None:
+        return
+    if item["state"] == store.FAILED and _typed_anything(transcript):
+        reply_run.typed_after_saying_not_sent(conn, item, run_id)
+    elif item["state"] == store.SENDING and store.thread_of(item).get("reply_reported"):
+        reply_run.confirm(conn, item, proved=_went(transcript, item, failures), run_id=run_id)
 
 
 def reply_after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
-    """The reply run's last word: the audit, what it read, any claim it left open, and what he hears. A
+    """The reply run's last word: the audit, what it read, what it claimed and reported, and what he hears. A
     model's words reach neither the run's row nor #alerts: these are fixed words and record fields."""
     if run_id is None:
         return None
@@ -216,24 +273,27 @@ def reply_after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outc
     handed, claimed = reply_run.handed_to(conn, run_id), reply_run.claimed_by(conn, run_id)
     found = _reply_audit(transcript, outcome, handed, claimed)
     reads = watch.page_reads(transcript)
-    failures = [*found.failures, *_read_shown(claimed, reads)]
+    failures = [*found.failures, *_read_shown(transcript, claimed)]
     if failures:
         with db.transaction(conn):
             log.event(conn, "inbox.audit_failed", {"failures": failures}, level="error", agent=watch.AGENT, run_id=run_id)
             pause.pause(conn, watch.AGENT, f"the audit of run {run_id} failed", notify=False)
     settled = watch.settle(conn, run_id, reads.results, trusted=not failures)
-    if claimed and _said_not_sent_but_typed(conn, claimed["id"], transcript):
-        with db.transaction(conn):
-            store.set_item_state(conn, claimed["id"], store.UNKNOWN, note="The run says this didn't go, but it typed, so it may have. It won't be sent again.")
-            pause.pause(conn, watch.AGENT, f"run {run_id} typed a reply it says didn't go", notify=False)
+    _settle_claim(conn, claimed, transcript, failures, run_id)
     left_open = reply_run.settle_open(conn)
+    word = reply_run.reported_by(conn, run_id)
+    if handed and word and transcript is not None:
+        at_target = [text for _, text in audit.reads_at(transcript, handed["target"], scope.REPLY_RULES.place_check)]
+        reply_run.settle_reported(conn, handed, word, borne_out=_borne_out(word, handed, at_target, failures=failures), run_id=run_id)
+    elif handed and word:
+        reply_run.settle_reported(conn, handed, word, borne_out=False, run_id=run_id)
     if found.no_browser:
         publish_job.no_browser_once(conn, run_id, watch.AGENT, "inbox.no_browser",
                                     f"No browser was connected when a reply run ran (run {run_id}), so nothing was typed. "
                                     "An approved reply stays approved until its use-by.")
-    reply_run.forget_handed(conn, run_id)
+    reply_run.forget_run(conn, run_id)
     _tried(conn, "report", lambda: report.report_due(conn))
-    _tried(conn, "cards", lambda: _cards_read_again(conn))
+    _tried(conn, "cards", lambda: social.read_again(conn))
     _tried(conn, "tell", lambda: send.tell_outcomes(conn))
 
     now = store.get(conn, claimed["id"]) if claimed else None

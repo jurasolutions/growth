@@ -32,7 +32,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from typing import Any, Iterable
-from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
+from urllib.parse import parse_qs, unquote, urlencode, urlsplit, urlunsplit
 
 from jura_growth import caps, config, db, discord, log, pause, timeutil, transcripts
 from jura_growth.agents.inbox import settings, store
@@ -93,6 +93,9 @@ _NEUTRAL_SEGMENTS = {
 _THREAD_QUERY = ("selected_item_id", "story_fbid", "fbid", "id", "v")
 _COMMENT_QUERY = ("reply_comment_id", "comment_id")
 _IG_COMMENT = re.compile(r"/c/(\d+)")
+_KEPT_QUERY = (*_THREAD_QUERY, *_COMMENT_QUERY, "asset_id")
+_PLAIN_VALUE = re.compile(r"[\w.-]+")
+_LINK_MARKUP_IN_PATH = re.compile(r"[\[\]()]")
 _UNSAFE_URL = re.compile(r"[\s<>\"`|^{}\\\x00-\x1f\x7f]")
 _POST_LABEL = re.compile(r"P-\d{1,9}")
 _OVER_CAP = "watch.over_cap."  # in `inbox_state`, per run, until its message is written
@@ -113,6 +116,7 @@ class Page:
     url: str
     name: str
     problem: str | None  # why the address isn't this platform's page, or None
+    asset_id: str = ""  # Business Suite's value for the Page, once the first-run check has recorded it
 
 
 def pages() -> dict[str, Page]:
@@ -123,7 +127,7 @@ def pages() -> dict[str, Page]:
     for platform in PLATFORMS:
         spec = configured.get(platform) or {}
         url = str(spec.get("url") or "")
-        found[platform] = Page(url, str(spec.get("name") or ""), hosts.page_problem(platform, url))
+        found[platform] = Page(url, str(spec.get("name") or ""), hosts.page_problem(platform, url), str(spec.get("asset_id") or ""))
     return found
 
 
@@ -154,6 +158,11 @@ def target_problem(platform: str, url: Any) -> str | None:
         return "no address"
     if len(url) > store.TARGET_CHARS or _UNSAFE_URL.search(url) or not url.isprintable() or not _encodable(url):
         return "an address with characters no real one has"
+    try:
+        if _LINK_MARKUP_IN_PATH.search(urlsplit(url).path):
+            return "an address with characters no real one has"
+    except ValueError:
+        return "an address that isn't a URL"
     site = fixture.active()
     if site is not None:
         return hosts.site_problem(url, site)
@@ -231,11 +240,31 @@ def same_name(one: str, other: str) -> bool:
     return bool(_folded(one)) and _folded(one) == _folded(other)
 
 
+def clean_link(url: str) -> str:
+    """An address with only what names its thread or comment, in plain values, and no fragment. A page or a
+    model chooses the rest, and this is what reaches Discord (code review 06, S-8)."""
+    parts = urlsplit(url)
+    query = [(name, value) for name, values in parse_qs(parts.query).items() if name in _KEPT_QUERY
+             for value in values if _PLAIN_VALUE.fullmatch(value)]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query, doseq=True), ""))
+
+
 def without_comment(url: str) -> str:
     """The post a comment's permalink is on: a newer comment with no address of its own still belongs to it."""
-    parts = urlsplit(url)
-    query = "&".join(f"{name}={value}" for name, values in parse_qs(parts.query).items() if name not in _COMMENT_QUERY for value in values)
-    return urlunsplit((parts.scheme, parts.netloc, _IG_COMMENT.split(parts.path, maxsplit=1)[0], query, ""))
+    parts = urlsplit(clean_link(url))
+    query = [(name, value) for name, values in parse_qs(parts.query).items() if name not in _COMMENT_QUERY for value in values]
+    return urlunsplit((parts.scheme, parts.netloc, _IG_COMMENT.split(parts.path, maxsplit=1)[0], urlencode(query, doseq=True), ""))
+
+
+def same_reply_place(url: str, place: str) -> bool:
+    """Whether `url` is on the thread or post at `place`, on the same host and for the same Page: what holds a
+    reply run to its claim, either kind (code review 06, SEC-1). A comment's own permalink is on its post."""
+    try:
+        if (urlsplit(url.strip()).hostname or "").lower() != (urlsplit(place.strip()).hostname or "").lower():
+            return False
+        return not hosts.odd_path(urlsplit(url.strip()).path) and thread_of(url.strip()) == thread_of(place.strip()) and hosts.same_asset(url, place)
+    except ValueError:
+        return False
 
 
 # --- observe --------------------------------------------------------------------------------------
@@ -345,12 +374,12 @@ def record_newer(conn: sqlite3.Connection, run_id: int, item: dict, text: str, o
     """A reply run read a newer message from this person on this thread (F9). It goes the way anything a
     run reads goes, held as `observed` until the run's checks, and in this item's conversation. A comment
     with no safe address of its own takes its post's, since a draft on it can only go there."""
-    platform = item["source"].split("-", 1)[0]
+    platform = store.platform_of(item)
     own_url = url and target_problem(platform, url) is None and thread_of(url) == thread_of(item["target"])
-    target = url if own_url else without_comment(item["target"]) if item["source"].endswith("-comment") else item["target"]
+    target = url if own_url else item["target"] if store.is_dm(item) else without_comment(item["target"])
     given = {"source": item["source"], "surface": store.thread_of(item).get("surface") or "posts", "url": target, "author": item["sender_name"],
              "text": text, "occurrence": occurrence, "age_hours": 0, "answered": False}
-    _reaction(conn, run_id, given, {}, Observed())
+    _reaction(conn, run_id, given, {}, Observed(), from_reply_run=True)
 
 
 def _is_own(platform: str, author: str, address: Any) -> bool:
@@ -365,7 +394,7 @@ def _is_own(platform: str, author: str, address: Any) -> bool:
     return _folded(author) in _own_names()
 
 
-def _reaction(conn: sqlite3.Connection, run_id: int, given: dict, counted: dict, result: Observed) -> str | None:
+def _reaction(conn: sqlite3.Connection, run_id: int, given: dict, counted: dict, result: Observed, *, from_reply_run: bool = False) -> str | None:
     source = given.get("source")
     if not isinstance(source, str) or source not in SOCIAL_SOURCES:
         return "an unknown source"
@@ -387,7 +416,7 @@ def _reaction(conn: sqlite3.Connection, run_id: int, given: dict, counted: dict,
     if isinstance(occurrence, bool) or not isinstance(occurrence, int) or not 1 <= occurrence <= MAX_OCCURRENCE:
         return "an occurrence that isn't a whole number from 1"
     url = given.get("url")
-    target = url if isinstance(url, str) and target_problem(platform, url) is None else ""
+    target = clean_link(url) if isinstance(url, str) and target_problem(platform, url) is None else ""
     thread = thread_of(target) if target else ""
     who = _folded(author)
     what = _key_text(text) if text.strip() else f"attachment:{attachment}"
@@ -428,7 +457,7 @@ def _reaction(conn: sqlite3.Connection, run_id: int, given: dict, counted: dict,
             "run": run_id, "surface": surface, "thread": thread, "comment_id": own_id, "words_key": words_key,
             "loose_key": loose_key,
             "occurrence": occurrence, "attachment": attachment if not text.strip() else None, "age_hours": age,
-            "answered": answered,
+            "answered": answered, "from_reply_run": from_reply_run,
         },
         state=store.OWN if own else store.BASELINE if silent else store.OBSERVED,
         stale=too_old,
@@ -750,6 +779,31 @@ def words_on_page(text: str, results: Iterable[str]) -> bool:
     return any(pattern.search(_comparable(result)) for result in results)
 
 
+def after_words(text: str, result: str) -> str | None:
+    """What a page goes on to say after `text`, as `words_on_page` reads it, or None when `text` isn't there."""
+    lines = [_comparable(line) for line in text.split("\n") if line.strip()]
+    if not lines:
+        return None
+    page = _comparable(result)
+    match = re.compile(_TREE_GAP.join(re.escape(line) for line in lines)).search(page)
+    return page[match.end():] if match else None
+
+
+def said_on_page(words: str, page_says: str) -> bool:
+    return bool(_comparable(words)) and _comparable(words) in page_says
+
+
+def name_beside(name: str, text: str, result: str) -> bool:
+    """Whether `name` is on the line that holds `text` or one of the few before it: who a page says wrote it."""
+    want, who = _comparable(text), _comparable(name)
+    lines = [line for line in result.split("\n") if line.strip()]
+    for number, line in enumerate(lines):
+        if want and who and want in _comparable(line):
+            if any(who in _comparable(near) for near in lines[max(0, number - 3):number + 1]):
+                return True
+    return False
+
+
 def settle(conn: sqlite3.Connection, run_id: int | None, results: Iterable[str], *, trusted: bool) -> Settled:
     """Move every held item on (N3). This run's are checked against what its pages returned, and
     any other held item's run was killed before its checks. `trusted` False: the run's audit failed,
@@ -763,6 +817,9 @@ def settle(conn: sqlite3.Connection, run_id: int | None, results: Iterable[str],
         if not trusted or thread.get("run") != run_id or not words_on_page(item["text"], results):
             state = store.UNVERIFIED
             note = "Unverified: this wasn't in what the page returned to the run, so there's no draft. Read the thread yourself."
+            if thread.get("from_reply_run"):  # a run's word for a person's message, which never needs quoting (code review 06, S-9)
+                note = "A reply run said they wrote again, and its pages didn't show it, so what it said isn't kept. Read the thread yourself."
+                conn.execute("UPDATE inbox_items SET text = '' WHERE id = ?", (item["id"],))
         elif thread.get("answered"):
             state = store.ANSWERED_BY_HAND
             note = "The Page had already answered this, so there's no draft."

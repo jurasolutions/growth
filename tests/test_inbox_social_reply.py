@@ -33,7 +33,7 @@ DRAFT = "We work with clinics on invoices and the copying that follows them. Lev
 THREAD = w.THREAD
 SAID = w.SAID
 NAME = "Priya Nair"
-ON_THREAD = f"{NAME}\n{SAID}"
+ON_THREAD = f"jura_solutions\n{NAME}\n{SAID}"
 COMMENT = w.COMMENT
 TEN_THIRTY = "2026-11-10T10:30:00+08:00"
 LATER = "2026-11-10T10:50:00+08:00"
@@ -91,7 +91,7 @@ def opening(url: str = THREAD, shows: str = ON_THREAD) -> list[dict]:
 
 
 def claim_steps(**over) -> list[dict]:
-    return [{"write": "read.json", "text": json.dumps(read_says(**over))}, {"cli": ["inbox", "reply-next", "--json", "--read-file", "{WORK}/read.json"]}]
+    return [{"write": "read.json", "text": json.dumps(read_says(**over))}, {"cli": ["inbox", "reply-next", "--read-file", "{WORK}/read.json"]}]
 
 
 def on_page(tool: str, given: dict, url: str = THREAD, text: str = "ok") -> dict:
@@ -220,7 +220,7 @@ def test_iw_d4_reply_due_holds_their_words_and_never_the_reply(conn, fake, monke
     due = next(c for c in fake.cli if c["cli"][:2] == ["inbox", "reply-due"])
     handed = json.loads(due["output"])
     assert handed["their_words"] == [SAID] and handed["author"] == NAME and handed["target_url"] == THREAD
-    assert handed["posting_identity"] == "jura_solutions"
+    assert "posting_identity" not in handed  # the run says who it is from the page (code review 06, SEC-2)
     assert DRAFT not in due["output"]
 
 
@@ -236,7 +236,7 @@ def test_iw_d4_the_ticket_only_absolute_paths_are_handed_out(conn, fake, monkeyp
 
 def test_iw_d4_a_read_file_named_relatively_is_refused_from_the_clean_folder(conn, fake, monkeypatch, discord_double):
     item_id, record = approved(conn, monkeypatch)
-    fake.scenario([*opening(), {"write": "read.json", "text": json.dumps(read_says())}, {"cli": ["inbox", "reply-next", "--json", "--read-file", "read.json"]},
+    fake.scenario([*opening(), {"write": "read.json", "text": json.dumps(read_says())}, {"cli": ["inbox", "reply-next", "--read-file", "read.json"]},
                    *w.browser(t.closed())])
     run()
     assert [c for c in fake.cli if c["cli"][:2] == ["inbox", "reply-next"]][0]["exit"] != 0
@@ -247,7 +247,7 @@ def test_iw_d4_a_read_file_named_relatively_is_refused_from_the_clean_folder(con
 def test_iw_d4_one_reply_per_run(conn, fake, monkeypatch, discord_double):
     first, _ = approved(conn, monkeypatch)
     second, second_record = approved(conn, monkeypatch, key="k2", conversation="c2", target="https://www.instagram.com/direct/t/222/", author="Mei Ling")
-    fake.scenario([*good_dm()[:-1], {"cli": ["inbox", "reply-next", "--json", "--read-file", "{WORK}/read.json"]}, *w.browser(t.closed())])
+    fake.scenario([*good_dm()[:-1], {"cli": ["inbox", "reply-next", "--read-file", "{WORK}/read.json"]}, *w.browser(t.closed())])
     run()
     assert store.get(conn, first)["state"] == store.SENT
     assert store.get(conn, second)["state"] == store.WAITING and approvals.get(conn, second_record.id).used_at is None
@@ -261,6 +261,7 @@ def test_iw_d4_one_reply_per_run_holds_even_with_the_gap_out_of_the_way(conn, fa
     _, record = approved(conn, monkeypatch)
     _, second = approved(conn, monkeypatch, key="k2", conversation="c2", target="https://www.instagram.com/direct/t/222/", author="Mei Ling")
     run_id = log.start_run(conn, "inbox-browser", "inbox-reply")
+    reply_run.hand_out(conn, run_id=run_id)
     assert reply_run.next_reply(conn, reply_run.read_of(read_says(approval=record.id)), run_id=run_id)["due"] is True
     monkeypatch.setattr(reply_run, "why_not_now", lambda conn, *, run_id: None)
     found = reply_run.next_reply(conn, reply_run.read_of(read_says(approval=second.id, author="Mei Ling")), run_id=run_id)
@@ -305,7 +306,7 @@ def test_iw_d4_a_social_reply_doesnt_count_against_the_email_cap(conn, monkeypat
 
 
 def good_comment(*, live: str = DRAFT, shows: str | None = None) -> list[dict]:
-    text = shows or f"Mei Ling\n{SAID}"
+    text = shows or f"Jura Solutions\nMei Ling\n{SAID}"
     read = {"acting_as": "Jura Solutions", "author": "Mei Ling"}
     return [*opening(COMMENT, text), *claim_steps(**read), click(COMMENT), click(COMMENT, "ref_2"), typing(url=COMMENT), click(COMMENT, "ref_3"),
             *read_back(COMMENT, live, f"Jura Solutions\n{live}"), *w.browser(t.closed())]
@@ -430,7 +431,8 @@ def test_iw_f9_the_same_words_again_are_a_newer_message(conn, fake, monkeypatch,
 
 def test_iw_f9_a_sticker_after_the_question_doesnt_stop_the_reply(conn, fake, monkeypatch, discord_double):
     item_id, _ = approved(conn, monkeypatch)
-    fake.scenario(good_dm(newest_from_them="", newest_attachment="sticker"))
+    fake.scenario([*opening(shows=f"{ON_THREAD}\nSticker"), *claim_steps(newest_from_them="", newest_attachment="sticker"), click(), typing(), press("Return"),
+                   *read_back(), *w.browser(t.closed())])
     assert run().status == "ok"
     assert store.get(conn, item_id)["state"] == store.SENT
 
@@ -440,7 +442,7 @@ def test_iw_f9_a_newer_message_the_page_never_showed_is_unverified_and_the_reply
     item_id, record = approved(conn, monkeypatch)
     fake.scenario([*opening(), *claim_steps(newest_from_them=NEWER), *w.browser(t.closed())])
     run()
-    newer = db.one(conn, "SELECT * FROM inbox_items WHERE text = ?", (NEWER,))
+    newer = db.one(conn, "SELECT * FROM inbox_items WHERE id != ?", (item_id,))
     assert newer["state"] == store.UNVERIFIED
     assert not social.wrote_again(conn, store.get(conn, item_id))
     social.settle_waiting(conn)
@@ -465,14 +467,14 @@ def test_iw_f9_a_stale_read_left_by_an_earlier_run_cant_be_claimed_on(conn, fake
     stale = paths.work_dir("inbox-reply") / "read.json"
     stale.parent.mkdir(parents=True, exist_ok=True)
     stale.write_text(json.dumps(read_says(approval=record.id)))
-    fake.scenario([*opening(), {"cli": ["inbox", "reply-next", "--json", "--read-file", "{WORK}/read.json"]}, *w.browser(t.closed())])
+    fake.scenario([*opening(), {"cli": ["inbox", "reply-next", "--read-file", "{WORK}/read.json"]}, *w.browser(t.closed())])
     run()
     assert approvals.get(conn, record.id).used_at is None and store.get(conn, item_id)["state"] == store.WAITING
 
 
 def test_iw_f9_answered_by_the_page_types_nothing_and_closes(conn, fake, monkeypatch, discord_double):
     item_id, record = approved(conn, monkeypatch)
-    fake.scenario([*opening(), *claim_steps(page_answered=True), *w.browser(t.closed())])
+    fake.scenario([*opening(shows=f"{ON_THREAD}\njura_solutions\nYes, we do."), *claim_steps(page_answered=True), *w.browser(t.closed())])
     outcome = run()
     assert outcome.status == "ok", outcome.error
     item = store.get(conn, item_id)
@@ -545,15 +547,15 @@ def test_iw_f9_the_author_on_the_thread_must_be_the_items(conn, fake, monkeypatc
     fake.scenario([*opening(shows=f"Someone Else\n{SAID}"), *claim_steps(author="Someone Else"), *w.browser(t.closed())])
     assert run().status == "ok"
     item = store.get(conn, item_id)
-    assert item["state"] == store.NEEDS_HAND_REPLY and "isn't who wrote" in item["note"]
+    assert item["state"] == store.NEEDS_HAND_REPLY and "didn't find this person" in item["note"]
     assert approvals.get(conn, record.id).used_at is None
 
 
-@pytest.mark.parametrize("bad", ["not json", json.dumps([1]), json.dumps({"target": "found"}), json.dumps({"approval": "A-9999", "target": "found"}),
+@pytest.mark.parametrize("bad", ["not json", json.dumps([1]), json.dumps({"target": "found"}),
                                  json.dumps({"approval": "{A}", "target": "maybe"}), json.dumps({"approval": "{A}", "target": "found", "occurrence": 0})])
 def test_iw_f9_only_a_clean_read_is_claimed(conn, fake, monkeypatch, discord_double, bad):
     item_id, record = approved(conn, monkeypatch)
-    fake.scenario([*opening(), {"write": "read.json", "text": bad}, {"cli": ["inbox", "reply-next", "--json", "--read-file", "{WORK}/read.json"]}, *w.browser(t.closed())])
+    fake.scenario([*opening(), {"write": "read.json", "text": bad}, {"cli": ["inbox", "reply-next", "--read-file", "{WORK}/read.json"]}, *w.browser(t.closed())])
     run()
     assert approvals.get(conn, record.id).used_at is None
     assert store.get(conn, item_id)["state"] == store.NEEDS_HAND_REPLY
@@ -639,7 +641,7 @@ def test_iw_a10_a_dm_run_opening_another_thread_fails_its_audit_even_if_all_else
     fake.scenario([*opening(), *w.browser(t.opened(other)), *w.browser(t.opened(THREAD)), *claim_steps(), click(), typing(), press("Return"), *read_back(), *w.browser(t.closed())])
     outcome = run()
     assert outcome.status == "failed" and "audit" in outcome.error
-    assert store.get(conn, item_id)["state"] == store.SENT  # it went, and it stays recorded as gone
+    assert store.get(conn, item_id)["state"] == store.UNKNOWN  # it may have gone, and nothing says where (SEC-1)
     assert pause.is_paused(conn, "inbox-browser")
 
 
@@ -747,6 +749,7 @@ def _claim_by_a_killed_run(conn, monkeypatch) -> tuple[int, approvals.Approval]:
 
     item_id, record = approved(conn, monkeypatch)
     killed = log.start_run(conn, "inbox-browser", "inbox-reply")
+    reply_run.hand_out(conn, run_id=killed)
     found = reply_run.next_reply(conn, reply_run.read_of(read_says(approval=record.id)), run_id=killed)
     assert found["due"] is True, found
     conn.execute("UPDATE runs SET status = 'failed', finished_at = started_at WHERE id = ?", (killed,))
@@ -789,6 +792,7 @@ def test_iw_n13_reply_next_finds_another_runs_open_claim(conn, fake, monkeypatch
     item_id, _ = _claim_by_a_killed_run(conn, monkeypatch)
     pw.at(monkeypatch, LATER)
     run_id = log.start_run(conn, "inbox-browser", "inbox-reply")
+    store.set_state(conn, f"reply.run.{run_id}", json.dumps({"item": item_id}))
     found = reply_run.next_reply(conn, None, run_id=run_id)
     assert found["due"] is False and store.get(conn, item_id)["state"] == store.UNKNOWN
     assert pause.is_paused(conn, "inbox-browser")
@@ -1007,6 +1011,8 @@ def test_iw_d4_only_the_reply_the_claim_checked_is_handed_out(conn, fake, monkey
     from jura_growth import log
 
     item_id, record = approved(conn, monkeypatch)
+    run_id = log.start_run(conn, "inbox-browser", "inbox-reply")
+    reply_run.hand_out(conn, run_id=run_id)
     real = social.reply_of
     calls = []
 
@@ -1015,7 +1021,6 @@ def test_iw_d4_only_the_reply_the_claim_checked_is_handed_out(conn, fake, monkey
         return replace(real(item), text="Something else.") if len(calls) == 1 else real(item)
 
     monkeypatch.setattr(social, "reply_of", first_read_differs)
-    run_id = log.start_run(conn, "inbox-browser", "inbox-reply")
     found = reply_run.next_reply(conn, reply_run.read_of(read_says(approval=record.id)), run_id=run_id)
     assert found["due"] is False and "Something else" not in json.dumps(found)
     assert approvals.get(conn, record.id).used_at is None and approvals.get(conn, record.id).status == approvals.APPROVED
@@ -1028,6 +1033,7 @@ def test_iw_a10_a_target_tampered_in_the_row_is_refused_at_the_claim(conn, fake,
     item_id, record = approved(conn, monkeypatch)
     conn.execute("UPDATE inbox_items SET target = 'https://www.instagram.com/direct/t/999/' WHERE id = ?", (item_id,))
     run_id = log.start_run(conn, "inbox-browser", "inbox-reply")
+    reply_run.hand_out(conn, run_id=run_id)
     found = reply_run.next_reply(conn, reply_run.read_of(read_says(approval=record.id)), run_id=run_id)
     assert found["due"] is False and approvals.get(conn, record.id).used_at is None
     assert approvals.get(conn, record.id).status == approvals.SUPERSEDED

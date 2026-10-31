@@ -120,10 +120,9 @@ def reply_due() -> None:
 
 
 @inbox_group.command("reply-next")
-@click.option("--json", "as_json", is_flag=True, help="Always JSON: kept so the command reads as `publish next` does.")
 @click.option("--read-file", "read_file", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path),
               help="What the run found on the target (prompts/inbox-reply.md), by its full path.")
-def reply_next(as_json: bool, read_file: Path) -> None:
+def reply_next(read_file: Path) -> None:
     """Judge what the run read, and claim at most one reply. Prints the text only if it was claimed."""
     raw = read_file.read_bytes() if read_file.stat().st_size <= caps.INBOX_READ_FILE_BYTES else b""
     with db.session() as conn:

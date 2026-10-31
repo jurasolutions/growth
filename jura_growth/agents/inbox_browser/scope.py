@@ -16,9 +16,10 @@ the approved text, whole, once, with one send.
 
 from __future__ import annotations
 
-from jura_growth.agents.inbox.watch import PLATFORMS, may_open
+from dataclasses import replace
+
+from jura_growth.agents.inbox.watch import PLATFORMS, may_open, same_reply_place
 from jura_growth.agents.publish import audit
-from jura_growth.agents.publish import hosts as publish_hosts
 from jura_growth.agents.publish import scope as publish_scope
 
 WATCH_COMMANDS = ("inbox watch-targets", "inbox observe", "inbox stopped")
@@ -28,7 +29,12 @@ WATCH_RULES = audit.AuditRules(next_word=None, stopped_word="inbox stopped", don
 REPLY_COMMANDS = ("inbox reply-due", "inbox reply-next", "inbox reply-done", "inbox stopped")
 REPLY_DENIED = ("form_input", "file_upload", "upload_image")
 REPLY_RULES = audit.AuditRules(next_word="inbox reply-next", stopped_word="inbox stopped", done_word="inbox reply-done",
-                               tool_word="inbox reply", one_line=True, place_check=publish_hosts.same_thread, asked_check=may_open)
+                               tool_word="reply", one_line=True, place_check=same_reply_place, asked_check=may_open)
+
+
+def reply_rules(*, is_dm: bool, accept_request: bool) -> audit.AuditRules:
+    """The clicks the steps name for this reply, before its typing: the Reply link or Accept, and the field."""
+    return replace(REPLY_RULES, clicks_before_typing=2 if (not is_dm or accept_request) else 1)
 
 
 def permissions(job: str):
