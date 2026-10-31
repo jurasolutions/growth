@@ -228,6 +228,25 @@ def test_the_check_command_says_the_list_is_missing_and_does_not_pass(no_buzzwor
     assert "pass" not in result.output.split()
 
 
+# --- 08: the intermittent failure --------------------------------------------------------------
+
+
+def test_the_live_engine_writing_its_run_log_does_not_fail_the_refusal_test(monkeypatch, tmp_path):
+    """What happened at 00:00:02 on 2026-11-01. The live publish job, not the test, wrote the day's
+    run log while `test_every_scenario_refuses_the_live_folders_and_changes_nothing[note-rules]` ran.
+    Stand-in folders here, so this never touches the live ones."""
+    import test_uat_seed_outreach as refusal
+
+    live = tmp_path / "growth"
+    (live / "runs").mkdir(parents=True)
+    (tmp_path / "config").mkdir()
+    monkeypatch.setattr(refusal, "LIVE_DATA", live)
+    monkeypatch.setattr(refusal, "REAL_CONFIG", tmp_path / "config")
+    before = refusal.untouched_snapshot()
+    (live / "runs" / "2026-11-01.jsonl").write_text('{"agent": "publish", "kind": "run.quiet"}\n', encoding="utf-8")
+    assert refusal.untouched_snapshot() == before
+
+
 # --- 09: a typed approval of a refused card, in a new process ---------------------------------------
 
 PICTURE = "Picture a small firm chasing its invoices.\n\nhttps://jurasolutions.sg\n"
