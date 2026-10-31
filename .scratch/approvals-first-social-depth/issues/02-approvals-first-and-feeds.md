@@ -1,6 +1,6 @@
 # 02: Approvals first, feeds after
 
-Status: ready-for-agent
+Status: done
 Blocked by: 01
 
 Asks go to #approvals, an approval triggers the action, and outcomes go to the agent's feed. PRD AF1 to AF5, FD1 to FD4, as worded in `reviews/functional.md` §3.

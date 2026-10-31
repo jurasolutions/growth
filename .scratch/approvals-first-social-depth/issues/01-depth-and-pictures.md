@@ -1,6 +1,6 @@
 # 01: Depth and pictures
 
-Status: ready-for-agent
+Status: done
 Blocked by: none
 
 Make social posts carry more to read and a picture. PRD DP1 to DP5, PC1 to PC3, as worded in `reviews/functional.md` §3.

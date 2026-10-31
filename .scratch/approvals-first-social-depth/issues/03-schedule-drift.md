@@ -1,6 +1,6 @@
 # 03: The schedule drift check
 
-Status: ready-for-agent
+Status: done
 Blocked by: none
 
 The one-pager says when scheduled jobs fire at the wrong SGT time by a steady amount. PRD SC1, as worded in `reviews/functional.md` §3.

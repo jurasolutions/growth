@@ -207,3 +207,21 @@ artifacts: crew/approvals-first-social-depth at bee9118, fast-forward
 decisions: merged after approve; the gate goes next
 questions: -
 evidence:  git merge --ff-only -> bee9118
+
+## 2026-11-01T04:30+0800 qa-lead (gate, appended by the conductor)
+status:    needs-human
+persona:   qa-lead
+ticket:    -
+artifacts: reviews/quality-gate.md
+decisions: go with conditions at a43e36a. X5, X13 wording wrong, X6 partly, amendments A1 to A4 for Ting Yu. Two rules moved, both tighter: the 17:00 decide-by and no card, no approval. X12: 0 critical, 0 major, 13 minor. X7 holds by inference. X9 met
+questions: for G4, carried in the PR body: A1 to A4; icp.md his own step; ticket 12 and the number limits; X15; .env mode
+evidence:  pytest in a stand-in root -> 5967 passed, 0 skipped; canary .env 0 opens; stand-in claude 0 calls; Chrome matrix 34 of 34 offline and with web fonts
+
+## 2026-11-01T04:35+0800 conductor (before release)
+status:    done
+persona:   conductor
+ticket:    -
+artifacts: reviews/uat.md L1; PRD §5; docs/agents/crew.md; tickets 01 to 04 closed
+decisions: the after-merge steps now hold the env file mode check and the read-only query, and no longer move the draft over inputs/icp.md. The gate's conditions stay Ting Yu's: the standing instruction covers the crew's decisions, not his acceptance, and only he can grant X15
+questions: -
+evidence:  tests/test_uat_seed_script.py -> 53 passed; the query runs on a freshly migrated temp database
