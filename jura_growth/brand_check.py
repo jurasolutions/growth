@@ -515,6 +515,12 @@ def _without_exempt(text: str) -> str:
     return text
 
 
+def figures_in(text: str) -> list[str]:
+    """The figures in `text` written in digits, as `_numbers` reads them: no dates, years, clock
+    times, approved claims or names with a number in them."""
+    return [m.group(0).strip() for m in FIGURE_RE.finditer(_without_exempt(text)) if re.search(r"\d", m.group(0))]
+
+
 def _numbers(text: str, chosen: Channel, sources: list[str]) -> list[Issue]:
     links = find_links(text) + list(sources)
     third_party = [link for link in links if not is_jura(link)]

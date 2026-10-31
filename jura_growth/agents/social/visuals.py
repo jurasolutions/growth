@@ -78,7 +78,11 @@ class Visual:
 
     def words(self) -> list[str]:
         """Every word this visual prints, for the brand checker."""
-        found = [self.caption, self.value, self.label, self.source]
+        return [word for word in [*self.statements(), self.source] if word]
+
+    def statements(self) -> list[str]:
+        """What this visual says, without the name of its source."""
+        found = [self.caption, self.value, self.label]
         found += [step.label for step in self.steps]
         for column in (self.left, self.right):
             if column:
@@ -162,6 +166,8 @@ def parse(data) -> tuple[Visual | None, list[str]]:
             if not value:
                 problems.append(f"a figure needs its {name}")
             _too_long(problems, f"visual.{name}", value, limit)
+        if visual.value and not re.search(r"\d", visual.value):
+            problems.append(f'a figure is a number, and visual.value is "{visual.value}"')
     return visual, problems
 
 

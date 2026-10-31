@@ -154,6 +154,15 @@ class CardSpec:
             found.append(self.overline)
         return [h for h in found if h]
 
+    def printed_words(self) -> list[str]:
+        """Every phrase this card prints, other than its source labels."""
+        found = [self.overline, self.headline, self.subtitle, self.caption]
+        for item in self.items:
+            found += [item.title, item.detail]
+        if self.visual is not None:
+            found += self.visual.statements()
+        return [text for text in found if text]
+
     def body(self) -> str:
         """Every other word the card prints, including the tool card's fixed
         strings, for the brand checker."""

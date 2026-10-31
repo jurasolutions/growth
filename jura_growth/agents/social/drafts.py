@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
+from jura_growth import brand_check
 from jura_growth.agents.social import history, render
 from jura_growth.agents.social.settings import Theme
 
@@ -136,6 +137,42 @@ def _card_depth(card: render.CardSpec | None, theme: Theme) -> list[str]:
     return problems
 
 
+def states_figure(post: str, figure: str) -> bool:
+    """Whether `post` states this figure whole: "1%" isn't in "11%", and "3" isn't in "3.5"."""
+    return re.search(rf"(?<![\w.,$]){re.escape(figure)}(?![\w%]|[.,]\d)", post) is not None
+
+
+def _publishers(sub: Submission) -> set[str]:
+    """The publisher on each `sources.md` line: `- URL | Publisher | YYYY-MM-DD | Title`."""
+    fields = [source.line.split("|") for source in sub.sources]
+    return {found[1].strip().casefold() for found in fields if len(found) > 1 and found[1].strip()}
+
+
+def _card_evidence(sub: Submission) -> list[str]:
+    """The picture states nothing the post and its sources don't. This doesn't prove a figure
+    true: the numbers rule passes any figure once a post has a source, so this ties it to what
+    Ting Yu reads on the approval card, the post and its sources."""
+    card = sub.card
+    if card is None or card.layout == "tool":  # a tool card's words come from the site's registry
+        return []
+    problems = []
+    publishers = _publishers(sub)
+    labels = [(f"items[{index}].source", item.source) for index, item in enumerate(card.items) if item.source]
+    if card.visual is not None and card.visual.source:
+        labels.append(("visual.source", card.visual.source))
+    for where, label in labels:
+        if label.casefold() not in publishers:
+            problems.append(f'{where}: source "{label}" is not the publisher on any line of sources.md; name it as that line does')
+    figures = brand_check.figures_in("\n".join(card.printed_words()))
+    if card.visual is not None and card.visual.value:
+        figures.insert(0, card.visual.value)
+    for figure in dict.fromkeys(figures):
+        for platform, text in sub.variants.items():
+            if not states_figure(text, figure):
+                problems.append(f'the card says "{figure}" and {platform}.md doesn\'t: every post states each figure on the card, written the same way')
+    return problems
+
+
 def theme_problems(sub: Submission, theme: Theme, today: date) -> list[str]:
     """What the day's theme needs from the sources and the card."""
     problems = []
@@ -167,4 +204,5 @@ def theme_problems(sub: Submission, theme: Theme, today: date) -> list[str]:
     if sub.card and theme.needs_tool and sub.card.layout != "tool":
         problems.append(f"{theme.label} uses the tool card (layout \"tool\")")
     problems += _card_depth(sub.card, theme)
+    problems += _card_evidence(sub)
     return problems
