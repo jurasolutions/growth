@@ -15,7 +15,9 @@ The read model never writes and never repairs:
   or use-by counts as lapsed by the clock, without writing; the one-pager job
   writes those transitions on its own connection before this runs (A17). No
   approval function and no kind's `content()` is called: either may supersede.
-- No job lock is taken: a running run is judged by its row.
+- No job lock is taken: a running run is judged by its row. Only the one-pager's
+  post waits for a lock (`read_patiently`): it starts in the same minute as
+  publish, and a held lock would post the bad-day picture.
 
 Every string in a snapshot has been through `privacy.for_discord()`.
 """
@@ -25,6 +27,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -60,6 +63,7 @@ DB_WORDING = {
 NOT_MIGRATED = DbWording("growth.db isn't migrated yet ({listed}). Send `/growth status` to migrate it.",
                          "Not available: growth.db isn't migrated yet")
 BUSY_TIMEOUT = 2  # seconds: scout-send writes every 10 minutes, so reads stay short
+LOCK_PATIENCE, LOCK_RETRY = 60, 5  # seconds: how long the one-pager's post waits for a lock, and how often it asks
 _BUSY = {"SQLITE_READONLY_ROLLBACK", "SQLITE_BUSY", "SQLITE_LOCKED"}
 
 
@@ -226,6 +230,19 @@ def read(source: Source) -> Snapshot:
             conn.close()
 
 
+def read_patiently(source: Source, *, sleep: Callable[[float], None] = time.sleep) -> Snapshot:
+    """`read`, retried while growth.db is locked, for up to `LOCK_PATIENCE` seconds. Past
+    that, the snapshot that says so. For the one-pager's post only: `/growth status` and
+    `--no-post` should stay quick."""
+    waited = 0.0
+    while True:
+        snapshot = read(source)
+        if snapshot.db_state != UNFINISHED_WRITE or waited + LOCK_RETRY > LOCK_PATIENCE:
+            return snapshot
+        sleep(LOCK_RETRY)
+        waited += LOCK_RETRY + BUSY_TIMEOUT  # each read may itself wait for the lock
+
+
 def _connect(path: Path) -> tuple[sqlite3.Connection | None, str, str | None]:
     """The read-only connection, already past its first query, or why not."""
     if not path.exists():
@@ -351,8 +368,19 @@ def _morning(conn: sqlite3.Connection, now: datetime) -> Yesterday | None:
 
 
 def _digest_day(day: str, summary: Mapping[str, Any]) -> Yesterday:
-    figures = {key: _clean(value) if isinstance(value, str) else value for key, value in summary["figures"].items()}
+    figures = {key: _masked(value) for key, value in summary["figures"].items()}
     return Yesterday(day, tuple(_clean(line) for line in summary["lines"]), float(summary["claude_cost_usd"] or 0.0), figures)
+
+
+def _masked(value: Any) -> Any:
+    """A figure with every string in it masked, however deep."""
+    if isinstance(value, str):
+        return _clean(value)
+    if isinstance(value, Mapping):
+        return {key: _masked(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_masked(item) for item in value]
+    return value
 
 
 def _plugin_lines(conn: sqlite3.Connection) -> tuple[str, ...]:

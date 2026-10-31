@@ -51,7 +51,20 @@ def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     return None
 
 
+def health(conn: sqlite3.Connection) -> list[str]:
+    """Live mode with something stopping it: no request is raised and no email goes, and until
+    now the first word of it was the 09:30 alert. Reads settings only."""
+    from jura_growth.agents.outreach import send
+    from jura_growth.agents.scout import settings
+
+    if settings.mode() != "live":
+        return []
+    problems = send.live_problems()
+    return [f"Clear what stops live outreach, or no email is asked for: {problems[0]}."] if problems else []
+
+
 def digest(conn: sqlite3.Connection, day: str) -> dict:
+    from jura_growth.agents.outreach import replies as replies_mod
     from jura_growth.agents.scout import settings
 
     def count(sql: str) -> int:
@@ -95,6 +108,7 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
             "emails_sent": sent,
             "emails_shadow": shadow,
             "replies": replies,
+            "reply_detection": replies_mod.enabled(),  # off, `replies` can't tell a quiet day from an unread one
             "unsubscribes": unsubscribes,
             "bounces": bounces,
             "complaints": complaints,

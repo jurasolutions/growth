@@ -415,7 +415,7 @@ def one_pager_cmd(no_post, grid) -> str | None:
         # Lapsed cards are edited (edits don't notify); new cards wait for the
         # heartbeat or a raising command, and the one-pager lists them.
         _approval_upkeep(conn, post=False)
-    snapshot = mission.read(mission.Source.here())
+    snapshot = mission.read_patiently(mission.Source.here())
     with db.session() as conn:
         result = one_pager_mod.post(conn, snapshot)
     answer = f"posted to #{result.channel}" if result.delivered else f"not posted to #{result.channel}: {result.reason}"
