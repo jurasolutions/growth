@@ -62,3 +62,14 @@ artifacts: issues/03, issues/04
 decisions: my merge of ticket 01 stopped on a conflict in two ticket files, my script carried on, and commit 45c3b5e closed the merge with conflict markers still in them. Local only, never pushed. Resolved here, keeping the developer's wording, which already held mine, plus the frame fingerprint check
 questions: -
 evidence:  grep for conflict markers across the worktree -> none
+
+## 2026-10-31 conductor (tickets 02 and 05)
+status:    done
+persona:   conductor
+ticket:    02, 05
+artifacts: crew/inbox-watch at cb42ff3; issues/07
+decisions: ticket 02 merged after one fix round, with the final review checking the fixes. Developer's pushback confirmed: a contact's own opt-out words still suppress on a failed verdict, with the doubt shown
+decisions: ticket 05 reconciles onto the merge. Its publish/job.py alert question is left as is: those findings name only tools, hosts and lengths
+decisions: the clean working folder extends to both inbox browser jobs; publish and the web-reading jobs are follow-up ticket 07, and Ting Yu is told
+questions: -
+evidence:  developer: 4770 passed at 03a71e0 (02); 4739 passed (05, before the merge)
