@@ -7,6 +7,7 @@ test_social_cards_real_chrome.py.
 """
 
 import json
+from datetime import date
 
 import pytest
 
@@ -359,6 +360,15 @@ def test_a_shortfall_then_a_word_miss_then_a_pass(env, conn, monkeypatch):
 
 
 # --- what the run is told -------------------------------------------------------------
+
+
+def test_only_instagram_is_offered_a_carousel(env, conn, monkeypatch):
+    """Final review SP-S3: Facebook's plan read "carousel of up to 1 today" on a carousel theme,
+    and `submit` only makes a carousel for Instagram."""
+    found = plan.build(conn, date(2026, 11, 10))
+    assert found["platforms"]["instagram"]["carousel_today"] is True
+    assert found["platforms"]["facebook"]["carousel_today"] is False
+    assert "carousel" not in next(line for line in plan.render_text(found).splitlines() if line.strip().startswith("facebook"))
 
 
 def test_the_plan_prints_each_themes_own_ranges_and_needs(env, conn, monkeypatch):

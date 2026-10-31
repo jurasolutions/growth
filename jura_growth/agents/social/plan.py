@@ -66,7 +66,7 @@ def build(conn: sqlite3.Connection, day: date, settings: Settings | None = None)
                 "chars_max": p.chars_max,
                 "links": p.links,
                 "image": p.size,
-                "carousel_today": p.carousel_on(day) or theme.carousel,
+                "carousel_today": name == "instagram" and (p.carousel_on(day) or theme.carousel),  # as `submit` makes them
                 "carousel_max": p.carousel_max,
                 "publish_mode": p.publish_mode,
                 "to_draft": name in active,
