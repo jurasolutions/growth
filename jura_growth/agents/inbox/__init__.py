@@ -1,7 +1,7 @@
 """Inbox watch: every reaction to Jura reported, every reply approved
 (prd/pending/prd-jura-inbox-watch-2026-10-31.md).
 
-So far this agent sees mail, triages it and reports it:
+This agent sees mail, triages it, reports it, and sends the replies Ting Yu approves:
 
 - `store`: the record of every reaction, and `store.record`, the one way in.
 - `mail`: the mail intake. Read-only IMAP, the noise filter, a lead's reply recorded as the 16:45
@@ -9,16 +9,19 @@ So far this agent sees mail, triages it and reports it:
 - `triage`: what the model may do, and everything that holds whatever it does.
 - `checks`: the brand channels for a reply, `inbox-email` and `inbox-social`.
 - `report`: one message per conversation in #mission-control, retried until delivered.
+- `kinds`: the `email-reply` approval kind: what a reply is, its card, and what each answer does.
+- `send`: `inbox send-due`, which claims an approved reply and sends exactly that.
 - `watch`: what a watch run may record, and what its records come to. The jobs that drive the browser
   belong to the `inbox_browser` plug-in, which has its own pause flag. Its commands are here, because
   a second `inbox` click group would silently replace this one.
 - `job`: the job's precheck.
-- `commands`: `jura-growth inbox status | pending | submit`, and a watch run's `watch-targets`, `observe`
-  and `stopped`.
+- `commands`: `jura-growth inbox status | pending | submit | send-due`, and a watch run's `watch-targets`,
+  `observe` and `stopped`.
 - `settings`: the limits in `caps.py`, tightened by `config/inbox.yaml`.
 
 Job `inbox-check` runs every 15 minutes, 07:00 to 23:45 SGT. Its precheck reads the mail and reports
 what needs no model. Claude starts only when something waits for triage (`prompts/inbox-check.md`).
+Job `inbox-send` runs every 10 minutes, 08:00 to 22:00 SGT, with no model.
 """
 
 from __future__ import annotations
@@ -42,6 +45,12 @@ def register(cli) -> None:
     from jura_growth.agents.inbox.commands import inbox_group
 
     cli.add_command(inbox_group)
+
+
+def approval_kinds() -> dict:
+    from jura_growth.agents.inbox import kinds
+
+    return kinds.kinds()
 
 
 def channels() -> dict:

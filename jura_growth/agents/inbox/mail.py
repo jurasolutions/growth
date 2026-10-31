@@ -49,7 +49,6 @@ ATTACHMENTS_KEPT = 5
 SECOND_MAILBOX = ("ENQUIRY_IMAP_HOST", "ENQUIRY_IMAP_USER", "ENQUIRY_IMAP_PASSWORD")
 _MAILBOX_SETTINGS = (("levi", replies.SETTINGS), ("enquiry", SECOND_MAILBOX))
 
-_MESSAGE_ID = re.compile(r"<[!-;=?-~]{1,250}>")
 _LIST_LINE = re.compile(rb'^\((?P<flags>[^)]*)\)\s+(?:"[^"]*"|NIL)\s+(?P<name>.+)$')
 _JUNK_NAMES = ("junk", "spam", "junk e-mail", "junk email", "bulk mail", "[gmail]/spam")
 _ENQUIRY_NAME = re.compile(r"^Name: (.+)$", re.M)
@@ -64,6 +63,7 @@ class Intake:
     dropped: int = 0
     replies: int = 0
     failed: int = 0
+    unfinished: int = 0  # mailboxes read only in part: their budget ran out, or a message waits
 
 
 class _Spent(Exception):
@@ -153,6 +153,8 @@ def intake(conn: sqlite3.Connection) -> Intake:
         cleared(conn, login.label)
         if finished:
             store.set_state(conn, _last_success(login), started)
+        else:
+            result.unfinished += 1
     log.event(conn, "inbox.checked", {"recorded": result.recorded, "noise": result.noise, "dropped": result.dropped,
                                       "replies": result.replies, "failed": result.failed}, agent=AGENT)
     return result
@@ -289,7 +291,9 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
 
     reply_to = _recipient(headers, sender)
     ours = replies.sent_subjects(conn, contact["lead_id"]) if contact else set()
-    wants_out = replies.opt_out_reason(subject, own, ours) if contact else None
+    asked_out = replies.opt_out_reason(subject, own, ours) if contact else None
+    by_id = bool(contact and contact["by_id"])
+    wants_out = None if by_id else asked_out
     # A stated failure means it may not be from this address. An emailed contact's own opt-out words are
     # still honoured: a real one lost is worse than a forged one honoured, which R1 shows and can be
     # undone (code review 01, S-4). Only a model's reading of it needs better proof (`own_sender`).
@@ -305,6 +309,9 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
         notes.append("It says it came from the website form, but it isn't signed by Jura.")
     if forged and not from_form:
         notes.append("The receiving server says this may not be from this address.")
+    if by_id and asked_out:
+        notes.append("It asks to be removed, but only a message id ties this address to the lead, so nothing is suppressed. "
+                     "Do it by hand if it's right.")
     if wants_out:
         state = store.REPORTED
         notes.append(f"They asked to be removed ({wants_out}): the address is suppressed and no reply will be drafted.")
@@ -330,10 +337,13 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
             "in_reply_to": next(iter(_ids(headers.get("In-Reply-To"))), None),
             "references": _ids(headers.get("References"))[-REFERENCES_KEPT:],
             "reply_to": reply_to,
+            # The domain the mail claims to be from, whoever gets the answer: the card compares them (A9).
+            "from_domain": suppression.domain_of(sender) if sender else "",
+            "forged": forged and not from_form,
             "copied": _copied(headers),
             # Whether `who` is this mail's own sender, and so whether triage may suppress it. Not an
             # address typed on the form, nor a `Reply-To` standing in for a From it can't read (SEC-2).
-            "own_sender": bool(sender) and who == sender and not from_form and not forged,
+            "own_sender": bool(sender) and who == sender and not from_form and not forged and not by_id,
         },
         attachments=attachments,
         lead_id=contact["lead_id"] if contact else None,
@@ -410,6 +420,12 @@ def _recipient(headers: Message, sender: str) -> str | None:
     return address if address and not _is_jura(address) else None
 
 
+def valid_recipient(address) -> str | None:
+    """One address that isn't Jura's, read again from a stored row before any mail goes to it (A8)."""
+    found = _one_address(str(address or ""))
+    return found if found and not _is_jura(found) else None
+
+
 def _copied(headers: Message) -> int:
     """How many other people were copied: named on the card and never included in a reply (S11)."""
     raw = headers.get_all("Cc") or ()
@@ -417,8 +433,7 @@ def _copied(headers: Message) -> int:
 
 
 def _ids(value) -> list[str]:
-    """Message ids from a header, and nothing else from it, so none can inject a header (A8)."""
-    return _MESSAGE_ID.findall(str(value or ""))
+    return replies.message_ids(value)
 
 
 def _signed_by_jura(headers: Message) -> bool:
@@ -427,17 +442,14 @@ def _signed_by_jura(headers: Message) -> bool:
 
 
 def _contact_of(check: _Check, sender: str, headers: Message, received: datetime | None, subject: str) -> dict | None:
-    """The lead this message answers (W6, F2), or None. Until ticket 03 outreach mail keeps no
-    Message-ID (see `store.remember_outgoing`), so for it the domain match is what finds a colleague."""
-    if received is None or replies.is_automatic(headers, subject):
+    """The lead this message answers (W6, F2), or None: the same two ways the 16:45 check looks. Its
+    `by_id` says only a message id ties it to the lead, which never suppresses anyone (SEC-4)."""
+    if received is None or replies.is_automatic(headers, subject) or not sender:
         return None
-    contact = check.known.match(sender, headers) if sender else None
-    if contact is None:
-        lead_id = store.lead_of_outgoing(check.conn, [*_ids(headers.get("In-Reply-To")), *_ids(headers.get("References"))])
-        contact = check.known.by_lead.get(lead_id) if lead_id is not None else None
+    contact, by_id = replies.answering(check.conn, check.known, sender, headers)
     if contact is None or received < timeutil.parse(contact["first_sent"]):
         return None
-    return contact
+    return {**contact, "by_id": by_id}
 
 
 def _noise_evidence(headers: Message, sender: str) -> str | None:
@@ -466,9 +478,9 @@ def _attachment_names(message: Message) -> tuple[str, ...]:
 # --- when a check can't do its job -------------------------------------------------
 
 
-def failed(conn: sqlite3.Connection, label: str, error: Exception) -> None:
+def failed(conn: sqlite3.Connection, label: str, error: Exception, *, line: str | None = None) -> None:
     """B5 rule 1, P-5: logged every time, and alerted once a day after two hours of it, so a real
-    bug is seen and a flap is not a failed run."""
+    bug is seen and a flap is not a failed run. `line` is what to say, if this isn't the mail check."""
     what = type(error).__name__
     since_key = f"{store.FAILING_SINCE}{label}"
     since = store.get_state(conn, since_key)
@@ -477,8 +489,8 @@ def failed(conn: sqlite3.Connection, label: str, error: Exception) -> None:
         store.set_state(conn, since_key, since)
     log.event(conn, "inbox.mail_failed", {"mailbox": label, "error": what}, level="warning", agent=AGENT)
     if timeutil.now() - timeutil.parse(since) >= timedelta(hours=OVERDUE_HOURS):
-        problem(conn, label, f"The {label} mail check hasn't worked for over {OVERDUE_HOURS} hours, so new mail isn't being "
-                              f"seen. The last error was {what}.", what)
+        problem(conn, label, line or f"The {label} mail check hasn't worked for over {OVERDUE_HOURS} hours, so new mail isn't being "
+                                     f"seen. The last error was {what}.", what)
 
 
 def problem(conn: sqlite3.Connection, label: str, line: str, what: str, *, at_once: bool = False) -> None:

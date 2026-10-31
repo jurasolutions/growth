@@ -10,7 +10,7 @@ from pathlib import Path
 import click
 
 from jura_growth import caps, db, log, timeutil
-from jura_growth.agents.inbox import store, triage, watch
+from jura_growth.agents.inbox import send, store, triage, watch
 
 
 
@@ -101,3 +101,12 @@ def submit(file: Path) -> str:
     if outcome.exit_code:
         sys.exit(outcome.exit_code)
     return outcome.lines[0]
+
+
+@inbox_group.command("send-due")
+def send_due() -> str:
+    """Claim each approved reply and send exactly what was approved. Job `inbox-send` runs this."""
+    with db.session() as conn:
+        summary = send.send_due(conn)
+    click.echo(summary or "nothing to send")
+    return summary

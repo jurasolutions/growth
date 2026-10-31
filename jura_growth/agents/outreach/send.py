@@ -462,7 +462,7 @@ class _Claimed:
     attempts: int  # counted by the claim, before the call
 
 
-def _retry_closed(earlier: approvals.Approval, now: datetime) -> str | None:
+def retry_closed(earlier: approvals.Approval, now: datetime) -> str | None:
     """Why a claimed email may no longer be retried, or None. A retry is
     bounded by whichever comes first: the retry window from the claim, or
     the approval's use-by (code review 06, Sp1)."""
@@ -508,7 +508,7 @@ def _claim(conn: sqlite3.Connection, message: dict, gated: compose.Email) -> _Cl
             elif sending != earlier.content_hash:
                 refusal = f"it changed after {earlier.id} was used, so it isn't sent again"
                 conn.execute("UPDATE outreach_messages SET status = 'failed', error = ? WHERE id = ?", (refusal, current["id"]))
-            elif (closed := _retry_closed(earlier, timeutil.now_sgt())) is not None:
+            elif (closed := retry_closed(earlier, timeutil.now_sgt())) is not None:
                 refusal = f"it may already have gone out: Resend was called under {earlier.id} {closed}"
                 conn.execute(
                     "UPDATE outreach_messages SET status = 'uncertain', error = ? WHERE id = ?",
@@ -647,6 +647,11 @@ def classify(status: int, body: dict) -> tuple[str, str]:
 
 
 def _resend(conn, message: dict, row: dict, email: compose.Email, client) -> tuple[str, str]:
+    return post_email(resend_payload(message, row, email), f"jura-outreach-{message['id']}", client)
+
+
+def post_email(payload: dict, idempotency_key: str, client: httpx.Client | None) -> tuple[str, str]:
+    """One email to Resend: ('sent', its id), or ('pause' | 'retry' | 'fail', why)."""
     key = config.require("RESEND_API_KEY_OUTREACH")
     try:
         url = resend_url()
@@ -657,8 +662,8 @@ def _resend(conn, message: dict, row: dict, email: compose.Email, client) -> tup
     try:
         response = client.post(
             url,
-            headers={"Authorization": f"Bearer {key}", "Idempotency-Key": f"jura-outreach-{message['id']}"},
-            json=resend_payload(message, row, email),
+            headers={"Authorization": f"Bearer {key}", "Idempotency-Key": idempotency_key},
+            json=payload,
         )
     except httpx.HTTPError as error:
         return "retry", f"Resend unreachable ({type(error).__name__})"

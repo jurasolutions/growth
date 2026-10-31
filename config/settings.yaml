@@ -151,6 +151,15 @@ jobs:
     timeout_minutes: 10
     schedule: {daily_every: {start: "07:00", end: "23:45", minutes: 15}}
 
+  # Claims and sends the email replies Ting Yu approved, reading the mail first so none goes over a
+  # newer message. No model. Its hours are checked in code too.
+  inbox-send:
+    agent: inbox
+    kind: command
+    command: [inbox, send-due]
+    quiet: true # no Discord post or run row when there is nothing to send
+    schedule: {daily_every: {start: "08:00", end: "22:00", minutes: 10}}
+
   # Reads Facebook and Instagram through Chrome and records what people said. It can't click. Its tools
   # come from the inbox-browser plug-in, and its hours are checked in code too.
   inbox-watch:

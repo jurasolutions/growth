@@ -22,7 +22,11 @@ bytes handed out include what the code adds around the draft: the call button, t
 footer, the HTML template, the sender and Reply-To. The content carries `compose.frame_fingerprint()`,
 a hash of that frame rendered for a stand-in recipient, so a template change between approval and
 claim supersedes the request instead of sending a frame Ting Yu never saw. The card names the
-template version and the frame's first eight hex digits. A pending
+template version and the frame's first eight hex digits.
+*Amended 2026-10-31 (inbox watch ticket 03):* an `email-reply` holds to all of this. Its bytes include its
+frame and its BCC, and a retry has the same bound, under its one key. It adds one rule: a retry goes only
+while the reply still hashes to what was approved, so if they wrote again after the claim, or were
+suppressed, it is marked unknown and never sent again. A pending
 request lapses at its decide-by and an approved, unclaimed one at its use-by, two separate clocks, so
 a yes is never lost behind the send caps. Approval state lives only in the `approvals` table: plug-in
 tables hold their item's lifecycle and never a copy of the decision. Don't loosen this to "approved

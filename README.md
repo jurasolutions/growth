@@ -192,6 +192,22 @@ they share the accounts, and a `publish` pause skips the watch. `jura-growth pau
 stops it and leaves the mail running. The first-run checks are in the setup guide.
 The PRD is `prd/pending/prd-jura-inbox-watch-2026-10-31.md`.
 
+A draft for an email becomes one card in `#approvals`, of kind `email-reply`: what they said, who really
+gets the reply, the draft exactly as it goes out, and what each answer does. It is always one message, so
+what they said is cut to fit and the draft never is. `inbox-send` (every 10 minutes, 08:00 to 22:00 SGT,
+with no model) reads the mail first, so a newer message supersedes the draft rather than being answered
+over, then claims the approval and sends exactly what was approved: threaded, from Levi, with one BCC to
+his mailbox. Only a clean read is claimed. A newer message from the same address under another subject holds
+the claim until triage has read it, and an opt-out or a "not now" there closes the draft. The whole subject is
+on the card, and one the card couldn't show as written, or holding someone else's link, goes as a safe one.
+
+Before each claim it asks the website's D1 about that reply's addresses. It only reads: if D1 can't answer the
+slot's replies are held and Ting Yu is told once a day, and this job never pauses any agent but its own. A
+retry stops at 23 hours under the one idempotency key, and past that it is marked unknown and never sent
+again. A refused Resend account or an outage stops the run, so every other approved reply stays unclaimed.
+Ting Yu hears one line on each outcome. A failed send doesn't count toward auto-pause, because the job shares
+the `inbox` flag with the mail watch.
+
 ## Kill switches
 
 - `jura-growth pause all` (or one agent). `jura-growth resume all` restarts.
@@ -281,13 +297,16 @@ A kind is an object with:
 | `on_skip`, `on_expire`, `on_lapse` | Optional, `(conn, subject)`. What a skip, an unanswered decide-by and an unclaimed use-by do to the item |
 | `superseded_note(conn, subject)` | Optional. Why the item changed or went away, in Ting Yu's words ("lead unsubscribed"), for the card's edited first line; `None` keeps the core's reason |
 | `used_word` | Optional. How the answer to a decision on a used request names the use ("already sent at 10:40"); "used" by default |
+| `conversation_card` | Optional. True when the card holds a person's words and the answer to them, so a greeting isn't masked as a learned name. Phones, addresses and secrets still are |
 
 The outreach plug-in's `outreach-email` kind (`agents/outreach/approval.py`) is the worked example:
 requests are raised only in live mode, only for emails due today and only up to today's remaining
 quota (MC §4.6 A14), and `send-due` claims before it calls Resend. The community plug-in's
 `group-rules` kind (`agents/community/group_rules.py`) is the example of a kind applied on
 decide: its approve takes `promo_days=` and `post_days=`, and `on_approve` claims the request and
-sets the group's confirmation and days in the decision itself.
+sets the group's confirmation and days in the decision itself. The inbox's `email-reply` kind
+(`agents/inbox/kinds.py`) adds `conversation_card`: its card carries what a person wrote, under the
+conversation class of `privacy.py`, rather than the plain masking every other card gets.
 
 ## Tests
 

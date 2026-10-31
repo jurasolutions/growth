@@ -93,6 +93,11 @@ def _links(text: str, ctx: dict) -> list[Issue]:
     return found
 
 
+def holds_a_link(text: str) -> bool:
+    """Whether the draft's link rule would refuse `text` (S1): a subject the card and Resend both carry."""
+    return bool(_links(text, {}))
+
+
 def _figures(text: str, ctx: dict) -> list[Issue]:
     # Their own figure is let through here so a small count can be said back to them. The core rule
     # still refuses anything larger, so the prompt doesn't offer this.
@@ -154,6 +159,8 @@ def _too_long(text: str, limit: int, what: str) -> list[Issue]:
 def check_email(text: str, ctx: dict) -> list[Issue]:
     """Levi signs an email, so on a holding reply he says he will reply."""
     issues = _shared(text, ctx) + _too_long(text, caps.INBOX_EMAIL_DRAFT_CHARS, "An email reply")
+    if text.count("\n") >= caps.INBOX_EMAIL_DRAFT_LINES:
+        issues.append(Issue("channel", f"An email reply is at most {caps.INBOX_EMAIL_DRAFT_LINES} lines, so its card stays one message"))
     words = words_in(text)
     if words >= EMAIL_WORDS_UNDER:
         issues.append(Issue("channel", f"An email reply is under {EMAIL_WORDS_UNDER} words; this is {words}"))

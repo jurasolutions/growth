@@ -39,6 +39,8 @@ A11_COMMANDS = {
     "publish done",
     "publish note-rules",
     "community set",
+    "inbox submit",
+    "inbox send-due",
 }
 
 # Every function whose body calls `approvals.request(`, and the A11 commands behind it.
@@ -51,6 +53,7 @@ RAISERS = {
         "and the publish queue's sync()",
     ("jura_growth.agents.community.group_rules", "request"):
         "community set rules= and rules_confirmed=yes, publish note-rules",
+    ("jura_growth.agents.inbox.kinds", "raise_request"): "inbox submit, inbox send-due",
 }
 
 KIND_NAMES = ("kind", "approval_kind", "kinds")

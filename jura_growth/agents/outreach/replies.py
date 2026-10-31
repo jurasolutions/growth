@@ -68,6 +68,7 @@ OPT_OUT_PHRASES = tuple(
 OPT_OUT_WHOLE_MESSAGES = frozenset({"stop", "please stop", "remove", "unsubscribe"})
 _GREETING_RE = re.compile(r"^\s*(?:hi|hello|hey|dear|good (?:morning|afternoon|evening))\b[^,.!:;\n]{0,40}[,.!:;\n]+")
 _APOSTROPHES = str.maketrans({chr(0x2019): "'", chr(0x2018): "'", chr(0x02bc): "'"})
+MESSAGE_ID_RE = re.compile(r"<[!-;=?-~]{1,250}>")
 SUBJECT_PREFIX_RE = re.compile(r"^(?:\s*(?:re|fwd?|aw|wg)\s*(?:\[\d+\])?\s*:\s*)+", re.I)
 AUTO_SUBJECT_RE = re.compile(r"\b(?:out of (?:the )?office|automatic reply|auto(?:matic)?[- ]?reply|autoreply|on leave|away from)\b", re.I)
 QUOTE_START_RE = re.compile(
@@ -449,6 +450,39 @@ def sent_contacts(conn: sqlite3.Connection) -> Contacts:
     ))
 
 
+def message_ids(value) -> list[str]:
+    """Message ids from a header, and nothing else from it, so none can inject a header (A8)."""
+    return MESSAGE_ID_RE.findall(str(value or ""))
+
+
+def naming_our_mail(conn: sqlite3.Connection, known: Contacts, sender: str, headers: Message) -> dict | None:
+    """F2: the lead whose message this one answers by `In-Reply-To` or `References`, from whatever
+    address, when that message is one Jura sent. Like a colleague's domain match it reaches addresses
+    Jura never wrote to, so it has to look like a person there, and it is never Jura's own copy."""
+    from jura_growth.agents.inbox import settings as inbox_settings
+    from jura_growth.agents.inbox import store as inbox_store
+
+    domain = suppression.domain_of(sender) if sender else ""
+    if not domain or under_domain(domain, inbox_settings.JURA_DOMAIN):
+        return None
+    lead_id = inbox_store.lead_of_outgoing(conn, [*message_ids(headers.get("In-Reply-To")), *message_ids(headers.get("References"))])
+    contact = known.by_lead.get(lead_id) if lead_id is not None else None
+    if contact is None or bulk_evidence(headers, sender) or failed_verdict(headers, domain):
+        return None
+    return contact
+
+
+def answering(conn: sqlite3.Connection, known: Contacts, sender: str, headers: Message) -> tuple[dict | None, bool]:
+    """(the lead this answers, whether only a message id says so). A match by id counts as the lead's
+    reply (F2) and never suppresses or unsubscribes: whoever holds an id could write in anyone's name
+    (code review 03, SEC-4). It is reported, and Ting Yu can act by hand."""
+    contact = known.match(sender, headers)
+    if contact is not None:
+        return contact, False
+    named = naming_our_mail(conn, known, sender, headers)
+    return named, named is not None
+
+
 def sent_subjects(conn: sqlite3.Connection, lead_id: int) -> set[str]:
     """The subjects Jura sent this lead, as `bare_subject` reads them."""
     rows = db.rows(conn, "SELECT DISTINCT subject FROM outreach_messages WHERE lead_id = ? AND sent_at IS NOT NULL", (lead_id,))
@@ -563,7 +597,7 @@ def _batch(conn, imap, numbers: list[bytes], known: Contacts, result: Result) ->
         result.checked += 1
         headers = found.message
         sender = parseaddr(str(headers.get("From", "")))[1].strip().lower()
-        contact = known.match(sender, headers)
+        contact, by_id = answering(conn, known, sender, headers)
         if contact is None:
             continue
         received = received_at(headers)
@@ -578,8 +612,8 @@ def _batch(conn, imap, numbers: list[bytes], known: Contacts, result: Result) ->
             continue
 
         ours = sent_subjects(conn, contact["lead_id"])
-        wants_out = bool(opt_out_reason(subject, "", ours))
-        if not wants_out and found.size <= MAX_BODY_BYTES:
+        wants_out = not by_id and bool(opt_out_reason(subject, "", ours))
+        if not by_id and not wants_out and found.size <= MAX_BODY_BYTES:
             body = body_of(imap, found.number, expected=headers)
             if body is None:
                 continue  # refused or shifted: the next check reads it, so an opt-out isn't lost

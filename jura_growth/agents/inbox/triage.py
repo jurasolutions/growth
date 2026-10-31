@@ -35,8 +35,8 @@ import shutil
 import sqlite3
 from dataclasses import dataclass, field
 
-from jura_growth import brand_check, caps, db, discord, gate, log, paths, privacy, suppression, timeutil
-from jura_growth.agents.inbox import checks, mail, report, settings, store
+from jura_growth import brand_check, caps, cards, db, discord, gate, log, paths, privacy, timeutil
+from jura_growth.agents.inbox import checks, kinds, mail, report, settings, store
 from jura_growth.agents.outreach import replies
 
 AGENT = "inbox"
@@ -49,6 +49,8 @@ ALWAYS_HIGH = frozenset({"complaint", "data-request"})
 # These are never answered, so an earlier open draft doesn't force one (E2, E6). Not `noise`: it can be
 # steered, and a question would lose its draft to it (F8).
 NOT_ANSWERED_WHATEVER_CAME_BEFORE = frozenset({"opt-out", "not-interested", "spam"})
+# Said by the person themselves, these stop every draft to that address, under any subject (E2; P-1).
+CLOSES_THEIR_DRAFTS = frozenset({"opt-out", "not-interested"})
 PRIORITIES = ("normal", "high")
 LANGUAGES = ("English", "Chinese", "Malay", "Tamil", "Hindi", "Indonesian", "Tagalog", "Thai", "Vietnamese", "Japanese", "Korean",
              "French", "German", "Spanish", "Other")
@@ -84,32 +86,15 @@ _WROTE_AGAIN = "They wrote again, so this draft is replaced."
 # --- what needs no model ----------------------------------------------------------------
 
 
-def _addresses(item: dict) -> list[str]:
-    thread = json.loads(item["thread_json"] or "{}")
-    return [address for address in (item["sender_address"], thread.get("reply_to")) if address]
-
-
-def _suppressed_because(conn: sqlite3.Connection, item: dict) -> str | None:
-    for address in _addresses(item):
-        reason = suppression.is_suppressed(conn, address)
-        if reason:
-            return reason
-    return None
-
-
-def _opted_out_earlier(reason: str) -> str:
-    return f"They opted out earlier ({reason}) and wrote again. The engine won't send. Answer by hand if it's right."
-
-
 def settle(conn: sqlite3.Connection) -> int:
     """Everything waiting that needs no model: F14, a message with no words, and a conversation out
     of attempts. Returns how many were closed. Each ends needing a hand reply, and reports."""
     limit = caps.INBOX_TRIAGE_ATTEMPTS
     closed = 0
     for item in store.waiting_for_triage(conn):
-        reason = _suppressed_because(conn, item)
+        reason = kinds.suppressed_because(conn, item)
         if reason:
-            note = _opted_out_earlier(reason)
+            note = kinds.opted_out_earlier(reason)
         elif not item["text"]:
             note = _NO_WORDS
         elif item["triage_attempts"] >= limit:
@@ -314,10 +299,10 @@ def submit(conn: sqlite3.Connection, payload) -> Submitted:
     if earlier and kind in NO_DRAFT - NOT_ANSWERED_WHATEVER_CAME_BEFORE:
         return _refused(f"an earlier message in this conversation still needs an answer (F8): class it for that, "
                         f"with a draft that answers all of it, not {kind}")
-    reason = _suppressed_because(conn, items[-1])
+    reason = kinds.suppressed_because(conn, items[-1])
     if reason:  # they were suppressed after the hand-out
         with db.transaction(conn):
-            _close(conn, items, store.NEEDS_HAND_REPLY, note=_opted_out_earlier(reason))
+            _close(conn, items, store.NEEDS_HAND_REPLY, note=kinds.opted_out_earlier(reason))
         return Submitted(0, [f"{payload['id']}: this address is suppressed, so it needs a hand reply"])
 
     if kind in WITH_DRAFT:
@@ -342,7 +327,7 @@ def _without_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], k
     newest = items[-1]
     with db.transaction(conn):
         if kind == "opt-out":
-            if json.loads(newest["thread_json"] or "{}").get("own_sender"):
+            if store.thread_of(newest).get("own_sender"):
                 replies.honour_opt_out(conn, newest["sender_address"], newest["lead_id"], newest["key"])
                 note = _OPTED_OUT
             else:
@@ -350,6 +335,8 @@ def _without_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], k
         else:
             note = _NOTE[kind]
         _close(conn, items, store.REPORTED, note=note, kind=kind, priority=payload.get("priority", "normal"))
+        if kind in CLOSES_THEIR_DRAFTS and (store.thread_of(newest).get("own_sender") or newest["source"] == "enquiry"):
+            kinds.close_drafts_to(conn, newest)  # never on a forged sender's word (SEC-6)
         log.event(conn, "inbox.triaged", {"item": newest["id"], "class": kind}, agent=AGENT)
 
 
@@ -368,22 +355,25 @@ def _with_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], kind
         return _brand_failed(conn, payload, items, issues)
 
     language = payload.get("language", "English")
-    parts = ["High priority." if high else "", _language_line(language), _DRAFT_READY]
+    parts = ["High priority." if high else "", kinds.language_line(language), _DRAFT_READY]
     with db.transaction(conn):
         _close(conn, items[:-1], store.REPORTED, kind=kind, priority="high" if high else "normal", language=language)
         _close(conn, [newest], store.TRIAGED, note=" ".join(part for part in parts if part), kind=kind,
                priority="high" if high else "normal", language=language, draft=draft,
                promised=high or checks.promises_a_reply(draft))
         log.event(conn, "inbox.triaged", {"item": newest["id"], "class": kind}, agent=AGENT)
+    _raise_its_card(conn, newest["id"])
     return Submitted(0, [f"OK: {payload['id']} classed {kind}, draft kept"])
 
 
-def _language_line(language: str) -> str:
-    if language == "English":
-        return ""
-    if language == "Other":
-        return "They wrote in another language. This draft is English."
-    return f"They wrote in {language}. This draft is English."
+def _raise_its_card(conn: sqlite3.Connection, item_id: int) -> None:
+    """Where a fresh draft's request is raised, and never in the precheck (N10). The card goes up once
+    it has committed. A failure here can't undo the draft just handed in: the next send slot does it."""
+    try:
+        if kinds.raise_due(conn):
+            cards.sweep_safely(conn)
+    except Exception as error:  # noqa: BLE001
+        log.event(conn, "inbox.raise_failed", {"item": item_id, "error": type(error).__name__}, level="warning", agent=AGENT)
 
 
 def _brand_failed(conn: sqlite3.Connection, payload: dict, items: list[dict], issues: list[brand_check.Issue]) -> Submitted:
@@ -416,7 +406,7 @@ def _close(conn: sqlite3.Connection, items: list[dict], state: str, *, note: str
     ids = [item["id"] for item in items]
     store.clear_state(conn, f"{_READ_ALONE}{items[-1]['conversation']}")
     for item in store.in_conversation(conn, items[-1]["conversation"]) if replaces_earlier else ():
-        if item["state"] == store.TRIAGED and item["id"] < min(ids):
+        if item["state"] in (store.TRIAGED, store.WAITING) and item["id"] < min(ids):
             store.update_triage(conn, item["id"], state=store.SUPERSEDED, note=_WROTE_AGAIN, draft=item["draft"], kind=item["class"],
                                 priority=item["priority"], language=item["language"], promised=bool(item["promised"]))
     for item in items:
