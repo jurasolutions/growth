@@ -17,6 +17,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+import approval_world as aw
 from jura_growth import approvals, config, db, log, paths, timeutil
 from jura_growth.agents.publish import claim, items, kinds
 from jura_growth.cli import cli
@@ -125,6 +126,13 @@ def item(conn, platform: str = "facebook", **given) -> tuple[items.Item, approva
 
 
 def decide(conn, approval, decision: str = "approve", monkeypatch=None):
+    """Ting Yu's answer to a request whose card has gone out, as the sweep would have sent it."""
+    aw.card_goes_out(conn, approval)
+    return decide_with_no_card(conn, approval, decision, monkeypatch)
+
+
+def decide_with_no_card(conn, approval, decision: str = "approve", monkeypatch=None):
+    """A decision on the request exactly as it stands, whether or not its card went out."""
     if monkeypatch is not None:
         monkeypatch.setenv("CONTROL_DISCORD_USER_ID", CONTROL_ID)
     return approvals.decide(conn, approval.id, decision, actor=f"discord:{CONTROL_ID}", origin=Origin.ssh(),

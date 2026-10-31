@@ -14,6 +14,7 @@ import httpx
 import pytest
 import yaml
 
+import approval_world as aw
 from jura_growth import config, paths, timeutil
 from jura_growth.agents.outreach import queue as queue_mod
 from jura_growth.agents.outreach import replies, send
@@ -256,6 +257,7 @@ def decide(conn, approval, decision: str = "approve", monkeypatch=None):
 
     if monkeypatch is not None:
         monkeypatch.setenv("CONTROL_DISCORD_USER_ID", CONTROL_ID)
+    aw.card_goes_out(conn, approval)  # as the sweep would have sent it
     return approvals.decide(conn, approval.id, decision, actor=f"discord:{CONTROL_ID}", origin=Origin.ssh(),
                             source_ref=None, args={})
 

@@ -248,10 +248,12 @@ class SocialPost:
         return None
 
     def on_approve(self, conn: sqlite3.Connection, subject: str, args: dict) -> None:
-        """A typed approval can reach a request whose card was refused, and that would be a yes to
-        words he hasn't read. A post whose card went out whole stands, whatever is learned since.
-        The sweep's own refusal stands until a card goes out, even if this process can't read why.
-        A refusal rolls the decision back, and a skip still works."""
+        """No card, no approval: a typed approval of a request whose card hasn't gone out would be
+        a yes to words he hasn't read, and #social-drafts no longer holds them. A card Discord hasn't
+        taken yet can wait, since the heartbeat posts it, and it stays open for a skip. A post whose
+        card went out whole stands, whatever is learned since. The answer says why: the sweep's own
+        refusal, then what this process can read, then the plain case. The refusal rolls the
+        decision back."""
         from jura_growth import cards  # cards reaches the kinds through the approvals registry
 
         latest = items.latest_request(conn, _item(conn, subject))
@@ -259,7 +261,8 @@ class SocialPost:
             return
         problem = cards.refusal(conn, latest.id) or self.card_problem(conn, subject)
         if problem:
-            raise approvals.BadArgs(f"{problem}, so it can't be approved")
+            raise approvals.BadArgs(f"{problem}. It can't be approved")
+        raise approvals.BadArgs("Its card hasn't gone out yet, so it can't be approved. The heartbeat posts it, and you can decide then")
 
     def own_copy(self, conn: sqlite3.Connection, subject: str) -> tuple[str, ...]:
         """The post's text, as Jura's own copy on its card (`privacy`). A draft past the brand gate only."""

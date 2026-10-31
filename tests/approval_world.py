@@ -182,6 +182,26 @@ def dispatch() -> Origin:
     return Origin.ssh()
 
 
+def card_goes_out(conn, approval) -> None:
+    """What a sweep does for a pending request, with no Discord: its card goes out and `posted_at` is
+    set (`approvals.mark_posted`), unless the sweep has refused it or would (`card_problem`). A test
+    of the card's own path uses the Discord double and `cards.sweep` instead."""
+    from jura_growth import cards
+
+    fresh = approvals.get(conn, approval.id)
+    if fresh is None or fresh.status != approvals.PENDING or fresh.posted_at is not None or cards.refusal(conn, fresh.id):
+        return
+    registered = approvals.kinds().get(fresh.kind)
+    hook = getattr(registered.kind, "card_problem", None) if registered else None
+    if hook is not None and hook(conn, fresh.subject):
+        return
+    if conn.in_transaction:
+        approvals.mark_posted(conn, fresh, f"card-{fresh.number}")
+    else:
+        with db.transaction(conn):
+            approvals.mark_posted(conn, fresh, f"card-{fresh.number}")
+
+
 def approve(conn, approval, *, args=None, origin=None, actor=CONTROL, source_ref=None):
     return approvals.decide(
         conn,

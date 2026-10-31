@@ -592,7 +592,19 @@ def _decided(conn, approval_id: str, decision: str):
     return answer
 
 
+def _card_goes_out(conn, approval) -> None:
+    """The scenario's card, in a window with no webhook to send it to: production would have posted it."""
+    from jura_growth import approvals
+
+    cards.sweep_safely(conn)
+    fresh = approvals.get(conn, approval.id)
+    if fresh is not None and fresh.status == approvals.PENDING and fresh.posted_at is None and not cards.refusal(conn, fresh.id):
+        with db.transaction(conn):
+            approvals.mark_posted(conn, fresh, None)
+
+
 def _approve(conn, approval) -> None:
+    _card_goes_out(conn, approval)
     answer = _decided(conn, approval.id, "approve")
     if answer.answer != "recorded":
         raise Refused(f"{approval.id} couldn't be approved: {answer.text}")

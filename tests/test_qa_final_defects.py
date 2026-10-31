@@ -299,6 +299,66 @@ def test_a_typed_approval_of_a_card_refused_for_a_learned_name_is_refused_in_a_n
     assert approvals.get(conn, request.id).used_at is None
 
 
+def test_a_learned_name_refuses_a_typed_approval_in_a_new_process_with_no_sweep_first(conn, env, monkeypatch, discord_double):
+    """The twin (review 10, St3). No sweep has refused anything, so only what the new process learns
+    can name the reason: take `privacy.learn` out of `card_problem` and the answer loses it."""
+    from uat import seed
+
+    pw.at(monkeypatch, pw.MORNING)
+    _, request = pw.item(conn, "facebook", text=PICTURE)
+    seed._lead(conn, 1, "Acme Pte Ltd", "acme.example.sg")
+    seed._contact(conn, 1, "marta.picture@acme.example.sg", "named", "https://acme.example.sg/contact")
+    conn.commit()
+    assert cards.refusal(conn, request.id) is None
+    monkeypatch.setenv("CONTROL_DISCORD_USER_ID", pw.CONTROL_ID)
+    ran = subprocess.run([sys.executable, "-c", NEW_PROCESS_DECIDES, request.id], env=dict(os.environ),
+                         capture_output=True, text=True, timeout=60)
+    assert ran.returncode == 0, ran.stderr
+    answer = json.loads(ran.stdout)
+    assert answer["answer"] == approvals.REFUSED, answer["text"]
+    assert "can't show the exact text" in answer["text"]
+
+
+# --- review 10, B1: no card, no approval ------------------------------------------------------------
+
+
+def test_a_typed_approval_of_a_post_whose_card_has_not_gone_out_is_refused(conn, social_day, monkeypatch):
+    social_day.mode = "500"
+    submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    assert first.posted_at is None and cards.refusal(conn, first.id) is None
+    pw.at(monkeypatch, pw.TEN)
+    answer = pw.decide_with_no_card(conn, first, monkeypatch=monkeypatch)
+    assert answer.answer == approvals.REFUSED, answer.text
+    assert "card hasn't gone out" in answer.text
+    assert approvals.get(conn, first.id).status == approvals.PENDING
+    pw.run(conn, monkeypatch=monkeypatch)
+    assert pw.next_item(conn).item is None
+    assert approvals.get(conn, first.id).used_at is None
+
+
+def test_once_the_heartbeat_posts_the_card_the_same_post_can_be_approved(conn, social_day, monkeypatch):
+    social_day.mode = "500"
+    submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    pw.at(monkeypatch, pw.TEN)
+    assert pw.decide_with_no_card(conn, first, monkeypatch=monkeypatch).answer == approvals.REFUSED
+    social_day.mode = "accept"
+    conn.commit()
+    assert cards.sweep(conn) == 2
+    assert pw.decide_with_no_card(conn, approvals.get(conn, first.id), monkeypatch=monkeypatch).answer == approvals.RECORDED
+    pw.run(conn, monkeypatch=monkeypatch)
+    assert pw.next_item(conn).item is not None
+
+
+def test_a_post_whose_card_has_not_gone_out_can_still_be_skipped(conn, social_day, monkeypatch):
+    social_day.mode = "500"
+    submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    assert pw.decide_with_no_card(conn, first, "skip", monkeypatch=monkeypatch).answer == approvals.RECORDED
+    assert approvals.get(conn, first.id).status == approvals.SKIPPED
+
+
 def test_a_card_the_sweep_refused_stays_refused_when_the_vocabulary_cannot_be_read(conn, env, monkeypatch, discord_double):
     """The sweep's refusal is on record, so a plug-in that fails to teach the name can't reopen it."""
     from jura_growth import privacy
