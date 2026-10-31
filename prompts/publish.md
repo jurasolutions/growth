@@ -101,7 +101,8 @@ end with `FAIL:` and the reason.
 - **Permalink:** after posting, the post appears at the top of the Page. Its timestamp links to
   its own page, on the same host as the target URL: on Facebook, an address on
   `www.facebook.com` with `/posts/` or `story_fbid` in it. Use that address, never a feed or
-  notification link.
+  notification link. For the live text, if the post is cut short with "See more", click it once
+  to show it all.
 - **Stop signals:** the "Log in to Facebook" page (`login`); "Confirm you're human" or a security
   check (`captcha`); "We noticed unusual activity" or a checkpoint asking you to confirm who you
   are (`checkpoint`); "You're temporarily restricted" or "Your Page has been restricted"
@@ -134,7 +135,8 @@ end with `FAIL:` and the reason.
   `https://www.instagram.com/p/<code>/` (or, if Instagram shows it as a reel,
   `https://www.instagram.com/reel/<code>/`), never the profile, a
   feed or an explore link. `publish done` refuses any other address. For the live text, write only the caption under the account
-  name: not the account name, the date, likes or comments.
+  name: not the account name, the date, likes or comments. If the caption is cut short with
+  "more", click it once to show it all.
 - **Stop signals:** the Instagram login page or "Log in to continue" (`login`); "Help us confirm
   it's you" or a security code request (`checkpoint`); "Confirm you're human" (`captcha`); "We
   suspended your account" or "Your account has been restricted" (`restriction`); "Try again
@@ -211,7 +213,8 @@ Facebook group (`group`) as the Jura Page, never as a person.
   `https://www.facebook.com/groups/<group>/permalink/<number>/`. Open it with `navigate`. Use
   that address, never the group's own page, a feed, a notification or the Page's timeline:
   `publish done` refuses any other address. For the live text, write only the post's text: not
-  the Page's name, the time, reactions or comments.
+  the Page's name, the time, reactions or comments. If the text is cut short with "See more",
+  click it once to show it all.
 - **Stop signals:** the "Log in to Facebook" page (`login`); "Confirm you're human" or a security
   check (`captcha`); a checkpoint asking you to confirm who you are (`checkpoint`); "You're
   temporarily restricted" or "Your Page has been restricted" (`restriction`); "You can't post

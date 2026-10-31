@@ -298,3 +298,15 @@ def test_a_removal_or_admin_warning_in_a_group_is_a_stop_that_skips_the_group():
 def test_a_post_held_for_an_admins_approval_stops_rather_than_guessing_a_permalink():
     post = part(section(COMMUNITY), "Post")
     assert re.search(r"admin's approval", post) and "--reason unidentified" in post
+
+
+@pytest.mark.parametrize(("section", "next_section", "word"), [
+    ("### Social post: Facebook Page", "### Social post: Instagram", '"See more"'),
+    ("### Social post: Instagram", "### Social post: LinkedIn company page", '"more"'),
+    ("### Community post: a Facebook group as the Jura Page", "### Group join as the Jura Page", '"See more"'),
+])
+def test_every_long_post_platform_says_to_show_all_the_text_before_reading_it_back(section, next_section, word):
+    """A cut-short read-back is a mismatch, and a mismatch pauses publishing (technical review B3)."""
+    part = PROMPT.split(section, 1)[1].split(next_section, 1)[0]
+    flat = " ".join(part.split())
+    assert f"cut short with {word}" in flat and "click it once to show it all" in flat
