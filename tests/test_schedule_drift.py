@@ -7,6 +7,7 @@ the newest at the last 22:00 before now, the other at 22:01 the day before.
 
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 from datetime import datetime, timedelta
 
@@ -304,7 +305,7 @@ def test_the_shipped_list_has_daily_jobs_far_enough_apart_for_the_check_to_fire(
 
 
 def test_steady_drift_reaches_needs_you(clock):
-    growth_db_with({"social": last_two("22:00", "22:01"), "one-pager": last_two("23:00")})
+    growth_db_with({"social": last_two("22:30", "22:31"), "one-pager": last_two("00:00")})
     snapshot = read()
     assert snapshot.db_state == mission.OK
     assert snapshot.drift is not None
@@ -326,33 +327,29 @@ def test_the_two_day_wake_says_nothing(clock):
 
 
 def test_the_one_pagers_own_run_clears_the_line_after_a_restart(clock):
-    growth_db_with(
-        {
-            "heartbeat": last_two("03:00"),
-            "digest": last_two("08:30"),
-            "one-pager": [days_ago(0, "08:00"), days_ago(1, "23:00"), days_ago(2, "23:00")],
-        }
-    )
-    assert read().drift is None
+    growth_db_with({"heartbeat": last_two("03:00"), "digest": last_two("09:05"), "one-pager": [days_ago(1, "00:00"), days_ago(2, "00:00")]})
+    assert read(days_ago(0, "08:55")).drift is not None  # before today's one-pager, the drift is real
+    growth_db_with({"one-pager": [days_ago(0, "09:00")]})
+    assert read(days_ago(0, "09:05")).drift is None
 
 
 def test_a_one_pager_fired_by_a_late_wake_still_says_so(clock):
-    """A Mac asleep overnight with a real drift: the one-pager fires at an 08:10 wake, 10 minutes
+    """A Mac asleep overnight with a real drift: the one-pager fires at a 09:10 wake, 10 minutes
     past its slot. Its own run must not silence the one place the line appears."""
     growth_db_with(
         {
-            "digest": last_two("08:30"),
+            "digest": last_two("09:05"),
             "backup": last_two("14:30"),
-            "social": last_two("22:00"),
-            "one-pager": [days_ago(0, "08:10")],
+            "social": last_two("22:30"),
+            "one-pager": [days_ago(0, "09:10")],
         }
     )
-    snapshot = read(days_ago(0, "08:10"))
+    snapshot = read(days_ago(0, "09:10"))
     assert "about 9 hours off" in needs_you(snapshot)
 
 
 def test_a_skipped_run_counts_as_a_start(clock):
-    growth_db_with({"social": last_two("22:00"), "one-pager": last_two("23:00")}, status="skipped")
+    growth_db_with({"social": last_two("22:30"), "one-pager": last_two("00:00")}, status="skipped")
     assert read().drift is not None
 
 
@@ -374,7 +371,7 @@ def test_the_line_comes_after_failures_and_before_missed_slots():
 
 
 def test_reading_drift_changes_no_file_and_never_opens_a_writable_connection(clock, monkeypatch):
-    growth_db_with({"social": last_two("22:00"), "one-pager": last_two("23:00")})
+    growth_db_with({"social": last_two("22:30"), "one-pager": last_two("00:00")})
     folders = world.watched()
     before = world.stat_snapshot(*folders)
 
@@ -385,6 +382,31 @@ def test_reading_drift_changes_no_file_and_never_opens_a_writable_connection(clo
     monkeypatch.setattr(db, "session", refuse)
     assert read().drift is not None
     assert world.stat_snapshot(*folders) == before
+
+
+def read_after_install(installed_at, now: datetime = NOW) -> mission.Snapshot:
+    source = world.source(now.isoformat(), jobs=shipped_jobs())
+    return mission.read(dataclasses.replace(source, installed_at=installed_at))
+
+
+def test_runs_on_the_old_times_from_before_an_install_are_not_drift(clock):
+    """Morning brief final review M2: the times moved half an hour, and the runs before the install
+    still sit on the old ones. Those aren't launchd keeping a wrong zone."""
+    growth_db_with({"app-factory": [days_ago(1, "06:30"), days_ago(2, "06:30")], "social": [days_ago(1, "07:00"), days_ago(2, "07:00")]})
+    assert read().drift is not None  # with no install time, they read as drift
+    assert read_after_install(lambda job: days_ago(1, "12:00")).drift is None
+
+
+def test_a_steady_drift_after_the_install_still_reports(clock):
+    growth_db_with({"social": last_two("22:30"), "one-pager": last_two("00:00")})
+    found = read_after_install(lambda job: days_ago(5, "12:00"))
+    assert found.drift is not None and found.drift.hours == -9
+
+
+def test_a_job_with_no_install_time_still_counts_beside_jobs_with_one(clock):
+    growth_db_with({"backup": last_two("14:30"), "social": last_two("22:30"), "one-pager": last_two("00:00")})
+    assert read_after_install(lambda job: None if job == "backup" else days_ago(0, "07:00")).drift is None  # only backup is left
+    assert read_after_install(lambda job: None if job in ("backup", "social") else days_ago(0, "07:00")).drift is not None
 
 
 def test_a_hot_journal_is_still_the_unfinished_write_state(clock, tmp_path):

@@ -430,8 +430,8 @@ def test_drift_seeds_the_rows_that_flag_steady_drift_at_the_real_slots(uat):
     with db.session() as conn:
         social = db.rows(conn, "SELECT started_at FROM runs WHERE job = 'social' ORDER BY id DESC")
         pager = db.rows(conn, "SELECT started_at FROM runs WHERE job = 'one-pager' ORDER BY id DESC")
-    assert [r["started_at"] for r in social] == ["2026-11-09T22:00:00+08:00", "2026-11-08T22:01:00+08:00"]
-    assert [r["started_at"] for r in pager] == ["2026-11-09T23:00:00+08:00", "2026-11-08T23:00:00+08:00"]
+    assert [r["started_at"] for r in social] == ["2026-11-09T22:30:00+08:00", "2026-11-08T22:31:00+08:00"]
+    assert [r["started_at"] for r in pager] == ["2026-11-09T00:00:00+08:00", "2026-11-08T00:00:00+08:00"]
     [line] = [item for item in needs_you() if "hours off" in item]
     assert "about 9 hours off" in line and "Restart the Mac once" in line
 

@@ -145,7 +145,7 @@ open "$UAT/cards"
 
 Run between 09:00 and 17:00. Cards can't be raised after 17:00, and publish runs stop at 18:00. Each `fresh` empties the UAT folder.
 
-**S1. 07:00: draft to card (must, AF1, DP1, DP3)**
+**S1. 07:30: draft to card (must, AF1, DP1, DP3)**
 - Do: `fresh social-day --theme ai-news`. It prints each card's A-id.
 - Expect, in #approvals: two cards, one Facebook and one Instagram, saying "decide by <today>, 17:00 SGT".
 - Expect, on each card: the whole post, quoted cleanly with no stray formatting, even split over two messages; sources shown, as "Links in the text" when the post links them and "Sources" when it can't; the status line and the images together at the top, and the answer line at the end of the card; Instagram's four images in order, cover first. The test server shows no buttons, which is expected: you tested those live on 2026-10-31.
@@ -311,7 +311,7 @@ Do them in this order, after 18:05 if you can, so that day's digest isn't confus
 - [ ] Done
 
 **L2. The clock (must, SC1)**
-- Expect, the next morning: the one-pager arrives at 08:00, and the social run update says about 07:00. Two days later, "Needs you" has no line about hours off.
+- Expect, the next morning: the one-pager arrives at 09:00, and the social run update says about 07:30. Two days later, "Needs you" has no line about hours off.
 - If it's still off the day after the restart, run `uv run jura-growth schedule install` again and note it here. The cause was never proved, so this is the real test of it.
 - [ ] Pass  [ ] Fail
 

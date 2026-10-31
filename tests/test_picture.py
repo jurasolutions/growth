@@ -558,7 +558,7 @@ def test_the_decide_heading_shows_a_real_zero():
 
 
 def test_later_today_lists_what_is_still_to_come():
-    assert picture.later_today(world.typical()) == ["Posting window 10:00–16:00", "Send window 09:30", "Digest 17:30"]
+    assert picture.later_today(world.typical()) == ["Posting window 10:00–16:00", "Send window 09:30", "Digest 18:05"]
     assert picture.later_today(world.quiet()) == []
     assert "Nothing else scheduled" in visible(picture.html(world.quiet()))
 

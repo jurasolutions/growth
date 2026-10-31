@@ -164,7 +164,7 @@ def test_jura_s_own_sender_address_stays_on_the_card_through_its_edit(conn, env,
     pw.at(monkeypatch, pw.MORNING)
     pw.social_config(monkeypatch, browser=BOTH)
     address = "tingyu@jurasolutions.sg"
-    monkeypatch.setattr(privacy, "learn", lambda conn=None: privacy.remember_owner(address))
+    monkeypatch.setattr(privacy, "learn", lambda conn=None, **_: privacy.remember_owner(address))
     _, approval = pw.item(conn, "facebook", text=f"Write to {address} about your invoices.\n\nhttps://jurasolutions.sg\n")
     cards.sweep(conn)
     [card] = discord_double.posts("approvals")

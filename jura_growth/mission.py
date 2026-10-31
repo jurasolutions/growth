@@ -323,20 +323,24 @@ def _missing_migrations(conn: sqlite3.Connection, tables: set[str]) -> tuple[str
     return tuple(m for m in expected if m not in done)
 
 
-def _recent_starts(conn: sqlite3.Connection, jobs: Mapping[str, Any]) -> dict[str, list[datetime]]:
-    """The last two start times of each job (`health.schedule_drift`), newest first."""
+def _recent_starts(conn: sqlite3.Connection, jobs: Mapping[str, Any], installed_at: Callable[[str], datetime | None]) -> dict[str, list[datetime]]:
+    """The last two start times of each job (`health.schedule_drift`), newest first. A run from
+    before the job's plist was installed ran on its old time, so it says nothing about the clock.
+    A job with no install time keeps all of its runs."""
     found = {}
     for job in jobs:
         rows = conn.execute("SELECT started_at FROM runs WHERE job = ? ORDER BY id DESC LIMIT 2", (job,)).fetchall()
-        found[job] = [timeutil.parse(row[0]) for row in rows]
+        starts = [timeutil.parse(row[0]) for row in rows]
+        since = installed_at(job)
+        found[job] = [start for start in starts if since is None or start >= since]
     return found
 
 
-def _drift(conn: sqlite3.Connection, jobs: Mapping[str, Any], now: datetime) -> health.Drift | None:
+def _drift(conn: sqlite3.Connection, jobs: Mapping[str, Any], now: datetime, installed_at: Callable[[str], datetime | None]) -> health.Drift | None:
     """A malformed `started_at` costs this one check, never the one-pager. `sqlite3.Error` still
     raises: a hot journal or a lock is the snapshot's `db_state`."""
     try:
-        return health.schedule_drift(_recent_starts(conn, jobs), jobs, now)
+        return health.schedule_drift(_recent_starts(conn, jobs, installed_at), jobs, now)
     except ValueError:
         return None
 
@@ -355,7 +359,7 @@ def _from_db(
         found = slots.classify(source.jobs, records, now, days, installed=loaded, installed_at=source.installed_at)
         facts["slots"] = {key: [_clean_slot(slot) for slot in statuses] for key, statuses in found.items()}
         facts["failures"] = _failures(conn, now)
-        facts["drift"] = _drift(conn, source.jobs, now)
+        facts["drift"] = _drift(conn, source.jobs, now, source.installed_at)
         facts["yesterday"], facts["spend_today"] = _yesterday(conn, now, _claude_jobs(source.jobs))
         facts["morning"] = _morning(conn, now)
     if "pause_flags" in tables:

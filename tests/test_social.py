@@ -818,7 +818,8 @@ def test_no_draft_command(env, conn):
 # --- digest and precheck ----------------------------------------------------------
 
 
-def test_digest_figures(env, conn, linkedin_on):
+def test_digest_figures(env, conn, monkeypatch, linkedin_on):
+    pw.social_config(monkeypatch, browser=())  # draft mode, the way back: each draft is his to post
     assert social.digest(conn, "2026-10-27")["figures"]["social_drafts_waiting"] == 0
     run_submit(conn, write(paths.work_dir("social") / "2026-10-27", TIP))
     part = social.digest(conn, "2026-10-27")

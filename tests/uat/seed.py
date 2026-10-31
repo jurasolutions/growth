@@ -866,12 +866,12 @@ def _runs_yesterday_and_before(conn, runs: dict[str, tuple[str, str]]) -> None:
 
 def drift(conn) -> None:
     """H5, C1: SC1's steady drift, the jobs firing about 9 hours early by their real slots."""
-    _runs_yesterday_and_before(conn, {"social": ("22:00", "22:01"), "one-pager": ("23:00", "23:00")})
+    _runs_yesterday_and_before(conn, {"social": ("22:30", "22:31"), "one-pager": ("00:00", "00:00")})
 
 
 def late_wake(conn) -> None:
-    """H5, C2: SC1's hardest quiet case, a Mac waking at 09:30 two days running, with `social` 2.5
-    hours past its slot and `app-factory` 3."""
+    """H5, C2: SC1's hardest quiet case, a Mac waking at 09:30 two days running, with `social` 2
+    hours past its slot and `app-factory` 2.5."""
     _runs_yesterday_and_before(conn, {"social": ("09:30", "09:30"), "app-factory": ("09:30", "09:30")})
 
 
