@@ -64,7 +64,7 @@ def test_with_no_env_file_of_its_own_it_is_refused(uat, monkeypatch):
 
 @pytest.mark.parametrize("inside", [paths.REPO_ROOT, paths.JURA_ROOT / "repos" / "growth"])
 def test_an_env_file_in_the_repo_is_refused(uat, monkeypatch, inside):
-    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(inside / ".env"))
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(inside / "uat.env"))  # beside .env, which no test may even stat
     assert "JURA_GROWTH_ENV_FILE" in seed.refusal(uat)
 
 
@@ -106,6 +106,11 @@ def uat_env(monkeypatch, tmp_path, line: str):
     "https://ptb.discord.com/api/webhooks/1234/live-token-in-a-test",
     "https://discordapp.com/api/webhooks/1234/live-token-in-a-test",
     "https://discord.com/api/webhooks/%31234/live-token-in-a-test",
+    "https://discord.com/api/webhooks/1/../1234/live-token-in-a-test",
+    "https://discord.com/api/webhooks/./1234/live-token-in-a-test",
+    "https://discord.com/api/webhooks/1/%2e%2e/1234/live-token-in-a-test",
+    "https://discord.com/api/webhooks/01234/live-token-in-a-test",
+    "https://discord.com/api/webhooks/0001234/live-token-in-a-test/",
 ])
 def test_a_live_webhook_in_any_spelling_in_the_env_file_is_refused_and_not_printed(uat, monkeypatch, tmp_path, spelling):
     uat_env(monkeypatch, tmp_path, f"DISCORD_WEBHOOK_FEED={spelling}")
@@ -116,6 +121,18 @@ def test_a_live_webhook_in_any_spelling_in_the_env_file_is_refused_and_not_print
 def test_the_test_servers_webhook_in_the_env_file_is_allowed(uat, monkeypatch, tmp_path):
     uat_env(monkeypatch, tmp_path, "DISCORD_WEBHOOK_FEED=https://discord.com/api/webhooks/9/test-server")
     assert seed.refusal(uat) is None
+
+
+@pytest.mark.parametrize("path", ["1/../9", "./9", "9/./token", "9/../token"])
+def test_a_dot_segment_in_a_webhook_path_is_refused_whatever_the_id(uat, monkeypatch, tmp_path, path):
+    """No test-server webhook needs one, and `httpx` resolves it before it sends."""
+    uat_env(monkeypatch, tmp_path, f"DISCORD_WEBHOOK_FEED=https://discord.com/api/webhooks/{path}")
+    assert "DISCORD_WEBHOOK_FEED" in seed.refusal(uat)
+
+
+def test_digits_that_are_not_ascii_are_refused_as_no_id(uat, monkeypatch, tmp_path):
+    uat_env(monkeypatch, tmp_path, "DISCORD_WEBHOOK_FEED=https://discord.com/api/webhooks/\uff11\uff12\uff13\uff14/x")
+    assert "DISCORD_WEBHOOK_FEED" in seed.refusal(uat)
 
 
 def test_a_keychain_value_in_the_env_file_is_refused_and_not_printed(uat, monkeypatch, tmp_path):

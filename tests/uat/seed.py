@@ -204,10 +204,21 @@ def _webhook_refusal() -> str | None:
     return _live_webhook_refusal(Path(value))
 
 
-def _webhook_id(url: str) -> str | None:
-    """A Discord webhook's id, however its URL is spelled: any host, API version, slash or query."""
-    match = re.search(r"/webhooks/+(\d+)", unquote(urlsplit(url).path), re.I)
-    return match.group(1) if match else None
+def _webhook_ids(url: str) -> set[int]:
+    """Every number in a Discord webhook's path, as numbers, however it is spelled: any host, API
+    version, slash, query, percent-encoding or leading zero. Empty when it can't be read as a webhook:
+    no ASCII digits for an id, or a `.` or `..` segment, which `httpx` resolves before it sends."""
+    path = urlsplit(url).path
+    while (decoded := unquote(path)) != path:
+        path = decoded
+    parts = [part for part in path.replace("\\", "/").split("/") if part]
+    lowered = [part.lower() for part in parts]
+    if "." in parts or ".." in parts or "webhooks" not in lowered:
+        return set()
+    after = parts[lowered.index("webhooks") + 1:]
+    if not after or not re.fullmatch(r"[0-9]+", after[0]):
+        return set()
+    return {int(part) for part in after if re.fullmatch(r"[0-9]+", part)}
 
 
 def _live_webhook_refusal(env_file: Path) -> str | None:
@@ -217,25 +228,25 @@ def _live_webhook_refusal(env_file: Path) -> str | None:
     found = [path for path in LIVE_ENV_FILES if path.exists()]
     if not found:
         return "no live env file to compare the webhooks against: export JURA_ROOT, as uat.md says"
-    live: set[str] = set()
+    live: set[int] = set()
     for path in found:
         for name, url in config._parse_env(path).items():
             if not name.startswith(discord.WEBHOOK_ENV_PREFIX) or not url:
                 continue
             resolved = config._keychain(url.removeprefix("keychain:")) if url.startswith("keychain:") else url
-            found_id = _webhook_id(resolved or "")
-            if found_id is None:
+            found_ids = _webhook_ids(resolved or "")
+            if not found_ids:
                 return f"{name} in the live env file can't be read to compare against: check it, then run this again"
-            live.add(found_id)
+            live |= found_ids
     for name, url in config._parse_env(env_file).items():
         if not name.startswith(discord.WEBHOOK_ENV_PREFIX) or not url or _cannot_leave_this_mac(url):
             continue
         if url.startswith("keychain:"):
             return f"{name} in the UAT env file is a keychain value, which can't be checked: write the test server's webhook itself"
-        found_id = _webhook_id(url)
-        if found_id is None:
+        found_ids = _webhook_ids(url)
+        if not found_ids:
             return f"{name} in the UAT env file isn't a webhook address that can be checked: write the test server's webhook itself"
-        if found_id in live:
+        if found_ids & live:
             return f"{name} in the UAT env file is a live webhook: use the test server's"
     return None
 
