@@ -2,26 +2,27 @@
 
 *For Ting Yu. Written 2026-10-31 by the functional lead against `prd-jura-approvals-first-social-depth-2026-10-31.md`. AC numbers are the PRD's own, as reworded in `reviews/functional.md` section 3. Steps expect the decisions in that review (B1 to B6, S1 to S14).*
 
-*Before this reaches him: the script was written without a shell, so nothing here has been run. The QA lead should dry-run it once the harness items below exist, and fix any step that doesn't work as written.*
+*Dry-run on 2026-10-31 for ticket 4: every command here was run as written with `JURA_GROWTH_DISCORD=off`, a stand-in for `claude` first on `PATH`, and the clock frozen on a business day. That proves the commands and what they write. What a card and a feed line say was read from the Discord double in `tests/test_uat_seed_discord_flow.py`. Nothing here has yet run against a real webhook or a real Chrome publish: those steps are the point of this script. The QA lead dry-runs it again before it reaches him.*
 
 ## What merging switches on
 
 Read this first. Merging is your acceptance, and you haven't read the PRD.
 
 - Each morning's posts come to #approvals as cards. **Approving one posts it for real**, through your Chrome, on Facebook or Instagram. Meta's terms forbid automated posting; you accepted that risk at the browser publishing sign-off.
-- Skip it or ignore it, and nothing posts. Nothing goes out without your approval of that exact post.
+- You decide by 17:00 SGT. Skip it or ignore it, and nothing posts. Nothing goes out without your approval of that exact post.
+- A post the masking layer would change is refused at the brand gate, so no card shows a masked word and what you read is what posts. A second failure drops that platform's post for the day, and #alerts says why.
 - Outreach emails and app PRDs already work this way. They gain a line in their feeds.
-- Approving an app PRD still doesn't build it. You build it by hand until Dispatch polls handoffs.
+- Approving an app PRD hands it to Dispatch, which builds it on its own branch from `main` (`dispatch_builds` is on). You don't build it by hand. Nothing reaches the site until you approve its release as well.
 
 ## How this script is laid out
 
 | Part | Checks | When | Touches anything real? |
 |---|---|---|---|
 | P | Pictures | Any time, before merge | No |
-| S | Social flow, on the fixture site | 09:00 to 18:00 | Your Chrome on `publish-fixture.localhost` only, and the test Discord server |
+| S | Social flow, on the fixture site | 09:00 to 17:00, any day | Your Chrome on `publish-fixture.localhost` only, and the test Discord server |
 | E | Outreach feed lines | A business day, 09:30 to 16:30 | Test server and the Resend stub. No email leaves |
-| A | App PRD feed lines | Any time | Test server only |
-| C | The schedule check | Any time | Test server only |
+| A | App PRD feed lines | Any time, any day | Test server only. Dispatch reads the live folders, never this one, so nothing is built |
+| C | The schedule check | Any time, any day | Test server only |
 | L | After merge: your steps and the first real posts | First live days | **Yes**: real posts |
 
 A fail on a step marked **(must)** means the work isn't accepted yet. No step before Part L posts anything real or needs the Dispatch UAT key: the harness records decisions through the same code Dispatch reaches.
@@ -30,16 +31,16 @@ The feed lines for `group-rules`, `community-post` and `group-join` are checked 
 
 ## Harness items this script needs
 
-These go in ticket 2. They are test code, and the seed still refuses any folder that isn't temporary.
+Built in ticket 4 (`tests/uat/seed.py`, covered by `tests/test_uat_seed_discord_flow.py`). They are test code, and the seed still refuses any folder that isn't temporary.
 
 | # | Item | Used in |
 |---|---|---|
-| H1 | Scenario `social-day [--theme ID]`: a checked-in sample submission (Facebook at 280 words, Instagram at 240, 3 detailed items, a visual, 2 sources on 2 hosts, dated today), put through the real `social submit` with `verify_links: false` in `$UAT/config`. Two pending cards with real rendered images. With the fixture URL set, the pages are `page.html` and `instagram.html` | S, E |
-| H2 | Scenario `decide --approval A-nnnn --decision approve\|skip`: calls `approvals.decide` as `_approve` does, sweeps the cards and prints the answer | S, E, A |
-| H3 | Scenario `app-prd`: a factory-shape PRD with its `app-build` request raised through the kind's own code. It replaces `new-app-prd`, which was never added | A |
-| H4 | Scenario `app-built`: reports that app as built with a stand-in commit and preview, raising its `app-release` request | A |
-| H5 | Scenarios `drift` and `late-wake`: the run rows in SC1's reworded criterion | C |
-| H6 | Refuse a non-business day only for the outreach scenarios. Social runs daily | S, A, C |
+| H1 | Scenario `social-day [--theme ID] [--offline]`: the checked-in sample in `tests/uat/social-day/` (Facebook at 280 words, Instagram at 240, 3 detailed items, a visual, 2 sources on 2 hosts, dated today), put through the real `social submit` with `verify_links: false` in `$UAT/config`. Two pending cards with real rendered images, and it prints their A-ids. With the fixture URL set, the pages are `page.html` and `instagram.html`; without it, test pages, never the real ones | S |
+| H2 | Scenario `decide --approval A-nnnn --decision approve\|skip`: calls `approvals.decide` as `_approve` does, sweeps the cards and prints the answer, whatever it is | S, E, A |
+| H3 | Scenario `app-prd`: a factory-shape PRD (`tests/uat/app-prd.md`) with its `app-build` request raised through the kind's own code. Each run is a new app, from APP-101. It replaces `new-app-prd`, which was never added | A |
+| H4 | Scenario `app-built [--app APP-nnn]`: reports the newest waiting handoff, or that app, as built with a stand-in commit and preview, raising its `app-release` request. Its repository is `$UAT/site`, and `JURA_SITE_REPO` must point there | A |
+| H5 | Scenarios `drift` and `late-wake`: the run rows in SC1's reworded criterion, yesterday and the day before | C |
+| H6 | Refuse a non-business day only for `outreach-live`, `edit-draft` and `shadow-trial`. Social runs daily, so everything else seeds on a weekend | S, A, C |
 | H7 | `_prepare_config` sets `post_buttons: false` in the UAT copy, because a plain webhook can't carry buttons | All |
 
 ## Before you start (once)
@@ -54,7 +55,7 @@ These go in ticket 2. They are test code, and the seed still refuses any folder 
    UNSUBSCRIBE_SECRET=uat-unsubscribe-secret
    ```
 
-   The Resend key is a fake value and must never work.
+   The Resend key is a fake value and must never work. Run `chmod 600 ~/jura-uat/uat.env`, or every command warns about it.
 
 3. **Chrome** open on the engine's profile, chosen in `/chrome`.
 
@@ -86,7 +87,7 @@ fresh() { rm -rf "$UAT" && mkdir "$UAT" && uv run python -m tests.uat.seed "$UAT
 decide() { uv run python -m tests.uat.seed "$UAT" --scenario decide --approval "$1" --decision "$2" --today "$TODAY"; }
 ```
 
-Find a card's A-id on the card, or with `uv run jura-growth approvals`.
+Find a card's A-id on the card, in what the seed prints, or with `uv run jura-growth approvals`.
 
 `JURA_GROWTH_NOW` freezes the clock for one command. It refuses the live folders, so it's safe here.
 
@@ -96,9 +97,10 @@ Find a card's A-id on the card, or with `uv run jura-growth approvals`.
 
 Your complaint was "no pictures, so it looks dull". The design system rules out stock images and drawn scenes, so the answer is a diagram of the post's own facts. **If these don't look good to you, stop here.** That's the moment to say so, or to reopen photographs (`PRD §6`, question 1).
 
-The sample words are test data. They stay in a temp folder and the number is a stand-in.
+The sample words are test data. They stay in a temp folder and the number is a stand-in. `fresh base` comes first because it makes `$UAT/config`: with that folder missing the brand check has no banned words to read, and P2's second render would pass.
 
 ```bash
+fresh base
 mkdir -p "$UAT/cards"
 cat > "$UAT/cards/flow.json" <<'EOF'
 {"layout": "headline", "overline": "AI news", "headline": "A model reads the invoice and you check it",
@@ -141,19 +143,20 @@ open "$UAT/cards"
 
 ## Part S: one social day, on the fixture
 
-Run between 09:00 and 18:00. Each `fresh` empties the UAT folder.
+Run between 09:00 and 17:00. Cards can't be raised after 17:00, and publish runs stop at 18:00. Each `fresh` empties the UAT folder.
 
 **S1. 07:00: draft to card (must, AF1, DP1, DP3)**
-- Do: `fresh social-day --theme ai-news`
+- Do: `fresh social-day --theme ai-news`. It prints each card's A-id.
 - Expect, in #approvals: two cards, one Facebook and one Instagram, saying "decide by <today>, 17:00 SGT".
-- Expect, on each card: the whole post, quoted cleanly with no stray formatting, even split over two messages; sources shown; the status line, answer line and images together at the top; Instagram's images in order, cover first. The test server shows no buttons, which is expected: you tested those live on 2026-10-31.
+- Expect, on each card: the whole post, quoted cleanly with no stray formatting, even split over two messages; sources shown, as "Links in the text" when the post links them and "Sources" when it can't; the status line and the images together at the top, and the answer line at the end of the card; Instagram's four images in order, cover first. The test server shows no buttons, which is expected: you tested those live on 2026-10-31.
+- Expect: no masked word on either card. A post the masking layer would change never reaches a card: it is refused at the brand gate.
 - Expect: you could decide from the card alone.
 - Expect, in #social-drafts: no post text, no image. Search the test server for `by hand`: no results.
 - [ ] Pass  [ ] Fail
 
 **S2. Approve: Facebook posts on the fixture (must, AF2, FD1, FD2)**
 - Do: `decide <Facebook A-id> approve`
-- Expect: the card reads "Approved by Ting Yu, hh:mm SGT". One line in #social-drafts: `A-nnnn approved`, the post's title, "It goes out on the next publish run, by 18:00 SGT. The run's update here gives the post's address."
+- Expect: the card reads "Approved by Ting Yu, hh:mm SGT". One line in #social-drafts: `A-nnnn approved`, the post's title, "It goes out on a publish run today, by 18:00 SGT. The run's update here gives the post's address."
 - Do: `uv run jura-growth run publish --ignore-schedule`, and watch the tab.
 - Expect: one new tab, text typed once, image attached, Post clicked once, tab closed. Your other tabs are untouched.
 - Expect, in #social-drafts: one run update with `A-nnnn · Facebook Page · posted · <fixture address>`, and no second "approved" line. `uv run jura-growth publish queue` shows it done.
@@ -173,7 +176,8 @@ Run between 09:00 and 18:00. Each `fresh` empties the UAT folder.
 
 **S5. Unanswered (must, FD1)**
 - Do: `fresh social-day --theme ai-news`, then `JURA_GROWTH_NOW="${TODAY}T18:05:00+08:00" uv run jura-growth digest`
-- Expect: both cards read "Expired: not approved in time". Two lines in #social-drafts, each `A-nnnn expired`. The digest in #daily-digest counts them as expired. Nothing posted.
+- Expect: both cards read "Expired: not approved in time". Two lines in #social-drafts, each `A-nnnn expired`. The digest's Publishing line in #daily-digest says "2 expired". Nothing posted.
+- Known wording gap, not a fail: the digest's Social line still says "2 drafts with no card", and its summary "2 social drafts waiting". Both drafts are over. It is logged for the quality gate.
 - [ ] Pass  [ ] Fail
 
 **S6. Late in the day (must, AF2)**
@@ -191,7 +195,7 @@ Run between 09:00 and 18:00. Each `fresh` empties the UAT folder.
 
 **S8. Publishing paused (should, S8)**
 - Do: `fresh social-day --theme ai-news`, `uv run jura-growth pause publish`, then `decide <Facebook A-id> approve`.
-- Expect: the feed line says publishing is paused. `publish next` gives nothing due. `uv run jura-growth resume publish` lets it claim.
+- Expect: the feed line ends "Publishing is paused, so nothing goes out until you resume it." `uv run jura-growth publish next --json` gives nothing due. `uv run jura-growth resume publish` lets it claim.
 - [ ] Pass  [ ] Fail
 
 **S9. A run after the deadline (must, AF4)**
@@ -201,8 +205,7 @@ Run between 09:00 and 18:00. Each `fresh` empties the UAT folder.
 
 **S10. The way back (must, AF5)**
 - Do: `fresh base`. Set Facebook's `publish_mode: draft` in `$UAT/config/social.yaml`. Then seed the day without emptying the folder: `uv run python -m tests.uat.seed "$UAT" --scenario social-day --theme ai-news --today "$TODAY"`.
-- Expect: Facebook's post and "post it by hand" in #social-drafts, with no Facebook card. Instagram has a card and no hand-post text.
-- [ ] Pass  [ ] Fail
+- Expect: Facebook's post and "post it by hand" in #social-drafts, with no Facebook card. Instagram has a card and no hand-post text.- [ ] Pass  [ ] Fail
 
 ---
 
@@ -223,11 +226,13 @@ fresh base
 uv run python -m tests.uat.seed "$UAT" --scenario outreach-live --today "$TODAY"
 ```
 
-Set `approvals.discord_buttons: true` in `$UAT/config/settings.yaml` only, then run `uv run jura-growth outreach send-due`, which raises five cards.
+Outreach is the only part the seed refuses on a weekend or a public holiday.
+
+Set `approvals.discord_buttons: true` in `$UAT/config/settings.yaml` only, then run `uv run jura-growth outreach send-due`, which raises five cards. It prints "nothing approved to send" as it does: nothing is approved yet.
 
 **E1. Approve, then sent (must, FD1, FD2)**
 - Do: `decide <lead 233's A-id> approve`
-- Expect: one line in #outreach-sent: `A-nnnn approved`, the card's "To:" title with the address masked, and "It goes out on a send run, inside the send window and the day's caps."
+- Expect: one line in #outreach-sent: `A-nnnn approved`, the card's "To:" title, and "It goes out on a send run, inside the send window and the day's caps." The title shows a shared inbox such as `info@example.com.sg` as it is, and masks only an address naming a person.
 - Do: `JURA_GROWTH_NOW="${TODAY}T16:30:00+08:00" uv run jura-growth outreach send-due` (the last slot of the day always sends).
 - Expect: one request at the stub, and one sent message in #outreach-sent with its domain and subject. No further "approved" line.
 - [ ] Pass  [ ] Fail
@@ -238,8 +243,8 @@ Set `approvals.discord_buttons: true` in `$UAT/config/settings.yaml` only, then 
 - [ ] Pass  [ ] Fail
 
 **E3. Nothing else leaked (must, FD1, MC A6)**
-- Do: search the test server for `info@example.com.sg`, `jane.tan` and `re_uat`.
-- Expect: no results in any feed line.
+- Do: search the test server for `jane.tan` and `re_uat`.
+- Expect: no results in any feed line. `info@example.com.sg` is a shared inbox and does show, on purpose. Only five cards exist at warm-up day 3 and neither planted value is among them, so this step checks for leaks from what was raised. A masked named address on a feed line is proved by `tests/test_feed.py`.
 - [ ] Pass  [ ] Fail
 
 **E4. Unanswered (must, FD1; do this last, as it jumps the clock)**
@@ -255,17 +260,19 @@ Set `approvals.discord_buttons: true` in `$UAT/config/settings.yaml` only, then 
 - Do: `fresh base`, `uv run python -m tests.uat.seed "$UAT" --scenario app-prd --today "$TODAY"`.
 - Expect: a card with the PRD attached.
 - Do: `decide <its A-id> approve`
-- Expect: exactly one line in #app-factory: `A-nnnn approved · APP-nnn <name>`, followed by "Build it: open Claude Code in `jurasolutions/` and say: build the approved PRD …". It must be clear that nothing builds on its own.
+- Expect: exactly one line in #app-factory: `A-nnnn approved · APP-nnn <name>`, followed by "Handed to Dispatch: it builds APP-nnn on its own branch from main." Nothing asks you to build it by hand. Nothing is built here either: Dispatch polls the live folders, and this approval is in the UAT folder.
+- Do: `uv run jura-growth apps handoffs`. Expect: the app, with "handed to Dispatch".
 - Do: `uv run jura-growth heartbeat`. Expect: no second line.
 - [ ] Pass  [ ] Fail
 
 **A2. Skip (must, FD1)**
-- Do: seed `app-prd` again, then `decide <its A-id> skip`.
+- Do: `uv run python -m tests.uat.seed "$UAT" --scenario app-prd --today "$TODAY"` again, which makes a new app, then `decide <its A-id> skip`.
 - Expect: one `skipped` line. The PRD is in `$UAT/prd/skipped/apps/` with "Skipped by Ting Yu on <today>" at the top.
 - [ ] Pass  [ ] Fail
 
 **A3. A release says what's next (should, S3)**
-- Do: seed `app-built` for A1's app, then `decide <the release A-id> approve`.
+- Do: `JURA_SITE_REPO="$UAT/site" uv run python -m tests.uat.seed "$UAT" --scenario app-built --today "$TODAY"`. It reports A1's app as built, in a stand-in repository inside the UAT folder, and prints the release's A-id.
+- Do: `JURA_SITE_REPO="$UAT/site" decide <the release A-id> approve`
 - Expect: one line naming `/growth apps release-plan APP-nnn`.
 - [ ] Pass  [ ] Fail
 
@@ -338,7 +345,7 @@ Open a source or two. Any figure on the picture should be there.
 - [ ] Pass  [ ] Fail
 
 **L7. Real emails and app PRDs (should)**
-- Expect, once research is running: feed lines in #outreach-sent and #app-factory as in Parts E and A.
+- Expect, once research is running: feed lines in #outreach-sent and #app-factory as in Parts E and A. An approved app PRD goes to Dispatch, which builds it on its own branch; its release comes back to you as a card.
 - [ ] Pass  [ ] Fail
 
 ## Sign-off
