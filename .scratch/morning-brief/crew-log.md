@@ -98,3 +98,15 @@ decisions: B4: a plug-in line's first line goes on the picture; its detail stays
 decisions: test_morning_order has two mornings, because queue tops up leftovers at 06:40, so the 08:30 job raises only when research queues nothing
 questions: -
 evidence:  pytest -> 4342 passed, 0 skipped; pyright 13 touched modules -> 0 errors; real fonts worst 1548 px; merge-tree with approvals-first -> conflicts only in health.py, mission.py
+
+## 2026-10-31T23:10+0800 reviewer (final), qa-engineer, conductor
+status:    done
+persona:   reviewer, qa-engineer, conductor
+ticket:    final
+artifacts: reviews/code-review-final.md; reviews/qa-01.md; issues/03 to 08; tests/test_qa_01_defects.py (red on purpose)
+decisions: all defects 03 to 08 and final B1, B2, S1 to S4, St1, St2 go to one fix round
+decisions: E15: real items sort ahead of "no trace" lines, so the ICP line or a live-outreach blocker can't fall under "and N more"
+decisions: S6 (copy the guides to outputs/growth/setup) goes in the after-merge steps; M1 to M4 are done at the rebase on approvals-first, whichever way the merge order falls
+decisions: issue 03: the morning post must go out, or leave a clear trace, past a long lock. The developer chooses the smallest way, within Dispatch's 60-second window
+questions: -
+evidence:  pytest without the defect file -> 4342 passed, 0 skipped; with it -> 17 failed, 4342 passed; --live-fonts -> problems [] on 5 fixtures, all three fonts loaded; full.png and quiet.png read by the conductor
