@@ -94,3 +94,13 @@ decisions: round 1 SP-B1, SEC-B1, SEC-B2 and round 2 R2-B1, R2-B2 fixed; guards,
 decisions: accepted cost: a post naming a word the masking layer changes is refused, and a second failure drops that platform's day. Link case rare (reviewer: 3 of 34 shapes, live 0 of 3)
 questions: -
 evidence:  reviews/code-review-02.md
+
+## 2026-11-01T01:10+0800 developer (ticket 04, appended by the conductor)
+status:    done
+persona:   developer
+ticket:    04
+artifacts: crew/approvals-first-social-depth-04-uat-harness eaf5654 8e4c06a; tests/uat/; reviews/uat.md
+decisions: H1 to H7 built, test code only; uat.md corrected for the 17:00 decide-by, the masked-word refusal and dispatch_builds on
+questions: -
+evidence:  uv run pytest -> 5074 passed, none skipped; Parts P to C dry-run with Discord off and a stand-in claude
+open:      for the final review: a missing config folder silently disables the buzzword check; expired drafts read "2 social drafts waiting" in the digest
