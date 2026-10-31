@@ -174,13 +174,16 @@ time or money ("saves you hours", "in seconds"). Never mention Jura client count
    second brand failure drops today's PRD. If it was one of Ting Yu's ideas, hold it first
    (step 5), then finish with `FAIL: brand check failed twice`.
 4. If `submit-prd` refuses because of a limit, finish with `SKIP: <reason>`.
+   If it answers `refused: the backlog is busy, try submit-prd again`, nothing was filed and no
+   attempt was used: run the same `submit-prd` once more in this run. If it is still busy, finish
+   with `SKIP: backlog busy`. Never hold an idea because the backlog was busy.
 5. If the PRD was for one of Ting Yu's ideas and it still can't be filed, hold the idea, so it
    isn't first again tomorrow:
    `jura-growth apps hold-idea <slug> --reason "<what submit-prd said, in one plain sentence>"`.
    That covers the brand check fails twice, and any rejection or refusal you can't fix within your
-   two dry runs (a duplicate it found, a source it wouldn't accept). A limit refusal (step 4) is
-   not the idea's fault: don't hold it then. While his oldest idea waits unheld, `submit-prd`
-   refuses any other PRD, so hold it before you fall back to the normal pick.
+   two dry runs (a duplicate it found, a source it wouldn't accept). A limit or busy refusal
+   (step 4) is not the idea's fault: don't hold it then. While his oldest idea waits unheld,
+   `submit-prd` refuses any other PRD, so hold it before you fall back to the normal pick.
 
 ## 5. Finish
 

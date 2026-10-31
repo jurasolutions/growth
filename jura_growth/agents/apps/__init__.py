@@ -69,7 +69,6 @@ def precheck(job: str, conn: sqlite3.Connection) -> str | None:
         return f"the app PRD template is missing ({catalog.template_path()})"
     if builds.raise_waiting(conn):
         cards.sweep_safely(conn)
-    factory.mark_missed(conn)
     return catalog.limit_reason(conn)
 
 
@@ -155,7 +154,7 @@ def _overview(conn: sqlite3.Connection) -> dict:
     files = catalog.prd_files()
     entries, registry_status = catalog.registry()
     live = [e for e in entries if e.get("status") == "live"]
-    rows = backlog.effective(backlog.load(), prd_files=files, live=live)
+    rows = ideas.view(backlog.load())  # the one view the queue's head is judged on, too
     today = timeutil.today_str()
     return {
         "today": today,
@@ -298,7 +297,6 @@ def submit_prd_cmd(file, dry_run, idea_slug) -> str:
     with db.session() as conn:
         if not dry_run:
             builds.raise_waiting(conn, run_id=log.current_run_id())
-            factory.mark_missed(conn)
         result = factory.submit(conn, text, dry_run=dry_run, idea=idea_slug)
         if not dry_run:
             cards.sweep_safely(conn)  # the cards go out once the requests are committed (A12)

@@ -115,14 +115,17 @@ def mark_written(*, name: str, slug: str, app_id: str, prd_path: str, tier: str,
     """`idea` names the row by its slug when the PRD's name and slug differ from it (an idea of
     Ting Yu's, renamed to meet the factory's name rules)."""
     with locked():
-        rows = load()
-        row = next((r for r in rows if r.get("slug") == idea), None) if idea else None
-        return _mark_written(rows, row or find(rows, slug=slug, name=name), name=name, slug=slug, app_id=app_id,
-                             prd_path=prd_path, tier=tier, category=category, does=does)
+        return mark_written_held(name=name, slug=slug, app_id=app_id, prd_path=prd_path, tier=tier,
+                                 category=category, does=does, idea=idea)
 
 
-def _mark_written(rows: list[dict], row: dict | None, *, name: str, slug: str, app_id: str, prd_path: str, tier: str,
-                  category: str, does: str) -> dict:
+def mark_written_held(*, name: str, slug: str, app_id: str, prd_path: str, tier: str, category: str, does: str,
+                      idea: str | None = None) -> dict:
+    """`mark_written` for a caller that already holds `locked()` (`apps submit-prd`); the lock
+    isn't re-entrant, so this never takes it."""
+    rows = load()
+    row = next((r for r in rows if (r.get("slug") or prd_mod.slugify(r["name"])) == idea), None) if idea else None
+    row = row or find(rows, slug=slug, name=name)
     if row is None:
         row = {"name": name, "slug": slug, "tier": tier, "category": category, "does": does, "status": "idea",
                "notes": f"New idea from the app factory, {timeutil.today_str()}."}

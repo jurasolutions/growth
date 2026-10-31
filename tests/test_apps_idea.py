@@ -14,6 +14,7 @@ user. Remote calls go through click's `CliRunner` with the SSH origin passed in 
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -604,35 +605,101 @@ def test_a_row_whose_prd_is_filed_is_never_the_head_r1(conn, prd_tree, monkeypat
     assert ideas.binding(prd_slug="other-tool", prd_name="Other tool", idea=None) == (None, [])
 
 
-def _mark_times_out(monkeypatch) -> None:
-    def busy(**kwargs):
-        raise TimeoutError("the app-backlog lock is still held after 30 seconds")
+def _no_filing_trace(conn, prd_tree) -> None:
+    assert not list((prd_tree / "pending" / "apps").glob("prd-app-003-*"))
+    assert db.scalar(conn, "SELECT count(*) FROM app_prds") == 0
+    assert db.scalar(conn, "SELECT count(*) FROM approvals") == 0
+    assert db.scalar(conn, "SELECT count(*) FROM qa_attempts") == 0  # no brand attempt used
 
-    monkeypatch.setattr(backlog, "mark_written", busy)
 
+def test_a_busy_backlog_refuses_submit_prd_before_anything_is_filed(tmp_path, conn, prd_tree, monkeypatch):
+    """Round 4: the lock is taken first, so a busy backlog files nothing: no PRD file, no
+    `app_prds` row, no request, no brand attempt, and the backlog as it was."""
+    from jura_growth import locks
 
-def test_a_lock_timeout_after_filing_reports_the_prd_filed_and_the_next_run_marks_it_r2(tmp_path, conn, monkeypatch):
-    """R2: the PRD, its row and its request are committed, so the answer is "filed", with what is
-    left; the next run's precheck marks the row, renamed idea included."""
     _without_the_seed_delivery_order_row()
     assert invoke("apps", "idea", "DO maker: delivery orders with a signature box").exit_code == 0
-    real = backlog.mark_written
-    _mark_times_out(monkeypatch)
+    before = backlog.load()
+    monkeypatch.setattr(backlog, "LOCK_TIMEOUT", 0.2)
+    with locks.held(backlog.LOCK) as got:
+        assert got
+        result = invoke("apps", "submit-prd", "--idea", "do-maker", str(write(tmp_path, GOOD)))
+    assert result.exit_code == 1, result.output
+    assert result.output.strip() == "refused: the backlog is busy, try submit-prd again"
+    _no_filing_trace(conn, prd_tree)
+    assert backlog.load() == before
+    again = invoke("apps", "submit-prd", "--idea", "do-maker", str(write(tmp_path, GOOD)))  # the retry files it
+    assert again.exit_code == 0, again.output
+    assert row("delivery-order-maker")["status"] == "prd-pending" and row("delivery-order-maker")["source"] == "ting-yu"
+
+
+def test_a_dry_run_takes_no_lock(tmp_path, conn, monkeypatch):
+    from jura_growth import locks
+
+    monkeypatch.setattr(backlog, "LOCK_TIMEOUT", 0.2)
+    with locks.held(backlog.LOCK):
+        result = invoke("apps", "submit-prd", "--dry-run", str(write(tmp_path, GOOD)))
+    assert result.exit_code == 0 and "passes every check" in result.output
+
+
+def test_filing_holds_the_backlog_lock_once_and_never_re_enters_it(tmp_path, conn, monkeypatch):
+    """The lock isn't re-entrant: a second take inside the filing step would wait on itself. Every
+    take is counted; the filing step marks the row under the one lock `submit` took."""
+    from jura_growth import locks
+
+    depth, deepest, takes = [0], [0], []
+    real = locks.waiting
+
+    @contextlib.contextmanager
+    def counted(name, **kwargs):
+        with real(name, **kwargs):
+            depth[0] += 1
+            deepest[0] = max(deepest[0], depth[0])
+            takes.append(name)
+            try:
+                yield
+            finally:
+                depth[0] -= 1
+
+    monkeypatch.setattr(locks, "waiting", counted)
+    monkeypatch.setattr(backlog, "LOCK_TIMEOUT", 2.0)  # a re-entry would fail fast, not hang
+    result = invoke("apps", "submit-prd", str(write(tmp_path, GOOD)))
+    assert result.exit_code == 0 and "backlog updated" in result.output, result.output
+    assert deepest[0] == 1 and takes == [backlog.LOCK]
+    marked = row("delivery-order-maker")
+    assert marked["status"] == "prd-pending" and marked["app_id"] == "APP-003"
+
+
+def test_a_slugless_hand_row_of_ting_yus_is_the_row_marked(tmp_path, conn):
+    """Review round 3, S3: Ting Yu's row lost its `slug` to a hand edit. `--idea` matches it by
+    the slug its name gives, so his row is marked and no second row is added."""
+    _without_the_seed_delivery_order_row()
+    assert invoke("apps", "idea", "DO maker: delivery orders with a signature box").exit_code == 0
+    rows = backlog.load()
+    for r in rows:
+        if r.get("slug") == "do-maker":
+            r.pop("slug")
+    backlog.save(rows)
     result = invoke("apps", "submit-prd", "--idea", "do-maker", str(write(tmp_path, GOOD)))
     assert result.exit_code == 0, result.output
-    assert "filed: APP-003" in result.output and "marked on the next run" in result.output
-    assert "Traceback" not in result.output
-    assert row("do-maker")["status"] == "idea"
-    events = db.rows(conn, "SELECT payload_json FROM events WHERE kind = 'apps.backlog.mark_failed'")
-    assert [json.loads(e["payload_json"])["app_id"] for e in events] == ["APP-003"]
-    monkeypatch.setattr(backlog, "mark_written", real)
-    apps_plugin.precheck("app-factory", conn)
-    marked = row("delivery-order-maker")
-    assert marked["status"] == "prd-pending" and marked["app_id"] == "APP-003" and marked["source"] == "ting-yu"
-    assert not [r for r in backlog.load() if r.get("slug") == "do-maker"]
-    apps_plugin.precheck("app-factory", conn)  # once marked, the catch-up leaves it alone
-    assert [r["slug"] for r in backlog.load()].count("delivery-order-maker") == 1
-    assert db.scalar(conn, "SELECT count(*) FROM events WHERE kind = 'apps.backlog.marked'") == 1
+    mine = [r for r in backlog.load() if r.get("source") == "ting-yu"]
+    assert [(r["name"], r["slug"], r["status"]) for r in mine] == [("Delivery order maker", "delivery-order-maker", "prd-pending")]
+    assert [r["name"] for r in backlog.load()].count("Delivery order maker") == 1
+
+
+def test_no_mark_failed_recovery_remains():
+    from jura_growth.agents.apps import factory
+
+    assert not hasattr(factory, "mark_missed")
+    for name in ("jura_growth/agents/apps/factory.py", "jura_growth/agents/apps/__init__.py", "docs/app-factory.md"):
+        assert "mark_failed" not in (paths.REPO_ROOT / name).read_text(encoding="utf-8"), name
+
+
+def test_the_prompt_retries_a_busy_refusal_once_then_skips_and_never_holds():
+    filing = _section("4. Check, then file")
+    busy = next(step for step in re.split(r"\n(?=\d\. )", filing) if "backlog is busy" in step)
+    assert "once" in busy and "`SKIP: backlog busy`" in busy and "hold" in busy.lower()
+    assert re.search(r"never hold|don't hold|do not hold", busy, re.I)
 
 
 @pytest.mark.parametrize("command", [
