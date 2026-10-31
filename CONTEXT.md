@@ -255,6 +255,10 @@ One read of the social platforms in the browser. It can read and record, and it 
 One place a watch run reads, such as Instagram Requests or a Page's notifications. A surface with
 no record of a good read has failed, which is different from a quiet day.
 
+**Unverified**:
+A message a watch run recorded whose words weren't in what the browser returned to that run, or that
+a run with a failed audit recorded. It is reported as such and gets no draft.
+
 **Replies waiting**:
 The one-pager's section for open inbox items, between Needs you and Approvals waiting.
 
