@@ -1,8 +1,9 @@
 """Nightly backup of `growth.db`, keeping 14 days, plus pruning of transcripts
-and the one-pager's grid PNGs (`retention` in config/settings.yaml)."""
+and the one-pager's pictures and grids (`retention` in config/settings.yaml)."""
 
 from __future__ import annotations
 
+import re
 import shutil
 import sqlite3
 from datetime import date, timedelta
@@ -23,23 +24,31 @@ def backup(conn: sqlite3.Connection) -> Path:
     removed = prune_backups()
     pruned = prune_transcripts()
     work = prune_browser_work()
-    grids = prune_grids()
+    grids = prune_pictures()
     log.event(conn, "backup.written", {"file": str(target), "removed": removed, "transcripts_pruned": pruned,
                                        "browser_work_pruned": work, "grids_pruned": grids})
     return target
 
 
-def prune_grids() -> int:
-    """Delete one-pager grids older than `retention.one_pager_days` (14 by
-    default, the grid's own span): each is a picture of what growth.db holds."""
+# What the one-pager writes, by name and date: grid-<day>.png, picture-<day>.png and .html.
+_DATED_PICTURE = re.compile(r"(?:grid|picture)-(\d{4}-\d{2}-\d{2})\.(?:png|html)")
+
+
+def prune_pictures() -> int:
+    """Delete the one-pager's dated pictures and pages older than
+    `retention.one_pager_days` (14 by default, the grid's own span): each shows
+    what growth.db holds, and a page keeps its approval reasons as text."""
     keep = int(config.settings().get("retention", {}).get("one_pager_days", 14))
     cutoff = timeutil.today() - timedelta(days=keep - 1)
     folder = paths.one_pager_dir()
     count = 0
-    for file in sorted(folder.glob("grid-*.png")) if folder.exists() else []:
+    for file in sorted(folder.iterdir()) if folder.exists() else []:
+        named = _DATED_PICTURE.fullmatch(file.name)
         try:
-            day = date.fromisoformat(file.stem.removeprefix("grid-"))
+            day = date.fromisoformat(named.group(1)) if named else None
         except ValueError:
+            continue
+        if day is None:
             continue
         if day < cutoff:
             file.unlink()

@@ -5,8 +5,8 @@
 added the line.*
 
 The one-pager now tells you how the growth engine is doing, every morning at 09:00 SGT in
-`#mission-control` on Discord: what needs you, approvals waiting, today's runs, yesterday's figures
-and spend, and the 14-day grid. The Jura growth line in the Cowork morning brief says less, a day
+`#mission-control` on Discord: a picture with what to decide and fix, what each agent did this
+morning, and yesterday's figures and spend. The Jura growth line in the Cowork morning brief says less, a day
 later, so it goes. All growth communication is now in Discord.
 
 ## Before you start
