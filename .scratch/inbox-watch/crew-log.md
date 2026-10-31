@@ -102,3 +102,13 @@ artifacts: crew/inbox-watch
 decisions: merged after one fix round; a run that can't prove the thread, the identity or a read-back ends `unknown`, alerted and never retried
 questions: -
 evidence:  developer: 6017 passed on a fresh database at 7d9fd8a
+
+## 2026-11-01 conductor (main merged in)
+status:    done
+persona:   conductor
+ticket:    07-merge-main
+artifacts: crew/inbox-watch; PRD "Amended after merging main"
+decisions: main's morning picture replaced the long one-pager, so Replies waiting now goes in the message posted with the picture; his words were "show these replies as pending items on mission-control"
+decisions: approvals-first is still not on main and not merged here
+questions: -
+evidence:  developer: 6886 passed on fresh data folders at 5bd5467; no conflict markers
