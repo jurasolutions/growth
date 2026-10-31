@@ -157,10 +157,18 @@ def refusal(folder: str | os.PathLike[str]) -> str | None:
 
 def _prepare_config() -> None:
     """A `JURA_GROWTH_CONFIG_DIR` inside the UAT folder starts as a copy of the repo's `config/`,
-    which is only read, so every command in the window has its settings."""
+    which is only read, so every command in the window has its settings. The copy's outreach
+    starts in shadow mode, with no legal review and no sending domain, whatever `config/scout.yaml`
+    ships (live since 2026-10-31): only `outreach-live` (S3) turns live mode on, and then only
+    towards the stub."""
     value = os.environ.get("JURA_GROWTH_CONFIG_DIR")
     if value and not (Path(value) / "settings.yaml").exists():
         shutil.copytree(paths.REPO_ROOT / "config", value, dirs_exist_ok=True)
+
+        def shadow(scout: dict) -> None:
+            scout.update(mode="shadow", legal_review_done=False, sending_domain=None)
+
+        _rewrite_yaml(Path(value) / "scout.yaml", shadow)
 
 
 # --- building blocks ------------------------------------------------------------------------

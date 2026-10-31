@@ -72,10 +72,23 @@ def prepare_scout(tmp, monkeypatch):
     return tmp
 
 
+# The go-live settings every scout and outreach test starts from, whatever config/scout.yaml
+# ships: shadow mode, no legal review, no sending domain, the code's default sender. A test
+# that needs live sending (or any other value here) says so in its `configure(...)` call, so
+# flipping the shipped file never changes what a behaviour test checks. The shipped values
+# themselves are checked in test_outreach_approval.py.
+TEST_BASELINE = {
+    "mode": "shadow",
+    "legal_review_done": False,
+    "sending_domain": None,
+    "from_local_part": "tingyu",
+}
+
+
 def configure(monkeypatch, **overrides) -> dict:
-    """Use config/scout.yaml with `overrides` merged in."""
+    """Use config/scout.yaml, with TEST_BASELINE and then `overrides` merged in."""
     base = yaml.safe_load((paths.config_dir() / "scout.yaml").read_text(encoding="utf-8")) or {}
-    merged = settings._merge(base, overrides)
+    merged = settings._merge(settings._merge(base, TEST_BASELINE), overrides)
     monkeypatch.setattr(config, "agent_config", lambda agent: merged if agent == "scout" else {})
     return merged
 
