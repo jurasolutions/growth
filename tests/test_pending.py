@@ -522,7 +522,52 @@ def test_pending_and_approvals_agree_on_what_is_waiting(conn):
         waiting_request(conn, number, hours=9 - number)
     waiting_request(conn, 5, hours=-1)
     listed = [line.split(" · ")[0] for line in json.loads(remote(["approvals"]).output)["text"].splitlines() if line.startswith("A-")]
-    assert [line.split(" · ")[0].removeprefix("- ") for line in section(text(), YOU).strip().splitlines()] == listed
+    assert [line.split(" · ")[0].removeprefix("- ") for line in section(text(), YOU).strip().splitlines() if line.startswith("- A-")] == listed
+
+
+DECIDE = "- Decide in #approvals, or send `/growth approve A-nnnn` or `/growth skip A-nnnn`."
+
+
+def test_requests_say_how_to_decide_them_on_one_line_after_them(conn):
+    waiting_request(conn, 11, hours=30)
+    waiting_request(conn, 12, hours=2)
+    lines = section(text(), YOU).strip().splitlines()
+    assert [line.split(" · ")[0] for line in lines[:2]] == ["- A-0012", "- A-0011"]
+    assert lines[2:] == [DECIDE]
+
+
+def test_the_decide_line_follows_the_cap_line_and_comes_before_anything_else(conn):
+    tonight(conn)
+    for number in range(11, 18):
+        waiting_request(conn, number, hours=number)
+    lines = section(text(), YOU).strip().splitlines()
+    assert lines[5] == "- and 2 more: send `/growth approvals`"
+    assert lines[6] == DECIDE
+    assert "APP-005" in lines[7]
+
+
+@pytest.mark.parametrize("world_with", ["nothing", "an approved release", "a request past its decide-by"])
+def test_no_requests_means_no_decide_line(conn, world_with):
+    if world_with == "an approved release":
+        tonight(conn)
+    elif world_with == "a request past its decide-by":
+        waiting_request(conn, 11, hours=-1)
+    assert "Decide in" not in text()
+
+
+def test_requests_that_cant_be_read_have_no_decide_line(conn):
+    conn.execute("DROP TABLE approvals")
+    assert "Decide in" not in text()
+
+
+def test_the_decide_line_survives_a_cut(conn):
+    for number in range(1, 8):
+        waiting_request(conn, 100 + number, hours=number)
+    for number in range(1, 41):
+        item(conn, number, state="unknown", run_id=run_row(conn, "failed"), request_status="approved", used=True)
+    answer = text()
+    assert len(answer) <= remote_mod.TEXT_LIMIT and re.search(r"\(cut: \d+ more lines?\)$", answer)
+    assert answer.splitlines()[6:8] == ["- and 2 more: send `/growth approvals`", DECIDE]
 
 
 def test_the_contract_says_what_pending_does(conn):
@@ -783,10 +828,97 @@ def test_a_held_lock_through_remote_opens_nothing_read_write(conn, monkeypatch):
     assert aw.mirrored("remote.command")[-1]["words"] == ["pending"]
 
 
-def test_every_other_command_still_opens_the_database():
-    result = remote(["status"])
-    assert result.exit_code == 0
+def empty_file() -> None:
+    paths.db_path().parent.mkdir(parents=True, exist_ok=True)
+    paths.db_path().write_bytes(b"")
+
+
+# QA 01, defect 02: a send mustn't turn "couldn't be read" into nothing to do.
+
+
+def test_pending_on_an_empty_database_file_writes_nothing_to_it():
+    empty_file()
+    text()
+    assert paths.db_path().stat().st_size == 0
+    assert aw.mirrored("remote.command")[-1]["words"] == ["pending"]
+
+
+def test_a_second_pending_on_an_empty_database_file_still_says_what_couldnt_be_read():
+    empty_file()
+    assert_couldnt_read(text(), "approvals")
+    assert_couldnt_read(text(), "approvals")
+    assert paths.db_path().stat().st_size == 0
+
+
+def test_an_empty_database_file_is_one_line_and_not_one_for_each_table():
+    empty_file()
+    for answer in (text(), CliRunner().invoke(cli, ["pending"]).output.strip()):
+        assert answer == ("**Couldn't be read**\n"
+                          "- Pending work couldn't be read: growth.db is an empty file, with no approvals or anything else in it.")
+
+
+def test_help_on_a_missing_database_leaves_it_missing():
+    assert remote(["help"]).exit_code == 0
+    assert not paths.db_path().exists()
+    assert aw.mirrored("remote.command")[-1]["words"] == ["help"]
+
+
+def test_pending_after_help_on_a_missing_database_still_says_so():
+    assert remote(["help"]).exit_code == 0
+    assert_couldnt_read(text(), "growth.db doesn't exist yet")
+
+
+def test_help_on_an_empty_database_file_writes_nothing_to_it():
+    empty_file()
+    result = remote(["help"])
+    assert result.exit_code == 0 and "/growth <command>" in result.output
+    assert paths.db_path().stat().st_size == 0
+    assert aw.mirrored("remote.command")[-1]["words"] == ["help"]
+
+
+def test_help_leaves_a_hot_journal_in_place(tmp_path):
+    mw.watched()
+    target = paths.db_path()
+    mw.hot_journal(target, tmp_path / "d4")
+    journal = Path(f"{target}-journal")
+    before = (target.read_bytes(), journal.read_bytes())
+    assert remote(["help"]).exit_code == 0
+    assert (target.read_bytes(), journal.read_bytes()) == before
+    assert aw.mirrored("remote.command")[-1]["words"] == ["help"]
+
+
+def test_a_refused_help_leaves_a_missing_database_missing_too():
+    assert remote(["help", "me"]).exit_code == 2
+    assert not paths.db_path().exists()
+
+
+def test_help_on_a_healthy_database_still_writes_its_row(conn):
+    assert remote(["help"]).exit_code == 0
+    (event,) = aw.events(conn, "remote.command")
+    assert event["words"] == ["help"]
+
+
+OTHER_COMMANDS = sorted(set(remote_mod.ALLOWLIST) - {"help", "pending"})
+
+
+@pytest.mark.parametrize("damage", [lambda: None, empty_file], ids=["missing", "empty"])
+@pytest.mark.parametrize("name", OTHER_COMMANDS)
+def test_only_pending_and_help_leave_the_database_alone(name, damage):
+    damage()
+    assert remote_mod._leave_database_alone(name.split()) is False
+
+
+def test_a_command_that_doesnt_open_the_database_itself_still_gets_it_opened_for_its_event():
+    """A refused command runs nothing, so only `remote` can have opened it: this goes red without the
+    guard that limits the branch to `pending` and `help`, where `status`, which opens it anyway, can't."""
+    assert remote(["run", "social"]).exit_code == 2
     assert paths.db_path().exists()
+    connection = db.connect()
+    try:
+        (event,) = aw.events(connection, "remote.command")
+    finally:
+        connection.close()
+    assert event["words"] == ["run", "social"]
 
 
 def test_a_lapse_by_the_clock_writes_nothing(conn, monkeypatch):
@@ -897,8 +1029,8 @@ def test_a_long_list_is_cut_to_the_limit_and_the_urgent_part_survives(conn, monk
     lines = answer.splitlines()
     assert lines[0] == "**Waiting for you**"
     assert [line.split(" · ")[0] for line in lines[1:6]] == [f"- A-{100 + n:04d}" for n in range(1, 6)]
-    assert lines[6] == "- and 2 more: send `/growth approvals`"
-    assert app_id in lines[7] and request.id in lines[7] and "`/growth apps release-plan APP-005`" in lines[7]
+    assert lines[6:8] == ["- and 2 more: send `/growth approvals`", DECIDE]
+    assert app_id in lines[8] and request.id in lines[8] and "`/growth apps release-plan APP-005`" in lines[8]
     assert GROWTH not in answer  # what growth holds is what gives way
 
 
@@ -918,7 +1050,7 @@ def test_each_group_runs_from_the_most_urgent_down(conn, monkeypatch):
     busy_world(conn, monkeypatch)
     answer = text()
     waiting = section(answer, YOU).strip().splitlines()
-    assert ["A-0021" in waiting[0], "APP-005" in waiting[1], "P-0001" in waiting[2]] == [True] * 3
+    assert ["A-0021" in waiting[0], waiting[1] == DECIDE, "APP-005" in waiting[2], "P-0001" in waiting[3]] == [True] * 4
     growth = section(answer, GROWTH).strip().splitlines()
     assert "APP-006" in growth[0] and "P-0002" in growth[1]
     assert [line for line in growth[2:5]] == ["- 1 community post planned for today onward.", "- 1 outreach email queued.",

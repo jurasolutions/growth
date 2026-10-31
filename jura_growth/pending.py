@@ -6,8 +6,9 @@ The approvals section is the core's own. Everything else comes from each plug-in
 It only reads, like the one-pager's read model (ADR 0002): growth.db is opened read-only through
 `mission.connect`, a request past its decide-by reads as lapsed by the clock with nothing written,
 and no kind's `content()` runs, since a read of that may supersede. `remote` masks the answer and
-cuts it, so the text starts with what is most urgent. When growth.db is missing or mid-write, `remote`
-leaves it alone too (`remote._leave_database_alone`).
+cuts it, so the text starts with what is most urgent. When growth.db is missing, empty or mid-write,
+`remote` leaves it alone too (`remote._leave_database_alone`). A 0-byte file is one line: SQLite opens it
+as a valid database with no tables, and a send that migrated it would then read as nothing to do.
 
 It says "nothing pending" only when every source was read. A source that couldn't be read gets its
 own line, never a silent gap or a guessed zero (the rule in `picture.py`).
@@ -24,11 +25,15 @@ from jura_growth.agents import GROWTH, UNREAD, YOU, PendingItem
 
 REQUESTS_SHOWN = 5
 TITLE_MAX = 100  # a title's own length can't push the urgent lines out of the answer
+DECIDE = "Decide in #approvals, or send `/growth approve A-nnnn` or `/growth skip A-nnnn`."
+EMPTY_DATABASE = "Pending work couldn't be read: growth.db is an empty file, with no approvals or anything else in it."
 
 
 def read() -> list[PendingItem]:
     """Everything open, or what couldn't be read. Never raises for the database's state."""
     now = timeutil.now_sgt()
+    if mission.is_empty(paths.db_path()):
+        return [PendingItem(UNREAD, EMPTY_DATABASE)]
     conn, state, error = mission.connect(paths.db_path())
     if conn is None:
         return [_database(now, state, error)]
@@ -65,7 +70,7 @@ def _requests(conn: sqlite3.Connection) -> list[PendingItem]:
         return [PendingItem(UNREAD, f"Approval requests couldn't be read ({_why(error)}).")]
     if len(waiting) > REQUESTS_SHOWN:
         items.append(PendingItem(YOU, f"and {len(waiting) - REQUESTS_SHOWN} more: send `/growth approvals`"))
-    return items
+    return [*items, PendingItem(YOU, DECIDE)] if items else []
 
 
 def _title(conn: sqlite3.Connection, request: approvals.Approval, registry: dict) -> str:

@@ -45,11 +45,12 @@ Nothing.
 
 ## `/growth pending` on a busy world
 
-`tests/test_pending.py::busy_world`, through `remote --json`. Exit 0, `recorded`, 800 characters.
+`tests/test_pending.py::busy_world`, through `remote --json`. Exit 0, `recorded`, 883 characters.
 
 ```
 **Waiting for you**
 - A-0021 · a test asked · decide by Tue 10 Nov, 12:02 SGT
+- Decide in #approvals, or send `/growth approve A-nnnn` or `/growth skip A-nnnn`.
 - APP-005 Delivery order maker 5 is approved (A-0004), until Tue 24 Nov, 10:02 SGT. Send `/growth apps release-plan APP-005` for the merge.
 - P-0001, facebook, 2026-11-10: the outcome is unknown. Check the page, then send `/growth publish resolve A-0501 posted --url <url>` or `/growth publish resolve A-0501 not-posted`.
 
@@ -75,4 +76,11 @@ Nothing pending. Nothing is waiting for you, and growth has nothing under way.
 ```
 **Couldn't be read**
 - Pending work couldn't be read: growth.db doesn't exist yet, so nothing has been recorded.
+```
+
+A 0-byte `growth.db`, through `remote --json`, exit 0, `recorded`, 123 characters:
+
+```
+**Couldn't be read**
+- Pending work couldn't be read: growth.db is an empty file, with no approvals or anything else in it.
 ```

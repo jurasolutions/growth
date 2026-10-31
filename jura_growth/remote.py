@@ -27,8 +27,8 @@ This module then:
    `handoff` Dispatch builds from, verbatim, since the PRD text must hash to
    what Ting Yu approved;
 7. writes one `remote.command` event with the actor, the words, the ref and
-   the answer, never the command's output (for `pending` on a growth.db that
-   is missing or mid-write, in the JSONL mirror only).
+   the answer, never the command's output (for `pending` and `help` on a
+   growth.db that is missing, empty or mid-write, in the JSONL mirror only).
 
 Anything not on the allowlist exits 2 with a line starting "refused:".
 """
@@ -412,12 +412,18 @@ def _listed(kind: str | None) -> list[dict]:
 # --- the command -------------------------------------------------------------------------------------
 
 
+_READ_ONLY = (["pending"], ["help"])  # control commands that write nothing but their own event
+
+
 def _leave_database_alone(words: list[str]) -> bool:
-    """For `pending` only: growth.db is missing or mid-write, so nothing here may open it read-write.
-    That open would create it or roll back its journal, and turn the answer just given into a false
-    one (ADR 0002; code review 01). Every other command opens it, as it always has."""
-    if words[:1] != ["pending"]:
+    """For `pending` and `help` only: growth.db is missing, empty or mid-write, so nothing here may
+    open it read-write. That open would create or migrate it or roll back its journal, and turn
+    `pending`'s answer, whichever of the two was sent first, into a false one (ADR 0002; code review
+    01, QA 01 defect 02). Neither needs it to answer. Every other command opens it, as it always has."""
+    if words[:1] not in _READ_ONLY:
         return False
+    if mission.is_empty(paths.db_path()):
+        return True
     conn, state, _ = mission.connect(paths.db_path())
     if conn is not None:
         conn.close()
@@ -509,7 +515,7 @@ def register(cli: click.Group) -> None:
         # The one-pager's post path has Dispatch's 60 seconds for everything, and has used most of
         # them if growth.db is locked: its answer can't wait another 30 on each of these. `pending`
         # and `help` only read, and an answer saying growth.db is locked must get back in time.
-        wait = db.SHORT_WAIT if words[:1] in (["one-pager"], ["pending"], ["help"]) else None
+        wait = db.SHORT_WAIT if words[:1] in (["one-pager"], *_READ_ONLY) else None
         reply = handle(ctx, words, actor=actor, ref=ref)
         database = not _leave_database_alone(words)
         reply = _masked(reply, wait, database=database)

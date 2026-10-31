@@ -259,6 +259,15 @@ def read_patiently(source: Source, *, sleep: Callable[[float], None] = time.slee
         waited += LOCK_RETRY + BUSY_TIMEOUT  # each read may itself wait for the lock
 
 
+def is_empty(path: Path) -> bool:
+    """A 0-byte file, which SQLite opens as a valid database with no tables. For a caller that must
+    tell that from a database with nothing in it; `connect` and `read` take it as it opens."""
+    try:
+        return path.stat().st_size == 0
+    except OSError:
+        return False
+
+
 def connect(path: Path) -> tuple[sqlite3.Connection | None, str, str | None]:
     """The read-only connection, already past its first query, or why not."""
     if not path.exists():
