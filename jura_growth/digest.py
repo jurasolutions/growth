@@ -1,4 +1,4 @@
-"""The 17:30 daily digest and the morning brief's figures.
+"""The 18:05 daily digest and the morning brief's figures.
 
 `jura-growth digest` writes `data/growth/daily-summary.json`, posts the day to
 #daily-digest and keeps a copy at `outputs/growth/digests/YYYY-MM-DD.md`.

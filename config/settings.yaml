@@ -104,7 +104,7 @@ jobs:
     agent: digest
     kind: command
     command: [digest]
-    schedule: {daily: "17:30"}
+    schedule: {daily: "18:05"}
 
   # The one-pager (mission control PRD SC1): writes the day's approval lapses,
   # then posts to #mission-control. Not in headless.NEVER: it is this job's own command.
