@@ -31,6 +31,11 @@ The rules:
 - Cards mention nobody and go through `discord.post()`'s masking, with the
   Keychain values loaded first (`privacy.load_for_masking`), because a
   preview carries text another process wrote.
+- A long card splits with its code fence balanced (`discord.split`). Its images
+  go on the first piece, beside the buttons and the status line, so a picture
+  is in view when the decision is made, and that piece keeps `HEADER_ROOM` free
+  for its edits. If a later piece fails, the pieces already sent are deleted
+  and the next sweep posts the card whole.
 - One sweep at a time, through the `approval-cards` lock; a second sweep that
   finds it held does nothing, and the next one catches up.
 
@@ -48,6 +53,9 @@ from jura_growth import approval_settings, approvals, db, discord, feed, locks, 
 CHANNEL = "approvals"
 USERNAME = "Jura growth · approvals"
 LOCK = "approval-cards"
+# Kept free in a card's first piece: its first line grows when it is edited ("Superseded: …"),
+# and an edit past Discord's limit would cut the end of the piece, closing fence and all.
+HEADER_ROOM = 120
 APPROVER = "Ting Yu"  # the one approver: CONTROL_DISCORD_USER_ID
 # What a card can show: a record's status, or CLAIMED once it is used.
 CLAIMED = "used"
@@ -190,9 +198,13 @@ def _post_unposted(conn: sqlite3.Connection) -> int:
                       level="warning", agent=registered.agent)
             continue
         result = discord.post(conn, CHANNEL, content, files=files, username=USERNAME, dedupe=False,
-                              suppress_embeds=True, wait=True, components=button_row(approval, registered.kind))
+                              suppress_embeds=True, wait=True, components=button_row(approval, registered.kind),
+                              first_piece_room=HEADER_ROOM, files_first=True)
         if not result.delivered:
-            continue  # saved to the outbox by post(); the next sweep posts it again
+            # Saved to the outbox by post(); the next sweep posts it again, whole. A piece that
+            # did go out would be left with live buttons, so it goes first.
+            _delete_pieces(conn, result)
+            continue
         message_id = result.message_ids[0] if result.message_ids else None
         with db.transaction(conn):
             approvals.mark_posted(conn, approval, message_id)
@@ -203,6 +215,12 @@ def _post_unposted(conn: sqlite3.Connection) -> int:
             )
         posted += 1
     return posted
+
+
+def _delete_pieces(conn: sqlite3.Connection, result: discord.PostResult) -> None:
+    for message_id in result.message_ids:
+        if message_id:
+            discord.delete(conn, CHANNEL, message_id)
 
 
 def _card_title(rest: list[str], approval: approvals.Approval) -> str:

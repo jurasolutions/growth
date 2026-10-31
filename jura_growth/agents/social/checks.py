@@ -43,6 +43,8 @@ MARKDOWN_RE = [
     (re.compile(r"\[[^\]\n]+\]\([^)\s]+\)"), "a markdown link"),
     (re.compile(r"^\s*>\s", re.M), "a block quote"),
     (re.compile(r"`[^`\n]+`"), "code formatting"),
+    # A fence line alone would also close the fence the post sits in on its approval card.
+    (re.compile(r"^\s*```", re.M), "a code fence"),
 ]
 QUOTE_RE = re.compile(r"“([^”]{1,600})”|\"([^\"\n]{1,600})\"")
 GRANT_RE = re.compile(

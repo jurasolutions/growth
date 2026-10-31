@@ -13,7 +13,7 @@ import pytest
 
 import approval_world as aw
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, cards, locks, paths
+from jura_growth import approvals, cards, discord, locks, paths
 
 
 @pytest.fixture
@@ -312,3 +312,70 @@ def test_decide_by_and_use_by_one_second_apart_still_post_the_card(conn, world, 
     world.decide_in = timedelta(seconds=1)
     raised(conn, world)
     assert cards.sweep(conn) == 1
+
+
+# --- a long card (technical review B2, N7; functional B1) ------------------------------------
+
+
+def _long_post(monkeypatch, files=()):
+    lines = [f"line {n:03d} " + "x" * 70 for n in range(60)]
+    text = "```\n" + "\n".join(lines) + "\n```"
+
+    def preview(self, conn, subject):
+        return approvals.Preview(title="a long post", text=text, reason="a test asked", files=tuple(files))
+
+    monkeypatch.setattr(aw.FakeKind, "preview", preview)
+    return lines
+
+
+def test_a_long_card_splits_with_its_fence_balanced_and_its_images_on_the_first_piece(conn, world, discord_double, monkeypatch):
+    lines = _long_post(monkeypatch, files=_images(3))
+    raised(conn, world)
+    assert cards.sweep(conn) == 1
+    posts = discord_double.posts("approvals")
+    assert len(posts) >= 2
+    assert [name for name, _ in posts[0].files] == [f"note-{n}.txt" for n in range(3)]
+    assert all(p.files == [] for p in posts[1:])
+    assert all((p.content or "").count("```") % 2 == 0 for p in posts)
+    shown = [line for p in posts for line in (p.content or "").split("\n")]
+    assert [line for line in shown if line.startswith("line ")] == lines
+
+
+def test_an_edit_of_a_nearly_full_first_piece_keeps_its_closing_fence(conn, world, discord_double, monkeypatch):
+    _long_post(monkeypatch)
+    approval = raised(conn, world)
+    cards.sweep(conn)
+    first = discord_double.posts("approvals")[0].content or ""
+    assert len(first) <= discord.MAX_CONTENT - cards.HEADER_ROOM
+    # The longest first line a card can come to show: a claim, with both times.
+    aw.approve(conn, approval)
+    cards.sweep(conn)
+    (edit,) = patches(discord_double)
+    assert (edit.content or "").endswith("\n```") and (edit.content or "").count("```") % 2 == 0
+    assert (edit.content or "").split("\n", 1)[1] == first.split("\n", 1)[1]
+
+
+def test_when_a_later_piece_fails_the_earlier_ones_are_deleted_and_the_next_sweep_posts_it_whole(conn, world, discord_double, monkeypatch):
+    _long_post(monkeypatch)
+    approval = raised(conn, world)
+    discord_double.fail_posts_after = 1
+    assert cards.sweep(conn) == 0
+    (orphan, *_) = discord_double.posts("approvals")
+    deleted = [r for r in discord_double.requests if r.method == "DELETE"]
+    assert [r.message_id for r in deleted] == [orphan.message_id]
+    assert aw.get(conn, approval.id).posted_at is None
+
+    discord_double.fail_posts_after = None
+    discord_double.requests.clear()
+    assert cards.sweep(conn) == 1
+    assert len(discord_double.posts("approvals")) >= 2
+    assert aw.get(conn, approval.id).message_id == discord_double.posts("approvals")[0].message_id
+
+
+def test_a_failed_delete_holds_nothing_up(conn, world, discord_double, monkeypatch):
+    _long_post(monkeypatch)
+    raised(conn, world)
+    discord_double.fail_posts_after = 1
+    discord_double.delete_fails = True
+    assert cards.sweep(conn) == 0
+    assert aw.events(conn, "discord.delete_failed")
