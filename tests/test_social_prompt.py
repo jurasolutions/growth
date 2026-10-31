@@ -95,7 +95,7 @@ def test_the_prompt_says_which_visual_suits_each_theme():
     settings = load()
     guidance = PROMPT[PROMPT.index("### The picture"):PROMPT.index("## 6.")]
     for theme in settings.themes.values():
-        if theme.needs_visual and theme.layout == "headline":
+        if theme.layout == "headline":
             assert f"`{theme.id}`" in guidance, theme.id
     for kind in visuals.KINDS:
         assert f"`{kind}`" in guidance

@@ -1,6 +1,6 @@
 """PC3: every card at both sizes in real Chrome, with nothing overflowing.
 
-No skip: if Chrome isn't there, these fail (reviews/test-strategy.md §2). Every render here is
+If Chrome isn't there, these fail (reviews/test-strategy.md §2). Every render here is
 offline, so the Google web fonts don't load and the fallback fonts draw the cards. The same matrix
 with the real fonts is a recorded check, because the suite stays off the network (PRD §4).
 
