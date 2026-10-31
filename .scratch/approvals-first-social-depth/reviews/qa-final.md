@@ -336,3 +336,98 @@ Open items from `crew-log.md`:
 
 - "A missing config folder silently disables the buzzword check." Confirmed, and now ticket 07. It predates the branch, the numbers rule still holds, and a live run always has the folder.
 - "Expired drafts read 2 social drafts waiting." This is now ticket 05.
+
+## After the merge
+
+*Developer, ticket 10, 2026-11-01, on `crew/approvals-first-social-depth-10-final-fixes`, which holds `origin/main` at `c11eb61`. Everything above this section is QA's record at `f0db1e5`. X1 to X8 are rerun here because the merge moved code they rely on. This is the developer's own run, for the reviewer and the gate to check: it isn't a QA verdict, and X10 to X15 stay with them.*
+
+Every command had temp data and outputs folders and a stand-in `claude` first on `PATH`. That stand-in's call log doesn't exist, so nothing called it.
+
+### Exit criteria, rerun
+
+| # | Verdict | Command | Result |
+|---|---|---|---|
+| X1 | **Met** | `pytest -rs -rfE -p no:cacheprovider -o addopts="" --tb=short --junitxml=...`, twice at the last code commit | Run 1: 5653 passed in 373 s. Run 2: 5653 passed in 517 s. No failure, error or `SKIPPED` line in either. The floor is 3980 |
+| X2 | **Met** | A script reads every test name in this file's "Trace" and "Classes" tables and looks for it as passed in run 1's junit | 122 names read. Two don't match by name, and neither is a miss: `test_every_platform_ships_in_draft_mode` is the old name QA listed beside its new one, and `test_submit_raises_exactly_one...` is an abbreviation of a test that passed |
+| X3 | **Met, two changes listed** | Appendix A, against `origin/main` | `same` 22 times. `CHANGED test_hashtag_limits_and_position`, as QA listed (technical N9). `CHANGED test_digest_figures`: main's version pins a by-hand count of 3, which is a draft-mode claim, and Facebook and Instagram ship in browser mode here. It now adds `monkeypatch` and `pw.social_config(monkeypatch, browser=())`, with every assertion exactly as on main |
+| X4 | **Met** | Each Class A or B test's parsed form compared between `f0db1e5` and the tip | All unchanged since QA read them. `tests/test_publish_instagram_linkedin.py` has no diff at all |
+| X5 | **Not met as worded, no rule lowered: the gate rules, as before** | The two greps in X5, against `origin/main` | The first prints the same 5 lines QA read, all a parametrize argument named `words`. The second prints nothing |
+| X6 | **Not met as worded, no behaviour changed: the gate rules, as before** | The two diffs in X6, against `origin/main` | The same as QA's: `approvals.py` 3 constants and 4 literals with the same values, `caps.py` a comment, `tests/gate_adapter_social_post.py` 4 lines under `[B2]`. `claim.py`, `origin.py`, `approvals_cli.py` and the ADRs show no diff. Ticket 09's refusal is in `agents/publish/kinds.py`, inside the kind |
+| X7 | **Met** | `find` over `inputs` and `design-system` newer than `a6c2cca`; `git diff --name-only origin/main...HEAD` filtered to blocked paths | Both print nothing |
+| X8 | **Met** | Run 1's junit, and the matrix below through `card_probe.probe`, whose default is `offline=True` | The PC3 file passed with no skip. 34 of 34 pass |
+
+UI-S1 made two captions uppercase, which runs wider, so X9's record was stale too. It is rerun below, and it needs no waiver.
+
+### The matrix, on fallback fonts (X8)
+
+| Case | Size | PNG | Fit | Smallest type | Result |
+|---|---|---|---|---|---|
+| flow-3-short | 1200×630 | 1200×630 | 1.0 | 17 | pass |
+| flow-3-short | 1080×1350 | 1080×1350 | 1.0 | 22 | pass |
+| flow-3-full | 1200×630 | 1200×630 | 0.88 | 15 | pass |
+| flow-3-full | 1080×1350 | 1080×1350 | 1.0 | 20 | pass |
+| flow-4-full | 1200×630 | 1200×630 | 0.88 | 15 | pass |
+| flow-4-full | 1080×1350 | 1080×1350 | 1.0 | 20 | pass |
+| flow-4-long-word | 1200×630 | 1200×630 | 0.88 | 15 | pass |
+| flow-4-long-word | 1080×1350 | 1080×1350 | 1.0 | 20 | pass |
+| compare-2-short | 1200×630 | 1200×630 | 1.0 | 17 | pass |
+| compare-2-short | 1080×1350 | 1080×1350 | 1.0 | 22 | pass |
+| compare-2-full | 1200×630 | 1200×630 | 0.88 | 15.0 | pass |
+| compare-2-full | 1080×1350 | 1080×1350 | 0.92 | 20 | pass |
+| compare-3-full | 1200×630 | 1200×630 | 0.88 | 15.0 | pass |
+| compare-3-full | 1080×1350 | 1080×1350 | 0.88 | 20 | pass |
+| compare-3-long-word | 1200×630 | 1200×630 | 0.88 | 15.0 | pass |
+| compare-3-long-word | 1080×1350 | 1080×1350 | 0.88 | 20 | pass |
+| figure-ring-short | 1200×630 | 1200×630 | 1.0 | 15 | pass |
+| figure-ring-short | 1080×1350 | 1080×1350 | 1.0 | 20 | pass |
+| figure-ring-full | 1200×630 | 1200×630 | 0.88 | 15 | pass |
+| figure-ring-full | 1080×1350 | 1080×1350 | 1.0 | 20 | pass |
+| figure-ring-whole | 1200×630 | 1200×630 | 0.88 | 15 | pass |
+| figure-ring-whole | 1080×1350 | 1080×1350 | 1.0 | 20 | pass |
+| figure-no-ring-full | 1200×630 | 1200×630 | 0.88 | 15 | pass |
+| figure-no-ring-full | 1080×1350 | 1080×1350 | 0.88 | 20 | pass |
+| list-2-short | 1200×630 | 1200×630 | 1.0 | 17 | pass |
+| list-2-short | 1080×1350 | 1080×1350 | 1.0 | 22 | pass |
+| list-5-full | 1200×630 | 1200×630 | 0.68 | 15.6 | pass |
+| list-5-full | 1080×1350 | 1080×1350 | 0.76 | 22 | pass |
+| list-5-no-icons | 1200×630 | 1200×630 | 0.68 | 12 | pass |
+| list-5-no-icons | 1080×1350 | 1080×1350 | 0.76 | 18.6 | pass |
+| headline-only | 1200×630 | 1200×630 | 0.72 | 17 | pass |
+| headline-only | 1080×1350 | 1080×1350 | 1.0 | 22 | pass |
+| slide-full | 1200×630 | 1200×630 | 1.0 | 15 | pass |
+| slide-full | 1080×1350 | 1080×1350 | 0.92 | 20 | pass |
+
+**Real fonts (X9):** the same cases with `offline=False`: 34 of 34 pass. The fonts loaded: `headline-only` at 1200×630 fits at 1.0 on web fonts and 0.72 on fallback, and `list-5-full` at 0.8 and 0.68, the same as QA's figures.
+
+**By eye:** `figure-ring-full` at 1080×1350 and `flow-4-full` at 1200×630, the two captions UI-S1 changed at their limit. The uppercase captions take two lines, inside the panel, and nothing is clipped.
+
+### The clock
+
+The merge doesn't touch the 9-hour shift, so no test may lean on the real time. Both runs below used the same throwaway plug-in as QA's: it starts the suite's clock at the time named and lets it tick. Tests that pin `JURA_GROWTH_NOW` are unaffected, and a subprocess keeps the real clock.
+
+| Clock starts | Why | Result |
+|---|---|---|
+| Tue 10 Nov, 00:00 | Where the live publish and one-pager jobs fire under the shift | 5653 passed in 382 s |
+| Sat 14 Nov, 16:58 | A weekend, crossing the 17:00 decide-by | 5653 passed in 481 s |
+
+Ticket 08's race is closed by construction: the refusal tests no longer stat the live data folder. The seed runs under an audit hook that stops it at the first thing it opens or changes there, and the file-by-file comparison uses a planted folder nothing else touches.
+
+### The defects, walked
+
+The real commands, each its own process, with a recorder on `127.0.0.1` for Discord and `DISCORD_WEBHOOK_*` scrubbed from the environment.
+
+| Ticket | Walked | Read |
+|---|---|---|
+| 05 | `social-day`, then `digest` at 18:05 | "Publishing: 0 posted, 0 skipped, 2 expired, 0 stopped" and "Social: 2 drafts expired (facebook, instagram), 0 skipped, 0 published". `social_drafts_waiting` is 0 and the brief line has no "waiting" |
+| 06, case 1 | Facebook to `draft`, approve, `publish next` | Line: "Facebook is in draft mode, so nothing is posted through the browser, and this lapses at 18:00 SGT." `publish next` hands out nothing. Digest: "1 draft approved, held by draft mode (facebook)", with no #social-drafts claim |
+| 09 | Webhook answering 500, a contact teaching a word in the post, `heartbeat`, `decide`, `publish next` | One note for each card and no card posted. `decide` answers "Discord would mask part of the post, so its card can't show the exact text, so it can't be approved". `publish next` says "A-0001 is waiting for a decision" and hands out nothing |
+
+Ticket 09's limit from QA still stands: this is the seed's `decide` in a new process, not a real SSH call, and it makes the same `approvals.decide` call. `tests/test_qa_final_defects.py` also decides in a real second process.
+
+Ticket 06's case 2 and ticket 07 are covered at their seams in the same test file, and ticket 08 in `tests/test_uat_seed_outreach.py`: a seed let into a planted folder fails both of the new checks, so a broken refusal can't pass them.
+
+### Open for the gate
+
+- **X5 and X6** read as QA reported, so the gate still has to rule on the wording of both.
+- **CLAUDE.md's numbers rule (ST-S2).** It still says "Only the phrases in `config/approved_claims.yaml`", and the email's "30-minute call" is the one allowance beside them. The allowance is now written in `config/approved_claims.yaml`. CLAUDE.md is Ting Yu's to change, so it isn't changed here. Suggested words: "Only the phrases in `config/approved_claims.yaml`, and the allowance it names."
+- **A wording cost to check at the gate.** A refused card's short line on the picture and in the message says "Let A-nnnn lapse ...: it has no card, so nothing goes out." The reason itself is in the note in #social-drafts and in the long text.

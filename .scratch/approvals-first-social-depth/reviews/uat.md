@@ -46,7 +46,7 @@ Built in ticket 4 (`tests/uat/seed.py`, covered by `tests/test_uat_seed_discord_
 ## Before you start (once)
 
 1. **A test Discord server.** You only need the channels and their webhooks: `daily-digest`, `scout-leads`, `outreach-sent`, `outreach-replies`, `app-factory`, `social-drafts`, `community`, `alerts`, `approvals`, `mission-control`. Skip the Dispatch steps in the older script.
-2. **The env file**, `~/jura-uat/uat.env`, outside the repo. Copy nothing from the real `.env`.
+2. **The env file**, `~/jura-uat/uat.env`, outside the repo. Copy nothing from the real `.env`. The seed refuses to run without this file, with a real webhook set in your shell, or with one of the live webhooks in it.
 
    ```
    DISCORD_WEBHOOK_<CHANNEL>=...    one line for each channel above
