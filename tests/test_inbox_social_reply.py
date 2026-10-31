@@ -255,6 +255,18 @@ def test_iw_d4_one_reply_per_run(conn, fake, monkeypatch, discord_double):
     assert json.loads(last["output"])["due"] is False
 
 
+def test_iw_d4_one_reply_per_run_holds_even_with_the_gap_out_of_the_way(conn, fake, monkeypatch):
+    from jura_growth import log
+
+    _, record = approved(conn, monkeypatch)
+    _, second = approved(conn, monkeypatch, key="k2", conversation="c2", target="https://www.instagram.com/direct/t/222/", author="Mei Ling")
+    run_id = log.start_run(conn, "inbox-browser", "inbox-reply")
+    assert reply_run.next_reply(conn, reply_run.read_of(read_says(approval=record.id)), run_id=run_id)["due"] is True
+    monkeypatch.setattr(reply_run, "why_not_now", lambda conn, *, run_id: None)
+    found = reply_run.next_reply(conn, reply_run.read_of(read_says(approval=second.id, author="Mei Ling")), run_id=run_id)
+    assert found["due"] is False and approvals.get(conn, second.id).used_at is None
+
+
 def test_iw_d4_twenty_minutes_between_two_replies_in_whole_minutes(conn, fake, monkeypatch, discord_double):
     approved(conn, monkeypatch)
     second, _ = approved(conn, monkeypatch, key="k2", conversation="c2", target="https://www.instagram.com/direct/t/222/", author="Mei Ling")
@@ -621,18 +633,31 @@ def test_iw_b1_an_upload_or_a_never_tool_fails_even_if_only_tried(conn, fake, mo
     assert pause.is_paused(conn, "inbox-browser")
 
 
-def test_iw_a10_a_dm_run_opening_another_thread_fails(conn, fake, monkeypatch, discord_double):
-    approved(conn, monkeypatch)
+def test_iw_a10_a_dm_run_opening_another_thread_fails_its_audit_even_if_all_else_is_clean(conn, fake, monkeypatch, discord_double):
+    item_id, _ = approved(conn, monkeypatch)
     other = "https://www.instagram.com/direct/t/999/"
-    fake.scenario([*opening(), *w.browser(t.opened(other)), *claim_steps(), *w.browser(t.closed())])
-    assert run().status == "failed"
+    fake.scenario([*opening(), *w.browser(t.opened(other)), *w.browser(t.opened(THREAD)), *claim_steps(), click(), typing(), press("Return"), *read_back(), *w.browser(t.closed())])
+    outcome = run()
+    assert outcome.status == "failed" and "audit" in outcome.error
+    assert store.get(conn, item_id)["state"] == store.SENT  # it went, and it stays recorded as gone
     assert pause.is_paused(conn, "inbox-browser")
 
 
-def test_iw_a10_a_run_that_lands_off_the_platforms_hosts_fails(conn, fake, monkeypatch, discord_double):
+def test_iw_a10_a_run_on_another_platforms_hosts_fails_its_audit(conn, fake, monkeypatch, discord_double):
     approved(conn, monkeypatch)
-    fake.scenario([*opening(), *w.browser(t.opened("https://www.facebook.com/jurasolutionssg")), *claim_steps(), *w.browser(t.closed())])
-    assert run().status == "failed"
+    fake.scenario([*opening(), *w.browser(t.opened("https://www.facebook.com/jurasolutionssg")), *w.browser(t.opened(THREAD)), *claim_steps(), click(), typing(), press("Return"), *read_back(), *w.browser(t.closed())])
+    outcome = run()
+    assert outcome.status == "failed" and "audit" in outcome.error
+
+
+@pytest.mark.parametrize("address", ["https://www.facebook.com/l.php?u=https://evil.example/", "https://www.facebook.com/someone.else"])
+def test_iw_a10_a_comment_run_asking_for_a_link_out_or_a_profile_fails_its_audit(conn, fake, monkeypatch, discord_double, address):
+    """A comment's target is held to its host, so what it may ask to open is what stops a page sending it elsewhere."""
+    approved(conn, monkeypatch, source="facebook-comment", target=COMMENT, author="Mei Ling", surface="posts")
+    steps = good_comment()
+    fake.scenario([*steps[:-1], *w.browser(t.chrome("navigate", {"url": address, "tabId": t.TAB}, f"Navigated to {COMMENT}\n" + t.tab_context((t.TAB, COMMENT)))), steps[-1]])
+    outcome = run()
+    assert outcome.status == "failed" and "audit" in outcome.error
 
 
 def test_iw_a3_page_text_telling_a_reply_run_to_type_more_is_caught_and_quoted_nowhere(conn, fake, monkeypatch, discord_double):
@@ -973,6 +998,28 @@ def test_iw_n12_a_comment_target_is_held_to_its_host(conn, fake, discord_double)
     social.raise_due(conn)
     assert store.get(conn, good)["state"] == store.WAITING
     assert store.get(conn, bad)["state"] == store.NEEDS_HAND_REPLY
+
+
+def test_iw_d4_only_the_reply_the_claim_checked_is_handed_out(conn, fake, monkeypatch):
+    """ADR 0003: the bytes handed out are the bytes hashed. A mismatch rolls the claim back, and says so."""
+    from dataclasses import replace
+
+    from jura_growth import log
+
+    item_id, record = approved(conn, monkeypatch)
+    real = social.reply_of
+    calls = []
+
+    def first_read_differs(item):  # the claim's own read, and not the one `use()` hashes after it
+        calls.append(item)
+        return replace(real(item), text="Something else.") if len(calls) == 1 else real(item)
+
+    monkeypatch.setattr(social, "reply_of", first_read_differs)
+    run_id = log.start_run(conn, "inbox-browser", "inbox-reply")
+    found = reply_run.next_reply(conn, reply_run.read_of(read_says(approval=record.id)), run_id=run_id)
+    assert found["due"] is False and "Something else" not in json.dumps(found)
+    assert approvals.get(conn, record.id).used_at is None and approvals.get(conn, record.id).status == approvals.APPROVED
+    assert store.get(conn, item_id)["state"] == store.WAITING
 
 
 def test_iw_a10_a_target_tampered_in_the_row_is_refused_at_the_claim(conn, fake, monkeypatch):
