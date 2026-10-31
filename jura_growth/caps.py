@@ -43,6 +43,9 @@ NO_REPEAT_DAYS = 14
 # the moment a run claims it, whatever happens next, so a run that crashes
 # mid-post still uses up its slot.
 BROWSER_JOBS = frozenset({"publish"})  # the only jobs that may drive Chrome
+# Jobs that hold a stranger's words in the session. Each may read only the repo and its own scratch
+# folder, and its transcript goes in BROWSER_TRANSCRIPT_DAYS (inbox watch, technical review B4).
+THIRD_PARTY_TEXT_JOBS = BROWSER_JOBS | {"inbox-check"}
 # Days a browser job's transcript is kept: it holds third-party page text (BP §4.7).
 BROWSER_TRANSCRIPT_DAYS = 7
 COMMUNITY_POSTS_PER_DAY = 1
@@ -72,6 +75,8 @@ INBOX_CHECK_SECONDS = 120
 INBOX_FIRST_RUN_DAYS = 7
 INBOX_LOOK_BACK_DAYS = 45  # the limit the 16:45 reply check uses
 INBOX_OLD_AFTER_HOURS = 48  # older at intake: reported with no draft (F12)
+INBOX_TRIAGE_PER_RUN = 10  # conversations handed to one triage run (technical review, B5 rule 4)
+INBOX_TRIAGE_ATTEMPTS = 2  # hand-outs before a conversation is reported for a hand reply
 # SGT, both ends inclusive. Launchd can fire early until the Mac restarts, so the code checks too.
 INBOX_CHECK_WINDOW = ("07:00", "23:59")
 

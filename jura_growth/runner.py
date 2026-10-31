@@ -263,7 +263,8 @@ def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
 
     A job in `caps.BROWSER_JOBS` that sets `browser: true` gets `--chrome`, and `--add-dir` for its own
     scratch folder only (ADR 0005, amended 2026-10-30): its plug-in's rules scope the Chrome tools by
-    domain, and the files it needs are copied into that folder, which the upload tool must be able to read. Any other job that sets `browser` raises."""
+    domain, and the files it needs are copied into that folder, which the upload tool must be able to read. Any other job that sets `browser` raises.
+    Any job in `caps.THIRD_PARTY_TEXT_JOBS` adds only its scratch folder too: it holds a stranger's words."""
     settings = config.settings()["claude"]
     browser = name in caps.BROWSER_JOBS
     if spec.get("browser") and not browser:
@@ -295,8 +296,9 @@ def claude_command(name: str, spec: dict) -> tuple[list[str], str]:
         "--setting-sources", "project",
         "--no-session-persistence",
         # A browser job adds only its own scratch folder, where its image copies are, so the Chrome upload
-        # tool may read them (rehearsal R1, 2026-10-30); every other job adds JURA_ROOT.
-        "--add-dir", str(work) if browser else str(paths.JURA_ROOT),
+        # tool may read them (rehearsal R1, 2026-10-30), and triage holds a stranger's words (inbox watch,
+        # B4); every other job adds JURA_ROOT.
+        "--add-dir", str(work) if name in caps.THIRD_PARTY_TEXT_JOBS else str(paths.JURA_ROOT),
         "--allowedTools", *allowed,
         "--disallowedTools", *disallowed,
     ]
@@ -338,7 +340,7 @@ def _commands_line(name: str) -> str:
 
 def _run_claude(name: str, spec: dict, agent: str, run_id: int | None) -> Outcome:
     argv, prompt = claude_command(name, spec)
-    timeout = int(config.settings()["claude"].get("timeout_minutes", 30)) * 60
+    timeout = int(spec.get("timeout_minutes") or config.settings()["claude"].get("timeout_minutes", 30)) * 60
     transcript = paths.writable(
         paths.data_dir() / "transcripts" / timeutil.today_str() / f"{run_id}-{name}.jsonl"
     )

@@ -161,13 +161,21 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
 ## The inbox watch
 
 `inbox-check` (every 15 minutes, 07:00 to 23:45 SGT) reads the `OUTREACH_IMAP_*` mailbox, and
-`ENQUIRY_IMAP_*` if it is set, read-only, with no model. Each person who wrote gets one message in
-`#mission-control`, with what they said and their phone numbers and addresses masked. A lead's reply
-also does what the 16:45 check would, which then counts nothing again. Mail with evidence in its headers
-that no person wrote it (a mailing list, a no-reply sender, a platform's notice), and everything in the
-Junk folder, is noise: no message of its own, and counted in the digest. A report Discord refused goes
-again on the next check. `jura-growth pause inbox` stops all of it, and the 16:45 check carries on.
-The PRD is `prd/pending/prd-jura-inbox-watch-2026-10-31.md`.
+`ENQUIRY_IMAP_*` if it is set, read-only, with no model. A lead's reply also does what the 16:45 check
+would, which then counts nothing again. Mail with evidence in its headers that no person wrote it (a
+mailing list, a no-reply sender, a platform's notice), and everything in the Junk folder, is noise: no
+message of its own, and counted in the digest.
+
+When someone wrote, Claude starts for triage (`prompts/inbox-check.md`). A person's words are hostile
+input, so triage reads only its scratch folder, has no web, and has two commands: `inbox pending` and
+`inbox submit --file`. It gives each conversation a class and, where one is merited, a draft that has to
+pass the `inbox-email` or `inbox-social` brand channel. It can't hide anyone: whatever it does, each
+conversation gets one message in `#mission-control`, with what they wrote as stored and their phone
+numbers and addresses masked. A conversation it hasn't dealt with after two tries needs a hand reply and
+is reported anyway, and a failed triage run alerts once without counting toward auto-pause.
+
+A report Discord refused goes again on the next check. `jura-growth pause inbox` stops all of it, and the
+16:45 check carries on. The PRD is `prd/pending/prd-jura-inbox-watch-2026-10-31.md`.
 
 ## Kill switches
 

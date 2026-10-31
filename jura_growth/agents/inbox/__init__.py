@@ -1,18 +1,20 @@
 """Inbox watch: every reaction to Jura reported, every reply approved
 (prd/pending/prd-jura-inbox-watch-2026-10-31.md).
 
-So far this agent sees mail and reports it, with no model:
+So far this agent sees mail, triages it and reports it:
 
 - `store`: the record of every reaction, and `store.record`, the one way in.
 - `mail`: the mail intake. Read-only IMAP, the noise filter, a lead's reply recorded as the 16:45
   check would, website enquiries, Jura's own mail dropped.
-- `report`: one message per reaction in #mission-control, retried until delivered.
+- `triage`: what the model may do, and everything that holds whatever it does.
+- `checks`: the brand channels for a reply, `inbox-email` and `inbox-social`.
+- `report`: one message per conversation in #mission-control, retried until delivered.
 - `job`: the job's precheck.
-- `commands`: `jura-growth inbox status`.
+- `commands`: `jura-growth inbox status | pending | submit`.
 - `settings`: the limits in `caps.py`, tightened by `config/inbox.yaml`.
 
-Job `inbox-check` runs every 15 minutes, 07:00 to 23:45 SGT. Its precheck does all of the above
-and starts no Claude.
+Job `inbox-check` runs every 15 minutes, 07:00 to 23:45 SGT. Its precheck reads the mail and reports
+what needs no model. Claude starts only when something waits for triage (`prompts/inbox-check.md`).
 """
 
 from __future__ import annotations
@@ -22,12 +24,21 @@ from pathlib import Path
 
 NAME = "inbox"
 MIGRATIONS = Path(__file__).parent / "migrations"
+# Under `data/growth/`. Not a blanket `**`: a deny would hit triage's own scratch folder.
+_NOT_FOR_TRIAGE = ("growth.db*", "transcripts/**", "backups/**", "discord-outbox/**", "runs/**", "launchd/**", "one-pager/**",
+                   "work/publish/**", "work/inbox-watch/**", "work/inbox-reply/**")
 
 
 def register(cli) -> None:
     from jura_growth.agents.inbox.commands import inbox_group
 
     cli.add_command(inbox_group)
+
+
+def channels() -> dict:
+    from jura_growth.agents.inbox import checks
+
+    return checks.channels()
 
 
 def precheck(job: str, conn: sqlite3.Connection):
@@ -39,22 +50,31 @@ def precheck(job: str, conn: sqlite3.Connection):
 
 
 def permissions(job: str):
-    """What the prompt uses. There is nothing else for a model to do yet."""
+    """Triage's two commands, and nothing else it could reach (technical review, B4). The runner's
+    `--add-dir` is already only its scratch folder; these name what matters most, as a second layer.
+    With `--strict-mcp-config` and no `--chrome` it has no MCP tools to deny."""
     if job != "inbox-check":
         return None
-    from jura_growth import headless
+    from jura_growth import headless, paths
 
-    return headless.Permissions(commands=("inbox status",))
+    denied = [f"Read(/{paths.data_dir()}/{place})" for place in _NOT_FOR_TRIAGE]
+    return headless.Permissions(
+        commands=("inbox pending", "inbox submit"),
+        disallowed_tools=("WebSearch", "WebFetch", *denied, f"Read(/{paths.outputs_dir()}/**)"),
+    )
 
 
-def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome) -> None:
-    """A report Discord refused goes again here as well as in the precheck (B7)."""
+def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
+    """Triage's last word, failing closed: the runner keeps a run's own outcome when this raises, and
+    that outcome holds the model's words. So any exception here ends in a fixed outcome of ours."""
     if job != "inbox-check":
         return None
-    from jura_growth.agents.inbox import report
+    from jura_growth.agents.inbox import triage
 
-    report.report_due(conn)
-    return None
+    try:
+        return triage.after_run(conn, run_id, outcome)
+    except Exception as error:  # noqa: BLE001 - see the docstring
+        return triage.failed_closed(conn, run_id, outcome, error)
 
 
 def setup_gaps() -> list:

@@ -16,6 +16,9 @@ old_after_hours: 48
 bodies_per_check: 50
 check_seconds: 120
 
+# Conversations handed to one triage run. The rest wait for the next check.
+triage_per_run: 10
+
 # Mail from these domains counts as a platform notice (R2), on top of the list in
 # jura_growth/agents/inbox/settings.py. Each one also covers its subdomains.
 extra_platform_domains: []

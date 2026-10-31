@@ -135,7 +135,7 @@ def intake(conn: sqlite3.Connection) -> Intake:
     check = _Check(conn, replies.sent_contacts(conn), result)
     for label in _unreadable_settings():
         result.failed += 1
-        _problem(conn, label, f"The {label} mailbox's settings can't be read, so new mail isn't being read. Check the Keychain.",
+        problem(conn, label, f"The {label} mailbox's settings can't be read, so new mail isn't being read. Check the Keychain.",
                  "unreadable settings", at_once=True)
     for login in mailboxes():
         started = timeutil.stamp()
@@ -143,7 +143,7 @@ def intake(conn: sqlite3.Connection) -> Intake:
             finished = _read_mailbox(check, login)
         except replies.RepliesAuthError as error:
             result.failed += 1
-            _problem(conn, login.label, f"The {login.label} mailbox refused the login, so new mail isn't being read. Check its password.",
+            problem(conn, login.label, f"The {login.label} mailbox refused the login, so new mail isn't being read. Check its password.",
                      type(error).__name__, at_once=True)
             continue
         except Exception as error:  # noqa: BLE001 - a network fault, a locked database or a bug
@@ -467,23 +467,23 @@ def failed(conn: sqlite3.Connection, label: str, error: Exception) -> None:
         store.set_state(conn, since_key, since)
     log.event(conn, "inbox.mail_failed", {"mailbox": label, "error": what}, level="warning", agent=AGENT)
     if timeutil.now() - timeutil.parse(since) >= timedelta(hours=OVERDUE_HOURS):
-        _problem(conn, label, f"The {label} mail check hasn't worked for over {OVERDUE_HOURS} hours, so new mail isn't being "
+        problem(conn, label, f"The {label} mail check hasn't worked for over {OVERDUE_HOURS} hours, so new mail isn't being "
                               f"seen. The last error was {what}.", what)
 
 
-def _problem(conn: sqlite3.Connection, label: str, problem: str, what: str, *, at_once: bool = False) -> None:
-    """Keep the line for the health strip, and alert at most once a day. `problem` is fixed text
+def problem(conn: sqlite3.Connection, label: str, line: str, what: str, *, at_once: bool = False) -> None:
+    """Keep the line for the health strip, and alert at most once a day. `line` is fixed text
     with a type name in it, never a host, an address or a word from a message."""
     if at_once:
         log.event(conn, "inbox.mail_failed", {"mailbox": label, "error": what}, level="warning", agent=AGENT)
-    store.set_state(conn, f"{store.PROBLEM}{label}", problem)
+    store.set_state(conn, f"{store.PROBLEM}{label}", line)
     today = timeutil.today_str()
     alerted_key = f"{store.ALERTED_ON}{label}"
     if store.get_state(conn, alerted_key) == today:
         return
     store.set_state(conn, alerted_key, today)
-    log.event(conn, "inbox.health", {"mailbox": label, "problem": problem}, level="warning", agent=AGENT)
-    discord.alert(conn, problem, agent=AGENT)
+    log.event(conn, "inbox.health", {"mailbox": label, "problem": line}, level="warning", agent=AGENT)
+    discord.alert(conn, line, agent=AGENT)
 
 
 def cleared(conn: sqlite3.Connection, label: str) -> None:
