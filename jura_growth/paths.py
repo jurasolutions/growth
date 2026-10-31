@@ -70,7 +70,8 @@ def work_dir(job: str) -> Path:
 
 
 def one_pager_dir() -> Path:
-    """The one-pager's grid PNGs, one a day (`grid-YYYY-MM-DD.png`), pruned by the backup."""
+    """The one-pager's files, one set a day, pruned by the backup: the morning picture
+    (`picture-YYYY-MM-DD.png` and `.html`) and any grid drawn on request (`grid-YYYY-MM-DD.png`)."""
     return data_dir() / "one-pager"
 
 
