@@ -164,7 +164,7 @@ def test_the_card_shows_the_preview_as_plain_text_and_says_it_follows_the_branch
     assert any(f"the release is commit {sha[:7]}" in line and "latest push" in line for line in lines)
 
 
-def test_the_shipped_config_pins_the_landing_page_pages_project_and_keeps_dispatch_builds_off():
+def test_the_shipped_config_pins_the_landing_page_pages_project_and_turns_dispatch_builds_on():
     """The landing page's Cloudflare Pages project is `landing-page`; Dispatch still doesn't poll
     build handoffs until Ting Yu turns it on."""
     import yaml
@@ -175,7 +175,7 @@ def test_the_shipped_config_pins_the_landing_page_pages_project_and_keeps_dispat
     assert shipped["pages_project"] == "landing-page-eq7"  # the pages.dev name, not the project name
     assert releases.PROJECT_RE.fullmatch(shipped["pages_project"])
     assert releases.preview_pattern("landing-page-eq7").fullmatch("https://claude-t-0031-x.landing-page-eq7.pages.dev")
-    assert approval_settings.switch("dispatch_builds") is False
+    assert approval_settings.switch("dispatch_builds") is True
 
 
 def test_without_the_pages_project_set_no_preview_is_accepted(conn, monkeypatch):
