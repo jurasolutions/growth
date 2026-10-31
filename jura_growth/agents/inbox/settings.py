@@ -4,7 +4,7 @@ only add to the platform domains that count as noise."""
 
 from __future__ import annotations
 
-from jura_growth import caps, config
+from jura_growth import caps, config, timeutil
 
 _HARD = {
     "email_replies_per_day": caps.INBOX_EMAIL_REPLIES_PER_DAY,
@@ -44,6 +44,12 @@ def limit(name: str) -> int:
 def minutes_between_social_replies() -> int:
     """A floor: config may lengthen the gap and never shorten it."""
     return caps.at_least(caps.INBOX_MINUTES_BETWEEN_SOCIAL_REPLIES, _configured().get("minutes_between_social_replies"))
+
+
+def in_hours(window: tuple[str, str]) -> bool:
+    """PRD §4: launchd can fire early until the Mac restarts, so a job's hours are checked in code too."""
+    start, end = window
+    return start <= timeutil.now_sgt().strftime("%H:%M") <= end
 
 
 def platform_domains() -> tuple[str, ...]:

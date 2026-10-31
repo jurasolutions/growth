@@ -78,6 +78,7 @@ INBOX_WATCH_WINDOW = ("09:05", "21:05")  # SGT, both ends inclusive
 # W2 says hourly. A floor under launchd, which can fire twice: each read is more activity on the account.
 INBOX_WATCH_MINUTES_BETWEEN_RUNS = 55
 INBOX_OBSERVATIONS_PER_RUN = 40  # new messages one watch run may record: a flood waits for the next run
+INBOX_OBSERVE_FILE_BYTES = 1_000_000  # one observation file: over this it is refused whole, to be split
 INBOX_WATCH_POST_DAYS = 30  # F6: posts this recent are read in turn, the least recently read first
 INBOX_BLIND_SURFACE_HOURS = 3  # F13: of the watch's own hours, then it goes to Needs you
 

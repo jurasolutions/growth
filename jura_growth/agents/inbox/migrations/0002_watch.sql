@@ -26,6 +26,7 @@ CREATE TABLE inbox_watch_posts (
   told_shares INTEGER,
   told_unread INTEGER NOT NULL DEFAULT 0,
   gone_at TEXT,
+  gone_said_run INTEGER,  -- a run said it has gone: held until that run's audit passes
   gone_told INTEGER NOT NULL DEFAULT 0,
   last_read_at TEXT,
   last_run_id INTEGER

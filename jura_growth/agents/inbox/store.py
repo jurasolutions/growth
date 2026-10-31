@@ -22,8 +22,10 @@ from jura_growth.agents.inbox import settings
 
 SOURCES = ("email", "enquiry", "facebook-comment", "facebook-dm", "instagram-comment", "instagram-dm", "post-stats",
            "app-usage")
+SOCIAL_SOURCES = ("facebook-comment", "facebook-dm", "instagram-comment", "instagram-dm")
+RUN_MESSAGE = "post-stats"  # counts and notes from a watch run: fixed words and validated numbers, no one's text
 STATES = ("new", "triaged", "reported", "waiting", "sent", "skipped", "lapsed", "superseded", "unknown", "failed",
-          "needs-you", "noise", "unverified", "answered-by-hand", "closed", "done", "observed", "baseline")
+          "needs-you", "noise", "unverified", "answered-by-hand", "closed", "done", "observed", "baseline", "own")
 NOISE = "noise"
 REPORTED = "reported"
 NEEDS_HAND_REPLY = "needs-you"  # the state's name in the PRD; in words, "needs a hand reply"
@@ -34,6 +36,7 @@ ANSWERED_BY_HAND = "answered-by-hand"
 # no report and no triage while it is held.
 OBSERVED = "observed"
 BASELINE = "baseline"  # seen on the first read of a surface (F12): never told, and not a day's reaction
+OWN = "own"  # signed with the Page's name or address: set aside, counted, and not a day's reaction
 
 NAME_CHARS = 120
 SUBJECT_CHARS = 300
@@ -143,6 +146,10 @@ def label(item_id: int) -> str:
     return f"I-{item_id:04d}"
 
 
+def has_state(conn: sqlite3.Connection, state: str) -> bool:
+    return db.one(conn, "SELECT 1 FROM inbox_items WHERE state = ? LIMIT 1", (state,)) is not None
+
+
 def set_item_state(conn: sqlite3.Connection, item_id: int, state: str) -> None:
     if state not in STATES:
         raise ValueError(f"unknown state {state!r}")
@@ -178,8 +185,8 @@ def day_counts(conn: sqlite3.Connection, day: str) -> dict[str, int]:
     """One day's figures: counts only, for the digest and the morning brief (R5)."""
     row = db.one(
         conn,
-        "SELECT sum(state NOT IN (?, ?)) AS reactions, sum(state = ?) AS noise FROM inbox_items WHERE substr(recorded_at, 1, 10) = ?",
-        (NOISE, BASELINE, NOISE, day),
+        "SELECT sum(state NOT IN (?, ?, ?)) AS reactions, sum(state = ?) AS noise FROM inbox_items WHERE substr(recorded_at, 1, 10) = ?",
+        (NOISE, BASELINE, OWN, NOISE, day),
     ) or {}
     return {"reactions": row.get("reactions") or 0, "noise": row.get("noise") or 0}
 

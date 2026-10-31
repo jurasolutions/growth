@@ -10,22 +10,20 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from datetime import timedelta
 
-from jura_growth import agents, caps, db, discord, log, pause, timeutil, transcripts
-from jura_growth.agents.inbox import report, watch
+from jura_growth import agents, caps, db, log, pause, timeutil, transcripts
+from jura_growth.agents.inbox import report, settings, watch
 from jura_growth.agents.inbox_browser import scope
 from jura_growth.agents.publish import audit, fixture
-from jura_growth.agents.publish.job import AUTH_VARIABLES, ENDINGS, MODEL_FAILED
+from jura_growth.agents.publish import job as publish_job
 
 RESUME = "`jura-growth resume inbox-browser` or /growth resume inbox-browser"
 
 
 def in_window() -> bool:
-    start, end = caps.INBOX_WATCH_WINDOW
-    return start <= timeutil.now_sgt().strftime("%H:%M") <= end
+    return settings.in_hours(caps.INBOX_WATCH_WINDOW)
 
 
 def _too_soon(conn: sqlite3.Connection) -> bool:
@@ -50,14 +48,13 @@ def precheck(conn: sqlite3.Connection):
     if not in_window():
         return agents.NothingToDo("outside the watch's hours")
     if _too_soon(conn):
-        return agents.NothingToDo("the watch read the platforms less than an hour ago")
+        return agents.NothingToDo(f"the watch read the platforms less than {caps.INBOX_WATCH_MINUTES_BETWEEN_RUNS} minutes ago")
     held = pause.is_paused(conn, watch.PUBLISH)
     if held:
         return f"publish is paused, and the two share the accounts: {held}"
-    for name in AUTH_VARIABLES:
-        if os.environ.get(name):
-            return (f"{name} is set, so Claude Code would start without the Chrome tools; remove it from the "
-                    f"environment scheduled runs get (the watch needs the claude.ai login)")
+    problem = publish_job.auth_problem("the watch needs the claude.ai login")
+    if problem:
+        return problem
     problems = watch.page_problems()
     if problems:
         return "; ".join(problems)
@@ -72,23 +69,6 @@ def _audit(transcript: transcripts.Transcript | None, outcome) -> audit.Audit:
         failures = ["no transcript was kept, so the run can't be cleared"] if outcome.status == "ok" else []
         return audit.Audit(failures=failures)
     return audit.audit(transcript, hosts=scope.hosts(), approved=[], images=[], site=fixture.active(), rules=scope.WATCH_RULES)
-
-
-def _ending(error: str, run_id: int) -> str:
-    phrase = next((words for prefix, words in ENDINGS if (error or "").startswith(prefix)), MODEL_FAILED)
-    return f"Run {run_id} {phrase}; its words are withheld (run {run_id}'s transcript keeps them)."
-
-
-def _no_browser(conn: sqlite3.Connection, run_id: int) -> None:
-    """Once a day: the text is the same each hour, and the health strip keeps saying it after that."""
-    today = timeutil.today_str()
-    earlier = db.scalar(conn, "SELECT count(*) FROM events WHERE kind = 'inbox.no_browser' AND ts LIKE ?", (f"{today}%",))
-    log.event(conn, "inbox.no_browser", {"run": run_id}, level="warning", agent=watch.AGENT, run_id=run_id)
-    if earlier:
-        return
-    discord.alert(conn, f"No browser was connected when the inbox watch ran (run {run_id}), so nothing on Facebook or "
-                        "Instagram was read. On the Mac, open Chrome with the Claude extension signed in to the same "
-                        "account as Claude Code. This is the only alert about it today.", agent=watch.AGENT)
 
 
 def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
@@ -106,24 +86,30 @@ def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
             pause.pause(conn, watch.AGENT, f"the audit of run {run_id} failed", notify=False)
 
     reads = watch.page_reads(transcript)
-    settled = watch.settle(conn, run_id, reads.text, trusted=not found.failures)
-    failed_surfaces = watch.finish_surfaces(conn, run_id, reads)
+    settled = watch.settle(conn, run_id, reads.results, trusted=not found.failures)
     # A steered run's numbers aren't told, and stay unremembered until a clean run reads them again.
-    lines = (watch.post_lines(conn, run_id) if not found.failures else []) + watch.over_cap_lines(conn, run_id)
-    watch.record_run_message(conn, run_id, lines)
+    # Before the surfaces settle, because the first good read of `posts` is what tells nothing (F12).
+    lines = watch.post_lines(conn, run_id) if not found.failures else []
+    failed_surfaces = watch.finish_surfaces(conn, run_id, watch.PageReads() if found.failures else reads)
+    watch.record_run_message(conn, run_id, [*lines, *watch.over_cap_lines(conn, run_id), *watch.own_lines(conn, run_id)])
     if found.no_browser:
-        _no_browser(conn, run_id)
+        publish_job.no_browser_once(conn, run_id, watch.AGENT, "inbox.no_browser",
+                                    f"No browser was connected when the inbox watch ran (run {run_id}), so nothing on "
+                                    "Facebook or Instagram was read.")
     _tried(conn, "report", lambda: report.report_due(conn))
 
     stop = watch.stopped_reason(conn, run_id)
     errors = []
     if found.failures:
-        errors.append(f"The audit of run {run_id} failed: {'; '.join(found.failures)}. Watching and social replies are "
-                      f"paused until you resume them: {RESUME}.")
+        # Fixed words and a count. A finding can quote what a model asked for, and #alerts renders links:
+        # the detail stays in the event and the transcript (code review 05, B1).
+        count = len(found.failures)
+        errors.append(f"The audit of run {run_id} failed with {count} finding{'s' if count != 1 else ''}, in that run's "
+                      f"inbox.audit_failed event. Watching and social replies are paused until you resume them: {RESUME}.")
     if stop:
         errors.append(f"Run {run_id} stopped: {stop} ({watch.STOP_REASONS.get(stop, 'a stop signal')}).")
     if outcome.status == "failed" and not errors:
-        errors.append(_ending(outcome.error, run_id))
+        errors.append(publish_job.ending(outcome.error, run_id))
     read = len(watch.SURFACES) - len(failed_surfaces)
     summary = f"read {read} of {len(watch.SURFACES)} surfaces; " + ", ".join(
         f"{count} {state}" for state, count in sorted(settled.states.items())) if settled.states else \
@@ -138,23 +124,7 @@ def after_run(conn: sqlite3.Connection, job: str, run_id: int | None, outcome):
 
 
 def failed_closed(conn: sqlite3.Connection, run_id: int | None, outcome, error: Exception):
-    """The outcome when the checks themselves broke: failed, with a fixed reason naming the run and
-    the error's type only, and the watch paused. A run nobody could check keeps no benefit of doubt."""
-    from jura_growth import runner
-
-    name = type(error).__name__
-    for step in (
-        lambda: log.event(conn, "inbox.checks_failed", {"error": name}, level="error", agent=watch.AGENT, run_id=run_id),
-        lambda: pause.pause(conn, watch.AGENT, f"the checks after run {run_id} couldn't run", notify=False),
-    ):
-        try:
-            step()
-        except Exception:  # noqa: BLE001 - the failed outcome stands whatever happens here
-            pass
-    return runner.Outcome(
-        "failed",
-        summary=f"the checks after run {run_id} couldn't run",
-        error=(f"The checks after run {run_id} couldn't run ({name}), so the run is treated as failed. Watching and "
-               f"social replies are paused until you resume them: {RESUME}."),
-        cost_usd=getattr(outcome, "cost_usd", None),
-    )
+    """The outcome when the checks themselves broke. A run nobody could check keeps no benefit of doubt,
+    and its held items reach him through the next mail check."""
+    return publish_job.checks_failed(conn, run_id, outcome, error, agent=watch.AGENT, event="inbox.checks_failed",
+                                     paused=f"Watching and social replies are paused until you resume them: {RESUME}.")

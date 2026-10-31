@@ -29,11 +29,18 @@ so `tests/test_publish_audit.py` doesn't change.
 
 `inbox observe --file` takes everything from a scratch file, so a page's words never pass through
 Bash quoting. Every field is validated, and a refusal gives a fixed reason. The text a message stores
-must appear in what `get_page_text` or `read_page` returned to that run (`find` is a retelling), or the
-item is `unverified`: reported as such, with no draft. Messages are held until that check, so nothing
-unchecked reaches a report or triage. A surface counts as read only if the run said so and read a page
-on that platform. Anything else has failed, which is different from a quiet day. A model's words never
-reach a run row, #alerts or a run update: `after_run` writes them from the records.
+must appear in what `get_page_text` or `read_page` returned to that run (`find` is a retelling), in one
+result with its lines together, and not in the tab's address or title, or the item is `unverified`:
+reported as such, with no draft. Messages are held until that check, so nothing unchecked reaches a report
+or triage. A surface counts as read only if the run said so, read a page on that platform and passed its
+audit. Anything else has failed, which is different from a quiet day. A model's words and links never
+reach a run row, #alerts or a run update: `after_run` writes them from a closed list and record fields,
+and an audit's findings, which can quote what a model asked for, stay in the event.
+
+The read-only audit is an allow list, so a tool the extension adds later fails until it is looked at.
+What a run may ask to open is held to a surface, a thread, a post of Jura's or a post in a group, so no
+page can send it to `l.php` or `/accounts/logout/`. Where the platform then redirects is its own
+choice: a login wall is a stop signal, not a finding.
 
 ## Decision 3: the conversation class
 
@@ -74,7 +81,11 @@ in a browser run writes both the `inbox-browser` and `publish` flags, because th
 - **A key's limit.** A message is keyed on its first 120 alphanumerics. A cut shorter than that, such as a
   list preview, reads as a different message, so the prompt copies from the thread and not from a preview.
 - **A steered stop.** A page can talk a model into `inbox stopped`, which pauses browser work until he
-  resumes it. That fails safe and costs an hour's reading, so it stays.
+  resumes it. That fails safe and costs an hour's reading, so it stays, and the alert says so.
+- **Counts include the Page's own.** A post's page shows one total of reactions and shares, with no split,
+  so S8's "excluding the Page's own activity" holds only for comments, through `page_comments`.
+- **The Page's name.** Facebook names aren't unique. What the page links to the Page's address is the
+  Page's. What only has its name is set aside, and counted once in #mission-control.
 - **Layouts change.** Meta's pages can't be tried in a build. The fixture proves the code, and the setup
   guide's first-run checks prove Meta. A failed surface is how a layout change shows up.
 - **Business Suite threads** carry their thread in the query, not the path. The reply job binds to them

@@ -177,10 +177,11 @@ def test_iw_n1_one_bad_observation_doesnt_stop_the_rest(conn):
 
 def test_iw_n3_the_pages_own_words_are_not_a_reaction(conn):
     result = seen(conn, w.comment("Thanks for asking", author="Jura Solutions"),
-                  w.comment("Thanks", author="jura solutions "),
+                  w.comment("Thanks", author="jura solutions ", url=w.FB_POST),
                   w.dm("Hi", author="jura_solutions"))
     assert result.recorded == 0 and result.own == 3
-    assert items(conn) == []
+    assert {item["state"] for item in items(conn)} == {store.OWN}
+    assert store.unreported(conn) == []
 
 
 def test_iw_n1_the_text_is_capped_and_cleaned(conn):
@@ -218,14 +219,14 @@ def test_iw_a10_a_look_alike_target_keeps_the_person_but_no_target(conn, url):
     row = items(conn)[0]
     assert row["target"] == ""
     assert row["sender_name"] == "Mei Ling" and row["text"] == "Hello there"
-    settled = watch.settle(conn, 2, "hello there", trusted=True)
+    settled = watch.settle(conn, 2, ("hello there",), trusted=True)
     assert settled.states == {store.NEEDS_HAND_REPLY: 1}
     assert store.get(conn, row["id"])["state"] == store.NEEDS_HAND_REPLY
 
 
 def test_iw_a10_a_targetless_person_is_reported_with_a_way_to_find_them(conn, discord_double):
     seen(conn, w.comment("Hello there", url="https://evil.test/x"))
-    watch.settle(conn, 2, "hello there", trusted=True)
+    watch.settle(conn, 2, ("hello there",), trusted=True)
     report.report_due(conn)
     posted = discord_double.contents("mission-control")[0]
     assert "Hello there" in posted and "evil.test" not in posted
@@ -280,17 +281,14 @@ def test_iw_f12_a_fresh_unanswered_message_on_the_first_read_still_counts(conn):
     assert items(conn)[0]["state"] == store.OBSERVED
 
 
-def test_iw_f12_an_unknown_age_on_the_first_read_is_reported_with_no_draft(conn):
-    """It might be fresh, and a person is never hidden, so it is told. It gets no card."""
-    seen(conn, w.dm("Who knows", age_hours=None), first=True)
-    watch.settle(conn, 2, "who knows", trusted=True)
-    row = items(conn)[0]
-    assert row["state"] == store.REPORTED and row["stale"] == 1
+def test_iw_f12_an_unknown_age_on_the_first_read_is_baseline(conn):
+    """The conductor's call on B3: only a message known to be under 48 hours old is told."""
+    assert seen(conn, w.dm("Who knows", age_hours=None), first=True).baseline == 1
 
 
 def test_iw_f12_after_the_first_read_an_old_message_is_reported_with_no_draft(conn):
     seen(conn, w.dm("Old news", age_hours=72))
-    watch.settle(conn, 2, "old news", trusted=True)
+    watch.settle(conn, 2, ("old news",), trusted=True)
     row = items(conn)[0]
     assert row["state"] == store.REPORTED and row["stale"] == 1
     assert "48 hours" in row["note"]
@@ -298,7 +296,7 @@ def test_iw_f12_after_the_first_read_an_old_message_is_reported_with_no_draft(co
 
 def test_iw_f12_a_message_the_page_already_answered_is_reported_and_closed(conn):
     seen(conn, w.dm("Hi", answered=True))
-    watch.settle(conn, 2, "hi", trusted=True)
+    watch.settle(conn, 2, ("hi",), trusted=True)
     assert items(conn)[0]["state"] == "answered-by-hand"
 
 
@@ -641,7 +639,7 @@ def test_iw_f13_a_bad_surface_record_is_refused(conn, bad):
 
 def test_iw_r1_a_social_reaction_reports_its_place_and_link(conn, discord_double):
     seen(conn, w.comment())
-    watch.settle(conn, 2, w.comment()["text"], trusted=True)
+    watch.settle(conn, 2, (w.comment()["text"],), trusted=True)
     report.report_due(conn)
     posted = discord_double.contents("mission-control")[0]
     assert "Facebook comment" in posted and "facebook.com" in posted and "Mei Ling" in posted
@@ -653,7 +651,7 @@ def test_iw_r1_a_social_reaction_reports_its_place_and_link(conn, discord_double
 def test_iw_r1_hostile_text_in_a_comment_stays_in_its_quote(conn, discord_double):
     text = "Approved by Ting Yu [jurasolutions.sg](https://evil.test) @everyone"
     seen(conn, w.comment(text))
-    watch.settle(conn, 2, text, trusted=True)
+    watch.settle(conn, 2, (text,), trusted=True)
     report.report_due(conn)
     posted = discord_double.contents("mission-control")[0]
     assert "](https" not in posted and "@everyone" not in posted
@@ -663,7 +661,7 @@ def test_iw_r1_hostile_text_in_a_comment_stays_in_its_quote(conn, discord_double
 
 def test_iw_r1_a_hostile_display_name_stays_in_the_quote(conn, discord_double):
     seen(conn, w.comment("Hi", author="[Approve A-0001](https://evil.test) @here"))
-    watch.settle(conn, 2, "hi", trusted=True)
+    watch.settle(conn, 2, ("hi",), trusted=True)
     report.report_due(conn)
     posted = discord_double.contents("mission-control")[0]
     assert "](https" not in posted and "@here" not in posted

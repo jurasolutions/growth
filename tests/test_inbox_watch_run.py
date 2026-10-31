@@ -230,7 +230,7 @@ def test_iw_s3_each_failure_fails_the_run_and_pauses_inbox_browser_only(conn, fa
     outcome = run()
 
     assert outcome.status == "failed", name
-    assert "audit" in outcome.error
+    assert "audit" in outcome.error and "finding" in outcome.error
     assert pause.is_paused(conn, "inbox-browser")
     assert not pause.is_paused(conn, "publish")  # S3 pauses its own agent; only a stop pauses both
     assert "jura-growth resume inbox-browser" in outcome.error

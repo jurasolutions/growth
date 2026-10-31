@@ -45,6 +45,10 @@ jura-growth pause inbox-browser
    - The likeliest to need a change are the start addresses in `SURFACES`, in
      `jura_growth/agents/inbox/watch.py`: `/direct/general/`, `/latest/inbox/spam` and
      `/latest/notifications`. None could be tried in the build.
+   - Check which identity `www.facebook.com/notifications` shows. The browser is signed in as Levi's
+     profile, and the watch can't click to switch to the Page. If it shows Levi's notifications, that
+     surface will read as failed, because it isn't the Page's. Then find an address that shows the Page's
+     (Business Suite has one) and change its start in `SURFACES`.
    - Instagram's General tab may have no address of its own. If so, it can't be read without a click.
      Decide then: drop that surface, or allow `computer` (the step below).
 7. **It can see enough without clicking.** Open two threads and two posts yourself, and compare them with

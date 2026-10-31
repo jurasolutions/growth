@@ -72,7 +72,6 @@ def job(name: str) -> dict:
 _lock = locks.held  # one lock per job
 # One browser job at a time, since they share Chrome and the accounts (ADR 0006). One shared lock
 # taken after the job's own: atomic, and `_abandon_stale` still sees the job lock.
-BROWSER_LOCK = "browser"
 ANOTHER_BROWSER_JOB = "another browser job is running"
 
 
@@ -96,7 +95,7 @@ def run(name: str, *, ignore_schedule: bool = False) -> Outcome:
         try:
             if name not in caps.BROWSER_JOBS:
                 return _run_locked(conn, name, spec, ignore_schedule)
-            with _lock(BROWSER_LOCK) as free:
+            with _lock(locks.BROWSER) as free:
                 if free:
                     return _run_locked(conn, name, spec, ignore_schedule)
                 log.event(conn, "run.quiet", {"job": name, "started_at": timeutil.stamp(), "reason": ANOTHER_BROWSER_JOB}, agent=agent)

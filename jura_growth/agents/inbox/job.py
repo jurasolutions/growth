@@ -12,16 +12,24 @@ from __future__ import annotations
 import sqlite3
 from typing import Callable, TypeVar
 
-from jura_growth import agents, caps, log, timeutil
-from jura_growth.agents.inbox import mail, report
+from jura_growth import agents, caps, locks, log
+from jura_growth.agents.inbox import mail, report, settings, store, watch
 
 T = TypeVar("T")
 
 
 def in_window() -> bool:
-    """PRD §4: launchd can fire early until the Mac restarts, so the hours are checked here too."""
-    start, end = caps.INBOX_CHECK_WINDOW
-    return start <= timeutil.now_sgt().strftime("%H:%M") <= end
+    return settings.in_hours(caps.INBOX_CHECK_WINDOW)
+
+
+def _settle_held(conn: sqlite3.Connection) -> None:
+    """A watch run's held items, when no browser job is running. A browser pause stops the watch's
+    own precheck and never this one, so nobody stays hidden behind it (N3)."""
+    if not store.has_state(conn, store.OBSERVED):
+        return
+    with locks.held(locks.BROWSER) as free:
+        if free:
+            watch.settle_orphans(conn)
 
 
 def _guarded(conn: sqlite3.Connection, step: str, work: Callable[[], T], otherwise: T) -> T:
@@ -45,5 +53,6 @@ def precheck(conn: sqlite3.Connection) -> agents.NothingToDo:
     if not in_window():
         return agents.NothingToDo("outside the mail check's hours")
     found = _guarded(conn, "intake", lambda: mail.intake(conn), mail.Intake(failed=1))
+    _guarded(conn, "settle", lambda: _settle_held(conn), None)
     reported = _guarded(conn, "report", lambda: report.report_due(conn), 0)
     return agents.NothingToDo(f"{found.recorded} new, {found.noise} noise, {reported} reported")

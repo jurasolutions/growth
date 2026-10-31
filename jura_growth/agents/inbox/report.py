@@ -33,7 +33,7 @@ NEXT_NEW = "Next: no draft yet in this build. Answer in the mailbox if it needs 
 NEXT_NEW_SOCIAL = "Next: no draft yet in this build. Answer on the platform if it needs one."
 SOCIAL_HEADINGS = {"facebook-comment": "Facebook comment", "facebook-dm": "Facebook message",
                    "instagram-comment": "Instagram comment", "instagram-dm": "Instagram message"}
-RUN_MESSAGE = "post-stats"  # counts and notes from a watch run: fixed words and validated numbers, no one's text
+RUN_MESSAGE = store.RUN_MESSAGE
 
 _LINK_TARGET = re.compile(r"\]\(\s*<?\s*(\w+)://")
 _SPOILER = re.compile(r"\|(?=\|)")

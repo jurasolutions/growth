@@ -57,8 +57,11 @@ count.
 **Other browser jobs (`AuditRules`, inbox watch technical review B1).** Everything above is the
 publish job's default. An inbox job passes its own command words, and may add:
 
-- `read_only` (a watch run): any `form_input`, `file_upload`, or `computer` action outside `LOOKS`
-  fails, because a click can be Like, Hide, Delete or Block and a transcript can't say which.
+- `read_only` (a watch run): an allow list. Any Chrome tool outside `READ_ONLY_TOOLS`, or `computer`
+  action outside `LOOKS`, fails, because a click can be Like, Hide, Delete or Block and a transcript
+  can't say which, and a tool the extension adds later must not pass by being new.
+- `asked_check`: what a run may ask to open, beyond its hosts. It judges only the address asked for:
+  where a platform then redirects (a login wall) is the platform's choice, and a stop signal.
 - `one_line` (a reply run): Return sends in a DM. So a line break in typed text, `shift+return`, or
   Return before a field holds a whole approved text fails. Once one does, one send (Return or a
   click) is allowed, and any later click, key or typing fails until the run's done word.
@@ -95,8 +98,8 @@ EDIT_KEYS = {"backspace", "delete", "up", "down", "left", "right", "arrowup", "a
              "home", "end", "pageup", "pagedown", "page_up", "page_down"}
 # Page actions that may not follow a stop.
 ACTS_AFTER_STOP = {"form_input", "file_upload", "upload_image", "navigate"}
-# Page tools a read-only run may never call at all, whatever they were given.
-READ_ONLY_DENIED = {"form_input", "file_upload", "upload_image"}
+# All a read-only run may call. `computer` stays for its looks alone (ADR 0006's reversal).
+READ_ONLY_TOOLS = {"navigate", "read_page", "get_page_text", "find", "computer", "tabs_close_mcp", *TABLESS}
 URL_KEYS = ("url", "uri", "href", "link")
 TAIL_CHARS = 20_000  # how far from a result's end its tab context may start
 MAX_DEPTH = 16  # the deepest JSON tab context read; anything deeper is unreadable
@@ -126,6 +129,7 @@ class AuditRules:
     read_only: bool = False
     one_line: bool = False
     place_check: Callable[[str, str], bool] = hosts_mod.within
+    asked_check: Callable[[str], bool] | None = None
 
 
 PUBLISH_RULES = AuditRules()
@@ -246,11 +250,13 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
             value = call.input.get(key)
             if isinstance(value, str):
                 check_url(value, f"{tool} was asked to open")
+                if rules.asked_check and value.strip() not in BLANK_TABS and not rules.asked_check(value):
+                    fail(f"{tool} was asked to open an address a {rules.tool_word} run doesn't read")
 
         action = str(call.input.get("action", "")) if tool == "computer" else ""
         if stopped and (tool in ACTS_AFTER_STOP or (tool == "computer" and action not in LOOKS)):
             fail(f"{f'{tool} {action}'.strip()} after {rules.stopped_word}")
-        if rules.read_only and (tool in READ_ONLY_DENIED or (tool == "computer" and action not in LOOKS)):
+        if rules.read_only and (tool not in READ_ONLY_TOOLS or (tool == "computer" and action not in LOOKS)):
             fail(f"{f'{tool} {action}'.strip()} in a {rules.tool_word} run, which may only read")
         if rules.one_line:
             sent = _one_line(tool, call.input, action, _whole_text_typed(fields, texts), sent, fail)
@@ -441,6 +447,50 @@ def tab_addresses(text: str) -> list[tuple[str, str]]:
     """(tab id, address) from the tab context that ends a tool's result, for another job's checks.
     Page text can't plant one (`_trailing_tabs`)."""
     return _trailing_tabs(text)
+
+
+_CONTEXT_HEADING = re.compile(r"(?:^|\n)\s*Tab Context:\s*(?:- Executed on tabId:[^\n]*\s*)?$")
+_RESULT_HEADING = re.compile(r"\A(?:(?:Title|URL|Source element):[^\n]*\n)+(?:---[^\n]*\n)?")
+
+
+def page_text(text: str) -> str:
+    """What a page said in a read tool's result: without the title and address that may open it, and
+    without the tab context and reminders that end it. An address the run asked for, or a page's
+    title, isn't anything a person there wrote (code review 05, B2). Never raises."""
+    try:
+        start = max(0, len(text) - TAIL_CHARS)
+        tail = _without_trailing_reminders(text[start:])
+        cut = _tail_json_start(tail)
+        if cut is None:
+            cut = _tail_lines_start(tail)
+        body = text[:start] + (tail if cut is None else _CONTEXT_HEADING.sub("", tail[:cut]))
+        return _RESULT_HEADING.sub("", body)
+    except Exception:  # noqa: BLE001 - page content is never allowed to break a check
+        return ""
+
+
+def _tail_json_start(tail: str) -> int | None:
+    """Where the JSON tab context `_tail_json` reads begins, or None."""
+    if not tail.endswith(("}", "]")):
+        return None
+    starts = [i for i in range(len(tail) - 1, -1, -1) if tail[i] in "{[" and (i == 0 or tail[i - 1] == "\n")]
+    for begin in starts[:TAIL_CANDIDATES]:
+        block = tail[begin:]
+        if _depth(block) > MAX_DEPTH:
+            continue
+        try:
+            json.loads(block)
+        except ValueError:
+            continue
+        return begin
+    return None
+
+
+def _tail_lines_start(tail: str) -> int | None:
+    """Where the `- Available tabs:` block `_tail_lines` reads begins, or None."""
+    if not _tail_lines(tail):
+        return None
+    return tail.rfind("- Available tabs:")
 
 
 def _tail_json(tail: str) -> list[tuple[str, str]]:

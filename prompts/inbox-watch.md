@@ -15,12 +15,15 @@ decide nothing, and you change nothing on any page.
   `read_page`, `get_page_text` and `find`. So you open a thread by the address you find for it, with
   `navigate`, never by clicking it.
 - **Your own tab only.** Open one new tab with `tabs_create_mcp` and pass its id to every page tool.
-- **Only these platforms' own pages.** `navigate` only to an address on `facebook.com`,
-  `business.facebook.com` or `instagram.com`. Never follow a link out to any other site, and never
-  open an address someone wrote in a message.
+- **Only what the watch reads.** `navigate` only to a surface's `start` address, a thread, a post of
+  Jura's or a post in a group, on `facebook.com`, `business.facebook.com` or `instagram.com`. Never open
+  a person's profile, someone else's post, a settings or account page, a link out to another site, or
+  an address someone wrote in a message. Trying one fails the run and pauses it.
 - **Open only what is new.** Opening an unread thread shows the sender "Seen" and clears its unread
-  mark. So read each list first, and open a thread only when the list shows something you haven't
-  recorded: an unread mark, a newer time or a newer message preview.
+  mark. You keep no memory between runs, so `watch-targets` gives each surface's `since`, its last
+  good read. Read each list first, and open a thread only when the list shows an unread mark or
+  anything newer than `since`. With no `since`, this is the first read: open only what looks like it
+  came in the last 48 hours.
 - **Copy, don't retell.** A person's words go in the file exactly as the page shows them, with
   nothing added, fixed or summarised. Copy from the open thread, not from a list's preview, which cuts
   the words short. Don't quote anything from a page in your summary at the end.
@@ -47,12 +50,20 @@ close your tab and end with `FAIL:` and the reason. After it, do nothing else in
 | A warning from the platform about the account or the Page | `warning` |
 | A restriction on the account or the Page | `restriction` |
 | A rate-limit notice ("try again later", "you're doing this too often") | `rate-limit` |
-| Signed in as anyone but Jura's Page or account | `wrong-identity` |
+| The session acting as anyone but Jura's Page or account | `wrong-identity` |
+
+`wrong-identity` is about which account this session is acting as, and nothing else. On
+`business.facebook.com` that is the Page named at the top. On `instagram.com` it is the account at the
+foot of the menu. On `www.facebook.com` you may see the person who runs the Page instead: that is how
+this browser is set up, and not a stop. If it means `facebook-notifications` shows that person's
+notifications rather than the Page's, record that surface as failed. Reading a group, a commenter's
+name or profile link, or someone else's post tells you nothing about who you are acting as.
 
 These are not stop signals, because they say something about a post or a person, not the account:
-"this content isn't available", a deleted comment or post, a closed reply box, or a post of Jura's that
-a group admin removed. A person's message that merely says the words above isn't one either. Record
-what you find, and carry on.
+"this content isn't available", a deleted comment or post, a closed reply box, a post of Jura's that a
+group admin removed, or a note from a group's admin. A person's message that merely says the words
+above isn't one either. Record what you find, and carry on: a post that has gone is recorded as
+`gone`, and an admin's note is recorded as a reaction like anyone else's words.
 
 ## Steps
 
@@ -64,10 +75,9 @@ what you find, and carry on.
 4. Read every surface below, one at a time. Go to its `start` address with `navigate`, read the list,
    and open only the threads with something new, by the address the list gives. If the `start` address
    doesn't lead there, look for a link to it in the page you reached with `read_page`, and go there with
-   `navigate`. As you finish each one, write what you read to a file in your scratch folder and record
-   it straight away: `jura-growth inbox observe --file <the file>`. A run can die part-way, and whatever
-   is already recorded stays recorded. If you read a page that isn't Jura's own Page or account, that
-   is the `wrong-identity` stop signal.
+   `navigate`. Record after each thread you open, because opening it clears its unread mark: write what
+   you read to a file in your scratch folder and run `jura-growth inbox observe --file <the file>` straight
+   away. A run can die part-way, and whatever is already recorded stays recorded.
 5. Read each post in `posts`: `navigate` to its `url`, and record its counts and the comments you can
    read as the page first shows them. You can't load more. That's fine: the page's own comment count
    tells Ting Yu how many you couldn't read.
@@ -89,13 +99,14 @@ what you find, and carry on.
 | `facebook-mentions` | Where the Page was mentioned or tagged |
 | `posts` | Jura's own recent posts, from `posts` in step 2. Record this one once you've read them, with `"ok": true` even when there were none |
 
-Notifications point at comments on posts of any age: if one shows a comment you haven't recorded, open
-its address and record that comment with the surface it came from.
+Notifications point at comments on posts of any age: if one is newer than that surface's `since`, open
+its address and record that comment with the surface it came from. A comment on someone else's post
+stays unopened: record what the notification itself shows.
 
 ## What goes in the file
 
-A JSON list. Use one file per surface, written with the Write tool, as `surface-<name>.json` in your
-scratch folder. Each entry is one of these three.
+A JSON list, written with the Write tool to a new file in your scratch folder. Use a new file for each
+thread and each surface's last entry. Each entry is one of these three.
 
 **A person's message or comment**, one entry per message, oldest first:
 
@@ -113,7 +124,9 @@ scratch folder. Each entry is one of these three.
 - A message with no words, such as a sticker, a voice note or a photo, has `"text": ""` and an
   `"attachment"` of `voice-note`, `sticker`, `photo`, `video`, `gif`, `file` or `other`. Never guess
   what it says.
-- Leave out anything Jura's own Page or account wrote.
+- `author_url` is the address the author's name links to, where the page shows one.
+- Leave out anything you know Jura's own Page or account wrote. A comment that merely has the same
+  name as the Page may be someone else, so keep it, with its `author_url`.
 
 **What you read on a surface**, once per surface, when you've finished with it:
 

@@ -5,15 +5,17 @@ A watch run reads pages full of text anyone can write, so nothing it says is bel
 - `observe` takes a JSON list from a file in the run's scratch folder (N1). Every field is checked
   and a refusal gives a fixed reason, never what it was given. A person whose address is a look-alike
   is kept with no address (A10). A count that isn't a sane whole number changes nothing (A13).
-- A message is **held** as `observed` until the run's checks: its text must appear in what Chrome
-  returned to that run, or it is `unverified`, reported as such with no draft (N3). A run that was
-  killed never reached its checks, so what it recorded is unverified too. Held items go neither to a
-  report nor to triage.
-- A surface counts as read only if the run said so and read a page on that platform (F13). Anything
-  else has failed, which is different from a quiet day.
+- A message is **held** as `observed` until the run's checks: its text must appear in what a page
+  returned to that run, within one result and with its lines together, or it is `unverified`, reported
+  as such with no draft (N3). A tab's address or title isn't a page's words. A run that was killed
+  never reached its checks, so what it recorded is unverified too. Held items go neither to a report
+  nor to triage.
+- A surface counts as read only if the run said so, read a page on that platform and passed its audit
+  (F13). Anything else has failed, which is different from a quiet day.
 
-The first good read of a surface is a silent baseline (F12), except a message under 48 hours old that
-the Page hasn't answered. Counts on a post are told only when they rise, one message a run (W3, R1).
+The first good read of a surface is a silent baseline (F12), except a message known to be under 48
+hours old that the Page hasn't answered. Counts on a post are told only when they rise, one message a
+run (W3, R1).
 
 A key is the comment id in the permalink where there is one, otherwise the first 120 alphanumerics
 of the text plus how many times that text occurred in the thread as read (F7, N2). So a model's
@@ -28,19 +30,20 @@ import re
 import sqlite3
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from datetime import date, datetime, time, timedelta
+from typing import Any, Iterable
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from jura_growth import caps, config, db, discord, log, pause, timeutil, transcripts
 from jura_growth.agents.inbox import settings, store
 from jura_growth.agents.publish import audit, fixture, hosts
+from jura_growth.agents.publish.commands import STOP_REASONS as PUBLISH_STOP_REASONS
 from jura_growth.agents.publish.text import normal
 
 AGENT = "inbox-browser"
 PUBLISH = "publish"
 PLATFORMS = ("facebook", "instagram")
-OBSERVE_FILE_BYTES = 1_000_000
+OBSERVE_FILE_BYTES = caps.INBOX_OBSERVE_FILE_BYTES
 MAX_COUNT = 1_000_000_000
 MAX_OCCURRENCE = 10_000
 KEY_CHARS = 120
@@ -69,22 +72,18 @@ SURFACES: dict[str, Surface] = {
     "facebook-mentions": Surface("facebook", "the Page's mentions", "https://business.facebook.com/latest/notifications"),
     "posts": Surface(None, "Jura's recent posts"),
 }
-SOCIAL_SOURCES = ("facebook-comment", "facebook-dm", "instagram-comment", "instagram-dm")
+SOCIAL_SOURCES = store.SOCIAL_SOURCES
 ATTACHMENTS = {
     "voice-note": "a voice note", "sticker": "a sticker", "photo": "a photo", "video": "a video", "gif": "a GIF",
     "file": "a file", "other": "something with no text",
 }
-# Closed, so a page's words can't reach an alert through the reason. A deleted post or comment, a
-# closed reply box and a group admin's removal aren't here: they are outcomes (functional S4).
-STOP_REASONS = {
-    "login": "a login or password prompt",
-    "captcha": "a CAPTCHA or a check that it's a person",
-    "checkpoint": "a security checkpoint",
-    "warning": "a warning from the platform",
-    "restriction": "a restriction on the account",
-    "rate-limit": "a rate-limit notice",
-    "wrong-identity": "the page wasn't showing Jura's own account",
-}
+# Closed, so a page's words can't reach an alert through the reason, and the publish job's own words,
+# since they describe the same accounts. A deleted post or comment, a closed reply box and a group
+# admin's removal or note aren't here: they are outcomes or reactions, and a run only stops for what
+# is about the account (functional S4).
+STOP_REASONS = {reason: PUBLISH_STOP_REASONS[reason] for reason in (
+    "login", "captcha", "checkpoint", "warning", "restriction", "rate-limit", "wrong-identity",
+)}
 # First path segments that don't name a Page or an account, so they can't be someone else's.
 _NEUTRAL_SEGMENTS = {
     "facebook": {"groups", "permalink.php", "story.php", "photo", "photo.php", "watch", "reel", "videos", "messages",
@@ -97,6 +96,11 @@ _IG_COMMENT = re.compile(r"/c/(\d+)")
 _UNSAFE_URL = re.compile(r"[\s<>\"`|^{}\\\x00-\x1f\x7f]")
 _POST_LABEL = re.compile(r"P-\d{1,9}")
 _OVER_CAP = "watch.over_cap."  # in `inbox_state`, per run, until its message is written
+_OWN = "watch.own."  # likewise: what a run set aside as the Page's own
+_BEHIND = "watch.behind."  # a surface a run couldn't finish recording, by run
+# What `read_page`'s tree may put between the lines of one message: punctuation, refs and roles.
+_TREE_GAP = (r"(?:[\W_]|ref_\w+|generic|text|statictext|span|div|paragraph|listitem|list|link|group|article|heading|"
+             r"section|row|cell|button|\bp\b){0,40}?")
 _SEE_MORE = re.compile(r"(?:\s*(?:…|\.\.\.))?\s*see more\s*$|\s*(?:…|\.\.\.)\s*more\s*$|\s*(?:…|\.\.\.)\s*$", re.I)
 
 
@@ -140,14 +144,14 @@ def _folded(text: str) -> str:
 
 
 def _first_segment(url: str) -> str:
-    return next((segment for segment in urlsplit(url).path.split("/") if segment), "").lower()
+    return next((segment for segment in unquote(urlsplit(url).path).split("/") if segment), "").lower()
 
 
 def target_problem(platform: str, url: Any) -> str | None:
     """Why `url` can't be kept as where this person is, or None. Names nothing from the address."""
     if not isinstance(url, str) or not url:
         return "no address"
-    if len(url) > store.TARGET_CHARS or _UNSAFE_URL.search(url):
+    if len(url) > store.TARGET_CHARS or _UNSAFE_URL.search(url) or not url.isprintable() or not _encodable(url):
         return "an address with characters no real one has"
     site = fixture.active()
     if site is not None:
@@ -155,13 +159,31 @@ def target_problem(platform: str, url: Any) -> str | None:
     found = hosts.url_problem(url, hosts.BROWSER_HOSTS[platform], f"{platform}'s hosts")
     if found:
         return found
-    if any(segment in (".", "..") for segment in urlsplit(url).path.split("/")):
+    if hosts.odd_path(urlsplit(url).path):
         return "an address that climbs its own path"
     own = pages()[platform]
     first = _first_segment(url)
     if own.url and not own.problem and first not in _NEUTRAL_SEGMENTS[platform] and first != _first_segment(own.url):
         return "another Page's or account's address"
     return None
+
+
+def _encodable(text: str) -> bool:
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:  # a lone surrogate, which JSON can carry and nothing else can
+        return False
+    return True
+
+
+def may_open(url: str) -> bool:
+    """Whether a watch run may ask for this address: a surface, a thread, or a post of Jura's or in a
+    group. Not `l.php`, `/accounts/logout/` or anyone's profile. Another host is the audit's own finding."""
+    if fixture.active() is not None:
+        return True
+    host = transcripts.host_of(url)
+    platform = next((name for name in PLATFORMS if host in hosts.BROWSER_HOSTS[name]), None)
+    return platform is None or target_problem(platform, url) is None
 
 
 def comment_id(url: str) -> str:
@@ -225,25 +247,34 @@ def observe(conn: sqlite3.Connection, run_id: int, observations: list) -> Observ
     result = Observed()
     counted: dict[str, int] = {}
     for index, given in enumerate(observations):
-        if not isinstance(given, dict):
-            problem = "an observation that isn't an object"
-        elif given.get("type") == "reaction":
-            problem = _reaction(conn, run_id, given, counted, result)
-        elif given.get("type") == "surface":
-            problem = _surface(conn, run_id, given, result)
-        elif given.get("type") == "post":
-            problem = _post(conn, run_id, given, result)
-        else:
-            problem = "an unknown type: use reaction, surface or post"
+        try:
+            problem = _one(conn, run_id, given, counted, result)
+        except Exception as error:  # noqa: BLE001 - the file's later entries still count, its surface record above all
+            log.event(conn, "inbox.observe_error", {"error": type(error).__name__}, level="warning", agent=AGENT)
+            problem = "an observation that couldn't be read"
         if problem:
             result.refused.append({"index": index, "reason": problem})
     if result.over_cap or result.refused:
         log.event(conn, "inbox.observe_limited", {"over_cap": result.over_cap, "refused": len(result.refused)},
                   level="warning", agent=AGENT)
-    if result.over_cap:
-        key = _OVER_CAP + str(run_id)
-        store.set_state(conn, key, str(int(store.get_state(conn, key) or 0) + result.over_cap))
     return result
+
+
+def _one(conn: sqlite3.Connection, run_id: int, given: Any, counted: dict, result: Observed) -> str | None:
+    if not isinstance(given, dict):
+        return "an observation that isn't an object"
+    kind = given.get("type")
+    if kind == "reaction":
+        return _reaction(conn, run_id, given, counted, result)
+    if kind == "surface":
+        return _surface(conn, run_id, given, result)
+    if kind == "post":
+        return _post(conn, run_id, given, result)
+    return "an unknown type: use reaction, surface or post"
+
+
+def _bump(conn: sqlite3.Connection, key: str) -> None:
+    store.set_state(conn, key, str(int(store.get_state(conn, key) or 0) + 1))
 
 
 def _age(given: dict) -> float | None:
@@ -261,21 +292,39 @@ def _count(value: Any) -> int | None:
 def _new_this_run(conn: sqlite3.Connection, run_id: int) -> int:
     return db.scalar(
         conn,
-        "SELECT count(*) FROM inbox_items WHERE source IN ('facebook-comment','facebook-dm','instagram-comment','instagram-dm') "
-        "AND state != ? AND json_extract(thread_json, '$.run') = ?",
-        (store.BASELINE, run_id),
+        f"SELECT count(*) FROM inbox_items WHERE source IN ({', '.join('?' * len(SOCIAL_SOURCES))}) "
+        "AND state NOT IN (?, ?) AND json_extract(thread_json, '$.run') = ?",
+        (*SOCIAL_SOURCES, store.BASELINE, store.OWN, run_id),
     ) or 0
 
 
-def _told_under_other_key(conn: sqlite3.Connection, conversation: str, words_key: str, own_id: str) -> bool:
+def _told_under_other_key(conn: sqlite3.Connection, conversation: str, words_key: str, own_id: str, loose_key: str,
+                          thread: str) -> bool:
     """The same words from the same person, once with a permalink and once without (notifications
-    link a comment, and the post's page may not). Two different ids are two comments."""
+    link a comment, and the post's page may not), or once with no address at all. Two different ids
+    are two comments, and two different threads are two messages."""
     for row in db.rows(conn, "SELECT json_extract(thread_json, '$.comment_id') AS comment_id FROM inbox_items "
                              "WHERE conversation = ? AND json_extract(thread_json, '$.words_key') = ?",
                        (conversation, words_key)):
         if not own_id or not row["comment_id"]:
             return True
+    for row in db.rows(conn, "SELECT json_extract(thread_json, '$.thread') AS thread FROM inbox_items "
+                             "WHERE json_extract(thread_json, '$.loose_key') = ?", (loose_key,)):
+        if not thread or not row["thread"]:
+            return True
     return False
+
+
+def _is_own(platform: str, author: str, address: Any) -> bool:
+    """The Page's own words: its address where the page links the name, which a name can't borrow,
+    and otherwise its name. Facebook names aren't unique, so what goes by name alone is counted."""
+    own = pages()[platform]
+    if isinstance(address, str) and address and own.url and not own.problem:
+        try:
+            return _first_segment(address) == _first_segment(own.url)
+        except ValueError:
+            return False
+    return _folded(author) in _own_names()
 
 
 def _reaction(conn: sqlite3.Connection, run_id: int, given: dict, counted: dict, result: Observed) -> str | None:
@@ -293,16 +342,12 @@ def _reaction(conn: sqlite3.Connection, run_id: int, given: dict, counted: dict,
         return "text that isn't text"
     attachment = given.get("attachment")
     if not text.strip():
-        attachment = attachment if attachment in ATTACHMENTS else None
+        attachment = attachment if isinstance(attachment, str) and attachment in ATTACHMENTS else None
         if attachment is None:
             return "no text and no attachment type"
     occurrence = given.get("occurrence", 1)
     if isinstance(occurrence, bool) or not isinstance(occurrence, int) or not 1 <= occurrence <= MAX_OCCURRENCE:
         return "an occurrence that isn't a whole number from 1"
-    if _folded(author) in _own_names():
-        result.own += 1
-        return None
-
     url = given.get("url")
     target = url if isinstance(url, str) and target_problem(platform, url) is None else ""
     thread = thread_of(target) if target else ""
@@ -315,16 +360,21 @@ def _reaction(conn: sqlite3.Connection, run_id: int, given: dict, counted: dict,
     conversation = store.text_key(source, thread, who)
     words_key = store.text_key(source, thread, who, what, str(occurrence))
     key = store.text_key(source, "comment", own_id) if own_id else words_key
-    if store.known(conn, key) or _told_under_other_key(conn, conversation, words_key, own_id):
+    loose_key = store.text_key(source, who, what, str(occurrence))
+    if store.known(conn, key) or _told_under_other_key(conn, conversation, words_key, own_id, loose_key, thread):
         result.duplicates += 1
         return None
 
     age, answered = _age(given), given.get("answered") is True
     first = _first_read(conn, surface)
     too_old = age is not None and age >= settings.limit("old_after_hours")
-    silent = first and (answered or too_old)
+    own = _is_own(platform, author, given.get("author_url"))
+    # F12: on a surface's first read, only a message known to be fresh and unanswered is told.
+    silent = own or (first and (answered or too_old or age is None))
     if not silent and _new_this_run(conn, run_id) >= settings.limit("observations_per_run"):
         result.over_cap += 1
+        _bump(conn, _OVER_CAP + str(run_id))
+        store.set_state(conn, _BEHIND + surface, str(run_id))
         return None
     outcome = store.record(conn, store.Reaction(
         source=source,
@@ -336,15 +386,19 @@ def _reaction(conn: sqlite3.Connection, run_id: int, given: dict, counted: dict,
         target=target,
         thread={
             "run": run_id, "surface": surface, "thread": thread, "comment_id": own_id, "words_key": words_key,
+            "loose_key": loose_key,
             "occurrence": occurrence, "attachment": attachment if not text.strip() else None, "age_hours": age,
             "answered": answered,
         },
-        state=store.BASELINE if silent else store.OBSERVED,
-        stale=too_old or (first and age is None),
+        state=store.OWN if own else store.BASELINE if silent else store.OBSERVED,
+        stale=too_old,
         reported=silent,
     ))
     if isinstance(outcome, store.Duplicate):
         result.duplicates += 1
+    elif own:
+        result.own += 1
+        _bump(conn, _OWN + str(run_id))
     elif silent:
         result.baseline += 1
     else:
@@ -382,9 +436,9 @@ def _surface(conn: sqlite3.Connection, run_id: int, given: dict, result: Observe
 
 @dataclass(frozen=True)
 class PageReads:
-    """What a run's Chrome really returned: the page text, and the platforms it read a page on."""
+    """What a run's Chrome really returned: each read's page text, and the platforms it read a page on."""
 
-    text: str = ""
+    results: tuple[str, ...] = ()
     platforms: frozenset[str] = frozenset()
 
 
@@ -396,16 +450,19 @@ def page_reads(transcript: transcripts.Transcript | None) -> PageReads:
     for call in transcript.calls:
         if call.name not in READ_TOOLS or not call.ok:
             continue
-        parts.append(call.result)
+        parts.append(audit.page_text(call.result))
         for _, url in audit.tab_addresses(call.result):
             host = transcripts.host_of(url)
             platforms |= {name for name in PLATFORMS if fixture.active() is not None or host in hosts.BROWSER_HOSTS[name]}
-    return PageReads("\n".join(parts), frozenset(platforms))
+    return PageReads(tuple(parts), frozenset(platforms))
 
 
 def finish_surfaces(conn: sqlite3.Connection, run_id: int, reads: PageReads) -> list[str]:
     """Settle every surface for this run: read only if the run said so and read a page on its
-    platform. Returns the ones that failed. A surface with no record has failed (F13)."""
+    platform. Returns the ones that failed. A surface with no record has failed (F13). A run whose
+    audit failed passes no reads, so it restarts no clock and spends no baseline. A surface a flood
+    stopped it finishing counts as read, and its last good read stays, so what wasn't recorded still
+    looks new to the next run (A13)."""
     now = timeutil.stamp()
     failed = []
     for name, surface in SURFACES.items():
@@ -416,7 +473,12 @@ def finish_surfaces(conn: sqlite3.Connection, run_id: int, reads: PageReads) -> 
         if row is None:
             conn.execute("INSERT INTO inbox_surfaces (surface, first_tried_at, last_run_id, said_ok, updated_at) "
                          "VALUES (?, ?, ?, 0, ?)", (name, now, run_id, now))
-        if ok:
+        behind = store.get_state(conn, _BEHIND + name) == str(run_id)
+        if behind:
+            store.clear_state(conn, _BEHIND + name)
+        if ok and behind:
+            conn.execute("UPDATE inbox_surfaces SET read_ok = 1, updated_at = ? WHERE surface = ?", (now, name))
+        elif ok:
             conn.execute("UPDATE inbox_surfaces SET read_ok = 1, last_good_at = ?, last_good_items = said_items, "
                          "updated_at = ? WHERE surface = ?", (now, now, name))
         else:
@@ -430,13 +492,10 @@ def surface_reads(conn: sqlite3.Connection) -> list[dict]:
     return db.rows(conn, "SELECT surface, first_tried_at, last_good_at, last_good_items, read_ok FROM inbox_surfaces ORDER BY surface")
 
 
-def _window_on(day) -> tuple[datetime, datetime]:
+def _window_on(day: date) -> tuple[datetime, datetime]:
     start, end = caps.INBOX_WATCH_WINDOW
-    midnight = timeutil.midnight(day)
-    def at(clock: str) -> datetime:
-        hour, minute = clock.split(":")
-        return midnight + timedelta(hours=int(hour), minutes=int(minute))
-    return at(start), at(end)
+    return (datetime.combine(day, time.fromisoformat(start), timeutil.SGT),
+            datetime.combine(day, time.fromisoformat(end), timeutil.SGT))
 
 
 def blind_hours(since: datetime, now: datetime) -> float:
@@ -488,6 +547,7 @@ _PUBLISHED = ("p.state = 'done' AND p.outcome = 'posted' AND p.post_url IS NOT N
 def targets(conn: sqlite3.Connection) -> dict:
     """What a run reads: the pages, the surfaces, and the least recently read posts Jura published in
     the last 30 days (F6), so every post is reached over a day and notifications catch the rest."""
+    since = {row["surface"]: row["last_good_at"] for row in surface_reads(conn)}
     posts = db.rows(
         conn,
         f"SELECT p.label AS item, p.platform, p.kind, p.post_url AS url FROM publish_items p "
@@ -497,7 +557,8 @@ def targets(conn: sqlite3.Connection) -> dict:
     )
     return {
         "pages": {name: {"url": page.url, "name": page.name} for name, page in pages().items()},
-        "surfaces": [{"surface": name, "label": surface.label, "start": surface.start} for name, surface in SURFACES.items()],
+        "surfaces": [{"surface": name, "label": surface.label, "start": surface.start, "since": since.get(name)}
+                     for name, surface in SURFACES.items()],
         "posts": posts,
     }
 
@@ -508,18 +569,19 @@ def _post(conn: sqlite3.Connection, run_id: int, given: dict, result: Observed) 
         return "an item that isn't a post's label"
     row = db.one(conn, f"SELECT p.id FROM publish_items p WHERE p.label = ? AND {_PUBLISHED}", (label, _post_cutoff()))
     if row is None:
-        return "a post Jura didn't publish in the last 30 days"
+        return f"a post Jura didn't publish in the last {caps.INBOX_WATCH_POST_DAYS} days"
     item = row["id"]
     read_this_run = db.scalar(conn, "SELECT count(*) FROM inbox_watch_posts WHERE last_run_id = ? AND publish_item != ?", (run_id, item)) or 0
     if read_this_run >= settings.limit("watch_posts_per_run"):
         return "more posts than a run may read"
     now = timeutil.stamp()
     if given.get("gone") is True:
+        # Held until the run's checks: a steered run must not drop a post, so `post_lines` settles it.
         conn.execute(
-            "INSERT INTO inbox_watch_posts (publish_item, gone_at, last_read_at, last_run_id) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT (publish_item) DO UPDATE SET gone_at = COALESCE(gone_at, excluded.gone_at), "
+            "INSERT INTO inbox_watch_posts (publish_item, gone_said_run, last_read_at, last_run_id) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (publish_item) DO UPDATE SET gone_said_run = excluded.gone_said_run, "
             "last_read_at = excluded.last_read_at, last_run_id = excluded.last_run_id",
-            (item, now, now, run_id),
+            (item, run_id, now, run_id),
         )
         result.posts += 1
         return None
@@ -533,6 +595,7 @@ def _post(conn: sqlite3.Connection, run_id: int, given: dict, result: Observed) 
         "INSERT INTO inbox_watch_posts (publish_item, reactions, shares, comments, page_comments, last_read_at, last_run_id) "
         "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (publish_item) DO UPDATE SET reactions = excluded.reactions, "
         "shares = excluded.shares, comments = excluded.comments, page_comments = excluded.page_comments, "
+        "gone_at = NULL, gone_told = 0, gone_said_run = NULL, "  # a later read found it: it was never gone
         "last_read_at = excluded.last_read_at, last_run_id = excluded.last_run_id",
         (item, reactions, shares, comments, page_comments, now, run_id),
     )
@@ -561,10 +624,13 @@ def post_lines(conn: sqlite3.Connection, run_id: int) -> list[str]:
     lines = []
     for row in rows:
         where = f"{row['label']} on {row['platform'].capitalize()}"
-        if row["gone_at"]:
+        if row["gone_said_run"] == run_id:
             if not row["gone_told"]:
-                conn.execute("UPDATE inbox_watch_posts SET gone_told = 1 WHERE publish_item = ?", (row["publish_item"],))
                 lines.append(f"{where} isn't there any more: a group admin or the platform may have removed it. <{row['post_url']}>")
+            conn.execute("UPDATE inbox_watch_posts SET gone_at = COALESCE(gone_at, ?), gone_told = 1, gone_said_run = NULL "
+                         "WHERE publish_item = ?", (timeutil.stamp(), row["publish_item"]))
+            continue
+        if row["gone_at"]:
             continue
         first = row["told_reactions"] is None
         said = [] if first else [
@@ -574,8 +640,8 @@ def post_lines(conn: sqlite3.Connection, run_id: int) -> list[str]:
         recorded = db.scalar(
             conn,
             "SELECT count(*) FROM inbox_items WHERE source IN ('facebook-comment', 'instagram-comment') "
-            "AND json_extract(thread_json, '$.thread') = ?",
-            (thread_of(row["post_url"]),),
+            "AND state != ? AND json_extract(thread_json, '$.thread') = ?",
+            (store.OWN, thread_of(row["post_url"])),
         ) or 0
         unread = max(0, row["comments"] - row["page_comments"] - recorded)
         if unread > row["told_unread"] and (posts_read_before or not first):
@@ -601,12 +667,23 @@ def over_cap_lines(conn: sqlite3.Connection, run_id: int) -> list[str]:
             f"{over} more wait for the next run, oldest unread first."]
 
 
+def own_lines(conn: sqlite3.Connection, run_id: int) -> list[str]:
+    """What went by the Page's name alone is counted, once, because Facebook names aren't unique (R3)."""
+    key = _OWN + str(run_id)
+    count = int(store.get_state(conn, key) or 0)
+    if not count:
+        return []
+    store.clear_state(conn, key)
+    return [f"The watch set aside {count} message{'s' if count != 1 else ''} signed as the Page itself. If you didn't "
+            "write them, someone may be impersonating the Page, so check the Page's inbox and recent posts."]
+
+
 def record_run_message(conn: sqlite3.Connection, run_id: int, lines: list[str]) -> None:
     """One message a run for everything that isn't a person's own message (R1). It goes to no triage."""
     if not lines:
         return
     key = store.text_key("watch-run", str(run_id))
-    store.record(conn, store.Reaction(source="post-stats", key=key, conversation=key, state=store.REPORTED,
+    store.record(conn, store.Reaction(source=store.RUN_MESSAGE, key=key, conversation=key, state=store.REPORTED,
                                       note="\n".join(lines), thread={"run": run_id}))
 
 
@@ -623,22 +700,27 @@ def _comparable(text: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", store.clean_text(text)).casefold().split())
 
 
-def _on_page(text: str, page: str) -> bool:
-    """Every line of `text` is in what the page returned. `read_page`'s tree breaks a message at its lines."""
-    return all(_comparable(line) in page for line in text.split("\n") if line.strip())
+def words_on_page(text: str, results: Iterable[str]) -> bool:
+    """Whether `text` appears in one result, its lines in order and together. Between them only what
+    `read_page`'s tree puts there may fall, so words scattered through a page aren't a message (N3, B2)."""
+    lines = [_comparable(line) for line in text.split("\n") if line.strip()]
+    if not lines:
+        return True
+    pattern = re.compile(_TREE_GAP.join(re.escape(line) for line in lines))
+    return any(pattern.search(_comparable(result)) for result in results)
 
 
-def settle(conn: sqlite3.Connection, run_id: int | None, page_text: str, *, trusted: bool) -> Settled:
-    """Move every held item on (N3). This run's are checked against what Chrome returned to it, and
+def settle(conn: sqlite3.Connection, run_id: int | None, results: Iterable[str], *, trusted: bool) -> Settled:
+    """Move every held item on (N3). This run's are checked against what its pages returned, and
     any other held item's run was killed before its checks. `trusted` False: the run's audit failed,
     so nothing it recorded can be cleared. A person always stays visible: every state here reports."""
     settled = Settled()
-    page = _comparable(page_text)
+    results = tuple(results)
     old_after = settings.limit("old_after_hours")
     for item in db.rows(conn, "SELECT * FROM inbox_items WHERE state = ? ORDER BY id", (store.OBSERVED,)):
         thread = json.loads(item["thread_json"] or "{}")
         state, note = store.NEW, ""
-        if not trusted or thread.get("run") != run_id or not _on_page(item["text"], page):
+        if not trusted or thread.get("run") != run_id or not words_on_page(item["text"], results):
             state = store.UNVERIFIED
             note = "Unverified: this wasn't in what the page returned to the run, so there's no draft. Read the thread yourself."
         elif thread.get("answered"):
@@ -652,7 +734,7 @@ def settle(conn: sqlite3.Connection, run_id: int | None, page_text: str, *, trus
             note = "There's no text to draft from: open the thread, and answer by hand if it matters."
         elif item["stale"]:
             state = store.REPORTED
-            note = f"It's older than {old_after} hours, or its age wasn't clear: answer by hand if it still matters."
+            note = f"It's older than {old_after} hours: answer by hand if it still matters."
         conn.execute("UPDATE inbox_items SET state = ?, note = ?, updated_at = ? WHERE id = ?",
                      (state, note, timeutil.stamp(), item["id"]))
         settled.states[state] = settled.states.get(state, 0) + 1
@@ -661,7 +743,7 @@ def settle(conn: sqlite3.Connection, run_id: int | None, page_text: str, *, trus
 
 def settle_orphans(conn: sqlite3.Connection) -> Settled:
     """Called with the job and browser locks held, so no live run can own a held item."""
-    return settle(conn, None, "", trusted=False)
+    return settle(conn, None, (), trusted=False)
 
 
 # --- a stop signal --------------------------------------------------------------------------------
@@ -686,14 +768,15 @@ def stop(conn: sqlite3.Connection, run_id: int | None, reason: str) -> None:
     text = f"A browser run stopped {where}: {STOP_REASONS[reason]}. Watching, social replies and publishing are paused."
     if run_id is not None:
         text += f" The run's transcript keeps what the page showed for {caps.BROWSER_TRANSCRIPT_DAYS} days."
-    discord.alert(conn, f"{text}\nNothing more happens on these accounts until you resume both: {RESUME}.", agent=AGENT)
+    discord.alert(conn, f"{text}\nA page's words can trigger a stop, so check the account first. Nothing more happens on "
+                        f"these accounts until you resume both: {RESUME}.", agent=AGENT)
 
 
 def parse_file(raw: bytes) -> list:
     """An observation file's list, or ValueError with fixed words."""
     try:
         found = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
         raise ValueError("the file isn't JSON text") from None
     if not isinstance(found, list):
         raise ValueError("the file must hold a JSON list")

@@ -133,7 +133,8 @@ A `claude` job runs `claude -p` in this folder with its prompt file on stdin and
   commands print; `publish next` copies the item's images into that folder, read-only, for the
   Chrome upload tool, which uploads only files the session may read (rehearsal 2026-10-30). It has no web search or fetch. Its Chrome tools come from the plug-in's
   `Permissions.allowed_tools`: the tab tools by name and one `ClaudeInChromeDomain(<host>)` rule
-  per host of each platform switched on and in `browser` mode, never a page tool by name. Any other job that
+  per host, never a page tool by name. For `publish` that is each platform switched on and in `browser`
+  mode; the watch names Facebook and Instagram itself, whatever `publish_mode` says. Any other job that
   sets `browser: true` fails. After the run, its transcript is audited for hosts, tabs, typed
   text, uploads and actions after a stop, and its summary and error are rewritten from the
   item's record, so no model or page text reaches the run row, `#alerts` or a run update.

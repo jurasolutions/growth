@@ -16,6 +16,7 @@ from jura_growth.agents.publish import audit, hosts
 TEXT = "Thanks for asking. Levi will come back to you today."
 HOSTS = (*hosts.BROWSER_HOSTS["facebook"], *hosts.BROWSER_HOSTS["instagram"])
 THREAD = "https://www.instagram.com/direct/t/1234567/"
+HOME = "https://www.facebook.com/jurasolutionssg"
 REPLY = audit.AuditRules(next_word="inbox reply-next", stopped_word="inbox stopped", done_word="inbox reply-done",
                          tool_word="inbox reply", one_line=True, place_check=hosts.same_place)
 
@@ -28,7 +29,7 @@ def judged(tmp_path, steps, *, approved=(), rules=None, places=()):
 
 def watched(tmp_path, *steps):
     """A watch run's own tab with `steps` on it, under the watch's rules."""
-    return judged(tmp_path, [t.created(), t.opened(), *steps, t.closed()], rules=watch_scope.WATCH_RULES)
+    return judged(tmp_path, [t.created(), t.opened(HOME), *steps, t.closed()], rules=watch_scope.WATCH_RULES)
 
 
 def reply_claim() -> dict:

@@ -12,14 +12,14 @@ doesn't depend on posting to it through the browser.
 
 from __future__ import annotations
 
-from jura_growth.agents.inbox.watch import PLATFORMS
+from jura_growth.agents.inbox.watch import PLATFORMS, may_open
 from jura_growth.agents.publish import audit
 from jura_growth.agents.publish import scope as publish_scope
 
 WATCH_COMMANDS = ("inbox watch-targets", "inbox observe", "inbox stopped")
 WATCH_DENIED = ("computer", "form_input", "file_upload", "upload_image")
 WATCH_RULES = audit.AuditRules(next_word=None, stopped_word="inbox stopped", done_word=None, tool_word="inbox watch",
-                               read_only=True)
+                               read_only=True, asked_check=may_open)
 
 
 def permissions(job: str):
