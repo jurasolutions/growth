@@ -68,7 +68,7 @@ def item_id_of(subject: str) -> int | None:
     return int(number) if (subject or "").startswith(_SUBJECT) and number.isdigit() else None
 
 
-def _item(conn: sqlite3.Connection, subject: str) -> dict | None:
+def item_of(conn: sqlite3.Connection, subject: str) -> dict | None:
     item_id = item_id_of(subject)
     return store.get(conn, item_id) if item_id is not None else None
 
@@ -192,20 +192,22 @@ def reply_of(item: dict) -> Reply | None:
 # --- the card ------------------------------------------------------------------------------------
 
 
-def _title(item: dict) -> str:
+def title_of(item: dict) -> str:
     """Names no person: it is the line an agent feed repeats through plain masking."""
+    if item["source"] in report.SOCIAL_HEADINGS:
+        return f"Social reply · {report.SOCIAL_HEADINGS[item['source']]}"
     if item["source"] == "enquiry":
         return "Email reply · enquiry"
     return "Email reply · answer to our email" if item["lead_id"] else "Email reply"
 
 
-def _unanswered(conn: sqlite3.Connection, item: dict) -> list[dict]:
+def unanswered(conn: sqlite3.Connection, item: dict) -> list[dict]:
     """What this reply answers: their messages up to it, since the last reply that went out."""
     found: list[dict] = []
     for other in store.in_conversation(conn, item["conversation"]):
         if other["sent_at"]:
             found = []
-        elif other["id"] <= item["id"] and other["state"] != store.NOISE:
+        elif other["id"] <= item["id"] and other["state"] not in store.NOT_HISTORY:
             found.append(other)
     return found or [item]
 
@@ -242,7 +244,7 @@ def _card_lines(conn: sqlite3.Connection, item: dict, reply: Reply, record: appr
     language = language_line(item["language"])
     if language:
         before.append(language)
-    if _has_a_number(_unanswered(conn, item)):
+    if _has_a_number(unanswered(conn, item)):
         before.append("They left a number. It's in the mailbox.")
     draft = "\n".join(f"> {line}" if line else ">" for line in reply.draft.split("\n"))
     # No address on these lines: the signature's is Levi's own.
@@ -262,55 +264,30 @@ def reason_of(item: dict) -> str:
     return f"{store.label(item['id'])}, {item['class'] or 'a message'}"
 
 
-def _room_for_quote(item: dict, before: list[str], after: list[str]) -> int:
+def room_for_quote(item: dict, before: list[str], after: list[str]) -> int:
     """What a quote may take: a card is always one message, and the draft is never what gives way (B8).
     Measured masked, because masking can lengthen text."""
-    return discord.MAX_CONTENT - CARD_FRAME - report.masked_length("\n".join([_title(item), f"Why: {reason_of(item)}", *before, *after]))
+    return discord.MAX_CONTENT - CARD_FRAME - report.masked_length("\n".join([title_of(item), f"Why: {reason_of(item)}", *before, *after]))
 
 
 def card_fits(conn: sqlite3.Connection, item: dict, reply: Reply) -> bool:
     before, after = _card_lines(conn, item, reply, None)
-    return _room_for_quote(item, before, after) >= report.masked_length(report.quoted(report.CUT_NOTE))
+    return room_for_quote(item, before, after) >= report.masked_length(report.quoted(report.CUT_NOTE))
 
 
 # --- the kind ------------------------------------------------------------------------------------
 
 
-class EmailReply:
-    """The kind `approvals` asks about every `inbox_item:<id>`."""
+class ReplyKind:
+    """What a reply kind shares, whichever way it goes out: its deadlines, and what each ending does."""
 
-    name = KIND
-    used_word = "sent"
+    name = ""
+    agent = ""
     conversation_card = True  # its card carries a person's words and the answer to them
-    # Inert until approvals-first lands (technical review, "Merging"): `feed.py` reads them with getattr.
-    feed_channel = "mission-control"
-    feed_approved = "It goes out as Levi within 10 minutes, or at 08:00 if it's after 22:00."
-
-    def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
-        item = _item(conn, subject)
-        if item is None or item["state"] not in (store.WAITING, store.SENDING):
-            return None
-        reply = reply_of(item)
-        if reply is None or wrote_again(conn, item) or suppressed_because(conn, item):
-            return None
-        return reply.content_bytes()
-
-    def preview(self, conn: sqlite3.Connection, subject: str) -> approvals.Preview:
-        """D1: what they said, who and where, the draft exactly as it goes out, and each answer's next step."""
-        item = _item(conn, subject)
-        reply = reply_of(item) if item else None
-        if item is None or reply is None:
-            raise LookupError(f"no reply for {subject}")
-        before, after = _card_lines(conn, item, reply, approvals.latest(conn, KIND, subject))
-        quote = report.card_quote(_unanswered(conn, item), _room_for_quote(item, before, after))
-        return approvals.Preview(title=_title(item), reason=reason_of(item), text="\n".join([*before, quote, *after]))
 
     def deadlines(self, conn: sqlite3.Connection | None, subject: str, now: datetime) -> approvals.Deadlines:
         return approvals.Deadlines(decide_by=now + timedelta(days=settings.limit("decide_by_days")),
                                    use_by=now + timedelta(days=settings.limit("use_by_days")))
-
-    def switched_off(self, conn: sqlite3.Connection, subject: str) -> str | None:
-        return switched_off()
 
     def on_skip(self, conn: sqlite3.Connection, subject: str) -> None:
         self._closed(conn, subject, "on_skip", store.SKIPPED, "Skipped: nothing goes out.")
@@ -321,20 +298,56 @@ class EmailReply:
     def on_lapse(self, conn: sqlite3.Connection, subject: str) -> None:
         self._closed(conn, subject, "on_lapse", store.LAPSED, _LAPSED)
 
+    def _closed(self, conn: sqlite3.Connection, subject: str, hook: str, state: str, note: str) -> None:
+        item = item_of(conn, subject)
+        if item is None:
+            return
+        store.set_item_state(conn, item["id"], state, note=note)
+        log.event(conn, "inbox.approval_closed", {"item": item["id"], "hook": hook}, agent=self.agent)
+
+    def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
+        raise NotImplementedError
+
+
+class EmailReply(ReplyKind):
+    """The kind `approvals` asks about every email's `inbox_item:<id>`."""
+
+    name = KIND
+    agent = AGENT
+    used_word = "sent"
+    # Inert until approvals-first lands (technical review, "Merging"): `feed.py` reads them with getattr.
+    feed_channel = "mission-control"
+    feed_approved = "It goes out as Levi within 10 minutes, or at 08:00 if it's after 22:00."
+
+    def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
+        item = item_of(conn, subject)
+        if item is None or item["state"] not in (store.WAITING, store.SENDING):
+            return None
+        reply = reply_of(item)
+        if reply is None or wrote_again(conn, item) or suppressed_because(conn, item):
+            return None
+        return reply.content_bytes()
+
+    def preview(self, conn: sqlite3.Connection, subject: str) -> approvals.Preview:
+        """D1: what they said, who and where, the draft exactly as it goes out, and each answer's next step."""
+        item = item_of(conn, subject)
+        reply = reply_of(item) if item else None
+        if item is None or reply is None:
+            raise LookupError(f"no reply for {subject}")
+        before, after = _card_lines(conn, item, reply, approvals.latest(conn, KIND, subject))
+        quote = report.card_quote(unanswered(conn, item), room_for_quote(item, before, after))
+        return approvals.Preview(title=title_of(item), reason=reason_of(item), text="\n".join([*before, quote, *after]))
+
+    def switched_off(self, conn: sqlite3.Connection, subject: str) -> str | None:
+        return switched_off()
+
     def superseded_note(self, conn: sqlite3.Connection, subject: str) -> str | None:
-        item = _item(conn, subject)
+        item = item_of(conn, subject)
         if item is None:
             return None
         if suppressed_because(conn, item):
             return "address suppressed"
         return _WROTE_AGAIN if wrote_again(conn, item) or item["state"] == store.SUPERSEDED else None
-
-    def _closed(self, conn: sqlite3.Connection, subject: str, hook: str, state: str, note: str) -> None:
-        item = _item(conn, subject)
-        if item is None:
-            return
-        store.set_item_state(conn, item["id"], state, note=note)
-        log.event(conn, "inbox.approval_closed", {"item": item["id"], "hook": hook}, agent=AGENT)
 
 
 def kinds() -> dict[str, EmailReply]:
@@ -357,8 +370,8 @@ def switched_off() -> str | None:
 # --- raising and settling -----------------------------------------------------------------------
 
 
-def raise_request(conn: sqlite3.Connection, subject: str, *, reason: str) -> approvals.Approval | None:
-    return approvals.request(conn, KIND, subject, reason=reason, run_id=log.current_run_id())
+def raise_request(conn: sqlite3.Connection, subject: str, *, reason: str, kind: str = KIND) -> approvals.Approval | None:
+    return approvals.request(conn, kind, subject, reason=reason, run_id=log.current_run_id())
 
 
 def raise_due(conn: sqlite3.Connection) -> list[approvals.Approval]:
@@ -389,30 +402,31 @@ def raise_due(conn: sqlite3.Connection) -> list[approvals.Approval]:
     return raised
 
 
-def refresh_open(conn: sqlite3.Connection) -> None:
+def refresh_open(conn: sqlite3.Connection, kind: str = KIND) -> None:
     """The next read (A3): every open request judged by the clock and by what would go out now, so a
     lapse is written and an item that went away is superseded, and its card says so."""
     rows = conn.execute(
         "SELECT subject, reason FROM approvals WHERE kind = ? AND status IN ('pending', 'approved') AND used_at IS NULL ORDER BY id",
-        (KIND,),
+        (kind,),
     ).fetchall()
     for row in rows:
         with db.transaction(conn):
-            raise_request(conn, row["subject"], reason=row["reason"])
+            raise_request(conn, row["subject"], reason=row["reason"], kind=kind)
 
 
-def settle_waiting(conn: sqlite3.Connection) -> None:
+def settle_waiting(conn: sqlite3.Connection, kind: ReplyKind | None = None) -> None:
     """An inbox item whose request has closed around it, by any path. If what would go out has changed
-    it needs asking again. If it is gone it is superseded, unless a message waits for triage, which
-    must see this draft to answer all of it (F8) and closes it then."""
+    it needs asking again. If it is gone it is superseded, unless a message waits for triage or a run's
+    checks, because triage must see this draft to answer all of it (F8), and closes it then."""
+    kind = kind or EmailReply()
     for item in store.with_state(conn, store.WAITING):
         subject = subject_of(item["id"])
-        latest = approvals.latest(conn, KIND, subject)
+        latest = approvals.latest(conn, kind.name, subject)
         if latest is None or latest.status != approvals.SUPERSEDED:
             continue
         with db.transaction(conn):
-            if EmailReply().content(conn, subject) is not None:
-                raise_request(conn, subject, reason=latest.reason)
-            elif not any(other["state"] == store.NEW for other in store.in_conversation(conn, item["conversation"])):
+            if kind.content(conn, subject) is not None:
+                raise_request(conn, subject, reason=latest.reason, kind=kind.name)
+            elif not any(other["state"] in (store.NEW, store.OBSERVED) for other in store.in_conversation(conn, item["conversation"])):
                 store.set_item_state(conn, item["id"], store.SUPERSEDED)
 

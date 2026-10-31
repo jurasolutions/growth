@@ -104,6 +104,9 @@ INBOX_OBSERVATIONS_PER_RUN = 40  # new messages one watch run may record: a floo
 INBOX_OBSERVE_FILE_BYTES = 1_000_000  # one observation file: over this it is refused whole, to be split
 INBOX_WATCH_POST_DAYS = 30  # F6: posts this recent are read in turn, the least recently read first
 INBOX_BLIND_SURFACE_HOURS = 3  # F13: of the watch's own hours, then it goes to Needs you
+INBOX_REPLY_WINDOW = ("09:10", "20:50")  # SGT, both ends inclusive (D4)
+INBOX_SOCIAL_REPLIES_PER_RUN = 1  # D4
+INBOX_READ_FILE_BYTES = 64_000  # what a reply run reports reading before its claim: one thread's newest message
 
 # App factory
 APP_PRDS_PER_DAY = 1

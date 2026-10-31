@@ -28,7 +28,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from jura_growth import approvals, caps, cards, db, log, pause, suppression, timeutil
-from jura_growth.agents.inbox import checks, kinds, mail, store, triage
+from jura_growth.agents.inbox import checks, kinds, mail, social, store, triage
 from jura_growth.agents.outreach import replies
 
 AGENT = "inbox"
@@ -56,6 +56,14 @@ def _paused(conn: sqlite3.Connection) -> Answer | None:
     if not why:
         return None
     return _refused(f"inbox is paused ({why}), so nothing would come of this. `/growth resume inbox` first.")
+
+
+def _browser_paused(conn: sqlite3.Connection, item: dict) -> Answer | None:
+    """A social card that couldn't be posted helps nobody either."""
+    why = pause.is_paused(conn, social.AGENT) if item["source"] in store.SOCIAL_SOURCES else None
+    if not why:
+        return None
+    return _refused(f"inbox-browser is paused ({why}), so nothing would come of this. `/growth resume inbox-browser` first.")
 
 
 def paragraphs(words: tuple[str, ...]) -> str:
@@ -124,11 +132,8 @@ def _problems(conn: sqlite3.Connection, item: dict, draft: str) -> list[str]:
     issues = [str(issue) for issue in triage.draft_problems(conn, item, draft, high=item["priority"] == "high")]
     if issues:
         return issues
-    candidate = {**item, "draft": draft}
-    reply = kinds.reply_of(candidate)
-    if reply is None:
-        return ["It has no single address to answer."]
-    return [] if kinds.card_fits(conn, candidate, reply) else ["It won't fit on one card with what they said. Shorten it."]
+    problem = social.card_problem(conn, {**item, "draft": draft})
+    return [problem] if problem else []
 
 
 def reword(conn: sqlite3.Connection, approval_id: str, words: tuple[str, ...]) -> Answer:
@@ -139,6 +144,9 @@ def reword(conn: sqlite3.Connection, approval_id: str, words: tuple[str, ...]) -
     if isinstance(found, Answer):
         return found
     record, item = found
+    browser = _browser_paused(conn, item)
+    if browser:
+        return browser
     draft = store.clean_text(paragraphs(words)).strip()
     if draft == item["draft"]:
         return _refused(f"that is already the draft on {record.id}.")
@@ -152,7 +160,7 @@ def reword(conn: sqlite3.Connection, approval_id: str, words: tuple[str, ...]) -
         if isinstance(again, Answer):
             return again
         store.update_draft(conn, item["id"], draft, promised=item["priority"] == "high" or checks.promises_a_reply(draft))
-        new = kinds.raise_request(conn, kinds.subject_of(item["id"]), reason=record.reason)
+        new = social.raise_for(conn, item, reason=record.reason)
         log.event(conn, "inbox.reworded", {"item": item["id"], "was": record.id, "now": new.id if new else None}, agent=AGENT)
     cards.sweep_safely(conn)
     if new is None or new.status != approvals.PENDING:
@@ -184,12 +192,14 @@ def _why_no_draft(conn: sqlite3.Connection, item: dict) -> str | None:
         return _NEVER_DRAFTED[state]
     if state == store.UNVERIFIED:
         return "It's unverified, so its words aren't proved to be anyone's. Read the thread and answer by hand."
+    if state == store.FAILED and item["source"] in store.SOCIAL_SOURCES:
+        return "The last reply on this one didn't post, and it isn't tried again. Answer by hand."
     if state == store.FAILED:  # a new draft would go under the one idempotency key this item has used
         return "Resend refused the last reply on this one. Answer by hand."
     if state in _REPLY_SENT or item["sent_at"] or item["send_attempts"] or approvals.claimed(conn, store.approval_subject(item["id"])):
         return "A reply already went, or may have. Answer by hand if there is more to say."
     if state == store.WAITING:
-        record = approvals.latest(conn, kinds.KIND, kinds.subject_of(item["id"]))
+        record = social.latest_for(conn, item)
         number = record.id if record else "its card"
         return f"It already has a card, {number}. `/growth inbox redraft {number} <guidance>` changes it."
     if state == store.TRIAGED:
@@ -243,7 +253,7 @@ def done(conn: sqlite3.Connection, label: str) -> Answer:
     conversation = store.in_conversation(conn, item["conversation"])
     clearable = [other for other in conversation if other["state"] in store.LISTED_STATES and not other["closed_at"]]
     carded = next((other for other in conversation if other["state"] == store.WAITING), None)
-    record = approvals.latest(conn, kinds.KIND, kinds.subject_of(carded["id"])) if carded else None
+    record = social.latest_for(conn, carded) if carded else None
     if not clearable:
         if record:
             return _refused(f"it has a card waiting. `/growth skip {record.id}` if you've answered by hand.")

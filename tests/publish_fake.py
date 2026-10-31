@@ -22,7 +22,9 @@ The fake, started by `runner.run("publish")`:
 - ends with the scenario's `result` text.
 
 Placeholders in any string: `{A}` the claimed A-id, `{TEXT}` the approved text, `{IMG1}` the first
-image copy (`{IMG2}`, `{IMG3}` … the later ones, for a carousel), `{WORK}` the scratch folder.
+image copy (`{IMG2}`, `{IMG3}` … the later ones, for a carousel), `{WORK}` the scratch folder. An
+`inbox-reply` run gets `{A}` from `inbox reply-due`, and `{TEXT}` and `{LIVE}` (the read-back's file) from
+`inbox reply-next`, which records in `claims.json` as `publish next` does.
 """
 
 from __future__ import annotations
@@ -98,6 +100,20 @@ for step in scenario["steps"]:
                 db = sqlite3.connect(Path(os.environ["JURA_GROWTH_DATA_DIR"]).joinpath("growth.db").resolve().as_uri() + "?mode=ro", uri=True)
                 used = db.execute("SELECT used_at, used_by_run FROM approvals WHERE id = ?", (int(handed["approval"].split("-")[1]),)).fetchone()
                 state = db.execute("SELECT state FROM publish_items WHERE label = ?", (handed["item"],)).fetchone()
+                db.close()
+                (home / "claims.json").write_text(json.dumps({"used_at": used[0], "used_by_run": used[1], "state": state[0]}))
+        if step["cli"][:2] == ["inbox", "reply-due"] and done.returncode == 0:
+            handed = json.loads(done.stdout)
+            values["{A}"] = handed.get("approval", "A-0000")
+        if step["cli"][:2] == ["inbox", "reply-next"] and done.returncode == 0:
+            handed = json.loads(done.stdout)
+            if handed.get("due"):
+                values["{A}"] = handed["approval"]
+                values["{TEXT}"] = handed["text"]
+                values["{LIVE}"] = handed["live_text_file"]
+                db = sqlite3.connect(Path(os.environ["JURA_GROWTH_DATA_DIR"]).joinpath("growth.db").resolve().as_uri() + "?mode=ro", uri=True)
+                used = db.execute("SELECT used_at, used_by_run FROM approvals WHERE id = ?", (int(handed["approval"].split("-")[1]),)).fetchone()
+                state = db.execute("SELECT state FROM inbox_items WHERE id = ?", (int(handed["item"].split("-")[1]),)).fetchone()
                 db.close()
                 (home / "claims.json").write_text(json.dumps({"used_at": used[0], "used_by_run": used[1], "state": state[0]}))
     elif "tamper" in step:

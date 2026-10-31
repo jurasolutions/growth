@@ -48,6 +48,29 @@ What a run may ask to open is held to a surface, a thread, a post of Jura's or a
 page can send it to `l.php` or `/accounts/logout/`. Where the platform then redirects is its own
 choice: a login wall is a stop signal, not a finding.
 
+A reply run has to click and type, so it keeps `computer`, for the steps that need it and no others. Before
+anything else it reads the one target it was handed and says what it found. A newer message supersedes the
+draft, and only a clean read is claimed. Until the claim, and after its done word, the audit holds it to reading,
+as it does a watch. In between it may use `left_click`, `type` and `key`, with no more clicks than the steps name
+before it types, and `one_line` holds it to the approved text, whole, once, with one send. `form_input` and
+uploads are denied by name. The audit holds either kind to the claimed thread or post, by what its tab showed.
+
+What the run says is believed only as far as Chrome bears it out, because it has just read hostile text:
+
+- **`sent` takes proof:** an audit with no failures, the whole text typed and sent, and its words at the target's
+  address in a read after the send. On a comment the Page's or account's name must be beside them. A direct
+  message shows no name on its own, so who it went as rests on the page having shown that name before the claim.
+  Anything less is `unknown`, which pauses `inbox-browser`, alerts and is never sent again, so nothing resolves it.
+- **A page can't close an item.** `gone` and `answered` count only with evidence at the target's address: a page
+  without their words, or their words with the Page's name after them. Otherwise the item needs a hand reply, and
+  the line says why. A session the page doesn't name gets a hand reply too, with no stop.
+
+What this can't prove, and accepts: which control a click between the claim and the send hit, so the prompt
+names them and Part B reads the Page's activity log. That a page showing the Page's name is acting as it, since a
+page can show both. That the message reported as newest really is, since a run can name an old one or claim a
+sticker: the sticker's word is looked for on the page, and the harm is bounded because only the approved text can
+go, in the right thread. Two people with one name can't be told apart.
+
 ## Decision 3: the conversation class
 
 Text a person wrote and their display name may appear on a card and on an R1 message, on Ting Yu's own

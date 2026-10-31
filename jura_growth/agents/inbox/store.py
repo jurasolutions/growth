@@ -50,6 +50,7 @@ LAPSED = "lapsed"
 FAILED = "failed"
 UNKNOWN = "unknown"  # it may have gone out, so it is never sent again
 SUPERSEDED = "superseded"
+CLOSED = "closed"  # its target went away, or the like: an outcome, with a note saying so
 DONE = "done"  # he cleared it (`/growth inbox done`)
 # The sources a person writes through, and so what triage reads. `MAIL_SOURCES` answer by email.
 MAIL_SOURCES = ("email", "enquiry")
@@ -191,6 +192,15 @@ def number_of(text: str) -> int:
     """The row id in `I-0012`. `remote` has checked its shape; anything else names no row."""
     digits = text.removeprefix("I-")
     return int(digits) if digits.isdigit() and len(digits) <= ID_DIGITS else 0
+
+
+def platform_of(item: dict) -> str:
+    """The platform a social item came from, by its source."""
+    return item["source"].split("-", 1)[0]
+
+
+def is_dm(item: dict) -> bool:
+    return item["source"].endswith("-dm")
 
 
 def has_state(conn: sqlite3.Connection, state: str) -> bool:
@@ -402,10 +412,10 @@ def engine_note(conn: sqlite3.Connection, what: str, text: str) -> None:
 # --- replies going out --------------------------------------------------------
 
 
-def drafts_without_a_card(conn: sqlite3.Connection) -> list[dict]:
-    """Email drafts triage has finished with that haven't been asked about yet, oldest first."""
-    places = ", ".join("?" for _ in MAIL_SOURCES)
-    return db.rows(conn, f"SELECT * FROM inbox_items WHERE state = ? AND source IN ({places}) ORDER BY id", (TRIAGED, *MAIL_SOURCES))
+def drafts_without_a_card(conn: sqlite3.Connection, sources: tuple[str, ...] = MAIL_SOURCES) -> list[dict]:
+    """Drafts triage has finished with that haven't been asked about yet, oldest first: by default email's."""
+    places = ", ".join("?" for _ in sources)
+    return db.rows(conn, f"SELECT * FROM inbox_items WHERE state = ? AND source IN ({places}) ORDER BY id", (TRIAGED, *sources))
 
 
 def with_state(conn: sqlite3.Connection, state: str) -> list[dict]:
@@ -413,7 +423,36 @@ def with_state(conn: sqlite3.Connection, state: str) -> list[dict]:
 
 
 def sent_on(conn: sqlite3.Connection, day: str) -> int:
-    return db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE substr(sent_at, 1, 10) = ?", (day,)) or 0
+    """Emails sent that day. Social replies have a cap of their own, counted from the claim."""
+    places = ", ".join("?" for _ in MAIL_SOURCES)
+    return db.scalar(conn, f"SELECT count(*) FROM inbox_items WHERE substr(sent_at, 1, 10) = ? AND source IN ({places})",
+                     (day, *MAIL_SOURCES)) or 0
+
+
+def mark_in_flight(conn: sqlite3.Connection, item_id: int) -> None:
+    """Its approval is claimed, in the same transaction. Any ask of his ends here."""
+    conn.execute("UPDATE inbox_items SET state = ?, send_attempts = send_attempts + 1, asked_at = NULL, guidance = NULL, updated_at = ? WHERE id = ?",
+                 (SENDING, timeutil.stamp(), item_id))
+
+
+def close_and_tell(conn: sqlite3.Connection, item_id: int, state: str, note: str) -> None:
+    """An item moved on by what a browser run found, with its own note and a fresh report, because he
+    heard about it when it arrived and may still think it waits on him. One he still has to answer stays
+    open on R4. Any ask of his ends here. Inside the caller's transaction."""
+    if state not in STATES:
+        raise ValueError(f"unknown state {state!r}")
+    now = timeutil.stamp()
+    closed = None if state in LISTED_STATES else now
+    conn.execute("UPDATE inbox_items SET state = ?, note = ?, reported_at = NULL, closed_at = ?, asked_at = NULL, guidance = NULL, "
+                 "updated_at = ? WHERE id = ?", (state, note, closed, now, item_id))
+
+
+def update_thread(conn: sqlite3.Connection, item_id: int, **fields: Any) -> None:
+    """Add to what an item keeps about its thread. Retention keeps only what it names."""
+    found = get(conn, item_id)
+    if found is not None:
+        conn.execute("UPDATE inbox_items SET thread_json = ? WHERE id = ?",
+                     (json.dumps({**thread_of(found), **fields}, ensure_ascii=False), item_id))
 
 
 # Told once to #alerts as soon as triage has made it high, whatever it became. Not while a run's checks hold it.

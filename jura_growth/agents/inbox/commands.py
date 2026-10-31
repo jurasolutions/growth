@@ -10,7 +10,7 @@ from pathlib import Path
 import click
 
 from jura_growth import approvals_cli, caps, config, db, log, mission, origin, privacy, timeutil
-from jura_growth.agents.inbox import one_pager, send, steer, store, triage, watch
+from jura_growth.agents.inbox import one_pager, reply_run, send, steer, store, triage, watch
 
 
 
@@ -110,6 +110,45 @@ def send_due() -> str:
         summary = send.send_due(conn)
     click.echo(summary or "nothing to send")
     return summary
+
+
+@inbox_group.command("reply-due")
+def reply_due() -> None:
+    """What a reply run reads before any claim: the target and whose words. Never the reply, as JSON."""
+    with db.session() as conn:
+        click.echo(json.dumps(reply_run.hand_out(conn, run_id=log.current_run_id()), ensure_ascii=False, indent=1))
+
+
+@inbox_group.command("reply-next")
+@click.option("--read-file", "read_file", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="What the run found on the target (prompts/inbox-reply.md), by its full path.")
+def reply_next(read_file: Path) -> None:
+    """Judge what the run read, and claim at most one reply. Prints the text only if it was claimed."""
+    raw = read_file.read_bytes() if read_file.stat().st_size <= caps.INBOX_READ_FILE_BYTES else b""
+    with db.session() as conn:
+        click.echo(json.dumps(reply_run.next_reply(conn, reply_run.parse_read(raw), run_id=log.current_run_id()), ensure_ascii=False, indent=1))
+
+
+@inbox_group.command("reply-done")
+@click.argument("approval_id", metavar="A-ID")
+@click.option("--url", help="The address of the thread or comment you read the reply back from.")
+@click.option("--live-text-file", "live_text_file", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="The reply's words as the page shows them, by the file's full path.")
+@click.option("--not-sent", "not_sent", is_flag=True, help="Nothing was sent: the page stopped it before the send.")
+def reply_done(approval_id: str, url: str | None, live_text_file: Path | None, not_sent: bool) -> None:
+    """Record what became of this run's claim."""
+    if not_sent == bool(url or live_text_file) or (not not_sent and not (url and live_text_file)):
+        raise click.UsageError("a post needs --url and --live-text-file; a reply that didn't go needs --not-sent")
+    live = None
+    if live_text_file is not None:
+        if live_text_file.stat().st_size > caps.INBOX_READ_FILE_BYTES:
+            raise click.ClickException("refused: that file is too long to be one reply")
+        live = live_text_file.read_text(encoding="utf-8", errors="replace")
+    with db.session() as conn:
+        recorded, line = reply_run.done(conn, approval_id, url=url, live=live, run_id=log.current_run_id())
+    if not recorded:
+        raise click.ClickException(line)
+    click.echo(line)
 
 
 @inbox_group.command("list")

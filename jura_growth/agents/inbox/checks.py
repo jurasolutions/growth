@@ -15,6 +15,7 @@ import re
 import unicodedata
 
 from jura_growth import brand_check, caps
+from jura_growth.agents.inbox import report
 from jura_growth.agents.outreach import compose
 from jura_growth.brand_check import Channel, Issue
 
@@ -57,6 +58,21 @@ _ASKS_FOR_EMAIL = re.compile(r"\b(?:post|leave|drop|share|comment|put|write|give
 _LEVI = re.compile(r"\bLevi\b")
 _LEVI_WILL = re.compile(r"\bLevi\b[^.?!\n]{0,20}(?:\bwill\b|['’]ll\b)")
 _I_WILL_REPLY = re.compile(r"\bI(?:['’]ll| will)\b[^.?!\n]{0,30}\b(?:reply|write|come back|get back|respond|answer|call|follow up)\b")
+
+
+# What Discord draws as something else, or as nothing, so a card couldn't show the bytes that go out.
+_MARKUP = re.compile(r"~~|\*\*|__|(?<![\w*])\*[^\s*][^*\n]*\*(?!\w)|(?<![\w_])_[^\s_][^_\n]*_(?!\w)")
+_BLANK_LOOKING = re.compile("[\t\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180d\u2800\u3164\ufe00-\ufe0f\uffa0\U000e0100-\U000e01ef]")
+
+
+def _shows_as_written(text: str) -> list[Issue]:
+    """D1: the card shows the draft exactly as it goes out, whoever steered it (code review 06, SEC-5)."""
+    found = []
+    if report.neutral(text) != text or _MARKUP.search(text):
+        found.append(Issue("channel", "A reply holds no Discord markup, because the card would draw it as something else"))
+    if _BLANK_LOOKING.search(text):
+        found.append(Issue("channel", "A reply holds no tabs or characters that read as nothing, because the card wouldn't show them"))
+    return found
 
 
 def words_in(text: str) -> int:
@@ -140,7 +156,7 @@ def _english(text: str) -> list[Issue]:
 
 
 def _shared(text: str, ctx: dict) -> list[Issue]:
-    issues = _links(text, ctx) + _figures(text, ctx) + _name(text, ctx) + _english(text)
+    issues = _links(text, ctx) + _figures(text, ctx) + _name(text, ctx) + _english(text) + _shows_as_written(text)
     promise = _PROMISE.search(text)
     if promise:
         issues.append(Issue("channel", "Make no promise, refund or discount: only Levi can, in a personal reply", promise.group(0)))

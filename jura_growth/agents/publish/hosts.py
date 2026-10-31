@@ -26,7 +26,7 @@ LinkedIn's are unreachable while it is turned off (since 2026-10-29).
 from __future__ import annotations
 
 import re
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from jura_growth.agents.publish import fixture
 
@@ -159,6 +159,62 @@ def same_place(url: str, place: str) -> bool:
     try:
         return (urlsplit(url.strip()).hostname or "").lower() == (urlsplit(place.strip()).hostname or "").lower() \
             and _path(url) == _path(place)
+    except ValueError:
+        return False
+
+
+# A direct message's own address (inbox watch N12, as amended): the thread is in the path, or in Business
+# Suite in a numeric `selected_item_id`. Anything else can't be bound to one person's thread.
+_DM_PATHS = {"instagram": re.compile(r"/direct/t/[A-Za-z0-9_-]+/?"), "facebook": re.compile(r"/messages/t/[A-Za-z0-9._-]+/?")}
+_FIXTURE_DM = re.compile(r"/(?:direct|messages)/t/[A-Za-z0-9_-]+/?")
+_SUITE_INBOX = re.compile(r"/latest/inbox(?:/(?:all|facebook|messenger|instagram|instagram_direct))?/?")
+SUITE_HOST = "business.facebook.com"
+DM_SHAPE = "a thread's own address (/direct/t/<id>/, /messages/t/<id>/, or Business Suite's inbox with a numeric selected_item_id)"
+
+
+def _selected_items(url: str) -> list[str]:
+    return parse_qs(urlsplit(url.strip()).query).get("selected_item_id", [])
+
+
+def asset_ids(url: str) -> list[str]:
+    """Business Suite's `asset_id`, which is likely what picks the Page a thread is answered as."""
+    return parse_qs(urlsplit(url.strip()).query).get("asset_id", [])
+
+
+def same_asset(url: str, place: str) -> bool:
+    """Whether two Business Suite addresses can be the same Page's: only a value on each can say they aren't,
+    because Suite adds one of its own as it loads."""
+    one, other = asset_ids(url), asset_ids(place)
+    return not one or not other or one == other
+
+
+def dm_target_problem(platform: str, url: str | None) -> str | None:
+    """Why `url` can't be replied to as one person's direct message, or None. Names the host, never the path."""
+    text = (url or "").strip()
+    wrong = problem(platform, text) if platform != "facebook" or fixture.active() is not None else url_problem(text, BROWSER_HOSTS["facebook"], "Facebook's hosts")
+    if wrong:
+        return wrong
+    parts = urlsplit(text)
+    host = (parts.hostname or "").lower()
+    if odd_path(parts.path) or "%" in parts.path:
+        return f"the address on {host} isn't {DM_SHAPE}"
+    if fixture.active() is not None:
+        return None if _FIXTURE_DM.fullmatch(parts.path) else f"the address on {host} isn't {DM_SHAPE}"
+    if platform == "facebook" and host == SUITE_HOST:
+        selected = _selected_items(text)
+        if _SUITE_INBOX.fullmatch(parts.path) and len(selected) == 1 and selected[0].isascii() and selected[0].isdigit():
+            return None
+        return f"the address on {host} isn't {DM_SHAPE}"
+    shape = _DM_PATHS.get(platform)
+    return None if shape and shape.fullmatch(parts.path) else f"the address on {host} isn't {DM_SHAPE}"
+
+
+def same_thread(url: str, place: str) -> bool:
+    """`url` is the thread at `place`: the same host and path, the same Business Suite thread, and no
+    path that climbs. `same_place` alone can't tell two Business Suite threads apart."""
+    try:
+        return (same_place(url, place) and not odd_path(urlsplit(url.strip()).path) and _selected_items(url) == _selected_items(place)
+                and same_asset(url, place))
     except ValueError:
         return False
 

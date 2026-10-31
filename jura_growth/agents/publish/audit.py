@@ -64,9 +64,17 @@ publish job's default. An inbox job passes its own command words, and may add:
   where a platform then redirects (a login wall) is the platform's choice, and a stop signal.
 - `one_line` (a reply run): Return sends in a DM. So a line break in typed text, `shift+return`, or
   Return before a field holds a whole approved text fails. Once one does, one send (Return or a
-  click) is allowed, and any later click, key or typing fails until the run's done word.
+  click) is allowed, and any later click, key or typing fails. A click on a field holding part of
+  the text fails, because it may be the send. The run may only read until its claim, and again after
+  its done word. In between it may use `left_click`, `type` and `key` and nothing else, with no
+  `repeat` above 1 and no `modifiers`, because they change what a key or a click does. A place a
+  page redirected it to isn't held against a run that stopped there: a login wall is a stop signal.
+- `clicks_before_typing`: how many clicks a run has between its claim and its typing. The audit can't
+  say what a click hit, so that is the most it can bound: the Reply link, Accept and the field.
 - `place_check`: how an address is held to `places`. `hosts.within` knows only groups, and a thread
   is one exact address, `hosts.same_place`.
+
+`reads_at`, `claim_index` and `send_index` give a job's checks what a transcript can prove.
 """
 
 from __future__ import annotations
@@ -114,6 +122,8 @@ _CREATED = re.compile(r"tab\s*id\D{0,3}(\d+)", re.I)
 _NAVIGATED = re.compile(r"\s*Navigated to (\S+)")
 _HANDED_OUT = re.compile(r'"due"\s*:\s*true|^A-[0-9]+ · ', re.M)
 RETURN_KEYS = {"return", "enter", "kp_enter"}
+REPLY_ACTIONS = {"left_click", "type", "key"}  # all a reply run does to a page, beside its looks
+READ_TOOLS = ("get_page_text", "read_page")  # `find` is a model's retelling
 SHIFT_RETURN_KEYS = {"shift+return", "shift+enter"}
 _LINE_BREAK = re.compile(r"[\n\r\x0b\x0c\x85\u2028\u2029]")
 
@@ -130,6 +140,7 @@ class AuditRules:
     one_line: bool = False
     place_check: Callable[[str, str], bool] = hosts_mod.within
     asked_check: Callable[[str], bool] | None = None
+    clicks_before_typing: int | None = None
 
 
 PUBLISH_RULES = AuditRules()
@@ -204,17 +215,24 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
     fields = _Fields()
     claimed = stopped = attempted_done = False
     sent = False  # one_line: the one send has happened, and the run's done word hasn't followed it
+    finished = False  # one_line: its done word was taken, so it may only read
+    clicks = 0
+    landings: list[str] = []  # one_line: pages a run was sent to, which a stop forgives
 
     def fail(text: str) -> None:
         if text not in found.failures:
             found.failures.append(text)
 
-    def check_url(url: str, where: str) -> None:
+    def check_url(url: str, where: str, *, asked: bool = True) -> None:
         problem = _url_problem(url, allowed, site, rules.tool_word)
         if problem:
             fail(f"{where}: {problem}")
         elif places and url.strip() not in BLANK_TABS and not any(rules.place_check(url, place) for place in places):
-            fail(f"{where}: an address outside the claimed item's own page")
+            line = f"{where}: an address outside the claimed item's own page"
+            if rules.one_line and not asked:
+                landings.append(line)
+            else:
+                fail(line)
 
     def typed(text: str, tool: str, name: str) -> None:
         if not claimed and normal(text):
@@ -229,7 +247,8 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
             if call.ok and _said(rules.stopped_word, command):
                 stopped = True
             if _said(rules.done_word, command):
-                sent = False
+                if call.ok:  # a refused word settles nothing (code review 06, S-2)
+                    sent, finished = False, True
                 if "--url" in command:
                     attempted_done = True  # recorded or refused, the run says the post went out
             continue
@@ -259,7 +278,12 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
         if rules.read_only and (tool not in READ_ONLY_TOOLS or (tool == "computer" and action not in LOOKS)):
             fail(f"{f'{tool} {action}'.strip()} in a {rules.tool_word} run, which may only read")
         if rules.one_line:
-            sent = _one_line(tool, call.input, action, _whole_text_typed(fields, texts), sent, fail)
+            _reply_tool(tool, action, claimed and not finished, rules.tool_word, fail)
+            if action in CLICKS and claimed and not _any_text(fields):
+                clicks += 1
+                if rules.clicks_before_typing is not None and clicks > rules.clicks_before_typing:
+                    fail(f"{clicks} clicks before typing, where {rules.clicks_before_typing} are all the steps need")
+            sent = _one_line(tool, call.input, action, _whole_text_typed(fields, texts), _part_typed(fields, texts), sent, fail)
         if tool == "form_input":
             value = call.input.get("value")
             name = f"form-{call.input.get('ref', '?')}"
@@ -292,11 +316,14 @@ def audit(transcript: transcripts.Transcript, *, hosts: tuple[str, ...] | list[s
         if not seen:
             fail(f"couldn't read the address of tab {tab} from a {tool} result, so it can't be cleared")
         for url in seen:
-            check_url(url, f"tab {tab} showed")
+            check_url(url, f"tab {tab} showed", asked=False)
         for shown, url in reported:
             if shown != tab and shown in created:
-                check_url(url, f"tab {shown} showed")
+                check_url(url, f"tab {shown} showed", asked=False)
 
+    if not stopped:
+        for line in landings:
+            fail(line)
     filled: dict[str, int] = {}
     for name, pieces in fields.typed.items():
         text = normal("".join(pieces))
@@ -322,12 +349,30 @@ def _whole_text_typed(fields: _Fields, texts: list[str]) -> bool:
     return any(normal("".join(pieces)) in texts for pieces in fields.typed.values())
 
 
-def _one_line(tool: str, given: dict, action: str, whole: bool, sent: bool, fail) -> bool:
+def _any_text(fields: _Fields) -> bool:
+    return any(normal("".join(pieces)) for pieces in fields.typed.values())
+
+
+def _part_typed(fields: _Fields, texts: list[str]) -> bool:
+    return any(normal("".join(pieces)) and normal("".join(pieces)) not in texts for pieces in fields.typed.values())
+
+
+def _reply_tool(tool: str, action: str, typing_phase: bool, word: str, fail) -> None:
+    """A reply run may only read outside its claim's typing phase, and only type and click within it."""
+    allowed = LOOKS | REPLY_ACTIONS if typing_phase else LOOKS
+    if tool not in READ_ONLY_TOOLS or (tool == "computer" and action not in allowed):
+        when = "between its claim and its done word" if typing_phase else "outside its claim, where it may only read"
+        fail(f"{f'{tool} {action}'.strip()} {when}, in a {word} run")
+
+
+def _one_line(tool: str, given: dict, action: str, whole: bool, part: bool, sent: bool, fail) -> bool:
     """A reply run's typing (`AuditRules.one_line`), judged before the call changes the fields:
     whether the one send has happened by the end of this call."""
     typed = given.get("value") if tool == "form_input" else given.get("text") if action == "type" else None
     if isinstance(typed, str) and _LINE_BREAK.search(typed):
         fail(f"{tool} typed a line break, and Return sends in a direct message")
+    if tool == "computer" and (given.get("repeat") not in (None, 1) or given.get("modifiers")):
+        fail(f"computer {action} with a repeat or a modifier, which changes what it does")
     if tool == "form_input":
         if sent:
             fail("form_input after the reply was sent")
@@ -337,6 +382,8 @@ def _one_line(tool: str, given: dict, action: str, whole: bool, sent: bool, fail
     if action in CLICKS:
         if sent:
             fail(f"computer {action} after the reply was sent")
+        elif part:
+            fail(f"computer {action} on a field holding part of the approved text, which may send it")
         return sent or whole
     if action == "type":
         if sent:
@@ -441,6 +488,46 @@ def _without_trailing_reminders(tail: str) -> str:
             break
         tail = tail[:start].rstrip()
     return tail
+
+
+def claim_index(transcript: transcripts.Transcript, rules: AuditRules) -> int | None:
+    """Where in the transcript the run's claim was handed out."""
+    for index, call in enumerate(transcript.calls):
+        if call.name == "Bash" and call.ok and _said(rules.next_word, str(call.input.get("command", ""))) and _HANDED_OUT.search(call.result):
+            return index
+    return None
+
+
+def send_index(transcript: transcripts.Transcript, text: str, rules: AuditRules) -> int | None:
+    """Where the whole of `text`, typed in one go after the claim, was sent by a Return or a click. None
+    means the transcript can't show it went. Everything was reported back as done by the browser."""
+    claim = claim_index(transcript, rules)
+    if claim is None:
+        return None
+    typed = False
+    want = normal(text)
+    for index, call in enumerate(transcript.calls):
+        if index <= claim or call.name != CHROME + "computer" or not call.ok:
+            continue
+        action = str(call.input.get("action", ""))
+        given = call.input.get("text")
+        if not typed:
+            typed = action == "type" and isinstance(given, str) and normal(given) == want
+        elif action in CLICKS or (action == "key" and isinstance(given, str) and given.lower() in RETURN_KEYS):
+            return index
+    return None
+
+
+def reads_at(transcript: transcripts.Transcript, place: str, place_check: Callable[[str, str], bool]) -> list[tuple[int, str]]:
+    """(where in the transcript, what the page said) for each read whose own tab context shows it was at
+    `place`. A page's words can't plant an address here (`tab_addresses`)."""
+    found = []
+    for index, call in enumerate(transcript.calls):
+        if call.name not in {CHROME + tool for tool in READ_TOOLS} or not call.ok:
+            continue
+        if any(place_check(url, place) for _, url in tab_addresses(call.result)):
+            found.append((index, page_text(call.result)))
+    return found
 
 
 def tab_addresses(text: str) -> list[tuple[str, str]]:

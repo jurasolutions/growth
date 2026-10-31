@@ -46,7 +46,7 @@ from dataclasses import dataclass
 import httpx
 
 from jura_growth import approvals, caps, cards, cloudflare, db, discord, locks, log, pause, suppression, timeutil
-from jura_growth.agents.inbox import kinds, mail, report, settings, store
+from jura_growth.agents.inbox import kinds, mail, reply_run, report, settings, social, store
 from jura_growth.agents.outreach import send as outreach_send
 from jura_growth.agents.scout import settings as scout_settings
 
@@ -98,7 +98,7 @@ def send_due(conn: sqlite3.Connection, *, client: httpx.Client | None = None) ->
             mail.failed(conn, _CRASH, error, line=f"The email reply send has been failing for over {mail.OVERDUE_HOURS} hours, so approved "
                                                   f"replies may be waiting. The last error was {what}.")
             summary = f"the send run stopped on {what}"
-        _tell_safely(conn)
+        tell_safely(conn)
     cards.sweep_safely(conn)
     return summary
 
@@ -142,6 +142,8 @@ def _send_due(conn: sqlite3.Connection, client: httpx.Client | None) -> str:
     kinds.refresh_open(conn)
     kinds.settle_waiting(conn)
     kinds.raise_due(conn)
+    social.settle_waiting(conn)  # a social reply's card too: this job runs whatever the browser's flag says
+    social.raise_due(conn)
     done = {"sent": 0, "failed": 0, "uncertain": _close_expired_claims(conn), "will retry": 0, "refused by Resend": 0}
     if in_window() and not kinds.switched_off():
         for item in due(conn):
@@ -205,9 +207,7 @@ def _claim(conn: sqlite3.Connection, item_id: int) -> _Claimed | None:
 
 
 def _in_flight(conn: sqlite3.Connection, item: dict, reply: kinds.Reply, subject: str, claim: approvals.Approval) -> _Claimed:
-    now = timeutil.stamp()
-    conn.execute("UPDATE inbox_items SET state = ?, send_attempts = send_attempts + 1, asked_at = NULL, guidance = NULL, updated_at = ? WHERE id = ?",
-                 (store.SENDING, now, item["id"]))
+    store.mark_in_flight(conn, item["id"])
     message_id = _outgoing_id(subject, claim)
     store.remember_outgoing(conn, message_id, lead_id=item["lead_id"])
     return _Claimed(reply, message_id, item["send_attempts"] + 1, bool(item["promised"]))
@@ -222,6 +222,8 @@ def _close_expired_claims(conn: sqlite3.Connection) -> int:
     """Claims past their retry time, whatever else is failing: he is told, and nothing more goes out."""
     closed = 0
     for item in store.with_state(conn, store.SENDING):
+        if item["source"] not in store.MAIL_SOURCES:  # a reply run's claim has no retry, and its own rule (N13)
+            continue
         earlier = approvals.latest(conn, kinds.KIND, kinds.subject_of(item["id"]))
         if earlier is None or not earlier.used_at or outreach_send.retry_closed(earlier, timeutil.now_sgt()):
             with db.transaction(conn):
@@ -304,24 +306,28 @@ def _mark_sent(conn: sqlite3.Connection, item_id: int, claimed: _Claimed, resend
 
 def _tell(conn: sqlite3.Connection, item: dict) -> bool:
     """One outcome's line, and whether Discord took it. Nothing is attempted with no webhook set."""
+    on_social = item["source"] in store.SOCIAL_SOURCES
     label = store.label(item["id"])
-    record = approvals.latest(conn, kinds.KIND, kinds.subject_of(item["id"]))
+    record = social.latest_for(conn, item)
     number = record.id if record else label
+    link = f" {reply_run.link_of(item)}" if on_social else ""
     if item["sent_at"] or item["state"] == store.LAPSED:
         if not discord.webhook_set(report.CHANNEL):
             return False
         if item["sent_at"]:
             name = report.shown_name(item["sender_name"])
-            text = f"{number} sent to {name or item['sender_domain']}, {cards.clock(item['sent_at'])} SGT ({label})."
+            text = f"{number} sent to {name or item['sender_domain']}, {cards.clock(item['sent_at'])} SGT ({label}).{link}"
             if item["state"] == store.NEEDS_HAND_REPLY:
                 text += f" It promises a personal reply, so {label} stays open until `/growth inbox done {label}`."
             own = (name,) if name else ()
         else:
-            text, own = f"{number} lapsed: answer {label} by hand if it still matters.", ()
+            text, own = f"{number} lapsed: answer {label} by hand if it still matters.{link}", ()
         return discord.post(conn, report.CHANNEL, text, username=report.USERNAME, dedupe=False, suppress_embeds=True,
                             conversation=own).delivered
     if not discord.webhook_set("alerts"):
         return False
+    if on_social:
+        return discord.alert(conn, f"{number}: the reply to {label} ({report.heading(item)}) {reply_run.alert_words(item)}", agent=AGENT).delivered
     said = (f"failed. {_DIDNT_GO}" if item["state"] == store.FAILED else f"can't be confirmed. {_MAY_HAVE_GONE}")
     return discord.alert(conn, f"{number}: the reply to {label} ({item['sender_domain']}) {said}", agent=AGENT).delivered
 
@@ -337,7 +343,7 @@ def tell_outcomes(conn: sqlite3.Connection) -> int:
     return told
 
 
-def _tell_safely(conn: sqlite3.Connection) -> None:
+def tell_safely(conn: sqlite3.Connection) -> None:
     try:
         tell_outcomes(conn)
     except Exception as error:  # noqa: BLE001 - the send stands whatever happens to the line about it

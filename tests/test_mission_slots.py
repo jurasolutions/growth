@@ -527,8 +527,9 @@ def test_every_job_in_settings_gets_its_slots():
     assert counts["inbox-check"] == 68  # every 15 minutes, 07:00 to 23:45 (inbox watch W1)
     assert counts["inbox-send"] == 85  # every 10 minutes, 08:00 to 22:00 (inbox watch D3)
     assert counts["inbox-watch"] == 13  # hourly, 09:05 to 21:05 (inbox watch W2)
+    assert counts["inbox-reply"] == 36  # every 20 minutes, 09:10 to 20:50 (inbox watch D4)
     assert all(n == 1 for job, n in counts.items()
-               if job not in {"scout-send", "scout-research", "community", "publish", "inbox-check", "inbox-send", "inbox-watch"})
+               if job not in {"scout-send", "scout-research", "community", "publish", "inbox-check", "inbox-send", "inbox-watch", "inbox-reply"})
 
 
 def test_publish_has_its_27_slots_on_a_weekend_and_a_holiday_too():

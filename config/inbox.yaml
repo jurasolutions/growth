@@ -27,7 +27,9 @@ extra_platform_domains: []
 # their names as the platforms show them, so their own words are never read as a reaction. These must
 # match page_url in config/social.yaml once that is set.
 pages:
-  facebook: {url: "https://www.facebook.com/jurasolutionssg", name: "Jura Solutions"}
+  # asset_id: Business Suite's value for this Page, from a thread's address on the first-run check. Once set,
+  # a reply won't go to a Business Suite thread that names any other Page's.
+  facebook: {url: "https://www.facebook.com/jurasolutionssg", name: "Jura Solutions", asset_id: ""}
   instagram: {url: "https://www.instagram.com/jura_solutions/", name: "jura_solutions"}
 
 # The mail servers whose Authentication-Results header counts, by the id that opens it. A sender can

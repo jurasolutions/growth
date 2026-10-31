@@ -42,6 +42,7 @@ A11_COMMANDS = {
     "inbox submit",
     "inbox send-due",
     "inbox reword",
+    "inbox reply-due",
 }
 
 # Every function whose body calls `approvals.request(`, and the A11 commands behind it.
