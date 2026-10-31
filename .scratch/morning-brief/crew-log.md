@@ -110,3 +110,15 @@ decisions: S6 (copy the guides to outputs/growth/setup) goes in the after-merge 
 decisions: issue 03: the morning post must go out, or leave a clear trace, past a long lock. The developer chooses the smallest way, within Dispatch's 60-second window
 questions: -
 evidence:  pytest without the defect file -> 4342 passed, 0 skipped; with it -> 17 failed, 4342 passed; --live-fonts -> problems [] on 5 fixtures, all three fonts loaded; full.png and quiet.png read by the conductor
+
+## 2026-10-31T23:50+0800 developer
+status:    done
+persona:   developer
+ticket:    final fix round, issues 03 to 08
+artifacts: crew/morning-brief-01-the-picture up to 634dfb4, merged; test_qa_01_defects.py moved into the right files and deleted
+decisions: issue 03: the post goes out with no write connection when locked; only one-pager runs past a lock; LOCK_PATIENCE 30, to stay clear of Dispatch's 60 seconds
+decisions: a lock after posting leaves the run row running until abandoned, then failed; a re-run would double-post
+decisions: E15 sorted further than the ruling: pause, plug-in lines, the rest, no-trace lines
+decisions: final B2: social_drafts_by_hand replaces S3's date match
+questions: -
+evidence:  pytest -> 4387 passed, 0 skipped; --live-fonts -> worst 1548, problems [] on all five; real EXCLUSIVE lock -> exit 0, 43 s, picture saved to the outbox; pyright -> 2 errors in runner.py on lines not changed here
