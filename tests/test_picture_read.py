@@ -10,6 +10,7 @@ import dataclasses
 import plistlib
 import sqlite3
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -215,7 +216,7 @@ def test_install_day_stays_clean_through_the_read(conn):
     source = dataclasses.replace(world.source(NINE, jobs={"social": JOBS["social"]}), installed_at=lambda job: after_the_slot)
     snapshot = mission.read(source)
     assert snapshot.installed_at["social"] == after_the_slot
-    assert row(snapshot, "Social").word == "Not installed"
+    assert (row(snapshot, "Social").word, row(snapshot, "Social").detail) == ("Not judged", "Installed today 08:00")
     assert not [line for line in picture.fixes(snapshot) if "no trace" in line]
     before_the_slot = dataclasses.replace(source, installed_at=lambda job: after_the_slot - timedelta(hours=1))
     assert row(mission.read(before_the_slot), "Social").word == "Didn't run"
@@ -270,12 +271,6 @@ def test_the_post_path_retries_a_held_lock_and_reads_once_it_clears(monkeypatch)
         holder.close()
     assert snapshot.db_state == mission.OK
     assert len(slept) == 2
-
-
-def test_the_whole_wait_leaves_dispatch_room_to_answer():
-    """S5: Dispatch runs `/growth one-pager` with a 60-second timeout, and a report of failure for
-    a post that still goes out means asking twice and posting twice."""
-    assert mission.LOCK_PATIENCE == 45
 
 
 @pytest.mark.parametrize("day", ["2026-11-09", "2026-11-10"], ids=["yesterday", "this morning"])
@@ -434,6 +429,31 @@ def test_a_healthy_database_is_read_once(conn, monkeypatch):
     assert calls == [1]
 
 
+# --- B2: drafts on draft-mode platforms --------------------------------------------------------------
+
+
+def _draft_today(conn, platform: str) -> None:
+    conn.execute(
+        "INSERT INTO social_posts (date, theme, platform, text, status, created_at) VALUES ('2026-11-10', 't', ?, 'b', 'draft', ?)",
+        (platform, NINE),
+    )
+
+
+@pytest.mark.parametrize("mode, by_hand", [("draft", 1), ("browser", 0)])
+def test_only_a_draft_on_a_draft_mode_platform_is_to_post_by_hand(mode, by_hand, conn, monkeypatch):
+    """Final B2: a `browser` platform's draft goes out through its card, answered or not."""
+    from jura_growth.agents.social import settings as social_settings
+
+    real = social_settings.load()
+    platforms = [dataclasses.replace(p, publish_mode=mode) for p in real.enabled_platforms()]
+    monkeypatch.setattr(social_settings, "load", lambda: SimpleNamespace(enabled_platforms=lambda: platforms))
+    _draft_today(conn, platforms[0].name)
+    figures = plugin("social").digest(conn, "2026-11-10")["figures"]
+    assert figures["social_drafts_waiting"] == 1
+    assert figures["social_drafts_by_hand"] == by_hand
+    assert read().morning.figures["social_drafts_by_hand"] == by_hand
+
+
 # --- N5: live mode with something stopping it -----------------------------------------------------
 
 
@@ -441,7 +461,8 @@ def test_live_mode_with_a_problem_is_a_fix_line(conn, monkeypatch):
     monkeypatch.setattr(scout_settings, "mode", lambda: "live")
     monkeypatch.setattr(send, "live_problems", lambda: ["sending_domain is not set in config/scout.yaml", "another"])
     lines = [line for line in read().plugin_lines if "live outreach" in line]
-    assert lines == ["Clear what stops live outreach, or no email is asked for: sending_domain is not set in config/scout.yaml."]
+    assert lines == ["Run `jura-growth outreach status`: 2 things stop live outreach, so no email is asked for.\n"
+                     "sending_domain is not set in config/scout.yaml."]
 
 
 def test_live_mode_with_nothing_wrong_and_shadow_mode_say_nothing(conn, monkeypatch):

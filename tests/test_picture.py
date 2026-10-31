@@ -36,7 +36,7 @@ def with_counts(requests: int = 0, fixes: int = 0, drafts: int = 0, replies: int
         slots=world.morning(),
         approvals=tuple(world.request(n) for n in range(requests)),
         plugin_lines=tuple(f"Fix item {n}" for n in range(fixes)),
-        morning=world.figures(social_drafts_waiting=drafts),
+        morning=world.figures(social_drafts_by_hand=drafts),
         yesterday=world.figures(replies=replies),
     )
 
@@ -61,23 +61,19 @@ def test_the_verdict_counts_all_four_things(counts, words):
     assert picture.verdict(with_counts(**counts)) == words
 
 
-def test_a_draft_with_its_own_request_is_decided_not_posted_by_hand():
+@pytest.mark.parametrize("reading", [mission.Reading.WAITING, mission.Reading.APPROVED, mission.Reading.SKIPPED, mission.Reading.USED])
+def test_an_answered_social_card_is_not_a_draft_to_post_by_hand(reading):
+    """Final B2: a card means a `browser` platform, which publish posts. Only a draft on a
+    `draft` platform is his to post, and that platform raises no card."""
+    snapshot = world.snap(slots=world.morning(), morning=world.figures(social_drafts_waiting=1),
+                          yesterday=world.figures(), approvals=(world.request(1, "social-post", reading=reading),))
+    assert "to post by hand" not in picture.verdict(snapshot)
+
+
+def test_a_card_for_one_platform_leaves_the_other_platforms_draft_to_post():
     snapshot = world.snap(slots=world.morning(), approvals=(world.request(1, "social-post"),),
-                          morning=world.figures(social_drafts_waiting=2), yesterday=world.figures())
+                          morning=world.figures(social_drafts_waiting=2, social_drafts_by_hand=1), yesterday=world.figures())
     assert picture.verdict(snapshot) == "1 to decide, 1 to post by hand."
-
-
-def test_a_social_request_from_an_earlier_day_doesnt_offset_todays_draft():
-    """S3: to post by hand counts today's drafts only, so only today's requests match them."""
-    yesterdays = world.request(1, "social-post", requested_at=NOW - timedelta(days=1))
-    snapshot = world.snap(slots=world.morning(), approvals=(yesterdays,), morning=world.figures(social_drafts_waiting=1), yesterday=world.figures())
-    assert picture.verdict(snapshot) == "1 to decide, 1 to post by hand."
-
-
-def test_more_social_requests_than_drafts_never_counts_below_zero():
-    snapshot = world.snap(slots=world.morning(), approvals=(world.request(1, "social-post"), world.request(2, "social-post")),
-                          morning=world.figures(social_drafts_waiting=1), yesterday=world.figures())
-    assert picture.verdict(snapshot) == "2 to decide."
 
 
 @pytest.mark.parametrize("fields", [
@@ -96,6 +92,16 @@ def test_reply_detection_off_leaves_the_all_clear_possible():
     snapshot = world.snap(slots=world.morning(), approvals=(), morning=world.figures(),
                           yesterday=world.figures(reply_detection=False))
     assert picture.verdict(snapshot) == "Nothing needs you right now."
+
+
+def test_three_unset_settings_fit_their_row_and_four_move_to_a_second_line():
+    three = picture.fixes(world.snap(gaps=tuple(health.Gap(f"SETTING_{n}") for n in range(3))))
+    assert three == ["Set `SETTING_0`, `SETTING_1`, `SETTING_2`."]
+    (four,) = picture.fixes(world.snap(gaps=tuple(health.Gap(f"SETTING_{n}") for n in range(4))))
+    first, detail = four.split("\n")
+    assert first == "Run `jura-growth status` for the 4 settings to set."
+    assert detail == "Not set: `SETTING_0`, `SETTING_1`, `SETTING_2`, `SETTING_3`."
+    assert "SETTING_0" not in picture.html(world.snap(gaps=tuple(health.Gap(f"SETTING_{n}") for n in range(4))))
 
 
 def test_a_recorded_reply_shows_even_with_reply_detection_off():
@@ -189,6 +195,7 @@ REQUEST_FAILURE = mission.Failure("community", datetime(2026, 11, 9, 7, 30, tzin
     (dict(installs={"social": health.OUT_OF_DATE}), "Run `jura-growth schedule install` again"),
     (dict(gaps=(health.Gap("RESEND_API_KEY_OUTREACH"), health.Gap("UNSUBSCRIBE_SECRET"))), "Set `RESEND_API_KEY_OUTREACH`, `UNSUBSCRIBE_SECRET`"),
     (dict(gaps=(health.Gap("Discord", have=3, of=10),)), "Set the Discord webhooks"),
+    (dict(gaps=tuple(health.Gap(f"SETTING_{n}") for n in range(4))), "Run `jura-growth status`"),
     (dict(gaps=(health.Gap("ANTHROPIC_API_KEY", must_be_unset=True),)), "Unset `ANTHROPIC_API_KEY`"),
     (dict(plugin_lines=(releases.PREVIEW_LINE.format(app_id="APP-014", label="APP-014 Invoice chaser", request="A-0153", why="skipped", preview="https://x.test"),)), "Run `jura-growth apps built APP-014 …`"),
     (dict(plugin_lines=(releases.MAIN_LINE.format(sha="abc1234", app_id="APP-014", task="T-0031", label="APP-014 Invoice chaser", request="A-0153"),)), "Once main holds abc1234, run `jura-growth apps released APP-014 --task T-0031`"),
@@ -339,7 +346,7 @@ def test_an_installed_job_that_has_never_left_a_trace_reads_didnt_run():
 
 def test_a_slot_from_before_the_install_is_not_judged_so_install_day_stays_clean():
     snapshot = never_ran(installed_at={"outreach-requests": NOW.replace(hour=8, minute=45)})
-    assert row(snapshot, "Outreach").word == "Not installed"
+    assert (row(snapshot, "Outreach").word, row(snapshot, "Outreach").detail) == ("Not judged", "Installed today 08:45")
     assert picture.fixes(snapshot) == []
     assert picture.verdict(snapshot) == "Nothing needs you right now."
 
@@ -354,6 +361,31 @@ def test_a_job_that_isnt_installed_keeps_its_one_fix_line():
     snapshot = never_ran(installs={"outreach-requests": health.NOT_INSTALLED})
     assert row(snapshot, "Outreach").word == "Not installed"
     assert [line for line in picture.fixes(snapshot) if "no trace" in line] == []
+
+
+def test_an_installed_job_with_a_run_on_record_never_reads_not_installed():
+    """Final S1: install at 10:00; the job ran at its old time that morning; asked at 10:10."""
+    now = NOW.replace(hour=10, minute=10)
+    snapshot = world.snap(now, slots=world.morning(now=now, social="not installed"), morning=world.figures(),
+                          yesterday=world.figures(), approvals=(), installs={"social": health.INSTALLED},
+                          installed_at={"social": NOW.replace(hour=10, minute=0)})
+    assert (row(snapshot, "Social").word, row(snapshot, "Social").detail) == ("Not judged", "Installed today 10:00")
+    assert picture.fixes(snapshot) == []
+
+
+def test_an_installed_job_before_its_first_slot_reads_as_coming():
+    now = NOW.replace(hour=8, minute=0)
+    snapshot = never_ran(slots=world.morning(now=now, outreach_requests="not installed"))
+    early = world.snap(now, slots=snapshot.slots, installs=INSTALLED)
+    assert (row(early, "Outreach").word, row(early, "Outreach").detail) == ("Later", "Due at 08:30")
+    moment = NOW.replace(hour=8, minute=33)
+    soon = world.snap(moment, slots=world.morning(now=moment, outreach_requests="not installed"), installs=INSTALLED)
+    assert (row(soon, "Outreach").word, row(soon, "Outreach").detail) == ("Due now", "Due at 08:30")
+
+
+def test_a_job_launchd_doesnt_have_still_reads_not_installed():
+    snapshot = never_ran(installs={"outreach-requests": health.NOT_INSTALLED}, installed_at={"outreach-requests": NOW.replace(hour=8, minute=45)})
+    assert row(snapshot, "Outreach").word == "Not installed"
 
 
 def test_a_job_launchd_says_nothing_about_is_not_judged():
@@ -375,6 +407,53 @@ def test_a_job_silent_for_days_is_one_fix_line():
               (("outreach-requests", today.replace(hour=8, minute=30)), ("outreach-requests", day_before.replace(hour=8, minute=30)))}
     snapshot = world.snap(slots=silent, installs=INSTALLED)
     assert picture.fixes(snapshot) == ["Check `outreach-requests`: no trace of its run today."]
+
+
+def test_a_job_silent_two_mornings_is_one_fix_line():
+    """Final S2: "no trace" names the job, so its missed count would only add to the verdict."""
+    today, yesterday = NOW.date(), (NOW - timedelta(days=1)).date()
+    snapshot = world.snap(
+        slots={("social", yesterday): [world.slot("social", "missed", at=NOW.replace(hour=7, minute=30) - timedelta(days=1))],
+               ("social", today): [world.slot("social", "due", at=NOW.replace(hour=7, minute=30))]},
+        morning=world.figures(), yesterday=world.figures(), approvals=(), installs={"social": health.INSTALLED},
+    )
+    assert picture.fixes(snapshot) == ["Check `social`: no trace of its run today."]
+    assert picture.verdict(snapshot) == "1 to fix."
+
+
+def test_a_missed_slot_with_no_trace_line_keeps_its_count():
+    yesterday = NOW - timedelta(days=1)
+    snapshot = world.snap(slots={("scout-send", yesterday.date()): [world.slot("scout-send", "missed", at=yesterday)]})
+    assert len(picture.fixes(snapshot)) == 1 and "missed 1 slot" in picture.fixes(snapshot)[0]
+
+
+def test_later_today_names_windows_and_promises_nothing():
+    """Final S4: the schedule alone can't say a post will go out."""
+    text = " ".join(picture.later_today(world.typical()))
+    assert "go out" not in text and "send " not in text.lower().replace("send window", "")
+
+
+def test_real_items_come_ahead_of_setup_chores_and_no_trace_lines():
+    """QA E15, conductor's ruling: the ICP line or a live-outreach blocker can't fall under
+    "and N more" because a job left no trace or a schedule is out of date."""
+    blocker, icp = "Run `jura-growth outreach status`: 1 thing stops live outreach.", "Put the ICP in inputs/icp.md."
+    snapshot = world.snap(
+        slots=world.morning(social="due", app_factory="due"),
+        installs={"backup": health.NOT_INSTALLED, "heartbeat": health.OUT_OF_DATE, "social": health.INSTALLED, "app-factory": health.INSTALLED},
+        gaps=(health.Gap("Discord", have=3, of=10), health.Gap("RESEND_API_KEY_OUTREACH")),
+        plugin_lines=(blocker, icp),
+    )
+    found = picture.fixes(snapshot)
+    assert found[:2] == [blocker, icp]
+    assert [line for line in found if "no trace" in line] == found[-2:]
+    assert len(found) == 8
+
+
+def test_the_pause_still_comes_first():
+    snapshot = world.snap(pause_file="holiday", paused=(("social", "by hand"),), plugin_lines=("A plug-in line.",))
+    found = picture.fixes(snapshot)
+    assert found[0].startswith("Delete the PAUSE file") and found[1].startswith("Send `/growth resume social`")
+    assert found[2] == "A plug-in line."
 
 
 def test_a_passed_slot_stays_due_in_the_classifier():
@@ -477,7 +556,7 @@ def test_the_decide_heading_shows_a_real_zero():
 
 
 def test_later_today_lists_what_is_still_to_come():
-    assert picture.later_today(world.typical()) == ["Posts go out 10:00–16:00", "Emails send 09:30", "Digest 17:30"]
+    assert picture.later_today(world.typical()) == ["Publish window 10:00–16:00", "Send window 09:30", "Digest 17:30"]
     assert picture.later_today(world.quiet()) == []
     assert "Nothing else scheduled" in visible(picture.html(world.quiet()))
 
@@ -525,7 +604,7 @@ def test_the_message_never_splits_from_the_picture():
     text = one_pager.summary(world.worst())
     assert len(text) <= 2000
     assert text.count("\n- ") == picture.FIX_SHOWN + 1  # four lines, and the "and N more" line
-    assert "- and 16 more: `/growth status`" in text
+    assert "- and 16 more: run `jura-growth one-pager --no-post` on the Mac" in text
 
 
 def test_the_message_shows_ordinary_fix_lines_in_full_and_cuts_only_the_longest():

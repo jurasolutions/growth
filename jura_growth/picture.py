@@ -71,11 +71,11 @@ def _schedule_stale(snapshot: mission.Snapshot, job: str) -> bool:
     return snapshot.installs.get(job) in (health.OUT_OF_DATE, health.NOT_INSTALLED)
 
 
-def _didnt_run(snapshot: mission.Snapshot) -> list[str]:
+def _didnt_run(snapshot: mission.Snapshot) -> dict[str, str]:
     """Each growth agent whose slot passed with no trace, as far back as `health` looks for
     missed slots. Skipped for a job whose install state is off: its old-time runs land in the
-    day before's slot until `schedule install`, and Fix already names it."""
-    now, lines = snapshot.now, []
+    day before's slot until `schedule install`, and Fix already names it. Job: its Fix line."""
+    now, lines = snapshot.now, {}
     since = health.previous_business_day_start(now)
     for agent in AGENTS:
         if _schedule_stale(snapshot, agent.job):
@@ -85,25 +85,31 @@ def _didnt_run(snapshot: mission.Snapshot) -> list[str]:
         if passed:
             latest = max(passed)
             when = "today" if latest.date() == now.date() else f"on {health.day_label(latest)}"
-            lines.append(f"Check `{agent.job}`: no trace of its run {when}.")
+            lines[agent.job] = f"Check `{agent.job}`: no trace of its run {when}."
     return lines
 
 
 def fixes(snapshot: mission.Snapshot) -> list[str]:
     """What needs fixing, each item with the action first. An item's first line is its own row on
-    the page. Any more of it is for the message: a failed run's words in a quote, or a plug-in's detail."""
-    return _didnt_run(snapshot) + health.strip(snapshot, short=True)
+    the page. Any more of it is for the message: a failed run's words in a quote, or a plug-in's detail.
+
+    In the order that survives the cap of four: a pause, then the plug-ins' own lines, such as the
+    ICP or a live-outreach blocker, then the rest of the strip in its order, and last a job that
+    left no trace. A job with a "no trace" line needs no missed count as well."""
+    silent = _didnt_run(snapshot)
+    items = [item for item in health.strip(snapshot, short=True)
+             if not any(item.startswith(f"Check `{job}`: it missed") for job in silent)]
+    paused = (1 if snapshot.pause_file else 0) + len(snapshot.paused)
+    plugins = [item for item in items[paused:] if item in snapshot.plugin_lines]
+    rest = [item for item in items[paused:] if item not in snapshot.plugin_lines]
+    return items[:paused] + plugins + rest + list(silent.values())
 
 
 def _to_post_by_hand(snapshot: mission.Snapshot) -> int | None:
-    """Today's social drafts with no request of their own, or None if the figure can't be read.
-    Today's only, by decision: a daily post from an earlier day shouldn't go out, so it asks
-    nothing of him. Requests match drafts by the day they were raised."""
-    drafts = (snapshot.morning.figures if snapshot.morning else {}).get("social_drafts_waiting")
-    if drafts is None:
-        return None
-    today = snapshot.now.date()
-    return max(0, drafts - sum(1 for r in waiting(snapshot) if r.kind == "social-post" and r.requested_at.date() == today))
+    """Today's drafts on platforms in `draft` mode, or None if the figure can't be read. A platform
+    in `browser` mode goes through a card and publish, answered or not, so its draft is never his to
+    post. Today's only, by decision: a daily post from an earlier day shouldn't go out."""
+    return (snapshot.morning.figures if snapshot.morning else {}).get("social_drafts_by_hand")
 
 
 def _replies_to_read(snapshot: mission.Snapshot) -> int | None:
@@ -166,7 +172,7 @@ def _counted(figures: Mapping, key: str, word: str, then: str) -> str:
 
 
 # The figures the page draws: without one of them, a row or a tile reads as a dash.
-MORNING_FIGURES = ("leads_added", "emails_queued", "social_drafts_waiting", "community_posts_planned", "app_prd_today")
+MORNING_FIGURES = ("leads_added", "emails_queued", "social_drafts_waiting", "social_drafts_by_hand", "community_posts_planned", "app_prd_today")
 YESTERDAY_FIGURES = ("emails_sent", "replies", "social_published")
 
 
@@ -218,13 +224,13 @@ STATUS_WORDS = {  # slot status: what the row's label says
     "not installed": "Not installed",
     "none": "Not today",
 }
-DIDNT_RUN, OUT_OF_DATE, UNAVAILABLE = "didnt run", "out of date", "unavailable"  # rows no slot status covers
+DIDNT_RUN, OUT_OF_DATE, UNAVAILABLE, NOT_JUDGED = "didnt run", "out of date", "unavailable", "not judged"  # rows no slot status covers
 
 
 @dataclass(frozen=True)
 class AgentRow:
     label: str
-    status: str  # a slot status, "none" with no slot today, or one of the three above
+    status: str  # a slot status, "none" with no slot today, or one of the four above
     word: str
     detail: str
     to_approve: int
@@ -249,6 +255,8 @@ def _row(snapshot: mission.Snapshot, agent: Agent, figures: Mapping, to_approve:
     slot = next(s for s in statuses if s.status == status)
     if _overdue(snapshot, slot):
         return _overdue_row(snapshot, agent, slot, row)
+    if status == "not installed" and snapshot.installs.get(agent.job) == health.INSTALLED:
+        return _installed_row(snapshot, agent, slot, row)
     if status == "ok":
         detail = agent.says(figures)
     elif status == "skipped":
@@ -264,6 +272,16 @@ def _row(snapshot: mission.Snapshot, agent: Agent, figures: Mapping, to_approve:
     return row(status, STATUS_WORDS[status], detail)
 
 
+def _installed_row(snapshot: mission.Snapshot, agent: Agent, slot: slots.SlotStatus, row) -> AgentRow:
+    """The classifier's "not installed" on a job launchd does have: a slot from before its install,
+    which isn't judged, or a first slot still to come."""
+    since = snapshot.installed_at.get(agent.job)
+    if since is not None and slot.at < since:
+        return row(NOT_JUDGED, "Not judged", f"Installed {by_when(since, snapshot.now)}")
+    status = "upcoming" if slot.at > snapshot.now else "due"
+    return row(status, STATUS_WORDS[status], f"Due at {slot.at:%H:%M}")
+
+
 def _overdue_row(snapshot: mission.Snapshot, agent: Agent, slot: slots.SlotStatus, row) -> AgentRow:
     state = snapshot.installs.get(agent.job)
     if state == health.OUT_OF_DATE:
@@ -275,7 +293,8 @@ def _overdue_row(snapshot: mission.Snapshot, agent: Agent, slot: slots.SlotStatu
 
 # --- Yesterday, and later today -----------------------------------------------------------
 
-LATER = (("publish", "Posts go out"), ("scout-send", "Emails send"), ("digest", "Digest"))
+# Windows, not outcomes: the schedule can't say a post or an email will go out.
+LATER = (("publish", "Publish window"), ("scout-send", "Send window"), ("digest", "Digest"))
 
 
 def later_today(snapshot: mission.Snapshot) -> list[str]:
@@ -357,7 +376,7 @@ code { font-family: var(--font-mono); font-size: 25px; line-height: 1; color: va
 .s-running { background: var(--info-bg); color: var(--info-fg); }
 .s-ok { background: var(--success-bg); color: var(--success-fg); }
 .s-skipped, .s-not-installed, .s-out-of-date { background: var(--warning-bg); color: var(--warning-fg); }
-.s-due, .s-upcoming, .s-none, .s-unavailable { background: var(--neutral-100); color: var(--neutral-600); }
+.s-due, .s-upcoming, .s-none, .s-unavailable, .s-not-judged { background: var(--neutral-100); color: var(--neutral-600); }
 footer { display: flex; gap: 48px; margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border-default); }
 .yesterday { flex: 1 1 0; min-width: 0; }
 .later { flex: none; width: 400px; font-size: 24px; line-height: 32px; }

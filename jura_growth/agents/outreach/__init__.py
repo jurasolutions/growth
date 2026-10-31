@@ -51,6 +51,11 @@ def precheck(job: str, conn: sqlite3.Connection) -> str | None:
     return None
 
 
+# The morning picture stops at the first line, which fits its three rows. The message and the long
+# text carry the first problem, and `outreach status` lists them all.
+LIVE_BLOCKED_LINE = "Run `jura-growth outreach status`: {things} live outreach, so no email is asked for.\n{problem}."
+
+
 def health(conn: sqlite3.Connection) -> list[str]:
     """Live mode with something stopping it: no request is raised and no email goes, and until
     now the first word of it was the 09:30 alert. Reads settings only."""
@@ -60,7 +65,10 @@ def health(conn: sqlite3.Connection) -> list[str]:
     if settings.mode() != "live":
         return []
     problems = send.live_problems()
-    return [f"Clear what stops live outreach, or no email is asked for: {problems[0]}."] if problems else []
+    if not problems:
+        return []
+    things = "1 thing stops" if len(problems) == 1 else f"{len(problems)} things stop"
+    return [LIVE_BLOCKED_LINE.format(things=things, problem=problems[0])]
 
 
 def digest(conn: sqlite3.Connection, day: str) -> dict:

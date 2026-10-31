@@ -234,7 +234,8 @@ def _missed_counts(snapshot) -> list[str]:
 
 
 def _gap_lines(gaps) -> list[str]:
-    """The setup gaps, action first, with every setting that is simply unset on one line."""
+    """The setup gaps, action first, with every setting that is simply unset on one line. Up to
+    three names fit the picture's row; past that its first line says where they are listed."""
     unset, lines = [], []
     for gap in gaps:
         if gap.of is not None:
@@ -243,6 +244,8 @@ def _gap_lines(gaps) -> list[str]:
             lines.append(f"Unset `{gap.name}`: it must not be set.")
         else:
             unset.append(f"`{gap.name}`")
+    if len(unset) > 3:
+        return lines + [f"Run `jura-growth status` for the {len(unset)} settings to set.\nNot set: {', '.join(unset)}."]
     return lines + ([f"Set {', '.join(unset)}."] if unset else [])
 
 
