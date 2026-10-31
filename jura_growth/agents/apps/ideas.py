@@ -14,6 +14,7 @@ the idea becomes an ordinary candidate.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 
@@ -29,6 +30,10 @@ SLUG_MAX = 60  # `validate_factory`'s slug limit
 REASON_MAX = 300
 NAME_MARK = ": "  # a colon and a space, so a web address or a time (06:30) doesn't name it
 _EDGE = " \t\r\n.,;:!?\"'"
+_LATIN = re.compile(r"[A-Za-z]")
+BUSY = "refused: the backlog is busy (another command is writing it); try again in a minute"
+NO_LATIN = ("refused: a name needs Latin letters for its web address. "
+            "Put one before a colon, like `Leave form maker: …`")
 
 
 class Refused(Exception):
@@ -98,9 +103,8 @@ def add(conn: sqlite3.Connection, text: str, *, actor: str) -> Added:
         raise Refused(f"refused: the idea is {len(text)} characters; keep it to {MAX_LENGTH}", 2)
     name = name_for(text)
     slug = slug_for(name)
-    if not slug:
-        raise Refused("refused: the name needs Latin letters (A to Z), because it becomes the tool's web address. "
-                      "Put one before a colon, like `Leave form maker: …`", 2)
+    if not slug or not _LATIN.search(name):  # "2026", "<@123>" and "123 456" too
+        raise Refused(NO_LATIN, 2)
     with backlog.locked():  # the check and the write see the same file
         rows = backlog.load()
         clashes = clash(conn, rows, name=name, slug=slug)
@@ -148,37 +152,52 @@ def queue(rows: list[dict]) -> list[dict]:
     return sorted((r for r in rows if is_open(r)), key=lambda r: str(r.get("added") or "9999-12-31"))
 
 
-def held_on(day: str) -> list[dict]:
-    return [r for r in backlog.load() if r.get("source") == SOURCE and str(r.get("held") or "") == day]
+def held_on(rows: list[dict], day: str) -> list[dict]:
+    return [r for r in rows if r.get("source") == SOURCE and str(r.get("held") or "") == day]
+
+
+def sentence(reason: str) -> str:
+    """The reason as one sentence: a full stop added only when it doesn't end in one already."""
+    reason = reason.rstrip()
+    return reason if reason.endswith((".", "!", "?", "…")) else reason + "."
+
+
+def view(rows: list[dict]) -> list[dict]:
+    """The rows with the status `apps context` shows (`backlog.effective`): a PRD file or a live
+    registry entry with the row's slug wins over the file. The queue's head is always judged on
+    this view, so the code and the factory's `ting_yu_ideas` agree on which idea is first."""
+    return backlog.effective(rows, prd_files=catalog.prd_files(), live=catalog.live_apps())
 
 
 def binding(*, prd_slug: str, prd_name: str, idea: str | None) -> tuple[str | None, list[str]]:
     """(the slug of Ting Yu's row a PRD is filed against, or None; the problems).
 
     `--idea` may name only the oldest open idea of his, and not when his row would then share a
-    name or slug with another row. Without `--idea`, while his oldest idea waits, only a PRD with
-    that idea's own name or slug may be filed (and is bound to it), unless one of his ideas was
+    name or slug with another row. Without `--idea`, a PRD with that idea's own name or slug is
+    bound to it; while it waits unheld, no other PRD may be filed, unless one of his ideas was
     held today. So a seed or factory row is never renamed, and the link doesn't rest on the
     prompt remembering the flag."""
     rows = backlog.load()
-    waiting = queue(rows)
-    head = waiting[0] if waiting else None
+    shown = view(rows)
+    waiting = queue(shown)
     if idea:
-        row = next((r for r in rows if r.get("slug") == idea), None)
-        if row is None or not is_open(row):
+        found = next((r for r in shown if r["slug"] == idea), None)
+        if found is None or not is_open(found):
             return None, [f"idea: {idea!r} isn't an open idea of Ting Yu's, so the PRD can't be filed against it"]
-        if head is not None and row is not head:
-            return None, [f"idea: Ting Yu's ideas are filed oldest first, and {head['slug']} comes first"]
-        other = backlog.find([r for r in rows if r is not row], slug=prd_slug, name=prd_name)
+        if waiting[0]["slug"] != idea:  # an open idea is always in the queue
+            return None, [f"idea: Ting Yu's ideas are filed oldest first, and {waiting[0]['slug']} comes first"]
+        other = backlog.find([r for r in rows if r.get("slug") != idea], slug=prd_slug, name=prd_name)
         if other is not None:
             return None, [f"duplicate: {prd_name!r} ({prd_slug}) is already a backlog row ({other['name']}, "
                           f"{other.get('status') or 'idea'}); choose another name for Ting Yu's idea"]
         return idea, []
-    if head is None or held_on(timeutil.today_str()):
+    if not waiting:
         return None, []
-    if backlog.find([head], slug=prd_slug, name=prd_name) is not None:
-        return head["slug"], []
-    slug = head["slug"]
+    slug = waiting[0]["slug"]
+    if backlog.find([waiting[0]], slug=prd_slug, name=prd_name) is not None:
+        return slug, []
+    if held_on(rows, timeutil.today_str()):
+        return None, []  # one of his ideas was held today: the next one may wait for tomorrow
     return None, [f"idea: Ting Yu's idea {slug} comes first. File its PRD with `--idea {slug}`, or hold it with "
                   f"`apps hold-idea {slug} --reason <why>` if it fails a check, before filing another"]
 
@@ -208,13 +227,14 @@ def hold(*, slug: str, reason: str) -> dict:
             raise Refused(f"not held: {slug} isn't an idea of Ting Yu's in the backlog", 1)
         if row.get("held"):
             raise Refused(f"not held: {slug} was already held on {row['held']}", 1)
-        if not is_open(row):
-            raise Refused(f"not held: {slug} is {row.get('status')}, not an open idea", 1)
-        head = queue(rows)[0]
-        if head is not row:
-            raise Refused(f"not held: {head['slug']} comes first; hold only the oldest of Ting Yu's ideas", 1)
+        shown = view(rows)
+        found = next(r for r in shown if r["slug"] == slug)
+        if not is_open(found):
+            raise Refused(f"not held: {slug} is {found['effective_status']}, not an open idea", 1)
+        head = queue(shown)[0]["slug"]
+        if head != slug:
+            raise Refused(f"not held: {head} comes first; hold only the oldest of Ting Yu's ideas", 1)
         today = timeutil.today_str()
-        row.update(held=today, held_reason=reason,
-                   notes=f"{(row.get('notes') or '').strip()} Not picked first on {today}: {reason}".strip())
+        row.update(held=today, held_reason=reason, notes=backlog._note(row, f"Not picked first on {today}: {reason}"))
         backlog.save(rows)
     return row

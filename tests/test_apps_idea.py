@@ -533,3 +533,150 @@ def test_a_save_replaces_the_file_in_one_step_and_leaves_no_temp_file(conn, monk
     assert sorted(p.name for p in backlog.path().parent.iterdir() if p.name.startswith(".app-backlog")) == []
     text = backlog.path().read_text(encoding="utf-8")
     assert text.startswith(backlog.HEADER) and len(backlog.load()) == 22
+
+
+# --- QA 01 (defects 02 and 03), brought over from tests/test_apps_idea_qa01.py ---------------------
+
+
+def test_a_held_ideas_digest_line_ends_in_one_full_stop_when_the_reason_is_a_sentence(conn, monkeypatch):
+    """Defect 02. The prompt asks for the reason "in one plain sentence", so it usually ends with
+    a full stop."""
+    _add("Site visit report: write up a site visit with photos", "2026-10-25", monkeypatch)
+    monkeypatch.setenv("JURA_GROWTH_NOW", f"{TODAY}T06:30:00+08:00")
+    reason = "A signed site visit report reads as an official record."
+    assert invoke("apps", "hold-idea", "site-visit-report", "--reason", reason).exit_code == 0
+    line = next(line for line in apps_plugin.digest(conn, TODAY)["lines"] if "your idea" in line)
+    assert not line.endswith(".."), line
+    assert line.endswith("official record."), line
+
+
+@pytest.mark.parametrize("reason, ending", [
+    ("Is it an official record?", "official record?"),
+    ("It reads as an official record!", "official record!"),
+    ("It reads as an official record", "official record."),
+])
+def test_the_digest_line_keeps_a_question_or_exclamation_mark_and_adds_a_stop_otherwise(conn, reason, ending):
+    assert invoke("apps", "idea", "Site visit report: write up a site visit").exit_code == 0
+    assert invoke("apps", "hold-idea", "site-visit-report", "--reason", reason).exit_code == 0
+    line = next(line for line in apps_plugin.digest(conn, TODAY)["lines"] if "your idea" in line)
+    assert line.endswith(ending) and not line.endswith(ending + "."), line
+
+
+@pytest.mark.parametrize("words", [
+    ["2026:", "a", "planner", "for", "next", "year"],
+    ["<@123>:", "ping", "the", "owner"],
+    ["123", "456"],
+])
+def test_a_name_with_no_latin_letters_is_refused_as_the_contract_says(conn, words):
+    """Defect 03. docs/dispatch-contract.md: "Exit 2 for ... no Latin letters in the name". PRD
+    §5.6: the name is "in Latin letters"."""
+    body = answer(remote(["apps", "idea", *words]))
+    assert body["exit_code"] == 2 and body["text"].startswith("refused:"), body
+    assert "a name needs Latin letters for its web address" in body["text"], body
+    assert not backlog.path().exists()
+
+
+# --- review round 2: R1 to R8 -----------------------------------------------------------------------
+
+
+def _filed_but_unmarked(prd_tree) -> None:
+    """The Delivery order maker PRD is in prd/pending/apps/, but its backlog row still says idea."""
+    target = prd_tree / "pending" / "apps" / "prd-app-003-delivery-order-maker-2026-10-26.md"
+    target.write_text(GOOD)
+
+
+def test_a_row_whose_prd_is_filed_is_never_the_head_r1(conn, prd_tree, monkeypatch):
+    """R1, the stuck-day repro: the file says idea, the PRD folder says pending. Binding, holding
+    and the context agree with the PRD folder."""
+    _without_the_seed_delivery_order_row()
+    _add("Delivery order maker: DOs with a signature box", "2026-10-20", monkeypatch)
+    _add("Petty cash log: track petty cash", "2026-10-21", monkeypatch)
+    monkeypatch.setenv("JURA_GROWTH_NOW", f"{TODAY}T06:30:00+08:00")
+    _filed_but_unmarked(prd_tree)
+    assert row("delivery-order-maker")["status"] == "idea"
+    view = json.loads(invoke("apps", "context", "--json").output)
+    assert [r["slug"] for r in view["ting_yu_ideas"]] == ["petty-cash-log"]
+    assert ideas.binding(prd_slug="petty-cash-log", prd_name="Petty cash log", idea=None) == ("petty-cash-log", [])
+    assert ideas.binding(prd_slug="x", prd_name="X", idea="petty-cash-log") == ("petty-cash-log", [])
+    refused = invoke("apps", "hold-idea", "delivery-order-maker", "--reason", "x")
+    assert refused.exit_code == 1 and "not an open idea" in refused.output
+    assert invoke("apps", "hold-idea", "petty-cash-log", "--reason", "x").exit_code == 0
+    assert ideas.binding(prd_slug="other-tool", prd_name="Other tool", idea=None) == (None, [])
+
+
+def _mark_times_out(monkeypatch) -> None:
+    def busy(**kwargs):
+        raise TimeoutError("the app-backlog lock is still held after 30 seconds")
+
+    monkeypatch.setattr(backlog, "mark_written", busy)
+
+
+def test_a_lock_timeout_after_filing_reports_the_prd_filed_and_the_next_run_marks_it_r2(tmp_path, conn, monkeypatch):
+    """R2: the PRD, its row and its request are committed, so the answer is "filed", with what is
+    left; the next run's precheck marks the row, renamed idea included."""
+    _without_the_seed_delivery_order_row()
+    assert invoke("apps", "idea", "DO maker: delivery orders with a signature box").exit_code == 0
+    real = backlog.mark_written
+    _mark_times_out(monkeypatch)
+    result = invoke("apps", "submit-prd", "--idea", "do-maker", str(write(tmp_path, GOOD)))
+    assert result.exit_code == 0, result.output
+    assert "filed: APP-003" in result.output and "marked on the next run" in result.output
+    assert "Traceback" not in result.output
+    assert row("do-maker")["status"] == "idea"
+    events = db.rows(conn, "SELECT payload_json FROM events WHERE kind = 'apps.backlog.mark_failed'")
+    assert [json.loads(e["payload_json"])["app_id"] for e in events] == ["APP-003"]
+    monkeypatch.setattr(backlog, "mark_written", real)
+    apps_plugin.precheck("app-factory", conn)
+    marked = row("delivery-order-maker")
+    assert marked["status"] == "prd-pending" and marked["app_id"] == "APP-003" and marked["source"] == "ting-yu"
+    assert not [r for r in backlog.load() if r.get("slug") == "do-maker"]
+    apps_plugin.precheck("app-factory", conn)  # once marked, the catch-up leaves it alone
+    assert [r["slug"] for r in backlog.load()].count("delivery-order-maker") == 1
+    assert db.scalar(conn, "SELECT count(*) FROM events WHERE kind = 'apps.backlog.marked'") == 1
+
+
+@pytest.mark.parametrize("command", [
+    ["apps", "idea", "Petty cash log: track petty cash"],
+    ["apps", "hold-idea", "petty-cash-log", "--reason", "x"],
+])
+def test_a_busy_backlog_answers_plainly_without_a_traceback_r3(conn, monkeypatch, command):
+    from jura_growth import locks
+
+    if command[1] == "hold-idea":
+        assert invoke("apps", "idea", "Petty cash log: track petty cash").exit_code == 0
+    monkeypatch.setattr(backlog, "LOCK_TIMEOUT", 0.2)
+    with locks.held(backlog.LOCK) as got:
+        assert got
+        result = CliRunner().invoke(cli, command)
+        through_remote = answer(remote(command)) if command[1] == "idea" else None  # hold-idea isn't remote's
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert result.output.startswith("refused: the backlog is busy") and "Traceback" not in result.output
+    if through_remote is not None:
+        assert through_remote["exit_code"] == 1 and through_remote["text"].startswith("refused: the backlog is busy")
+
+
+def test_the_prompt_holds_before_it_finishes_with_fail_after_two_brand_failures_r4():
+    filing = _section("4. Check, then file")
+    step3 = re.search(r"^3\. (.+?)(?=^\d\. )", filing, re.S | re.M).group(1)
+    assert "step 5" in step3 and step3.index("step 5") < step3.index("FAIL: brand check failed twice")
+
+
+def test_on_the_day_one_is_held_the_new_head_still_binds_r5(conn, monkeypatch):
+    _without_the_seed_delivery_order_row()
+    _add("Petty cash log: track petty cash", "2026-10-20", monkeypatch)
+    _add("Job sheet: a one-page job sheet", "2026-10-21", monkeypatch)
+    monkeypatch.setenv("JURA_GROWTH_NOW", f"{TODAY}T06:30:00+08:00")
+    assert invoke("apps", "hold-idea", "petty-cash-log", "--reason", "x").exit_code == 0
+    assert ideas.binding(prd_slug="delivery-order-maker", prd_name="Delivery order maker", idea="job-sheet") == ("job-sheet", [])
+    assert ideas.binding(prd_slug="job-sheet", prd_name="Job sheet", idea=None) == ("job-sheet", [])
+    assert ideas.binding(prd_slug="other-tool", prd_name="Other tool", idea=None) == (None, [])
+
+
+def test_a_save_keeps_the_files_mode_and_a_new_file_is_0644_r6(conn):
+    import stat
+
+    assert invoke("apps", "idea", "Petty cash log: track petty cash").exit_code == 0
+    assert stat.S_IMODE(backlog.path().stat().st_mode) == 0o644
+    backlog.path().chmod(0o640)
+    assert invoke("apps", "idea", "Job sheet: a one-page job sheet").exit_code == 0
+    assert stat.S_IMODE(backlog.path().stat().st_mode) == 0o640

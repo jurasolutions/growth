@@ -10,6 +10,7 @@ the brand gate's attempts.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -159,22 +160,44 @@ def submit(conn: sqlite3.Connection, text: str, *, dry_run: bool = False, idea: 
         request = builds.request(conn, parsed.app_id, reason=f"the app factory filed {parsed.app_id} on {today}", run_id=run_id)
         log.event(conn, "apps.prd.written", {"app": parsed.app_id, "name": parsed.name, "path": relative,
                                              "approval": request.id if request else None}, agent=NAME)
-    backlog.mark_written(
-        name=parsed.name,
-        slug=parsed.slug,
-        app_id=parsed.app_id,
-        prd_path=relative,
-        tier=parsed.tier,
-        category=parsed.category,
-        does=entry.get("description", parsed.one_line),
-        idea=idea,
-    )
+    mark = {"name": parsed.name, "slug": parsed.slug, "app_id": parsed.app_id, "prd_path": relative,
+            "tier": parsed.tier, "category": parsed.category,
+            "does": entry.get("description", parsed.one_line), "idea": idea}
+    try:
+        backlog.mark_written(**mark)
+        marked = "backlog updated"
+    except Exception as error:  # noqa: BLE001 - the PRD and its request are committed; the next run marks it
+        log.event(conn, "apps.backlog.mark_failed", {**mark, "error": f"{type(error).__name__}: {error}"},
+                  level="error", agent=NAME)
+        marked = f"PRD filed; the backlog row will be marked on the next run ({type(error).__name__})"
     lines = [
         f"filed: {parsed.app_id} {parsed.name} at {relative}",
-        "backlog updated",
+        marked,
         f"approval request {request.id} raised; its card goes to #approvals" if request else "no approval request raised",
     ]
     return Submission(True, lines, app_id=parsed.app_id, name=parsed.name, path=relative, status="filed")
+
+
+_MARK_KEYS = ("name", "slug", "app_id", "prd_path", "tier", "category", "does", "idea")
+
+
+def mark_missed(conn: sqlite3.Connection) -> list[str]:
+    """The catch-up pass for `apps.backlog.mark_failed`: each filed PRD whose backlog row couldn't
+    be marked (the backlog was busy) is marked now, its renamed idea of Ting Yu's included. A PRD
+    some row already carries is left alone. A backlog still busy waits for the next pass."""
+    done = []
+    for event in db.rows(conn, "SELECT payload_json FROM events WHERE kind = 'apps.backlog.mark_failed' ORDER BY id"):
+        try:
+            payload = json.loads(event["payload_json"])
+            mark = {key: payload.get(key) for key in _MARK_KEYS}
+            if not mark["app_id"] or any(r.get("app_id") == mark["app_id"] for r in backlog.load()):
+                continue
+            backlog.mark_written(**mark)
+        except Exception:  # noqa: BLE001 - still busy or unreadable; the next pass tries again
+            continue
+        log.event(conn, "apps.backlog.marked", {"app_id": mark["app_id"], "idea": mark["idea"]}, agent=NAME)
+        done.append(mark["app_id"])
+    return done
 
 
 def pitch(parsed: prd_mod.AppPrd) -> tuple[str, str]:

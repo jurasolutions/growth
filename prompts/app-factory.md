@@ -171,7 +171,8 @@ time or money ("saves you hours", "in seconds"). Never mention Jura client count
    backlog and sends the PRD with its pitch to Ting Yu as an `app-build` request in #approvals;
    don't do any of those yourself.
 3. If the brand check fails, fix **every** reason in one regeneration and submit once more. A
-   second brand failure drops today's PRD: finish with `FAIL: brand check failed twice`.
+   second brand failure drops today's PRD. If it was one of Ting Yu's ideas, hold it first
+   (step 5), then finish with `FAIL: brand check failed twice`.
 4. If `submit-prd` refuses because of a limit, finish with `SKIP: <reason>`.
 5. If the PRD was for one of Ting Yu's ideas and it still can't be filed, hold the idea, so it
    isn't first again tomorrow:

@@ -51,6 +51,7 @@ HEADER = """\
 
 """
 LOCK = "app-backlog"
+LOCK_TIMEOUT = 30.0  # seconds; a writer holds it for one read, change and save
 
 
 def path() -> Path:
@@ -69,8 +70,10 @@ def save(rows: list[dict]) -> Path:
     Call it under `locked()` with the rows read under the same lock."""
     target = paths.writable(path())
     body = yaml.safe_dump({"apps": rows}, sort_keys=False, allow_unicode=True, width=100)
+    mode = target.stat().st_mode & 0o777 if target.exists() else 0o644  # mkstemp makes 0600
     handle, temp = tempfile.mkstemp(dir=target.parent, prefix=".app-backlog.", suffix=".tmp")
     try:
+        os.chmod(temp, mode)
         with os.fdopen(handle, "w", encoding="utf-8") as out:
             out.write(HEADER + body)
             out.flush()
@@ -84,8 +87,9 @@ def save(rows: list[dict]) -> Path:
 
 @contextmanager
 def locked() -> Iterator[None]:
-    """One writer at a time, across processes. Not re-entrant: never nest it."""
-    with locks.waiting(LOCK):
+    """One writer at a time, across processes. Not re-entrant: never nest it. Raises
+    `TimeoutError` when another writer holds it for more than `LOCK_TIMEOUT` seconds."""
+    with locks.waiting(LOCK, timeout=LOCK_TIMEOUT):
         yield
 
 

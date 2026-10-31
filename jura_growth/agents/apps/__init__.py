@@ -69,6 +69,7 @@ def precheck(job: str, conn: sqlite3.Connection) -> str | None:
         return f"the app PRD template is missing ({catalog.template_path()})"
     if builds.raise_waiting(conn):
         cards.sweep_safely(conn)
+    factory.mark_missed(conn)
     return catalog.limit_reason(conn)
 
 
@@ -86,8 +87,8 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     """The factory's day, after a line for each idea of Ting Yu's it held that day: the reason it
     gave reaches him even when it then filed another PRD."""
     found = _digest(conn, day)
-    held = [f"App factory: your idea {row['name']} wasn't picked first: {row.get('held_reason') or 'no reason given'}."
-            for row in ideas.held_on(day)]
+    held = [f"App factory: your idea {row['name']} wasn't picked first: {ideas.sentence(row.get('held_reason') or 'no reason given')}"
+            for row in ideas.held_on(backlog.load(), day)]
     found["lines"] = held + found["lines"]
     return found
 
@@ -259,6 +260,9 @@ def idea_cmd(ctx, text) -> str:
         except ideas.Refused as refused:
             click.echo(refused.text)
             sys.exit(refused.code)
+        except TimeoutError:
+            click.echo(ideas.BUSY)
+            sys.exit(1)
         log.event(conn, "apps.idea.added", {"slug": added.row["slug"], "name": added.row["name"], "actor": actor},
                   agent=NAME)
     click.echo(ideas.reply(added))
@@ -275,6 +279,9 @@ def hold_idea_cmd(slug, reason) -> str:
     except ideas.Refused as refused:
         click.echo(refused.text)
         sys.exit(refused.code)
+    except TimeoutError:
+        click.echo(ideas.BUSY)
+        sys.exit(1)
     with db.session() as conn:
         log.event(conn, "apps.idea.held", {"slug": slug, "reason": row["held_reason"]}, agent=NAME)
     click.echo(f"held: {row['name']} ({slug}) on {row['held']}: {row['held_reason']}")
@@ -291,6 +298,7 @@ def submit_prd_cmd(file, dry_run, idea_slug) -> str:
     with db.session() as conn:
         if not dry_run:
             builds.raise_waiting(conn, run_id=log.current_run_id())
+            factory.mark_missed(conn)
         result = factory.submit(conn, text, dry_run=dry_run, idea=idea_slug)
         if not dry_run:
             cards.sweep_safely(conn)  # the cards go out once the requests are committed (A12)
