@@ -51,6 +51,7 @@ retention:
   # Publish transcripts hold page text: at most 7 days (caps.BROWSER_TRANSCRIPT_DAYS); may only be lower.
   browser_transcripts_days: 7
   one_pager_days: 14 # the one-pager's grid PNGs in data/growth/one-pager/
+  outbox_days: 14 # Discord messages that were refused, in data/growth/discord-outbox/: they can hold a person's words
 
 # Jobs `pause all` leaves running: housekeeping, and the digest that reports
 # the pause.
