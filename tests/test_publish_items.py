@@ -14,7 +14,7 @@ import pytest
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
 from jura_growth import approvals, cards, config, db, paths
-from jura_growth.agents.publish import items, kinds
+from jura_growth.agents.publish import hosts, items, kinds
 from jura_growth.agents.social import submit
 from jura_growth.agents.social.settings import SettingsError, load
 from sweep import PHONE, RESEND_KEY, assert_clean, d2_secrets, outbox_dir, planted  # noqa: F401
@@ -39,11 +39,18 @@ def social_posts(conn) -> list[dict]:
     return db.rows(conn, "SELECT * FROM approvals WHERE kind = 'social-post' ORDER BY id")
 
 
+SHIPPED = {
+    "facebook": {"publish_mode": "browser", "page_url": "https://www.facebook.com/jurasolutionssg", "enabled": True},
+    "instagram": {"publish_mode": "browser", "page_url": "https://www.instagram.com/jura_solutions/", "enabled": True},
+    "linkedin": {"publish_mode": "draft", "page_url": None, "enabled": False},
+}
+
+
 # --- settings: publish_mode is draft or browser (expand and contract) ------------------------
 
 
 def test_publish_mode_is_draft_or_browser_and_auto_is_gone(monkeypatch):
-    assert {p.publish_mode for p in load().platforms.values()} == {"draft"}
+    assert {p.name: p.publish_mode for p in load().platforms.values()} == {name: ships["publish_mode"] for name, ships in SHIPPED.items()}
     pw.social_config(monkeypatch, browser=("facebook",))
     settings = load()
     assert settings.platforms["facebook"].publish_mode == "browser"
@@ -62,9 +69,13 @@ def test_publish_mode_is_draft_or_browser_and_auto_is_gone(monkeypatch):
         load()
 
 
-def test_every_platform_ships_in_draft_mode():
+def test_each_platform_ships_exactly_as_decided():
+    """Facebook and Instagram post through the browser, each only once Ting Yu approves that exact
+    post. LinkedIn stays off. Merging this is what switches real posting on (PRD §7)."""
     raw = config.agent_config("social")["platforms"]
-    assert {spec["publish_mode"] for spec in raw.values()} == {"draft"}
+    assert {name: {key: spec[key] for key in ("publish_mode", "page_url", "enabled")} for name, spec in raw.items()} == SHIPPED
+    for name in ("facebook", "instagram"):
+        assert hosts.page_problem(name, SHIPPED[name]["page_url"]) is None
 
 
 # --- AC-P1.1 a request per item ------------------------------------------------------------

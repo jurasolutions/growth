@@ -597,3 +597,70 @@ def test_a_post_whose_card_went_out_whole_can_still_be_approved_if_a_name_is_lea
     first, _ = approvals.pending(conn)
     monkeypatch.setattr(kinds.SocialPost, "card_problem", lambda self, conn, subject: UNREADABLE)
     assert pw.decide(conn, first, monkeypatch=monkeypatch).answer == "recorded"
+
+
+# --- the config as it ships (test strategy R1, R3, E2E-1) -------------------------------------------
+
+
+def test_a_day_on_the_shipped_config_asks_in_approvals_and_posts_only_what_was_approved(conn, env, monkeypatch, discord_double):
+    monkeypatch.setenv("CONTROL_DISCORD_USER_ID", pw.CONTROL_ID)
+    folder = write(paths.work_dir("social") / "2026-10-27", TIP)
+    assert submit.submit(conn, folder, offline=True).status == "delivered"
+    first, second = approvals.pending(conn)
+    posts = discord_double.posts("approvals")
+    assert len(posts) == 2
+    assert "https://www.facebook.com/jurasolutionssg" in (posts[0].content or "")
+    assert "https://www.instagram.com/jura_solutions/" in (posts[1].content or "")
+    assert discord_double.posts("social-drafts") == []
+
+    pw.at(monkeypatch, "2026-10-27T10:00:00+08:00")
+    pw.run(conn, monkeypatch=monkeypatch)
+    assert pw.next_item(conn).item is None  # nothing goes out while both wait
+
+    pw.decide(conn, first, monkeypatch=monkeypatch)
+    pw.decide(conn, second, "skip", monkeypatch=monkeypatch)
+    cards.sweep(conn)
+    found = pw.next_item(conn)
+    assert found.item is not None and found.item.platform == "facebook"
+    cards.sweep(conn)
+    assert [line.split(" · ")[0] for line in discord_double.contents("social-drafts")] == [
+        f"**{first.id} approved**", f"**{second.id} skipped**"]
+    assert [row["platform"] for row in db.rows(conn, "SELECT platform FROM publish_items WHERE state = 'claimed'")] == ["facebook"]
+    assert_nothing_asks_to_post_by_hand(discord_double)
+
+
+@pytest.mark.parametrize("state", ["pending", "skipped", "expired", "superseded", "paused"])
+def test_on_the_shipped_config_a_request_that_isnt_approved_hands_out_nothing(conn, env, monkeypatch, discord_double, state):
+    """R1: nothing goes out in any state but approved, for either platform."""
+    monkeypatch.setenv("CONTROL_DISCORD_USER_ID", pw.CONTROL_ID)
+    folder = write(paths.work_dir("social") / "2026-10-27", TIP)
+    assert submit.submit(conn, folder, offline=True).status == "delivered"
+    requests = approvals.pending(conn)
+    assert [approvals.kinds()[r.kind].agent for r in requests] == ["publish", "publish"]
+    at_ten = "2026-10-27T10:00:00+08:00"
+    if state == "skipped":
+        for request in requests:
+            pw.decide(conn, request, "skip", monkeypatch=monkeypatch)
+    elif state == "expired":
+        at_ten = "2026-10-27T17:01:00+08:00"
+        pw.at(monkeypatch, at_ten)
+        for request in requests:
+            assert pw.decide(conn, request, monkeypatch=monkeypatch).answer == approvals.EXPIRED
+    elif state == "superseded":
+        for request in requests:
+            pw.decide(conn, request, monkeypatch=monkeypatch)
+        conn.execute("UPDATE social_posts SET text = text || ' Changed.'")
+    elif state == "paused":
+        for request in requests:
+            pw.decide(conn, request, monkeypatch=monkeypatch)
+        pause.pause(conn, "publish", "a test", notify=False)
+    pw.at(monkeypatch, at_ten)
+    pw.run(conn, monkeypatch=monkeypatch)
+    assert pw.next_item(conn).item is None
+    assert db.rows(conn, "SELECT * FROM approvals WHERE used_at IS NOT NULL") == []
+    assert db.rows(conn, "SELECT * FROM publish_items WHERE state = 'claimed'") == []
+
+
+def test_a_late_run_on_the_shipped_config_skips_before_claude_starts(conn, env, monkeypatch):
+    pw.at(monkeypatch, "2026-10-27T17:00:00+08:00")
+    assert "17:00" in social.precheck("social", conn)

@@ -151,8 +151,8 @@ platforms:
     hashtags_max: 2
     links: post
     image: {width: 1200, height: 630}
-    publish_mode: draft
-    page_url: null
+    publish_mode: browser
+    page_url: https://www.facebook.com/jurasolutionssg
 
   instagram:
     label: Instagram
@@ -165,8 +165,8 @@ platforms:
     links: bio # captions don't make links clickable: write "Link in bio", no URL
     image: {width: 1080, height: 1350}
     carousel: {days: [mon, thu], max_slides: 5} # plus any theme with `carousel: true`
-    publish_mode: draft
-    page_url: null
+    publish_mode: browser
+    page_url: https://www.instagram.com/jura_solutions/
 
 # --- brand rules specific to social posts (PRD §4) ---------------------------
 
