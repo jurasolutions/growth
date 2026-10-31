@@ -235,7 +235,9 @@ class SocialPost:
     def card_problem(self, conn: sqlite3.Connection, subject: str) -> str | None:
         """Why the card can't go out: Discord would mask part of the post, and Ting Yu must never
         approve words he couldn't read. The brand gate refuses these; this holds for a name
-        learned since the gate, or a draft changed past it."""
+        learned since the gate, or a draft changed past it. It learns the names first: a new
+        process, as each SSH call is, knows none, and would call the post fine."""
+        privacy.learn(conn)
         content = social_content(conn, _item(conn, subject).ref_id)
         if content is not None and privacy.own_copy_as_shown(content["text"]) != content["text"]:
             return "Discord would mask part of the post, so its card can't show the exact text"
@@ -244,9 +246,14 @@ class SocialPost:
     def on_approve(self, conn: sqlite3.Connection, subject: str, args: dict) -> None:
         """A typed approval can reach a request whose card was refused, and that would be a yes to
         words he hasn't read. A post whose card went out whole stands, whatever is learned since.
+        The sweep's own refusal stands until a card goes out, even if this process can't read why.
         A refusal rolls the decision back, and a skip still works."""
+        from jura_growth import cards  # cards reaches the kinds through the approvals registry
+
         latest = items.latest_request(conn, _item(conn, subject))
-        problem = self.card_problem(conn, subject) if latest and latest.posted_at is None else None
+        if latest is None or latest.posted_at is not None:
+            return
+        problem = cards.refusal(conn, latest.id) or self.card_problem(conn, subject)
         if problem:
             raise approvals.BadArgs(f"{problem}, so it can't be approved")
 
