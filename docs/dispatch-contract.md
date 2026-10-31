@@ -90,6 +90,7 @@ brackets are required; words in square brackets are optional.
 | `approve <A-nnnn> [key=value …] [note]` | `approve` | Answers from the enum below. Leading `key=value` words are the kind's arguments (`group-rules`: `promo_days=… post_days=…`); the rest is a note |
 | `apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>` | `apps built` | Dispatch calls it when a build task ships (D6): the task, its branch based on `main`, the branch's full head SHA and its Cloudflare Pages preview. Raises an `app-release` request in `#approvals` bound to that SHA. Each option once, as `--task T-0031` or `--task=T-0031`, in any order. Exit 1 for a build that wasn't handed off, or a value it can't bind (a short SHA, a preview outside the landing page's Pages project) |
 | `apps handoffs` | `apps handoffs` | What Dispatch polls (D6). `--json` adds `handoff`, below. A handoff stays listed until `apps built` reports it |
+| `apps idea <text>` | `apps idea` | Adds Ting Yu's own toolbox idea to the app backlog, the text verbatim, with `source: ting-yu`; the app factory picks his ideas before any other, oldest first. The name is the text before a first `: ` (a colon and a space), else its first few words, at most 60 characters; it needs Latin letters, since it becomes the tool's web address. No approval: it writes only the backlog row, and the PRD and both build decisions still apply. Exit 2 for no text, more than 500 characters, no Latin letters in the name or a word that reads as an option (`--source`, `-x`); exit 1, with the text starting `not added:` and naming the clash, when the name or slug matches anything live, pending, built or already in the backlog. Exit 1, with the text starting `refused: the backlog is busy`, when another writer holds the backlog for 30 seconds; nothing is written, so send it again. Not retry-safe: a resend that did land answers exit 1 as a duplicate. No scheduled run can send it |
 | `apps release-plan <APP-NNN>` | `apps release-plan` | Claims the approved `app-release` request, then answers with the merge of exactly the approved SHA into `main`, for Ting Yu to run on the Mac. The claim is spent once it runs. A retry while the build is still the claimed commit and preview answers with the same merge and makes no new claim, so a lost answer can be fetched again; the merge names a fixed SHA, so it releases nothing new. Exit 1, with nothing to run, when no approved release is waiting, or when the build moved on from the claimed commit |
 | `apps released <APP-NNN> --task <T-nnnn>` | `apps released` | Records the release once `main` of the landing-page repository holds the claimed SHA, and moves the PRD to `prd/done/apps/`. Exit 1 while the release isn't claimed or `main` lacks the SHA |
 | `community removed <group-id>` | `community removed` | |
@@ -104,7 +105,9 @@ brackets are required; words in square brackets are optional.
 | `status` | `status` | |
 
 Ticket 09 added `one-pager` and ticket 12 the four `apps` commands. Browser publishing's ticket 03
-adds `publish queue` and `publish resolve`, as rows of their own in this order.
+adds `publish queue` and `publish resolve`, as rows of their own in this order. `apps idea` came
+on 2026-10-31; Dispatch passes `/growth` text through unfiltered, so it needs no change to send
+it.
 
 ## Answers and exit codes
 

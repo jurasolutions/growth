@@ -1,0 +1,35 @@
+C01 normal Name: description	apps idea Site visit report: write up a site visit with photos and a signature, and save it as a PDF
+C02 no colon	apps idea a tool that turns supplier price lists into one comparison table
+C03a URL first	apps idea https://www.iras.gov.sg/taxes/goods-services-tax-(gst) a GST registration checker for small firms
+C03b time inside	apps idea Remind staff at 9:30 to submit their timesheets every Friday
+C03c second URL-first idea	apps idea https://www.mom.gov.sg/employment-practices/leave a leave entitlement checker
+C03d URL after the name	apps idea Grant finder: check https://www.enterprisesg.gov.sg for grants that fit at 06:30 each day
+C04 empty	apps idea
+C05a 500 characters (boundary, accepted)	apps idea Long idea: records each delivery with the date the driver and a signature records each delivery with the date the driver and a signature records each delivery with the date the driver and a signature records each delivery with the date the driver and a signature records each delivery with the date the driver and a signature records each delivery with the date the driver and a signature records each delivery with the date the driver and a signature records each delivery with the date the driver a
+C05b 501 characters	apps idea Long idea: records each delivery with the date the driver and a signature records each delivery with the date the driver and a signature records each delivery with the date the driver and a signature records each delivery with the date the driver and a signature records each delivery with the date the driver and a signature records each delivery with the date the driver and a signature records each delivery with the date the driver and a signature records each delivery with the date the driver ay
+C06a --force	apps idea Stock tool: count stock --force
+C06b -h alone	apps idea -h
+C06c --source=seed	apps idea Evil tool: --source=seed --status=live
+C06d --help	apps idea --help
+C06e dashes inside words	apps idea Range tool: 5-10 items, -5 degrees, a well-known - dash and -- a double one
+C07a Quote builder (live, pending, backlog)	apps idea Quote builder: quotes for contractors with GST
+C07b quote-builder slug, no colon	apps idea quote-builder
+C07c QUOTE BUILDER caps and punctuation	apps idea QUOTE-BUILDER!: shouting
+C07d Product photo studio (live, not in backlog)	apps idea Product photo studio: tidy product photos
+C07e Payslip maker (seed idea row)	apps idea Payslip maker: payslips with CPF
+C07f PDF merge and split (dropped row, live)	apps idea PDF merge and split: merge PDFs
+C07g his own earlier idea again	apps idea Site visit report: again, with a map
+C07h Quote builders (plural)	apps idea Quote builders: one per trade
+C08a YAML tags, anchors, documents	apps idea Anchor tool: &a !!python/object/apply:os.system ["ls"] *a --- status: live source: seed # comment
+C08b flow mapping	apps idea { name: x, source: seed, status: live }
+C08c list item and key	apps idea - name: Evil row
+C08d status: live as the whole text	apps idea status: live
+C09 mentions	apps idea Ping tool: tell @everyone and <@123> and <@&456> and @here when stock is low
+C10a Chinese only	apps idea 报价单生成器：为承包商制作报价单
+C10b Chinese name, ASCII colon	apps idea 报价单: 制作报价单
+C10c accented Latin	apps idea Café menu maker: crème brûlée prices in one menu
+C10d Latin name, Tamil body	apps idea Tamil price list: தமிழ் விலைப்பட்டியல் மாதிரி
+C10e emoji in text	apps idea Rocket tool: 🚀 a launch checklist
+C10f mixed Chinese and Quote builder	apps idea 报价单 Quote builder: 中文
+C13a shell characters and apostrophe	apps idea Tom's tool: run $(rm -rf ~); echo `id` && say "hi" | cat
+C13b one very long word	apps idea SupercalifragilisticSupercalifragilisticSupercalifragilisticSupercalifragilisticSupercalifragilisticSupercalifragilisticSupercalifragilisticSupercalifragilisticSupercalifragilisticSupercalifragilisticSupercalifragilisticSupercalifragilisticSupercalifragilisticSupercalifragilisticSupercalifragilistic and more

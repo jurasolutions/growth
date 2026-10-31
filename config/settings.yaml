@@ -25,7 +25,7 @@ discord:
 approvals:
   discord_buttons: true    # U17 passed 2026-10-31 (Approve on A-0002 from the phone); unlocks live outreach (06)
   post_buttons: true       # send Approve/Skip components on cards (11); Dispatch owns the #approvals webhook since 2026-10-31
-  dispatch_builds: true    # Dispatch GC-05/06 live, crew builds (PRD §9); previews behind Cloudflare Access (2026-10-31)
+  dispatch_builds: true    # Dispatch GC-05/06 live, crew builds (PRD §9); previews public by decision (2026-10-31): anyone with the link, no sign-in
   # In the units of jura_growth/caps.py. A value may shorten a deadline, never
   # lengthen it: anything above the cap reads as the cap.
   deadlines:

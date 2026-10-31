@@ -1,0 +1,55 @@
+#### H1 hold a non-head idea of his
+$ jura-growth apps hold-idea van-check-sheet --reason it needs a rule no official page confirms
+not held: site-visit-report comes first; hold only the oldest of Ting Yu's ideas
+exit 1
+backlog: unchanged
+
+#### H2 hold a seed row
+$ jura-growth apps hold-idea payslip-maker --reason x
+not held: payslip-maker isn't an idea of Ting Yu's in the backlog
+exit 1
+backlog: unchanged
+
+#### H3 hold an unknown slug
+$ jura-growth apps hold-idea no-such-idea --reason x
+not held: no-such-idea isn't an idea of Ting Yu's in the backlog
+exit 1
+backlog: unchanged
+
+#### H4 hold the head, empty reason
+$ jura-growth apps hold-idea site-visit-report --reason    
+refused: say why it wasn't picked: --reason <text>
+exit 2
+backlog: unchanged
+
+#### H5 hold the head
+$ jura-growth apps hold-idea site-visit-report --reason A signed site visit report reads as an official record, so it fails the no-official-documents check.
+held: Site visit report (site-visit-report) on 2026-11-01: A signed site visit report reads as an official record, so it fails the no-official-documents check.
+exit 0
+backlog diff:
+@@ -183 +183,5 @@
+-  notes: Sent by Ting Yu with `apps idea` on 2026-10-30.
++  notes: 'Sent by Ting Yu with `apps idea` on 2026-10-30. Not picked first on 2026-11-01: A signed site
++    visit report reads as an official record, so it fails the no-official-documents check.'
++  held: '2026-11-01'
++  held_reason: A signed site visit report reads as an official record, so it fails the no-official-documents
++    check.
+
+#### H6 hold the head again
+$ jura-growth apps hold-idea site-visit-report --reason again
+not held: site-visit-report was already held on 2026-11-01
+exit 1
+backlog: unchanged
+
+#### H7 hold the new head on the same day
+$ jura-growth apps hold-idea van-check-sheet --reason a second hold today
+held: Van check sheet (van-check-sheet) on 2026-11-01: a second hold today
+exit 0
+backlog diff:
+@@ -195 +195,4 @@
+-  notes: Sent by Ting Yu with `apps idea` on 2026-10-31.
++  notes: 'Sent by Ting Yu with `apps idea` on 2026-10-31. Not picked first on 2026-11-01: a second hold
++    today'
++  held: '2026-11-01'
++  held_reason: a second hold today
+
