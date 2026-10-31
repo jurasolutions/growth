@@ -233,8 +233,9 @@ class SocialPost:
         """The post's text, as Jura's own copy on its card (`privacy`). A draft past the brand gate only."""
         item = _item(conn, subject)
         post = db.one(conn, "SELECT text, qa_json FROM social_posts WHERE id = ?", (item.ref_id,))
-        passed = post and json.loads(post["qa_json"] or "{}").get("passed")
-        return (post["text"].strip(),) if passed else ()
+        if post is None or not json.loads(post["qa_json"] or "{}").get("passed"):
+            return ()
+        return (post["text"].strip(),)
 
     def switched_off(self, conn: sqlite3.Connection, subject: str) -> str | None:
         from jura_growth.agents.social.settings import load

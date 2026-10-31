@@ -406,15 +406,15 @@ def _deliver(
 ) -> httpx.Response:
     give_up = None if patience is None else time.monotonic() + patience
     for attempt in range(3):
-        allowed = {} if give_up is None else {"timeout": max(give_up - time.monotonic(), 0.1)}
+        allowed = httpx.USE_CLIENT_DEFAULT if give_up is None else max(give_up - time.monotonic(), 0.1)
         try:
             if files:
                 multipart: dict = {"payload_json": (None, json.dumps(payload), "application/json")}
                 for i, (name, body) in enumerate(files):
                     multipart[f"files[{i}]"] = (name, body)
-                response = client.request(method, url, files=multipart, params=params, **allowed)
+                response = client.request(method, url, files=multipart, params=params, timeout=allowed)
             else:
-                response = client.request(method, url, json=payload, params=params, **allowed)
+                response = client.request(method, url, json=payload, params=params, timeout=allowed)
         except (httpx.HTTPError, httpx.InvalidURL) as error:
             # Only the error's type: httpx messages can quote the URL, which is the secret.
             raise DiscordError(f"Discord could not be reached ({type(error).__name__})") from None

@@ -46,10 +46,9 @@ def channel_for(registered) -> str | None:
 def _next_step(conn: sqlite3.Connection, approval: approvals.Approval, registered) -> str | None:
     """What the kind says happens next. A kind that can't say still gets its line."""
     step = getattr(registered.kind, "feed_approved", None)
-    if not callable(step):
-        return step
     try:
-        return step(conn, approval.subject)
+        said = step(conn, approval.subject) if callable(step) else step
+        return str(said) if said else None
     except Exception as error:  # noqa: BLE001 - a feed line never fails on a kind's wording
         log.event(conn, "approval.feed_error", {"approval": approval.id, "error": f"{type(error).__name__}: {error}"},
                   level="warning", agent=registered.agent)
