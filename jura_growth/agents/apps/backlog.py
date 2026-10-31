@@ -11,8 +11,9 @@ Ting Yu skipped its PRD). An idea whose PRD expired unanswered keeps status
 idea with a `reopens` date, and shows as `resting` until then (MC §5.9 step 5).
 
 Several processes write it (the factory, decisions, `apps idea` from Discord), so
-every read, change and save runs under `locked()`, and `save` replaces the file
-in one step: a reader never sees half a file, and no writer loses another's row.
+every writer's read, change and save runs under `locked()`, and `save` replaces the
+file in one step: no writer loses another's row, and a reader that changes nothing
+(`load_checked`, for `jura-growth pending`) takes no lock and never sees half a file.
 """
 
 from __future__ import annotations
@@ -63,6 +64,22 @@ def load() -> list[dict]:
     data = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
     rows = data.get("apps", []) if isinstance(data, dict) else data
     return [dict(r) for r in rows if isinstance(r, dict) and r.get("name")]
+
+
+def load_checked() -> list[dict]:
+    """`load`, for a reader that must tell an empty backlog from a broken one. A file that exists
+    but isn't a mapping with an `apps` list, or has a row `load` would drop, raises `ValueError`. A
+    hand edit can do either, and `load` would read it as no rows. A missing file is the seed, as in
+    `load`."""
+    if not path().exists():
+        return load()
+    data = yaml.safe_load(path().read_text(encoding="utf-8"))
+    rows = data.get("apps") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("the file isn't a mapping with an apps list")
+    if not all(isinstance(row, dict) and row.get("name") for row in rows):
+        raise ValueError("a row isn't a mapping with a name")
+    return [dict(row) for row in rows]
 
 
 def save(rows: list[dict]) -> Path:

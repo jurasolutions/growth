@@ -1,0 +1,1 @@
+Spec: ticket 01 below (route S). The mission control PRD is `jurasolutions/prd/pending/prd-jura-mission-control-2026-10-25.md`; this feature adds a dated amendment to it, and the remote command allowlist lives in `docs/dispatch-contract.md`.

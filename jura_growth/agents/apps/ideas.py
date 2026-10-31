@@ -19,6 +19,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from jura_growth import timeutil
+from jura_growth.agents import BACKLOG, GROWTH, UNREAD, PendingItem
 from jura_growth.agents.apps import backlog, catalog
 from jura_growth.agents.apps import prd as prd_mod
 
@@ -165,6 +166,20 @@ def is_open(row: dict) -> bool:
 def queue(rows: list[dict]) -> list[dict]:
     """Ting Yu's open ideas, oldest first (rows without a date last, in file order)."""
     return sorted((r for r in rows if is_open(r)), key=lambda r: str(r.get("added") or "9999-12-31"))
+
+
+def pending_items() -> list[PendingItem]:
+    """`pending`'s line for Ting Yu's open ideas. It reads the file and takes no lock (`save` swaps
+    the file in one step, so a reader never sees half of it), and writes nothing. A backlog that
+    can't be read, or is the wrong shape, says so, and holds up no other line."""
+    try:
+        waiting = queue(view(backlog.load_checked()))
+    except Exception as error:  # noqa: BLE001 - a hand edit can break the file; say so and go on
+        return [PendingItem(UNREAD, f"The app backlog couldn't be read ({type(error).__name__}), so your ideas in it aren't counted.")]
+    if not waiting:
+        return []
+    verb = "waits" if len(waiting) == 1 else "wait"
+    return [PendingItem(GROWTH, f"{len(waiting)} of your ideas {verb} in the backlog for the app factory. The next is {waiting[0]['name']}.", order=BACKLOG)]
 
 
 def held_on(rows: list[dict], day: str) -> list[dict]:

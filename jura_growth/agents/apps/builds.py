@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from jura_growth import approval_settings, approvals, config, db, handoff_fit, log, paths, timeutil
+from jura_growth.agents import GROWTH, YOU, PendingItem
 from jura_growth.agents.apps import backlog, catalog
 from jura_growth.agents.apps import prd as prd_mod
 
@@ -306,6 +307,21 @@ def health_lines(conn: sqlite3.Connection) -> list[str]:
         else:
             lines.append(HAND_BUILD_LINE.format(label=label, request=build["approval_id"], build_it=build_it(build["prd_path"], build["approval_id"])))
     return lines
+
+
+def pending_items(conn: sqlite3.Connection) -> list[PendingItem]:
+    """`pending`'s lines for the open handoffs: Dispatch holds them when `dispatch_builds` is on, and
+    otherwise Ting Yu does. `conn` is the read model's read-only connection."""
+    dispatch = approval_settings.switch("dispatch_builds")
+    items = []
+    for build in open_handoffs(conn):
+        label, request = f"{build['app_id']} {build['name']}".strip(), build["approval_id"]
+        if dispatch:
+            items.append(PendingItem(GROWTH, f"{label} (approval {request}) was handed to Dispatch {timeutil.ago(build['handed_off_at'])}, "
+                                             "and isn't reported built yet."))
+        else:
+            items.append(PendingItem(YOU, HAND_BUILD_LINE.format(label=label, request=request, build_it=build_it(build["prd_path"], request))))
+    return items
 
 
 # --- skip and expiry ----------------------------------------------------------------
