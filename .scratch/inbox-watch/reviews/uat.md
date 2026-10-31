@@ -110,12 +110,13 @@ If H1 finds a canary, stop: `/growth pause inbox`, and pass the transcript to Cl
 | Row | Do this | Pass when |
 |---|---|---|
 | U22 | `/growth inbox redraft A-nnnn shorter, and ask what they use today` | The old card stays open until the new one is up. Within about 15 minutes it closes, and a new draft follows the guidance |
+| U22a | Redraft a card, then press Approve on it before the new one is up | The old text goes, exactly as it read on the card, and no new card follows |
 | U23 | `/growth inbox reword A-nnnn Thanks for asking. Levi will write back today.` | Old card closes, and the new card shows those exact words |
 | U24 | Reword with something that fails the brand check, such as `Thanks!` | The answer gives the reason, and the old card stays open (S1) |
 | U25 | Press Skip on a card | Nothing goes out, and the card reads skipped |
 | U25a | On a report that says no reply was needed, `/growth inbox draft I-nnnn say hello back` | Within about 15 minutes a card follows, using the guidance |
 | U25b | On a hand reply, `/growth inbox done I-nnnn` | It leaves `/growth inbox list`, and nothing goes out |
-| U25c | Send email A a message that gets it suppressed, then `/growth inbox unsuppress I-nnnn` | The suppression lifts. Try the same on an address that clicked unsubscribe on the website: it is refused and stays suppressed |
+| U25c | From email A, send a message that gets it suppressed, then `/growth inbox unsuppress I-nnnn` on that message | The suppression lifts, and the answer names the domain. Try the same on an address that clicked unsubscribe on the website: it is refused, says why, and stays suppressed |
 
 ## F. Staying in charge
 

@@ -266,10 +266,12 @@ hasn't answered. It is stored and never told.
 
 **Replies waiting**:
 The one-pager's section for open inbox items, between Needs you and Approvals waiting. `/growth inbox
-list` shows the same on request.
+list` shows the same on request, with nothing capped. Its count of reactions counts people writing: a
+rise in counts or an app opened gets its own report, and isn't in that number.
 
 **Closed**:
-An inbox item Ting Yu is asked nothing more about. A person's words are removed 90 days after it closes.
+An inbox item Ting Yu is asked nothing more about. A person's words are removed from the engine's own
+records 90 days after it closes. What was already posted stays in Discord until he deletes it there.
 A reported message closes when its report went, noise when it was recorded, and a hand reply when he
 clears it or a week on, when the list stops showing it. A promised reply stays listed until he clears it,
 and its words still go 90 days after it was sent.
