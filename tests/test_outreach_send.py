@@ -211,6 +211,8 @@ def test_live_send_calls_resend_with_the_right_email(conn, monkeypatch):
     assert payload["from"] == '"Levi Ting, Jura Solutions" <tingyu@hello.jurasolutions.sg>'  # local part from config
     assert payload["to"] == ["info@alderlogistics.sg"] and payload["reply_to"] == "levi@jurasolutions.sg"
     url = compose.unsubscribe_url("info@alderlogistics.sg", "test-secret")
+    # Inbox watch F2 adds the id a reply names. The rest is as it was, and none of it is in the approval's hash.
+    assert payload["headers"].pop("Message-ID").endswith("@hello.jurasolutions.sg>")
     assert payload["headers"] == {
         "List-Unsubscribe": f"<{url}>, <mailto:levi@jurasolutions.sg?subject=unsubscribe>",
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",

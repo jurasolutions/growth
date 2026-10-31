@@ -25,7 +25,9 @@ Every rule is code. In order:
     `BEGIN IMMEDIATE` transaction re-reads the email, checks that what will go
     out hashes to the approval, claims the `outreach-email` approval and
     counts the attempt; then exactly that email goes to Resend under
-    `Idempotency-Key: jura-outreach-<id>`; then it is marked sent. A claimed
+    `Idempotency-Key: jura-outreach-<id>`, with a `Message-ID` the claim kept
+    so an answer from any address finds its lead (inbox watch F2; a header,
+    not part of what the approval covers); then it is marked sent. A claimed
     email that Resend errored on, or that the process lost before the mark,
     is retried under the same key with no second claim, but only within
     `caps.OUTREACH_RETRY_WINDOW_HOURS` of the claim; after that it is marked
@@ -49,6 +51,7 @@ from email.utils import formataddr
 import httpx
 
 from jura_growth import approval_settings, approvals, caps, cloudflare, config, db, discord, holidays, locks, log, pause, timeutil, uat_stub
+from jura_growth.agents.inbox import store as inbox_store
 from jura_growth.agents.outreach import approval, compose, queue, replies, store, sync
 from jura_growth.agents.scout import contact as contact_rules
 from jura_growth.agents.scout import dnc, registry, settings
@@ -460,9 +463,10 @@ class _Claimed:
     row: dict  # the recipient's contact row, read inside the claim
     email: compose.Email  # built from those rows; its hash is the approval's
     attempts: int  # counted by the claim, before the call
+    message_id: str  # the same on a retry under this claim
 
 
-def _retry_closed(earlier: approvals.Approval, now: datetime) -> str | None:
+def retry_closed(earlier: approvals.Approval, now: datetime) -> str | None:
     """Why a claimed email may no longer be retried, or None. A retry is
     bounded by whichever comes first: the retry window from the claim, or
     the approval's use-by (code review 06, Sp1)."""
@@ -501,6 +505,7 @@ def _claim(conn: sqlite3.Connection, message: dict, gated: compose.Email) -> _Cl
                 raise approvals.NotApproved(approvals.NotApproved.CHANGED, "it changed during this run, so it isn't sent; the next slot reads it again")
             sending = approval.content_hash_of(row["email"], email.subject, email.draft)
             earlier = approval.claimed(conn, current["id"])
+            used = earlier  # the claim this attempt runs under
             if earlier is None:
                 used = approvals.use(conn, approval.KIND, approval.subject_of(current["id"]), run_id=log.current_run_id())
                 if used.content_hash != sending:
@@ -508,7 +513,7 @@ def _claim(conn: sqlite3.Connection, message: dict, gated: compose.Email) -> _Cl
             elif sending != earlier.content_hash:
                 refusal = f"it changed after {earlier.id} was used, so it isn't sent again"
                 conn.execute("UPDATE outreach_messages SET status = 'failed', error = ? WHERE id = ?", (refusal, current["id"]))
-            elif (closed := _retry_closed(earlier, timeutil.now_sgt())) is not None:
+            elif (closed := retry_closed(earlier, timeutil.now_sgt())) is not None:
                 refusal = f"it may already have gone out: Resend was called under {earlier.id} {closed}"
                 conn.execute(
                     "UPDATE outreach_messages SET status = 'uncertain', error = ? WHERE id = ?",
@@ -516,9 +521,11 @@ def _claim(conn: sqlite3.Connection, message: dict, gated: compose.Email) -> _Cl
                      current["id"]),
                 )
                 alert = f"Message {current['id']} {refusal}. It won't be retried; sending again needs a fresh approval."
-            if refusal is None:
+            if refusal is None and used is not None:
                 conn.execute("UPDATE outreach_messages SET attempts = attempts + 1 WHERE id = ?", (current["id"],))
-                claimed = _Claimed(current, row, email, current["attempts"] + 1)
+                outgoing = _outgoing_id(used, current["id"])
+                inbox_store.remember_outgoing(conn, outgoing, lead_id=current["lead_id"])
+                claimed = _Claimed(current, row, email, current["attempts"] + 1, outgoing)
     except approvals.NotApproved as error:
         # Nothing is claimed. A lapse or supersede `use()` wrote is rolled back
         # with it, and written again at the next read.
@@ -532,6 +539,13 @@ def _claim(conn: sqlite3.Connection, message: dict, gated: compose.Email) -> _Cl
     if alert:
         discord.alert(conn, alert, agent=store.AGENT)
     raise _NotClaimed(refusal or "not claimed")
+
+
+def _outgoing_id(claim: approvals.Approval, message: int) -> str:
+    """This email's `Message-ID`, kept so an answer from any address finds its lead (F2). It is a
+    header only: no part of what the approval covers, so `compose.frame_fingerprint()` and every live
+    approval's content stay as they were."""
+    return inbox_store.outgoing_id(f"{approval.subject_of(message)}|{claim.content_hash}|{claim.used_at}", sending_domain() or settings.SITE)
 
 
 def _send_one(conn, message: dict, lead: dict, row: dict, mode: str, client) -> str:
@@ -567,7 +581,7 @@ def _send_one(conn, message: dict, lead: dict, row: dict, mode: str, client) -> 
     except _NotClaimed as refused:
         raise _NotClaimed(f"message {message['id']} ({lead['domain']}): {refused}") from None
     message, row, email = claimed.message, claimed.row, claimed.email
-    outcome, detail = _resend(conn, message, row, email, client)
+    outcome, detail = _resend(conn, message, row, email, client, claimed.message_id)
     if outcome == "sent":
         with db.transaction(conn):
             _mark_sent(conn, message, lead, row, email, mode="live", resend_id=detail)
@@ -614,7 +628,8 @@ def _mark_sent(conn, message: dict, lead: dict, row: dict, email: compose.Email,
     log.event(conn, "outreach.sent", {"message": message["id"], "mode": mode, "domain": lead["domain"], "kind": message["kind"]}, agent=store.AGENT)
 
 
-def resend_payload(message: dict, row: dict, email: compose.Email) -> dict:
+def resend_payload(message: dict, row: dict, email: compose.Email, *, message_id: str | None = None) -> dict:
+    headers = compose.list_unsubscribe_headers(email.unsubscribe_url)
     return {
         "from": from_address(),
         "to": [row["email"]],
@@ -622,7 +637,7 @@ def resend_payload(message: dict, row: dict, email: compose.Email) -> dict:
         "subject": email.subject,
         "text": email.text,
         "html": email.html,
-        "headers": compose.list_unsubscribe_headers(email.unsubscribe_url),
+        "headers": {**headers, "Message-ID": message_id} if message_id else headers,
         "tags": [{"name": "agent", "value": "outreach"}, {"name": "message", "value": str(message["id"])}],
     }
 
@@ -646,7 +661,12 @@ def classify(status: int, body: dict) -> tuple[str, str]:
     return "fail", detail
 
 
-def _resend(conn, message: dict, row: dict, email: compose.Email, client) -> tuple[str, str]:
+def _resend(conn, message: dict, row: dict, email: compose.Email, client, message_id: str | None = None) -> tuple[str, str]:
+    return post_email(resend_payload(message, row, email, message_id=message_id), f"jura-outreach-{message['id']}", client)
+
+
+def post_email(payload: dict, idempotency_key: str, client: httpx.Client | None) -> tuple[str, str]:
+    """One email to Resend: ('sent', its id), or ('pause' | 'retry' | 'fail', why)."""
     key = config.require("RESEND_API_KEY_OUTREACH")
     try:
         url = resend_url()
@@ -657,8 +677,8 @@ def _resend(conn, message: dict, row: dict, email: compose.Email, client) -> tup
     try:
         response = client.post(
             url,
-            headers={"Authorization": f"Bearer {key}", "Idempotency-Key": f"jura-outreach-{message['id']}"},
-            json=resend_payload(message, row, email),
+            headers={"Authorization": f"Bearer {key}", "Idempotency-Key": idempotency_key},
+            json=payload,
         )
     except httpx.HTTPError as error:
         return "retry", f"Resend unreachable ({type(error).__name__})"

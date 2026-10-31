@@ -22,7 +22,7 @@ from jura_growth.agents.inbox import settings
 
 SOURCES = ("email", "enquiry", "facebook-comment", "facebook-dm", "instagram-comment", "instagram-dm", "post-stats",
            "app-usage")
-STATES = ("new", "triaged", "reported", "waiting", "sent", "skipped", "lapsed", "superseded", "unknown", "failed",
+STATES = ("new", "triaged", "reported", "waiting", "sending", "sent", "skipped", "lapsed", "superseded", "unknown", "failed",
           "needs-you", "noise", "unverified", "answered-by-hand", "closed", "done")
 NOISE = "noise"
 REPORTED = "reported"
@@ -30,6 +30,12 @@ NEEDS_HAND_REPLY = "needs-you"  # the state's name in the PRD; in words, "needs 
 NEW = "new"
 TRIAGED = "triaged"  # classed, with a draft ready for its card
 WAITING = "waiting"  # its card is up
+SENDING = "sending"  # its approval is claimed: it may be on its way, and the claim is never made twice
+SENT = "sent"
+SKIPPED = "skipped"
+LAPSED = "lapsed"
+FAILED = "failed"
+UNKNOWN = "unknown"  # it may have gone out, so it is never sent again
 SUPERSEDED = "superseded"
 # The sources a person writes through, and so what triage reads. `MAIL_SOURCES` answer by email.
 MAIL_SOURCES = ("email", "enquiry")
@@ -144,10 +150,14 @@ def label(item_id: int) -> str:
     return f"I-{item_id:04d}"
 
 
-def set_item_state(conn: sqlite3.Connection, item_id: int, state: str) -> None:
+def set_item_state(conn: sqlite3.Connection, item_id: int, state: str, *, note: str | None = None) -> None:
+    """Move an inbox item on. A `note` joins what it already says, and the intake's warning stays."""
     if state not in STATES:
         raise ValueError(f"unknown state {state!r}")
-    conn.execute("UPDATE inbox_items SET state = ?, updated_at = ? WHERE id = ?", (state, timeutil.stamp(), item_id))
+    found = get(conn, item_id) if note else None
+    said = " ".join(part for part in (found["note"], note) if part) if found else None
+    conn.execute("UPDATE inbox_items SET state = ?, note = COALESCE(?, note), updated_at = ? WHERE id = ?",
+                 (state, said, timeutil.stamp(), item_id))
 
 
 # --- reports ------------------------------------------------------------------
@@ -245,6 +255,37 @@ def update_triage(conn: sqlite3.Connection, item_id: int, *, state: str, note: s
     )
 
 
+# --- replies going out --------------------------------------------------------
+
+
+def drafts_without_a_card(conn: sqlite3.Connection) -> list[dict]:
+    """Email drafts triage has finished with that haven't been asked about yet, oldest first."""
+    places = ", ".join("?" for _ in MAIL_SOURCES)
+    return db.rows(conn, f"SELECT * FROM inbox_items WHERE state = ? AND source IN ({places}) ORDER BY id", (TRIAGED, *MAIL_SOURCES))
+
+
+def with_state(conn: sqlite3.Connection, state: str) -> list[dict]:
+    return db.rows(conn, "SELECT * FROM inbox_items WHERE state = ? ORDER BY id", (state,))
+
+
+def sent_on(conn: sqlite3.Connection, day: str) -> int:
+    return db.scalar(conn, "SELECT count(*) FROM inbox_items WHERE substr(sent_at, 1, 10) = ?", (day,)) or 0
+
+
+def outcomes_owed(conn: sqlite3.Connection) -> list[dict]:
+    """Replies whose outcome Ting Yu hasn't heard yet (F15, S7), oldest first."""
+    return db.rows(
+        conn,
+        "SELECT * FROM inbox_items WHERE told_at IS NULL AND (sent_at IS NOT NULL OR state IN (?, ?, ?)) ORDER BY id",
+        (FAILED, UNKNOWN, LAPSED),
+    )
+
+
+def mark_told(conn: sqlite3.Connection, item_id: int) -> None:
+    now = timeutil.stamp()
+    conn.execute("UPDATE inbox_items SET told_at = ?, updated_at = ? WHERE id = ?", (now, now, item_id))
+
+
 # --- what the mail check remembers --------------------------------------------
 
 LAST_SUCCESS = "mail.last_success."
@@ -279,15 +320,21 @@ def clear_state(conn: sqlite3.Connection, key: str) -> None:
 # --- Jura's own outgoing mail -------------------------------------------------
 
 
+def outgoing_id(seed: str, domain: str) -> str:
+    """The `Message-ID` for one message Jura sends. The same `seed` gives the same id, so a retry under
+    one claim carries it again. `seed` holds the approval's content hash, which leaves nothing to guess:
+    an answer that names this id came from someone who was shown it."""
+    return f"<{hashlib.sha256(seed.encode('utf-8')).hexdigest()[:32]}@{domain}>"
+
+
 def remember_outgoing(conn: sqlite3.Connection, message_id: str, *, lead_id: int | None = None) -> None:
     """Keep the `Message-ID` of a message Jura sent, so its copy is recognised (F4) and an answer
-    naming it finds its lead (F2).
+    naming it finds its lead (F2). Inbox replies and outreach sends write it in their claim, before
+    Resend is called, so a copy that lands first is still known.
 
-    Nothing calls this yet: ticket 03 sets and keeps a `Message-ID` on inbox replies and on outreach
-    sends, with UAT confirming Resend keeps it. Until then outreach mail has nothing to look up, and
-    F2's domain match is what covers it (`replies.Contacts.match`): a colleague on the lead's domain
-    counts, and someone elsewhere answering outreach is reported as a stranger. Copies of outreach
-    mail are dropped by sender domain, so F4 holds for them.
+    Whether Resend keeps a `Message-ID` it is given is for UAT Part B to confirm. If it rewrites it, the
+    lookup finds nothing: a colleague on the lead's domain still counts (`replies.Contacts.match`),
+    someone elsewhere is reported as a stranger, and copies are dropped by sender domain, so F4 holds.
     """
     conn.execute(
         "INSERT OR IGNORE INTO inbox_outgoing (message_key, lead_id, recorded_at) VALUES (?, ?, ?)",

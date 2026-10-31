@@ -49,7 +49,6 @@ ATTACHMENTS_KEPT = 5
 SECOND_MAILBOX = ("ENQUIRY_IMAP_HOST", "ENQUIRY_IMAP_USER", "ENQUIRY_IMAP_PASSWORD")
 _MAILBOX_SETTINGS = (("levi", replies.SETTINGS), ("enquiry", SECOND_MAILBOX))
 
-_MESSAGE_ID = re.compile(r"<[!-;=?-~]{1,250}>")
 _LIST_LINE = re.compile(rb'^\((?P<flags>[^)]*)\)\s+(?:"[^"]*"|NIL)\s+(?P<name>.+)$')
 _JUNK_NAMES = ("junk", "spam", "junk e-mail", "junk email", "bulk mail", "[gmail]/spam")
 _ENQUIRY_NAME = re.compile(r"^Name: (.+)$", re.M)
@@ -64,6 +63,7 @@ class Intake:
     dropped: int = 0
     replies: int = 0
     failed: int = 0
+    unfinished: int = 0  # mailboxes read only in part: their budget ran out, or a message waits
 
 
 class _Spent(Exception):
@@ -153,6 +153,8 @@ def intake(conn: sqlite3.Connection) -> Intake:
         cleared(conn, login.label)
         if finished:
             store.set_state(conn, _last_success(login), started)
+        else:
+            result.unfinished += 1
     log.event(conn, "inbox.checked", {"recorded": result.recorded, "noise": result.noise, "dropped": result.dropped,
                                       "replies": result.replies, "failed": result.failed}, agent=AGENT)
     return result
@@ -330,6 +332,8 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
             "in_reply_to": next(iter(_ids(headers.get("In-Reply-To"))), None),
             "references": _ids(headers.get("References"))[-REFERENCES_KEPT:],
             "reply_to": reply_to,
+            # The domain the mail claims to be from, whoever gets the answer: the card compares them (A9).
+            "from_domain": suppression.domain_of(sender) if sender else "",
             "copied": _copied(headers),
             # Whether `who` is this mail's own sender, and so whether triage may suppress it. Not an
             # address typed on the form, nor a `Reply-To` standing in for a From it can't read (SEC-2).
@@ -410,6 +414,12 @@ def _recipient(headers: Message, sender: str) -> str | None:
     return address if address and not _is_jura(address) else None
 
 
+def valid_recipient(address) -> str | None:
+    """One address that isn't Jura's, read again from a stored row before any mail goes to it (A8)."""
+    found = _one_address(str(address or ""))
+    return found if found and not _is_jura(found) else None
+
+
 def _copied(headers: Message) -> int:
     """How many other people were copied: named on the card and never included in a reply (S11)."""
     raw = headers.get_all("Cc") or ()
@@ -417,8 +427,7 @@ def _copied(headers: Message) -> int:
 
 
 def _ids(value) -> list[str]:
-    """Message ids from a header, and nothing else from it, so none can inject a header (A8)."""
-    return _MESSAGE_ID.findall(str(value or ""))
+    return replies.message_ids(value)
 
 
 def _signed_by_jura(headers: Message) -> bool:
@@ -427,14 +436,10 @@ def _signed_by_jura(headers: Message) -> bool:
 
 
 def _contact_of(check: _Check, sender: str, headers: Message, received: datetime | None, subject: str) -> dict | None:
-    """The lead this message answers (W6, F2), or None. Until ticket 03 outreach mail keeps no
-    Message-ID (see `store.remember_outgoing`), so for it the domain match is what finds a colleague."""
+    """The lead this message answers (W6, F2), or None: the same two ways the 16:45 check looks."""
     if received is None or replies.is_automatic(headers, subject):
         return None
-    contact = check.known.match(sender, headers) if sender else None
-    if contact is None:
-        lead_id = store.lead_of_outgoing(check.conn, [*_ids(headers.get("In-Reply-To")), *_ids(headers.get("References"))])
-        contact = check.known.by_lead.get(lead_id) if lead_id is not None else None
+    contact = (check.known.match(sender, headers) or replies.naming_our_mail(check.conn, check.known, sender, headers)) if sender else None
     if contact is None or received < timeutil.parse(contact["first_sent"]):
         return None
     return contact
