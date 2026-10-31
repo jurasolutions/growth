@@ -21,7 +21,8 @@ from jura_growth import approvals, cards, config, db, discord, suppression, time
 from jura_growth.agents.outreach import approval, compose, design, queue as queue_mod, requeue, send, store
 from sweep import MASKED_ADDRESS, NAMED_ADDRESS, PERSON, SOURCE_PAGE, assert_clean, d2_secrets, outbox_dir, planted  # noqa: F401
 
-from test_scout_support import at, body_for, decide, fake_resend, live_ready, outreach_requests, scout_env, seed  # noqa: F401
+from jura_growth.origin import Origin
+from test_scout_support import CONTROL_ID, at, body_for, decide, fake_resend, live_ready, outreach_requests, scout_env, seed  # noqa: F401
 
 FRIDAY_0912 = "2026-11-06T09:12:00+08:00"
 SUBJECT = "A free delivery order maker for Example"
@@ -158,6 +159,51 @@ def test_an_email_queued_by_the_morning_run_gets_its_card_ahead_of_the_send_wind
     send.send_due(conn)
     assert sent == []
     assert db.scalar(conn, "SELECT status FROM outreach_messages WHERE id = ?", (queued.message_id,)) == "queued"
+
+
+# --- no card, no approval (ticket 11): an email is the action least able to be taken back ----------
+
+
+def decide_as_it_stands(conn, request, decision, monkeypatch):
+    """Ting Yu's answer, with no helper giving the request a card first."""
+    monkeypatch.setenv("CONTROL_DISCORD_USER_ID", CONTROL_ID)
+    return approvals.decide(conn, request.id, decision, actor=f"discord:{CONTROL_ID}", origin=Origin.ssh(), source_ref=None, args={})
+
+
+def test_a_typed_approval_of_an_email_whose_card_has_not_gone_out_is_refused_and_sends_nothing(conn, monkeypatch, lead_233):
+    request = approvals.get(conn, lead_233.approval)
+    assert request.posted_at is None  # no webhook here, so no sweep has posted it
+    at(monkeypatch, "2026-11-10T10:00:00+08:00")
+    answer = decide_as_it_stands(conn, request, "approve", monkeypatch)
+    assert answer.answer == approvals.REFUSED, answer.text
+    assert "card hasn't gone out" in answer.text
+    assert approvals.get(conn, request.id).status == approvals.PENDING
+    sent = fake_resend(monkeypatch)
+    at(monkeypatch, "2026-11-10T10:10:00+08:00")
+    send.send_due(conn)
+    assert sent == []
+    assert approvals.get(conn, request.id).used_at is None
+
+
+def test_an_email_whose_card_has_not_gone_out_can_still_be_skipped(conn, monkeypatch, lead_233):
+    request = approvals.get(conn, lead_233.approval)
+    at(monkeypatch, "2026-11-10T10:00:00+08:00")
+    assert decide_as_it_stands(conn, request, "skip", monkeypatch).answer == approvals.RECORDED
+    assert approvals.get(conn, request.id).status == approvals.SKIPPED
+
+
+def test_an_email_whose_card_went_out_can_be_approved_and_sends(conn, monkeypatch, discord_double):
+    live_ready(monkeypatch)
+    at(monkeypatch, FRIDAY_0912)
+    lead(conn, 233, "info@example.com.sg", "https://example.com.sg/contact")
+    request = approvals.get(conn, queue(conn, 233).approval)
+    assert request.posted_at is not None  # the sweep at the end of `queue` posted it
+    at(monkeypatch, "2026-11-10T10:00:00+08:00")
+    assert decide_as_it_stands(conn, request, "approve", monkeypatch).answer == approvals.RECORDED
+    sent = fake_resend(monkeypatch)
+    at(monkeypatch, "2026-11-10T10:10:00+08:00")
+    send.send_due(conn)
+    assert len(sent) == 1
 
 
 def test_send_due_edits_the_card_to_claimed_after_the_send(conn, monkeypatch, discord_double, lead_233):

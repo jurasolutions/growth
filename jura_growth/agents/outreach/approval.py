@@ -137,6 +137,14 @@ class OutreachEmail:
         )
 
     # The kind's own switch: `use()` refuses without claiming while it shows.
+    def on_approve(self, conn: sqlite3.Connection, subject: str, args: dict) -> None:
+        """No card, no approval: a typed approval of an email whose card hasn't gone out would send
+        words he hasn't read, to a real prospect. The heartbeat posts the card, and it stays open
+        for a skip. The refusal rolls the decision back."""
+        latest = approvals.latest(conn, self.name, subject)
+        if latest is not None and latest.posted_at is None:
+            raise approvals.BadArgs("Its card hasn't gone out yet, so it can't be approved. The heartbeat posts it, and you can decide then")
+
     def switched_off(self, conn: sqlite3.Connection, subject: str) -> str | None:
         from jura_growth.agents.outreach import send
         from jura_growth.agents.scout import settings
