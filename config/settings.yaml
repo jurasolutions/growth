@@ -100,6 +100,15 @@ jobs:
     command: [outreach, sync]
     schedule: {business_days: "16:45"}
 
+  # Raises requests for emails queued on an earlier day and posts their cards,
+  # so they are in #approvals before the 09:00 one-pager. It sends nothing.
+  outreach-requests:
+    agent: outreach
+    kind: command
+    command: [outreach, raise-due]
+    quiet: true # no run row when nothing is raised
+    schedule: {business_days: "08:30"}
+
   digest:
     agent: digest
     kind: command
