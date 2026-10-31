@@ -74,9 +74,9 @@ def test_the_previous_business_day_skips_a_public_holiday(uat):
 
 
 @pytest.mark.parametrize("day, why", [(date(2026, 11, 14), "weekend"), (date(2026, 11, 9), "Deepavali")])
-def test_a_day_that_isnt_a_business_day_is_refused_and_seeds_nothing(uat, day, why):
+def test_a_day_that_isnt_a_business_day_is_refused_for_outreach_and_seeds_nothing(uat, day, why):
     with pytest.raises(seed.Refused, match=why):
-        seed.seed(uat, today=day)
+        seed.seed(uat, scenario="shadow-trial", today=day)
     assert not (uat / "data" / "growth.db").exists()
 
 
