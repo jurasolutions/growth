@@ -185,7 +185,7 @@ def _message(item: dict) -> dict:
 
 def _shown(conn: sqlite3.Connection, items: list[dict]) -> dict:
     newest = items[-1]
-    every = store.in_conversation(conn, newest["conversation"])
+    every = store.history(conn, newest["conversation"])
     earlier = _open_draft(conn, newest["conversation"], {item["id"] for item in items})
     return {
         "id": store.label(newest["id"]),
@@ -200,7 +200,7 @@ def _shown(conn: sqlite3.Connection, items: list[dict]) -> dict:
         "must_draft": earlier is not None,
         "earlier_draft": earlier["draft"] if earlier else None,
         "brand_failures": max(item["brand_failures"] for item in items),
-        "messages": [_message(item) for item in every[-MESSAGES_SHOWN:] if item["state"] != store.NOISE],
+        "messages": [_message(item) for item in every[-MESSAGES_SHOWN:]],
     }
 
 
@@ -356,7 +356,7 @@ def _without_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], k
 def _with_draft(conn: sqlite3.Connection, payload: dict, items: list[dict], kind: str, draft: str) -> Submitted:
     newest = items[-1]
     high = payload.get("priority") == "high" or kind in ALWAYS_HIGH
-    every = store.in_conversation(conn, newest["conversation"])
+    every = store.history(conn, newest["conversation"])
     their_words = "\n".join(part for item in every for part in (item["subject"], item["text"]) if part)
     context = {"sender_name": newest["sender_name"], "their_words": their_words, "public": _is_public(newest),
                "platform": _platform(newest), "high": high}

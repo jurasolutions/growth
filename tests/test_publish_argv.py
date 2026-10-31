@@ -31,11 +31,11 @@ def rules(built):
 
 
 @pytest.mark.parametrize("job", ALL_CLAUDE_JOBS)
-def test_only_publish_gains_chrome_and_browser_rules(job, monkeypatch):
+def test_only_browser_jobs_gain_chrome_and_browser_rules(job, monkeypatch):
     pw.social_config(monkeypatch)
     built = argv(job)
     text = " ".join(built)
-    if job == "publish":
+    if job in caps.BROWSER_JOBS:
         assert "--chrome" in built
         assert "ClaudeInChromeDomain(" in text
     else:

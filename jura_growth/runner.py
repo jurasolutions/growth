@@ -1,8 +1,9 @@
 """`jura-growth run <job>`: what launchd calls for every scheduled job.
 
-In order: the PAUSE file (before touching the database), the agent's pause
-flag, business days for business-day jobs, the agent's own precheck, a lock so
-a slow run and its next slot never overlap, then the job itself.
+In order: the PAUSE file (before touching the database), a lock so a slow run
+and its next slot never overlap (a browser job also takes the one lock all
+browser jobs share), the agent's pause flag, business days for business-day
+jobs, the agent's own precheck, then the job itself.
 
 A `command` job calls a `jura-growth` command in-process. A `claude` job runs
 headless Claude Code (`claude -p`) with the job's prompt file and a tight tool
@@ -70,6 +71,9 @@ def job(name: str) -> dict:
 
 
 _lock = locks.held  # one lock per job
+# One browser job at a time, since they share Chrome and the accounts (ADR 0006). One shared lock
+# taken after the job's own: atomic, and `_abandon_stale` still sees the job lock.
+ANOTHER_BROWSER_JOB = "another browser job is running"
 
 
 def run(name: str, *, ignore_schedule: bool = False) -> Outcome:
@@ -90,7 +94,13 @@ def run(name: str, *, ignore_schedule: bool = False) -> Outcome:
 
         conn = db.connect()
         try:
-            return _run_locked(conn, name, spec, ignore_schedule)
+            if name not in caps.BROWSER_JOBS:
+                return _run_locked(conn, name, spec, ignore_schedule)
+            with _lock(locks.BROWSER) as free:
+                if free:
+                    return _run_locked(conn, name, spec, ignore_schedule)
+                log.event(conn, "run.quiet", {"job": name, "started_at": timeutil.stamp(), "reason": ANOTHER_BROWSER_JOB}, agent=agent)
+                return _run_update(conn, name, spec, None, Outcome("ok", ANOTHER_BROWSER_JOB))
         finally:
             conn.close()
 

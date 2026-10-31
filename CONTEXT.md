@@ -255,6 +255,15 @@ One read of the social platforms in the browser. It can read and record, and it 
 One place a watch run reads, such as Instagram Requests or a Page's notifications. A surface with
 no record of a good read has failed, which is different from a quiet day.
 
+**Unverified**:
+A message a watch run recorded whose words weren't in what a page returned to that run, or that a run
+with a failed audit recorded. It is reported as such and gets no draft. Until that check a message is
+**held** (state `observed`), and goes to neither a report nor triage.
+
+**Baseline**:
+What a surface's first good read found, except a message known to be under 48 hours old that the Page
+hasn't answered. It is stored and never told.
+
 **Replies waiting**:
 The one-pager's section for open inbox items, between Needs you and Approvals waiting.
 

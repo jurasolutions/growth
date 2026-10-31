@@ -125,6 +125,18 @@ def group_post_problem(url: str | None, group_url: str) -> str | None:
     return None
 
 
+_ENCODED_PATH_CHARS = re.compile(r"%(?:2e|2f|5c)", re.I)
+
+
+def odd_path(path: str) -> bool:
+    """Whether a URL's path climbs or hides a segment, as a browser would read it: a `.` or `..`
+    segment, percent-encoded or not, an encoded `/` or `\\`, or an encoding left after decoding once."""
+    decoded = unquote(path)
+    if re.search(r"%(?:2f|5c)", path, re.I) or "\\" in decoded or _ENCODED_PATH_CHARS.search(decoded):
+        return True
+    return any(segment in (".", "..") for segment in decoded.split("/"))
+
+
 def within(url: str, place: str) -> bool:
     """Whether `url` is `place` or a page under it, on any of the same platform's hosts: a group's
     own address (`/groups/<id>`), its posts, members or About. The query and fragment don't count;
@@ -136,7 +148,7 @@ def within(url: str, place: str) -> bool:
         raw = urlsplit(url.strip()).path
     except ValueError:
         return False
-    if not _GROUP_PATH.fullmatch(root) or any(segment in (".", "..") for segment in raw.split("/")):
+    if not _GROUP_PATH.fullmatch(root) or odd_path(raw):
         return False
     return path == root or path.startswith(root + "/")
 

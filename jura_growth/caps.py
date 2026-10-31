@@ -42,14 +42,15 @@ NO_REPEAT_DAYS = 14
 # Browser publishing (browser publishing PRD §4.4). A cap counts an item from
 # the moment a run claims it, whatever happens next, so a run that crashes
 # mid-post still uses up its slot.
-BROWSER_JOBS = frozenset({"publish"})  # the only jobs that may drive Chrome
+BROWSER_JOBS = frozenset({"publish", "inbox-watch", "inbox-reply"})  # the only jobs that may drive Chrome
 # Jobs that hold a stranger's words in the session. Each may read only the repo and its own scratch
 # folder, and its transcript goes in BROWSER_TRANSCRIPT_DAYS (inbox watch, technical review B4).
 THIRD_PARTY_TEXT_JOBS = BROWSER_JOBS | {"inbox-check"}
 # Jobs that start in an empty folder of their own, because Claude Code runs read-only Bash commands
 # unasked, and `grep -r KEY .` in the repo would reach `.env` whatever the Read rules say (code review
-# 02, SEC-1). The inbox's browser jobs join this when they land. `publish` hasn't moved yet.
-CLEAN_CWD_JOBS = frozenset({"inbox-check"})
+# 02, SEC-1). A session on hostile pages with the accounts signed in needs this most. `publish` hasn't
+# moved yet, because it is a rehearsed live job. Every path a job here is handed must be absolute.
+CLEAN_CWD_JOBS = frozenset({"inbox-check", "inbox-watch", "inbox-reply"})
 # Days a browser job's transcript is kept: it holds third-party page text (BP §4.7).
 BROWSER_TRANSCRIPT_DAYS = 7
 COMMUNITY_POSTS_PER_DAY = 1
@@ -87,6 +88,13 @@ INBOX_EMAIL_DRAFT_CHARS = 1400
 INBOX_SOCIAL_DRAFT_CHARS = 600
 # SGT, both ends inclusive. Launchd can fire early until the Mac restarts, so the code checks too.
 INBOX_CHECK_WINDOW = ("07:00", "23:59")
+INBOX_WATCH_WINDOW = ("09:05", "21:05")  # SGT, both ends inclusive
+# W2 says hourly. A floor under launchd, which can fire twice: each read is more activity on the account.
+INBOX_WATCH_MINUTES_BETWEEN_RUNS = 55
+INBOX_OBSERVATIONS_PER_RUN = 40  # new messages one watch run may record: a flood waits for the next run
+INBOX_OBSERVE_FILE_BYTES = 1_000_000  # one observation file: over this it is refused whole, to be split
+INBOX_WATCH_POST_DAYS = 30  # F6: posts this recent are read in turn, the least recently read first
+INBOX_BLIND_SURFACE_HOURS = 3  # F13: of the watch's own hours, then it goes to Needs you
 
 # App factory
 APP_PRDS_PER_DAY = 1
