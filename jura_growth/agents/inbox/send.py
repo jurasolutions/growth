@@ -129,7 +129,7 @@ def _suppressed_in_d1(conn: sqlite3.Connection, item: dict) -> bool:
         log.event(conn, "inbox.suppression_unread", {"error": type(error).__name__, "held": held}, level="warning", agent=AGENT)
         return False
     for row in rows:
-        address = addresses.get(row.get("email_hash"))
+        address = addresses.get(str(row.get("email_hash")))
         if address:
             suppression.add(conn, email=address, reason=row["reason"], source=f"d1:{row.get('source')}")
     mail.cleared(conn, _SUPPRESSION)
