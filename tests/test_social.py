@@ -15,7 +15,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from jura_growth import brand_check, config, db, digest, paths, runner, timeutil
+import publish_world as pw
+from discord_double import discord_double  # noqa: F401 - a fixture
+from jura_growth import approvals, brand_check, config, db, digest, paths, runner, timeutil
 from jura_growth.agents import social
 from jura_growth.agents.social import checks, history, linkcheck, plan, render, rhythm, submit, toolbox
 from jura_growth.agents.social.settings import load
@@ -547,7 +549,9 @@ def run_submit(conn, folder, **kwargs):
     return submit.submit(conn, folder, offline=True, **kwargs)
 
 
-def test_submit_delivers_everything(env, conn, linkedin_on):
+def test_submit_delivers_everything(env, conn, monkeypatch, linkedin_on):
+    """Draft mode, the way back (AF5). The next test is the same day in browser mode."""
+    pw.social_config(monkeypatch, browser=())
     folder = write(paths.work_dir("social") / "2026-10-27", TIP)
     outcome = run_submit(conn, folder)
     assert outcome.status == "delivered", outcome.text()
@@ -572,7 +576,24 @@ def test_submit_delivers_everything(env, conn, linkedin_on):
     assert not [m for m in outbox() if m["channel"] == "alerts"]
 
 
+def test_browser_mode_writes_the_same_files_and_rows_and_raises_a_card_for_each(env, conn, monkeypatch, discord_double):
+    pw.social_config(monkeypatch, browser=("facebook", "instagram"))
+    outcome = run_submit(conn, write(paths.work_dir("social") / "2026-10-27", TIP))
+    assert outcome.status == "delivered", outcome.text()
+    out = paths.outputs_dir() / "social" / "2026-10-27"
+    for name in ("facebook.md", "instagram.md", "card.json", "qa.json"):
+        assert (out / name).exists(), name
+    sizes = {p: [render.png_size(f) for f in files] for p, files in outcome.images.items()}
+    assert sizes == {"facebook": [(1200, 630)], "instagram": [(1080, 1350)] * 3}
+    rows = db.rows(conn, "SELECT * FROM social_posts ORDER BY platform")
+    assert [(r["platform"], r["status"], r["theme"]) for r in rows] == [("facebook", "draft", "automation-tip"),
+                                                                        ("instagram", "draft", "automation-tip")]
+    assert len(approvals.pending(conn)) == 2 and len(discord_double.posts("approvals")) == 2
+    assert discord_double.posts("social-drafts") == []
+
+
 def test_submit_monday_news_with_carousel(env, conn, monkeypatch, linkedin_on):
+    pw.social_config(monkeypatch, browser=())
     monkeypatch.setenv("JURA_GROWTH_NOW", MONDAY)
     folder = write(paths.work_dir("social") / "2026-10-26", NEWS)
     outcome = run_submit(conn, folder)

@@ -458,7 +458,10 @@ Every 20 minutes from 09:00 to 17:40 SGT, every day (`daily_every` in `config/se
 
 `social.digest(conn, day)` gives `social_drafts_waiting`, `social_skipped` and
 `social_published` (published by `published_at` day), a `#daily-digest` line, and a brief
-fragment such as "3 social drafts waiting" or "no social draft today".
+fragment such as "3 social drafts waiting" or "no social draft today". The line says where each
+draft is: waiting in `#approvals` on a pending card, waiting in `#social-drafts` in `draft` mode, or
+with no card (too late to ask, from before the platform moved to `browser` mode, or a card that has
+closed).
 
 `publish.digest(conn, day)` adds the day's publish items: `publish_posted`, `publish_skipped`,
 `publish_expired` and `publish_stopped`, and a "Publishing: …" line, on days that had items.

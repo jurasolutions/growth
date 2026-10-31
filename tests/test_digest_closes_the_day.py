@@ -31,6 +31,20 @@ def test_the_1805_digest_closes_an_unanswered_card_and_counts_it(conn, social_da
     assert db.rows(conn, "SELECT * FROM approvals WHERE used_at IS NOT NULL") == []
 
 
+def test_a_post_approved_and_never_claimed_closes_with_its_own_line_at_the_digest(conn, social_day, monkeypatch):
+    submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    pw.at(monkeypatch, "2026-11-10T16:59:00+08:00")
+    pw.decide(conn, first, monkeypatch=monkeypatch)
+    cards.sweep(conn)
+    pw.at(monkeypatch, "2026-11-10T18:05:00+08:00")
+    conn.commit()
+    assert pw.invoke("digest").exit_code == 0
+    mine = [line for line in feed_lines(social_day) if first.id in line]
+    assert [line.split(" · ")[0] for line in mine] == [f"**{first.id} approved**", f"**{first.id} expired**"]
+    assert mine[1].endswith("Approved but not used in time.")
+
+
 def test_a_digest_that_posts_nothing_writes_no_lapse(conn, social_day, monkeypatch):
     submit_tip(conn)
     first, _ = approvals.pending(conn)
