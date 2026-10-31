@@ -95,7 +95,7 @@ def pending(conn: sqlite3.Connection) -> list:
     """`jura-growth pending`: the posts planned for today onward."""
     planned = db.scalar(conn, "SELECT count(*) FROM community_posts WHERE kind = 'post' AND status = 'planned' AND planned_day >= ?",
                         (timeutil.today_str(),)) or 0
-    return [agents.PendingItem(agents.GROWTH, f"{planned} community post{'s' if planned != 1 else ''} planned for today onward.", order=2)] if planned else []
+    return [agents.PendingItem(agents.GROWTH, f"{planned} community post{'s' if planned != 1 else ''} planned for today onward.", order=agents.COUNT)] if planned else []
 
 
 def digest(conn: sqlite3.Connection, day: str) -> dict:

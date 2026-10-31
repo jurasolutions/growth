@@ -200,7 +200,7 @@ imports it by name. The module may define:
 | `REQUIRED_SETTINGS` | The `.env` settings the agent needs, by name. Each one not set is a setup gap in `jura-growth status` and the one-pager |
 | `setup_gaps()` | `[health.Gap(name, ok=...)]` in place of `REQUIRED_SETTINGS`: names and booleans only, never a value. `Gap(name, ok=..., must_be_unset=True)` is a setting that must *not* be set (the publish job's `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`), shown as "set, and must not be" |
 | `health(conn)` | Extra "Needs you" lines for the one-pager. `conn` is the read model's read-only connection, so a write raises |
-| `pending(conn)` | What the agent has unfinished, for `jura-growth pending`: `[agents.PendingItem(holder, text)]`, where `holder` is `agents.YOU`, `agents.GROWTH` or `agents.UNREAD` (a source that couldn't be read). `conn` is the same read-only connection. An exception shows as one line saying what couldn't be read |
+| `pending(conn)` | What the agent has unfinished, for `jura-growth pending`: `[agents.PendingItem(holder, text, order)]`, where `holder` is `agents.YOU`, `agents.GROWTH` or `agents.UNREAD` (a source that couldn't be read), and `order` places the line among its holder's: `agents.NEXT_STEP` (the default), `LISTED`, `COUNT` or `BACKLOG`, most urgent first. `conn` is the same read-only connection. An exception shows as one line saying what couldn't be read |
 
 Every hook except `NAME` is optional and found with `getattr`. Its prompt goes in
 `prompts/<job>.md`, its settings in `config/<name>.yaml`, and its hard limits in `caps.py`.

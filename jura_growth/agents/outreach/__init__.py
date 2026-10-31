@@ -74,7 +74,7 @@ def health(conn: sqlite3.Connection) -> list[str]:
 def pending(conn: sqlite3.Connection) -> list:
     """`jura-growth pending`: the emails queued to send."""
     queued = db.scalar(conn, "SELECT count(*) FROM outreach_messages WHERE status = 'queued'") or 0
-    return [agents.PendingItem(agents.GROWTH, f"{queued} outreach email{'s' if queued != 1 else ''} queued.", order=2)] if queued else []
+    return [agents.PendingItem(agents.GROWTH, f"{queued} outreach email{'s' if queued != 1 else ''} queued.", order=agents.COUNT)] if queued else []
 
 
 def digest(conn: sqlite3.Connection, day: str) -> dict:

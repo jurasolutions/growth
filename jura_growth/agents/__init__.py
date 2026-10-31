@@ -110,17 +110,19 @@ class NothingToDo(str):
 # Who holds the next step of a `PendingItem`. `UNREAD` holds nothing: it says a source couldn't be
 # read, so the answer can't say "nothing pending".
 YOU, GROWTH, UNREAD = "you", "growth", "unread"
+# Where a `PendingItem` sits among its holder's items, most urgent first: a next step or work under
+# way, a capped list of items, a count, and a line about the backlog.
+NEXT_STEP, LISTED, COUNT, BACKLOG = 0, 1, 2, 3
 
 
 @dataclass(frozen=True)
 class PendingItem:
     """One line of `jura-growth pending`. `order` places it among its holder's items: lower first,
-    and equal keep the order the plug-ins gave them. 0 is a next step or work under way, 1 a list
-    of items, 2 a count and 3 a backlog line."""
+    and equal keep the order the plug-ins gave them."""
 
     holder: str
     text: str
-    order: int = 0
+    order: int = NEXT_STEP
 
 
 BROKEN: dict[str, str] = {}

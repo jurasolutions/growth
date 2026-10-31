@@ -27,7 +27,8 @@ This module then:
    `handoff` Dispatch builds from, verbatim, since the PRD text must hash to
    what Ting Yu approved;
 7. writes one `remote.command` event with the actor, the words, the ref and
-   the answer, never the command's output.
+   the answer, never the command's output (for `pending` on a growth.db that
+   is missing or mid-write, in the JSONL mirror only).
 
 Anything not on the allowlist exits 2 with a line starting "refused:".
 """
@@ -44,7 +45,7 @@ from typing import Callable
 
 import click
 
-from jura_growth import approvals, approvals_cli, config, db, discord, handoff_fit, log, origin, pause, privacy
+from jura_growth import approvals, approvals_cli, config, db, discord, handoff_fit, log, mission, origin, paths, pause, privacy
 
 CONTRACT = 1
 TEXT_LIMIT = 1900  # Dispatch adds its own words; Discord takes 2,000
@@ -208,7 +209,7 @@ def _with_options(usage: str, summary: str) -> Entry:
 ALLOWLIST: dict[str, Entry] = {
     "approvals": Entry("approvals [kind]", _positional("approvals", 0, 1), "List the requests waiting for you, soonest to lapse first."),
     "approve": Entry("approve <A-nnnn> [key=value …] [note]", _decision("approve"), "Approve a request.", decision=True),
-    "apps built": _with_options("apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>", "Dispatch sends this, to report a build and ask for its release."),
+    "apps built": _with_options("apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>", "Dispatch sends this when a build ships. Send it yourself to ask again."),
     "apps handoffs": Entry("apps handoffs", _none("apps handoffs"), "Dispatch sends this, to list the builds waiting for a builder."),
     "apps idea": Entry("apps idea <text>", _idea, "Add your own idea to the app backlog."),
     "apps release-plan": Entry("apps release-plan <APP-NNN>", _positional("apps release-plan", 1, 1), "Claim an approved release and get its merge."),
@@ -411,19 +412,35 @@ def _listed(kind: str | None) -> list[dict]:
 # --- the command -------------------------------------------------------------------------------------
 
 
-def _masked(reply: Reply, wait: float | None = None) -> Reply:
+def _leave_database_alone(words: list[str]) -> bool:
+    """For `pending` only: growth.db is missing or mid-write, so nothing here may open it read-write.
+    That open would create it or roll back its journal, and turn the answer just given into a false
+    one (ADR 0002; code review 01). Every other command opens it, as it always has."""
+    if words[:1] != ["pending"]:
+        return False
+    conn, state, _ = mission.connect(paths.db_path())
+    if conn is not None:
+        conn.close()
+    return state in (mission.MISSING, mission.UNFINISHED_WRITE)
+
+
+def _masked(reply: Reply, wait: float | None = None, *, database: bool = True) -> Reply:
     """The text and the listing as they may reach Discord.
 
     If the named contacts or the Keychain values can't be loaded, masking
     still runs on what is known (configured secrets always go first) and a
     `remote.masking_degraded` event says so: in growth.db, or only in the
-    JSONL mirror when the database can't be opened (code review 11)."""
+    JSONL mirror when the database can't be opened (code review 11). Without
+    `database`, it runs on what is known with growth.db left closed."""
     try:
-        with db.session(wait=wait) as conn:
-            try:
-                privacy.load_for_masking(conn)
-            except Exception as error:  # noqa: BLE001 - the answer still goes back, masked
-                log.event(conn, "remote.masking_degraded", {"error": f"{type(error).__name__}: {error}"}, level="warning")
+        if database:
+            with db.session(wait=wait) as conn:
+                try:
+                    privacy.load_for_masking(conn)
+                except Exception as error:  # noqa: BLE001 - the answer still goes back, masked
+                    log.event(conn, "remote.masking_degraded", {"error": f"{type(error).__name__}: {error}"}, level="warning")
+        else:
+            privacy.load_for_masking(None)
     except Exception as error:  # noqa: BLE001 - no database: the mirror holds the event
         try:
             log.event(None, "remote.masking_degraded", {"error": f"{type(error).__name__}: {error}"}, level="warning")
@@ -456,18 +473,22 @@ def payload(reply: Reply) -> str:
     return handoff_fit.encode(body)
 
 
-def _record(words: list[str], actor: str | None, ref: str | None, reply: Reply, wait: float | None = None) -> None:
-    """One `remote.command` event: who, what, and the answer. Never the output."""
+def _record(words: list[str], actor: str | None, ref: str | None, reply: Reply, wait: float | None = None, *, database: bool = True) -> None:
+    """One `remote.command` event: who, what, and the answer. Never the output. Without `database`,
+    only in the JSONL mirror."""
     payload = {"actor": actor, "words": list(words), "ref": ref, "origin": reply.origin, "answer": reply.answer, "exit_code": reply.exit_code}
     level = "info" if reply.exit_code == OK else "warning"
-    try:
-        with db.session(wait=wait) as conn:
-            log.event(conn, "remote.command", payload, level=level)
-    except Exception:  # noqa: BLE001 - the answer still goes back; the mirror line may be all there is
+    if database:
         try:
-            log.event(None, "remote.command", payload, level=level)
-        except OSError:
+            with db.session(wait=wait) as conn:
+                log.event(conn, "remote.command", payload, level=level)
+            return
+        except Exception:  # noqa: BLE001 - the answer still goes back; the mirror line may be all there is
             pass
+    try:
+        log.event(None, "remote.command", payload, level=level)
+    except OSError:
+        pass
 
 
 def register(cli: click.Group) -> None:
@@ -489,7 +510,9 @@ def register(cli: click.Group) -> None:
         # them if growth.db is locked: its answer can't wait another 30 on each of these. `pending`
         # and `help` only read, and an answer saying growth.db is locked must get back in time.
         wait = db.SHORT_WAIT if words[:1] in (["one-pager"], ["pending"], ["help"]) else None
-        reply = _masked(handle(ctx, words, actor=actor, ref=ref), wait)
-        _record(words, actor, ref, reply, wait)
+        reply = handle(ctx, words, actor=actor, ref=ref)
+        database = not _leave_database_alone(words)
+        reply = _masked(reply, wait, database=database)
+        _record(words, actor, ref, reply, wait, database=database)
         click.echo(payload(reply) if as_json else reply.text)
         ctx.exit(reply.exit_code)

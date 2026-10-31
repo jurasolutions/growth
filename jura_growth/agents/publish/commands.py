@@ -27,7 +27,7 @@ from pathlib import Path
 import click
 
 from jura_growth import approvals, caps, db, discord, log, pause, timeutil
-from jura_growth.agents import GROWTH, YOU, PendingItem
+from jura_growth.agents import GROWTH, LISTED, YOU, PendingItem
 from jura_growth.agents.publish import claim, fixture, hosts, items, kinds, outcomes
 from jura_growth.agents.publish import text as text_mod
 
@@ -339,9 +339,9 @@ def pending_items(conn: sqlite3.Connection) -> list[PendingItem]:
             found.append(PendingItem(YOU, _settle_line(item, record)))
         else:
             open_lines.append(f"{_where(item)}: ready (request {word})" if item.state == "ready" else f"{_where(item)}: {item.state}")
-    found += [PendingItem(GROWTH, line, order=1) for line in open_lines[:PENDING_SHOWN]]
+    found += [PendingItem(GROWTH, line, order=LISTED) for line in open_lines[:PENDING_SHOWN]]
     if len(open_lines) > PENDING_SHOWN:
-        found.append(PendingItem(GROWTH, f"and {len(open_lines) - PENDING_SHOWN} more: send `/growth publish queue`", order=1))
+        found.append(PendingItem(GROWTH, f"and {len(open_lines) - PENDING_SHOWN} more: send `/growth publish queue`", order=LISTED))
     return found
 
 

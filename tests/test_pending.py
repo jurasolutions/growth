@@ -9,10 +9,12 @@ Yu as the control user. A plug-in's `pending(conn)` hook gets the read model's r
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sqlite3
 import types
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -218,6 +220,69 @@ def test_pending_and_the_one_pager_read_the_same_states(conn, monkeypatch):
     assert one_pager_says(app_id, request.decide_by) and "stays on its preview" in text()
 
 
+def skipped_build(conn, number: int) -> str:
+    app_id, _ = handed_off(conn, number)
+    assert built(app_id, site_repo.branch(f"{BRANCH}-{number}"), branch=f"{BRANCH}-{number}").exit_code == 0
+    assert aw.skip(conn, release_requests(conn)[-1]).answer == "recorded"
+    return app_id
+
+
+def approved_build(conn, number: int) -> str:
+    app_id, _ = handed_off(conn, number)
+    assert built(app_id, site_repo.branch(f"{BRANCH}-{number}"), branch=f"{BRANCH}-{number}").exit_code == 0
+    assert aw.approve(conn, release_requests(conn)[-1], args={}).answer == "recorded"
+    return app_id
+
+
+@pytest.mark.parametrize("claimed", [False, True], ids=["approved", "claimed"])
+def test_six_skipped_builds_dont_push_a_release_out_of_the_answer(conn, claimed):
+    """Old skips stay `built` for good, and each line runs long: the release that can still go comes first."""
+    for number in range(10, 16):
+        skipped_build(conn, number)
+    app_id = approved_build(conn, 20)
+    if claimed:
+        assert CliRunner().invoke(cli, ["apps", "release-plan", app_id]).exit_code == 0
+    answer = text()
+    assert "(cut" not in answer and len(answer) <= remote_mod.TEXT_LIMIT
+    first = section(answer, YOU).strip().splitlines()[0]
+    assert app_id in first and ("`/growth apps released" if claimed else "`/growth apps release-plan") in first
+
+
+def test_preview_lines_show_the_newest_three_then_how_many_more(conn):
+    made = [skipped_build(conn, number) for number in range(10, 16)]
+    lines = section(text(), YOU).strip().splitlines()
+    assert [next(app for app in made if app in line) for line in lines[:3]] == ["APP-015", "APP-014", "APP-013"]
+    assert lines[3:] == ["- and 3 more stay on their previews."]
+
+
+def test_three_preview_lines_show_no_more_line(conn):
+    for number in range(10, 13):
+        skipped_build(conn, number)
+    assert "more stay" not in text()
+
+
+def test_a_preview_line_comes_after_the_other_next_steps(conn):
+    skipped_build(conn, 10)
+    label, _ = item(conn, 1, state="unknown", run_id=run_row(conn, "failed"), request_status="approved", used=True)
+    lines = section(text(), YOU).strip().splitlines()
+    assert label in lines[0] and "APP-010" in lines[1]
+
+
+@pytest.mark.parametrize("how", ["superseded", "none on record"])
+def test_a_built_app_with_no_live_request_gets_its_own_line_and_the_one_pager_stays_as_it_was(conn, how):
+    app_id, sha, request = built_waiting(conn)
+    if how == "superseded":
+        conn.execute("UPDATE approvals SET status = 'superseded', closed_at = ?, close_reason = 'x' WHERE id = ?", (aw.NOW, request.number))
+    else:
+        conn.execute("DELETE FROM approvals WHERE id = ?", (request.number,))
+    answer = text()
+    assert not answer.startswith("Nothing pending")
+    [line] = lines_about(section(answer, YOU), app_id)
+    assert "has no release request on record" in line
+    assert f"`/growth apps built {app_id} --task {TASK} --branch {BRANCH} --sha {sha} --preview {PREVIEW}`" in line
+    assert one_pager_says(app_id, aw.NOW) == []
+
+
 def assert_on_preview(line, app_id, sha, request, why):
     assert f"{request.id} {why}" in line and PREVIEW in line
     assert f"`/growth apps built {app_id} --task {TASK} --branch {BRANCH} --sha {sha} --preview {PREVIEW}`" in line
@@ -389,6 +454,32 @@ def test_the_seed_backlog_has_no_ideas_of_yours(conn):
     assert "backlog" not in text()
 
 
+SHAPES = {
+    "an empty file": "",
+    "apps isn't a list": "apps: oops\n",
+    "a typo in the key, over a real idea": "app:\n  - name: Petty cash log\n    source: ting-yu\n    status: idea\n",
+    "a top-level list of strings": "- just\n- strings\n",
+    "a row that isn't a mapping": "apps:\n  - just a string\n  - name: Petty cash log\n    source: ting-yu\n",
+    "a row with no name": "apps:\n  - source: ting-yu\n    status: idea\n",
+}
+
+
+@pytest.mark.parametrize("body", SHAPES.values(), ids=SHAPES.keys())
+def test_a_backlog_of_the_wrong_shape_reads_as_unreadable_and_not_as_no_ideas(conn, body):
+    paths.writable(backlog.path()).write_text(body, encoding="utf-8")
+    assert_couldnt_read(text(), "The app backlog couldn't be read")
+
+
+def test_a_backlog_with_an_empty_list_is_read_and_has_no_ideas(conn):
+    paths.writable(backlog.path()).write_text("apps: []\n", encoding="utf-8")
+    assert text().startswith("Nothing pending")
+
+
+def test_the_writers_load_stays_as_lenient_as_it_was():
+    paths.writable(backlog.path()).write_text("apps: oops\n", encoding="utf-8")
+    assert backlog.load() == []
+
+
 def test_a_backlog_that_cant_be_read_hides_nothing_else_and_says_so(conn):
     app_id, _, request = tonight(conn)
     paths.writable(backlog.path()).write_text("apps: [unclosed", encoding="utf-8")
@@ -424,6 +515,21 @@ def test_seven_requests_show_the_five_soonest_then_how_many_more(conn):
     answer = section(text(), YOU)
     assert [approvals.format_id(n) in answer for n in range(7, 0, -1)] == [True] * 5 + [False] * 2
     assert "- and 2 more: send `/growth approvals`" in answer
+
+
+def test_pending_and_approvals_agree_on_what_is_waiting(conn):
+    for number in range(1, 5):
+        waiting_request(conn, number, hours=9 - number)
+    waiting_request(conn, 5, hours=-1)
+    listed = [line.split(" · ")[0] for line in json.loads(remote(["approvals"]).output)["text"].splitlines() if line.startswith("A-")]
+    assert [line.split(" · ")[0].removeprefix("- ") for line in section(text(), YOU).strip().splitlines()] == listed
+
+
+def test_the_contract_says_what_pending_does(conn):
+    row = next(line for line in (paths.REPO_ROOT / "docs" / "dispatch-contract.md").read_text(encoding="utf-8").splitlines()
+               if line.startswith("| `pending` |"))
+    assert "no backlog lock" in row and "takes no lock" not in row
+    assert "`**Couldn't be read**`" in row and "JSONL mirror" in row
 
 
 def test_five_requests_show_no_more_line(conn):
@@ -610,13 +716,77 @@ def test_pending_writes_nothing_at_all_on_its_own(conn, monkeypatch):
     assert rows_by_table(conn) == rows
 
 
+def every_row(conn) -> dict[str, list[tuple]]:
+    tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
+    return {table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")] for table in tables}
+
+
+def other_files(folders) -> dict[str, tuple]:
+    """Every file but growth.db and the JSONL mirror, the two places its own event goes."""
+    return {path: stat for path, stat in mw.stat_snapshot(*folders).items()
+            if "growth.db" not in path and f"{os.sep}runs" not in path}
+
+
 def test_through_remote_only_its_own_event_is_written(conn, monkeypatch):
     busy_world(conn, monkeypatch)
-    rows = rows_by_table(conn)
+    folders = mw.watched()
+    rows, files = every_row(conn), other_files(folders)
     assert "APP-005" in text()
-    after = rows_by_table(conn)
-    assert after == {**rows, "events": rows["events"] + 1}
+    after = every_row(conn)
+    assert after["events"][:-1] == rows["events"]  # an UPDATE anywhere would show here, not only a new row
+    assert {table: found for table, found in after.items() if table != "events"} == {table: found for table, found in rows.items() if table != "events"}
+    assert other_files(folders) == files
     assert conn.execute("SELECT kind FROM events ORDER BY id DESC LIMIT 1").fetchone()[0] == "remote.command"
+
+
+# --- remote leaves a database that is missing or mid-write alone (code review 01) ---------------------
+
+
+def test_a_second_send_on_a_missing_database_still_says_so_and_no_database_appears():
+    assert_couldnt_read(text(), "growth.db doesn't exist yet")
+    assert not paths.db_path().exists()
+    assert_couldnt_read(text(), "growth.db doesn't exist yet")
+    assert not paths.db_path().exists()
+    assert [event["words"] for event in aw.mirrored("remote.command")] == [["pending"], ["pending"]]
+
+
+def test_a_refused_pending_on_a_missing_database_leaves_it_missing_too():
+    result = remote(["pending", "now"])
+    assert result.exit_code == 2
+    assert not paths.db_path().exists()
+    assert aw.mirrored("remote.command")[-1]["words"] == ["pending", "now"]
+
+
+def test_a_hot_journal_stays_in_place_through_remote(tmp_path):
+    mw.watched()
+    target = paths.db_path()
+    mw.hot_journal(target, tmp_path / "d4")
+    journal = Path(f"{target}-journal")
+    before = (target.read_bytes(), journal.read_bytes())
+    assert_couldnt_read(text(), "growth.db has an unfinished write")
+    assert (target.read_bytes(), journal.read_bytes()) == before
+    assert aw.mirrored("remote.command")[-1]["words"] == ["pending"]
+
+
+def test_a_held_lock_through_remote_opens_nothing_read_write(conn, monkeypatch):
+    monkeypatch.setattr(mission, "BUSY_TIMEOUT", 0)
+    opened = []
+    real = db.connect
+    monkeypatch.setattr(db, "connect", lambda *args, **kwargs: opened.append(kwargs) or real(*args, **kwargs))
+    conn.execute("BEGIN EXCLUSIVE")
+    try:
+        answer = text()
+    finally:
+        conn.execute("ROLLBACK")
+    assert_couldnt_read(answer, "growth.db has an unfinished write")
+    assert opened == []
+    assert aw.mirrored("remote.command")[-1]["words"] == ["pending"]
+
+
+def test_every_other_command_still_opens_the_database():
+    result = remote(["status"])
+    assert result.exit_code == 0
+    assert paths.db_path().exists()
 
 
 def test_a_lapse_by_the_clock_writes_nothing(conn, monkeypatch):
@@ -763,6 +933,39 @@ def test_the_answer_is_masked_and_mentions_are_defused(conn, monkeypatch, d2_sec
         agents.PendingItem(agents.YOU, f"Key {RESEND_KEY} for @everyone and <@123>, from tan.meiling@acme.sg")])
     answer = text()
     assert RESEND_KEY not in answer and "@everyone" not in answer and "<@123>" not in answer and "tan.meiling" not in answer
+
+
+def raw_request(conn, number: int, kind: str, subject: str, reason: str) -> None:
+    conn.execute("INSERT INTO approvals (id, kind, subject, content_hash, status, reason, requested_at, decide_by)"
+                 " VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
+                 (number, kind, subject, f"{number:064x}", reason, aw.NOW, aw.later(aw.NOW, hours=5)))
+
+
+@pytest.mark.parametrize("padding", [65, 72, 77, 84, 90])
+def test_an_address_across_the_cut_in_a_title_is_still_masked(conn, padding):
+    """`group-rules`' real title, with a scraped group name: a cut address would no longer match a mask."""
+    from jura_growth.agents.community import groups
+
+    name = "G" * padding + " email jane.tan@gmail.com or 9123 4567 for the rules of this group, thanks"
+    state, group_id, messages = groups.add(conn, {
+        "channel": "facebook", "name": name, "url": "https://www.facebook.com/groups/x/", "fit": "good fit", "fit_reason": "r",
+        "promo_rules": "not stated in public sources", "source_urls": ["https://example.com/x"]})
+    assert state == "added", messages
+    raw_request(conn, 8, "group-rules", f"group:{group_id}", "r")
+    [line] = lines_about(text(), "A-0008")
+    assert "Group" in line and "jane.tan" not in line and "jane" not in line and "9123" not in line
+
+
+@pytest.mark.parametrize("padding", [78, 84, 90, 96])
+def test_an_address_across_the_cut_in_a_requests_own_words_is_still_masked(conn, padding):
+    raw_request(conn, 7, "no-such-kind", "no-such-kind:7", "x" * padding + " jane.tan@gmail.com and more words after it, past the cut")
+    [line] = lines_about(text(), "A-0007")
+    assert "xxx" in line and "jane" not in line
+
+
+def test_a_title_masked_on_the_bare_command_too(conn):
+    raw_request(conn, 7, "no-such-kind", "no-such-kind:7", "x" * 84 + " jane.tan@gmail.com and more words after it")
+    assert "jane" not in CliRunner().invoke(cli, ["pending"]).output
 
 
 def test_a_named_person_is_masked_even_when_remotes_own_load_meets_a_lock(conn, monkeypatch):

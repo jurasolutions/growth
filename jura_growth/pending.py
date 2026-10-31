@@ -6,7 +6,8 @@ The approvals section is the core's own. Everything else comes from each plug-in
 It only reads, like the one-pager's read model (ADR 0002): growth.db is opened read-only through
 `mission.connect`, a request past its decide-by reads as lapsed by the clock with nothing written,
 and no kind's `content()` runs, since a read of that may supersede. `remote` masks the answer and
-cuts it, so the text starts with what is most urgent.
+cuts it, so the text starts with what is most urgent. When growth.db is missing or mid-write, `remote`
+leaves it alone too (`remote._leave_database_alone`).
 
 It says "nothing pending" only when every source was read. A source that couldn't be read gets its
 own line, never a silent gap or a guessed zero (the rule in `picture.py`).
@@ -18,7 +19,7 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
-from jura_growth import agents, approvals, cards, db, discord, mission, paths, privacy, timeutil
+from jura_growth import agents, approvals, approvals_cli, cards, db, discord, mission, paths, privacy, timeutil
 from jura_growth.agents import GROWTH, UNREAD, YOU, PendingItem
 
 REQUESTS_SHOWN = 5
@@ -33,7 +34,7 @@ def read() -> list[PendingItem]:
         return [_database(now, state, error)]
     try:
         privacy.load_for_masking(conn, reraise=db.is_lock)  # here too, as `remote`'s own load may meet a lock
-        return [*_requests(conn, now), *_plugins(conn), *_broken()]
+        return [*_requests(conn), *_plugins(conn), *_broken()]
     except sqlite3.Error as failure:  # only a lock or a hot journal gets out: a passing state of the whole file
         return [_database(now, mission.state_of(failure), mission.error_name(failure))]
     finally:
@@ -49,16 +50,15 @@ def _database(now: datetime, state: str, error: str | None) -> PendingItem:
 # --- approval requests ------------------------------------------------------------------------
 
 
-def _requests(conn: sqlite3.Connection, now: datetime) -> list[PendingItem]:
-    """Requests still waiting for a decision, soonest to lapse first. Its own SELECT, as in the read
-    model. One past its decide-by has lapsed by the clock, so it isn't waiting."""
+def _requests(conn: sqlite3.Connection) -> list[PendingItem]:
+    """Requests still waiting for a decision, soonest to lapse first: the one selection `approvals`
+    shows, so the two can't disagree. One past its decide-by has lapsed by the clock, so it isn't
+    waiting."""
     try:
-        rows = conn.execute("SELECT id, kind, subject, reason, decide_by FROM approvals WHERE status = 'pending'").fetchall()
-        due = {row["id"]: timeutil.parse(row["decide_by"]) for row in rows}
-        waiting = sorted((row for row in rows if now < due[row["id"]]), key=lambda row: (due[row["id"]], row["id"]))
+        waiting = approvals_cli.waiting(conn, None)[0]
         registry = approvals.kinds()
-        items = [PendingItem(YOU, f"{approvals.format_id(row['id'])} · {_title(conn, row, registry)} · decide by {timeutil.when(due[row['id']])}")
-                 for row in waiting[:REQUESTS_SHOWN]]
+        items = [PendingItem(YOU, f"{request.id} · {_title(conn, request, registry)} · decide by {timeutil.when(due)}")
+                 for request, due in waiting[:REQUESTS_SHOWN]]
     except Exception as error:  # noqa: BLE001 - the plug-ins' lines still go out
         if db.is_lock(error):
             raise
@@ -68,17 +68,18 @@ def _requests(conn: sqlite3.Connection, now: datetime) -> list[PendingItem]:
     return items
 
 
-def _title(conn: sqlite3.Connection, row: sqlite3.Row, registry: dict) -> str:
-    """The card's title; without one, the row's own words."""
-    registered = registry.get(row["kind"])
+def _title(conn: sqlite3.Connection, request: approvals.Approval, registry: dict) -> str:
+    """The card's title; without one, the request's own words. Masked before it is shortened: an
+    address or a number across the cut would no longer match a mask."""
+    registered = registry.get(request.kind)
     title = ""
     if registered is not None:
         try:
-            title = registered.kind.preview(conn, row["subject"]).title
+            title = registered.kind.preview(conn, request.subject).title
         except Exception as error:  # noqa: BLE001 - a request with no preview is still waiting
             if db.is_lock(error):
                 raise
-    return discord.shortened(title or row["reason"] or cards.label(row["kind"]), TITLE_MAX)
+    return discord.shortened(privacy.for_discord(title or request.reason or cards.label(request.kind)), TITLE_MAX)
 
 
 # --- the plug-ins ---------------------------------------------------------------------------------

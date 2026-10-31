@@ -99,3 +99,9 @@ that couldn't be read gets its own line saying so, never a silent gap or a guess
 
 Do not start a third thing. The approve reply, the card wording and Dispatch's D7 promotion stay as
 they are.
+
+## Decisions
+
+2026-11-01, after code review 01: a publish item in `claimed` whose run has ended, or that no run
+claimed, is listed under Waiting for you with `/growth publish resolve`, not under Growth is on it as
+this ticket lists `claimed`. No run will finish it, and `publish resolve` already accepts it.

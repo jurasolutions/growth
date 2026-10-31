@@ -11,7 +11,7 @@ the same text through `remote --json`, under 1,900 characters, with no cut.
 Send each as `/growth <command>`, or as a plain message in #control.
 `approvals [kind]`: List the requests waiting for you, soonest to lapse first.
 `approve <A-nnnn> [key=value …] [note]`: Approve a request.
-`apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>`: Dispatch sends this, to report a build and ask for its release.
+`apps built <APP-NNN> --task <T-nnnn> --branch <b> --sha <sha> --preview <url>`: Dispatch sends this when a build ships. Send it yourself to ask again.
 `apps handoffs`: Dispatch sends this, to list the builds waiting for a builder.
 `apps idea <text>`: Add your own idea to the app backlog.
 `apps release-plan <APP-NNN>`: Claim an approved release and get its merge.

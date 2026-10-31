@@ -47,6 +47,10 @@ def test_the_commands_only_dispatch_sends_say_so(name):
     assert "Dispatch" in remote_mod.ALLOWLIST[name].summary
 
 
+def test_the_apps_built_summary_agrees_with_pending_which_sends_you_to_it_to_ask_again():
+    assert "ask again" in remote_mod.ALLOWLIST["apps built"].summary
+
+
 @pytest.mark.parametrize("name", sorted(set(remote_mod.ALLOWLIST) - {"apps built", "apps handoffs"}))
 def test_no_other_command_says_only_dispatch_sends_it(name):
     assert "Dispatch" not in remote_mod.ALLOWLIST[name].summary
