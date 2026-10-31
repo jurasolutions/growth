@@ -107,3 +107,39 @@ artifacts: crew/apps-idea-command @ 725f272 (pushed, PR #17)
 decisions: removed mark_failed / mark_missed; factory.submit takes backlog.locked() before filing and holds it through mark_written_held; lock timeout -> BUSY refusal, exit 1, nothing filed, no attempt used; prompt retries once then SKIP: backlog busy; S3 slug fallback; N3 _overview uses ideas.view
 questions: -
 evidence:  tests/test_apps_idea.py -> 90 passed (busy and slug-less tests red against d4748a7); full suite -> 4075 passed; pyflakes, pyright -> clean
+
+## 2026-11-01T02:30+08:00 release-manager
+status:    needs-human
+persona:   release-manager
+ticket:    01
+artifacts: reviews/release.md; reviews/pr-body.md; PR #17 body; crew/apps-idea-command @ 57d9346 (.scratch/apps-idea-command/)
+decisions: no version bump or changelog (no convention); no main merge needed (clean); QA db, locks and prd copies left out of the feature folder
+questions: skip the quality gate (yes); G4 merge with a merge commit after the re-review approves
+evidence:  merged tree with origin/main -> 4075 passed; merge-tree -> no conflicts; secret grep -> none; migrations, config -> none; gh -> MERGEABLE CLEAN
+
+## 2026-11-01T02:35+08:00 conductor
+status:    done
+persona:   conductor
+ticket:    01
+artifacts: -
+decisions: quality gate not run, route S has none and QA passed every criterion; G4 stays Ting Yu's (merge PR #17 with a merge commit) once the round-4 re-review approves; I run the post-merge pull and uv sync
+questions: -
+evidence:  -
+
+## 2026-11-01T02:50+08:00 reviewer
+status:    done
+persona:   reviewer
+ticket:    01 (round 4)
+artifacts: reviews/code-review-01.md ("Re-review 725f272")
+decisions: approve; recovery path gone; lock-first filing correct and freed on every exit; S3, N3 fixed; B1, S1, S2 moot; should-fix R4-S1 (an I/O failure after filing, not the lock, leaves a renamed idea at the head until a hold the next day); nits on the lapse hook's lock wait, the brand-fail alert under the lock, test-only helpers
+questions: -
+evidence:  full suite -> 4075 passed; r4 probes -> 14 passed; real busy submit-prd -> exit 1 after 30s, nothing filed; pyflakes, pyright -> clean
+
+## 2026-11-01T02:55+08:00 conductor
+status:    done
+persona:   conductor
+ticket:    01
+artifacts: crew-log and reviews committed onto crew/apps-idea-command
+decisions: ship as is; R4-S1 and the round-4 nits are follow-ups (R4-S1 heals itself through a hold, and no data is lost); G4 handed to Ting Yu: merge PR #17 with a merge commit; crew worktrees removed
+questions: -
+evidence:  PR #17 MERGEABLE CLEAN; full suite 4075 passed on the merged tree

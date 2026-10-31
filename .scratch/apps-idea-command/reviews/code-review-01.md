@@ -426,3 +426,139 @@ No finding reaches confidence 8 or above.
 - **YAML:** still `safe_dump` and `safe_load`.
 - **The new error text:** it is an exception name and message with no credentials, and it is redacted.
 - **The new chmod:** it copies the existing mode, so an existing file can't become more permissive. A first file is now 0644, as on `main`, and holds no secrets.
+
+## Re-review 725f272
+
+- **Compared:** 725f272 against d4748a7, which was reviewed in round 3. I read every changed file: `docs/app-factory.md`, `jura_growth/agents/apps/__init__.py`, `backlog.py`, `factory.py`, `prompts/app-factory.md` and `tests/test_apps_idea.py`. I also read the code the filing path reaches: `builds.request`, `approvals.request` with `_lapse_if_due`, `builds._set_aside`, `db.transaction` with `after_commit`, `gate.gate`, `discord.alert` and `locks.waiting`.
+- **Checked against:** the conductor's round-4 decision (crew-log, 2026-11-01T01:05), PRD §5.6 with the "Amended 2026-10-31" bullet, and round-3 findings B1, S1, S2, S3 and N1 to N3.
+- **Reviewer:** crew reviewer, round 4, 2026-10-31.
+
+### Verdict: approve
+
+No finding blocks. The recovery path is gone, and nothing of it is left behind. Filing now takes the backlog lock first. A busy backlog refuses with nothing filed and no attempt used. The lock is released on every exit I could drive. S3 and N3 are fixed, and B1, S1 and S2 can no longer happen. One finding is *should fix*: a mark that fails after filing for a reason other than the lock now has no recovery (R4-S1). There are four nits. None of them changes the verdict.
+
+### Evidence
+
+- **Full suite** (worktree `.venv`, `JURA_ROOT` set to the real tree, temporary `JURA_GROWTH_DATA_DIR` and `JURA_GROWTH_OUTPUTS_DIR`): `uv run pytest -q -p no:cacheprovider -o addopts=""` gave **4075 passed** in 314s. HEAD was 725f272 and `git status` was clean afterwards.
+- **pyflakes** (`uvx --offline pyflakes`) on `ideas.py`, `backlog.py`, `factory.py` and `apps/__init__.py`: clean. In `tests/test_apps_idea.py` it reports only the `prd_tree` fixture import, which is the suite's usual pattern. **pyright** (`--pythonpath .venv/bin/python`) on `factory.py`, `backlog.py` and `apps/__init__.py`: 0 errors.
+- **Round-4 probes** (`review01r4/tests_copy/test_review_probe_r4.py`, on a fresh copy of the branch's tests): **14 passed.**
+  - **Busy:** with the lock held and `LOCK_TIMEOUT` at 0.2s, `submit-prd --idea do-maker` exits 1 with exactly `refused: the backlog is busy, try submit-prd again`. The counts of `app_prds`, `approvals`, `qa_attempts` and `events` are unchanged. `rejections_today` stays 0, no `prd-app-003-*` file is written, the backlog is unchanged, and the lock is free afterwards.
+  - **Lock released on every exit:** I drove six exits, and the lock was free (`locks.held` got it) after each one:
+    - `gate.gate` raising `RuntimeError`
+    - a first brand failure (`retry`)
+    - a second brand failure (`dropped`)
+    - a limit refusal
+    - a structural rejection
+    - "already exists"
+  - **Hold time** of a real filing, timed inside `locks.waiting`: 0.03s.
+  - **Moot B1:** file the PRD, let it expire, run the next precheck. The row stays `{'status': 'idea', 'app_id': None, 'reopens': '2026-12-02'}`.
+  - **Moot S1:** a renamed idea, filed and then skipped, followed by the next precheck, stays `[('delivery-order-maker', 'dropped')]`.
+  - **Moot S2:** after a renamed filing, `apps context` lists `ting_yu_ideas: []`. The next day, a dry run of APP-004 "passes every check".
+  - **R4-S1 repro:** see below.
+  - **R4-N1 repro:** see below.
+- **Real processes** (`review01r4`, worktree `.venv`, temporary data and a copy of the QA PRD tree): a second process held `app-backlog.lock` for 40s. `jura-growth apps submit-prd` printed `refused: the backlog is busy, try submit-prd again` and exited 1 after 30s, with no traceback. The PRD tree was unchanged, and the database showed `app_prds 0, qa_attempts 0`. The one approval present is the `raise_waiting` catch-up for the QA tree's APP-005, which runs before the lock, as on `main`.
+- **Earlier probes rerun:**
+  - **Round 2** (`test_review_probe_r2.py`): 7 passed. The remote lock-timeout probe still answers `{"ok": false, "answer": "refused", "exit_code": 1, "text": "refused: the backlog is busy (another command is writing it); try again in a minute"}`. The one that fails, `test_mismatch_backlog_unmarked_after_a_failed_mark_written`, now fails by design: it monkeypatches `backlog.mark_written`, which filing no longer calls.
+  - **Round 3:** the S3 probe now shows one row, `('Delivery order maker', 'prd-pending', 'ting-yu')`. The other round-3 probes call `mark_missed` or patch the mark, so they are moot.
+- **`code-review` pass** (forked, read only): 8 findings.
+  - Finding 1 is R4-S1, which I reproduced.
+  - Finding 2, the hold time, is folded into the lock-hold assessment below and into R4-N2.
+  - Findings 5, 6 and 8 are R4-N3 and R4-N4.
+  - I dismissed three:
+    - **Finding 3, dry run against real run:** the queue head can change between the two only through `hold-idea` (the factory's own step) or a hand edit. `apps idea` adds the newest row, never the head.
+    - **Finding 4, `--idea` re-entry untested:** `test_a_busy_backlog_refuses_submit_prd_before_anything_is_filed` files with `--idea` after the retry. With the default 30s timeout, a re-entry there would hang for 30s and then answer BUSY, so that test would fail.
+    - **Finding 7, `ExitStack`:** a style preference. `ExitStack` is the usual way to take a context manager only on some calls.
+- **`security-review` pass** (sub-agent, read only): nothing at confidence 8 or above. It raised the Discord alert under the lock, which is R4-N2.
+- **Blocked paths:** none. `git diff 1206360 725f272 --name-only` has nothing under `inputs/`, `design-system/`, `.github/` or `.env`. **UI files:** none.
+
+### Check 1: the recovery path is gone
+
+- `git grep -e mark_failed -e mark_missed -e apps.backlog.marked -e _MARK_KEYS -e _mark_written 725f272` (excluding `.scratch/`) finds only the guard test at `tests/test_apps_idea.py:690-695`. Nothing is left in code or docs, and `factory.py` no longer imports `json`.
+- **No events written:** the busy path writes no event (the events count is unchanged in the probe). The successful path writes `apps.prd.written`, as on `main`. The branch was never merged, so no live database holds `mark_failed` rows that need cleaning.
+- **Docs:** `docs/app-factory.md:42` now describes lock-first filing and the busy answer. The PRD (`prd-jura-app-factory-2026-10-24.md`) never described the recovery path. `docs/dispatch-contract.md` still describes `apps idea`'s busy answer correctly.
+- **Helpers:** `_mark_written` is gone. `backlog.mark_written`, the wrapper that takes the lock, no longer has a production caller (R4-N3).
+
+### Check 2: lock-first filing
+
+- **No self-deadlock on the normal paths.** Inside `_submit`, every backlog read goes through `backlog.load()` with no lock. That covers `catalog.taken`, `catalog.next_number`, `ideas.binding` → `ideas.view`, and `mark_written_held`. `gate.gate`, `log.event` and `builds.request` take no backlog lock. `builds.raise_waiting` and `cards.sweep_safely` run outside `factory.submit` (`__init__.py:298-302`). The suite's re-entry test covers the plain path, and the `--idea` retry test covers the renamed path.
+- **One hook path reaches `rest` under the lock (R4-N1).** It goes `builds.request` → `approvals.request` → `_lapse_if_due` → `on_expire` → `_set_aside`, then `db.after_commit` → `backlog.rest`. The after-commit step runs when `with db.transaction(conn)` ends at `factory.py:172-179`, and that is still inside `submit`'s lock. `flock` on a second file descriptor blocks inside the same process, so `rest` waits on its own process and times out. It times out rather than hangs.
+  - **When it can happen:** only if a live, overdue `app-build` request exists for an app number that no file, `app_prds` row, backlog row or registry entry still uses. That needs a factory-authored PRD placed by hand, raised by the catch-up, then deleted by hand, with no heartbeat in between. The hourly `expire_due` would otherwise supersede the request as "the item is gone".
+- **Busy: nothing filed, no attempt used.** The lock is taken at `factory.py:114-118`, before the limit check, the rejection count, the brand gate (`qa_attempts`), the file, `app_prds` and the request. This is confirmed in-process and with real processes.
+- **Released on every exit.** `ExitStack` leaves `locks.waiting`, whose `finally` blocks run `LOCK_UN` and `close()`. The six probes above (an exception, both brand outcomes, a limit, a rejection, "exists") and the save-failure probe all leave the lock free.
+- **How long the lock is held.** The brand checker is local regex (`brand_check.py`, no I/O), and a passing filing holds the lock for about 0.03s. Two things under the lock can wait longer:
+  - **A brand failure** posts to #alerts (`gate.py:76-79` → `discord.alert`, `httpx.Client(timeout=30)`, up to three tries on 429 or 5xx, with sleeps of up to 10s). Normally that is under a second.
+  - **The filing transaction and the gate's writes** can wait on SQLite's `busy_timeout` of 30000ms if another process holds a write transaction. The repo's writers keep those short.
+  - **So, in practice,** the 30s `apps idea` timeout is exceeded only if Discord hangs for more than 30s, or a SQLite writer stalls, during a factory brand failure around 06:30 SGT.
+  - **What Ting Yu sees if it happens:** exit 1 with `refused: the backlog is busy (another command is writing it); try again in a minute`. Nothing is written, so resending is safe. That answer arrives at about 30s plus start-up, inside Dispatch's 60-second SSH `subprocess.run` timeout (`docs/dispatch-contract.md:45`), so he sees the refusal rather than a Dispatch timeout.
+  - **The same window** can also make a skip or expiry's `backlog.drop`/`rest` time out, which logs `apps.prd.set_aside_failed` (R4-N2).
+
+### Check 3: round-3 findings
+
+| Finding | Status | Where |
+|---|---|---|
+| B1 | Moot: there are no `mark_failed` events to replay. My probe shows a rested row stays rested | `factory.py` (removed) |
+| S1 | Moot: a skipped filing stays `dropped` after the next precheck | the same |
+| S2 | Moot: a renamed idea is marked under the same lock as its filing, so the context and the dry run never see it open | `factory.py:180-189` |
+| S3 | Fixed: `mark_written_held` matches `(r.get("slug") or slugify(name)) == idea`. Tested, and my probe shows one `ting-yu` row, `prd-pending` | `backlog.py:127` |
+| N1 | Moot: the broad `except` is gone. A failure now raises (see R4-S1) | |
+| N2 | Moot: the mark runs under the lock that filing took, and there's no catch-up loop | |
+| N3 | Fixed: `_overview` uses `ideas.view` | `__init__.py:157` |
+
+### Check 4: the prompt
+
+`prompts/app-factory.md:177-179` and `:184-186` say that a busy refusal filed nothing and used no attempt, to retry `submit-prd` once in the same run, then to finish `SKIP: backlog busy`, and never to hold the idea for it. Step 5 lists "busy" beside "limit" as not the idea's fault. Dry runs take no lock, so the two dry runs in step 1 can't be refused as busy. This is right: a busy retry spends no brand attempt, and `SKIP` matches how a limit refusal is already handled. `test_the_prompt_retries_a_busy_refusal_once_then_skips_and_never_holds` pins it.
+
+### Standards
+
+**Blocking**
+
+None.
+
+**Should fix**
+
+- **R4-S1. `factory.py:180`: a mark that fails after filing has no recovery, and for a renamed idea his row stays first.**
+  - **Why:** `mark_written_held` runs after the file is written and after `app_prds` and the request are committed. Removing `mark_missed` also removed the only catch-up. The lock-timeout cause is now ruled out by design. What is left is I/O: disk full, a `paths.writable` refusal, or a kill in the millisecond between commit and save.
+  - **Reproduced** (`test_save_fails_after_filing`, with `backlog.save` raising `OSError(28)`):
+    - The command raises a traceback, and the lock is freed.
+    - `prd-app-003-delivery-order-maker-…` is filed, with `app_prds 1, approvals 1`.
+    - His row reads `{'status': 'idea', 'app_id': None}`, and `ideas.queue(ideas.view(...))` puts `do-maker` at the head.
+  - **The effect:** the next day the factory picks `do-maker` again. Its PRD is rejected as a duplicate of APP-003, and under step 5 it is held with a misleading reason. The queue unblocks itself after one wasted day.
+  - **Why it isn't blocking:** this failure class (an I/O error after commit) is the same as `main`'s. The only new part is the renamed-idea consequence, and the cause is now rare.
+  - **Cheapest fix:** catch `OSError` around the mark and answer `filed: …` plus `backlog not updated (<error>); mark <idea> prd-pending <APP-NNN> in app-backlog.yaml by hand`, the way `releases.py:378-384` already handles `backlog.release`. Alternatively, have `ideas.view` treat a row as filed when `app_prds` holds a filing bound to its slug.
+
+**Nit**
+
+- **R4-N1. `factory.py:172-179` with `builds.py:327-339`: the lapse hook's after-commit `backlog.rest` runs under `submit`'s lock and waits on its own process for 30s.**
+  - **Reproduced:** `test_lapse_hook_inside_the_filing_transaction`. An overdue live request for APP-003 was planted, with `LOCK_TIMEOUT` at 1s.
+    - The run took 1.25s and logged `apps.prd.set_aside_failed` with "TimeoutError: the app-backlog lock is still held after 1 seconds".
+    - The brand-new PRD was moved to `prd/skipped/apps/`.
+    - The output still said "filed … approval request A-0001 raised".
+  - **What is new:** moving the new file to `prd/skipped/apps/` is existing behaviour from `main`. Only the 30-second self-wait is new.
+  - **Why it's a nit:** the precondition needs hand edits and a missed heartbeat (see Check 2).
+  - **Fix, if wanted:** refuse to file when `approvals` already holds any record for `app:<app_id>`. That also fixes the file move.
+- **R4-N2. `gate.py:76-79`: the brand-failure alert posts to Discord while the backlog lock is held.**
+  - **The effect:** a hung Discord call (30s timeout, up to three tries) can make `apps idea` answer busy. It can also make a skip or expiry's `drop`/`rest` time out, which logs `set_aside_failed`. The raw row then stays `prd-pending`, because `backlog.effective` doesn't map `prd/skipped/apps/` to a status.
+  - **Fix:** call `gate.gate(..., alert=False)` under the lock, and send the alert after `submit` releases it.
+- **R4-N3. `backlog.py:113-119`:** `mark_written`, the wrapper that takes the lock, is used only by `tests/gate_adapter_app_build.py`. `_overview` (`__init__.py:154-157`) now reads `prd_files()` and `registry()` twice, once directly and once inside `ideas.view`. Both are harmless. Passing `files` and `live` into the view would save the second read.
+- **R4-N4. `tests/test_apps_idea.py:690-695`:** `test_no_mark_failed_recovery_remains` greps source text, so a later legitimate mention of "mark_failed" would fail it. `hasattr(factory, "mark_missed")` together with the busy behaviour tests is enough.
+
+### Spec
+
+| Amendment line or decision | Code |
+|---|---|
+| Round-4 decision: "submit-prd takes the backlog lock before it files anything and holds it through mark_written" | Matches (`factory.py:110-120`, `:180`) |
+| "a busy backlog refuses the submit with nothing filed (exit 1)" | Matches, in-process and with real processes |
+| "the factory retries once in-run" | Matches (`prompts/app-factory.md:177-179`) |
+| `--idea` only for his oldest open idea; "While that idea waits unheld, no other PRD is filed" | Matches. The S3 slug-less hand row is now marked |
+| "picks Ting Yu's open ideas … oldest first", judged on the context's view | Matches. `_overview` and `binding` share `ideas.view`. The one exception is R4-S1's I/O-failure window |
+
+### Security
+
+No finding reaches confidence 8 or above.
+
+- **Lock exposure:** `submit-prd` isn't on the remote allowlist (`remote.py:207-214`), so nobody in Discord can hold or starve the lock through it.
+- **Lock path:** the lock name is a fixed string, and the path goes through `paths.writable`.
+- **Slug fallback:** a plain equality check.
+- **YAML:** still `safe_load` and `safe_dump`, with an atomic replace.
+- **Logging:** no new logging. The removed event, which carried error text, is gone.
+- **Prompt:** fixed text, with no untrusted content interpolated.
