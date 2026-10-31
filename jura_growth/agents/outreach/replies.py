@@ -587,5 +587,4 @@ def _batch(conn, imap, numbers: list[bytes], known: Contacts, result: Result) ->
             # Lines of four words or more: a sign-off ("Best regards") would blank later posts.
             privacy.never_show(*(line for line in own.splitlines() if len(line.split()) >= 4))
             wants_out = bool(opt_out_reason(subject, own, ours))
-        # A stated failure means it may not be from this address, so it suppresses nobody (inbox review, SEC-2).
-        apply_reply(conn, contact, sender, received, key, wants_out and not failed_verdict(headers, suppression.domain_of(sender)), result)
+        apply_reply(conn, contact, sender, received, key, wants_out, result)

@@ -14,7 +14,6 @@ from discord_double import discord_double  # noqa: F401
 from inbox_world import NOW, mailbox_env, raw_mail, triage_all
 from jura_growth import brand_check, caps, config, db, log, paths, runner, suppression
 from jura_growth.agents.inbox import report, store, triage
-from jura_growth.agents.outreach import replies
 from runner_support import settings_with
 from test_inbox_triage import (  # noqa: F401
     DRAFT,
@@ -285,25 +284,29 @@ def _forged_contact(conn, monkeypatch, body: str):
     return lead
 
 
-def test_sec6_opt_out_words_in_a_forged_mail_suppress_nobody_at_intake(conn, monkeypatch):
-    """SEC-6, SEC-2: a follow-up may be cancelled, since a forgery only ever reduces outreach, but a
-    suppression is permanent and theirs to ask for."""
+def test_sec6_a_contacts_own_opt_out_words_are_honoured_and_the_doubt_is_shown(conn, monkeypatch):
+    """SEC-6, IW-E2: code review 01 decided this one: a real opt-out lost is worse than a forged one
+    honoured. So it suppresses, in both checks, and the report says the server doubted it."""
     lead = _forged_contact(conn, monkeypatch, "Please remove me")
 
     triage.mail.intake(conn)
 
+    assert suppression.is_suppressed(conn, lead["email"]) == "unsubscribe"
+    [row] = db.rows(conn, "SELECT * FROM inbox_items")
+    assert "They asked to be removed" in row["note"] and "may not be from this address" in row["note"]
+
+
+def test_sec6_a_contacts_long_opt_out_needs_better_proof_from_a_model(conn, monkeypatch):
+    """SEC-6, SEC-2: no phrase of theirs here, only a model's reading of a mail the server says failed,
+    and that model can be steered. Reported for him to suppress by hand."""
+    lead = _forged_contact(conn, monkeypatch, "We have gone another way and would be glad if you left us out from here on.")
+    triage.mail.intake(conn)
+    [row] = store.waiting_for_triage(conn)
+
+    answer(conn, row["id"], "opt-out", draft=None)
+
     assert suppression.is_suppressed(conn, lead["email"]) is None
-    assert db.scalar(conn, "SELECT status FROM leads WHERE id = ?", (lead["lead_id"],)) != "unsubscribed"
-
-
-def test_sec6_the_1645_check_keeps_the_same_rule(conn, monkeypatch):
-    """SEC-6, IW-F1: one rule in both checks."""
-    lead = _forged_contact(conn, monkeypatch, "Please remove me")
-
-    replies.check(conn)
-
-    assert suppression.is_suppressed(conn, lead["email"]) is None
-    assert db.scalar(conn, "SELECT count(*) FROM outreach_replies") == 1
+    assert "it isn't suppressed" in item(conn, row["id"])["note"]
 
 
 def test_sec6_a_forged_sender_cant_join_their_conversation(conn, monkeypatch):

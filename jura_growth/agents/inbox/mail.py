@@ -289,9 +289,11 @@ def _record_message(check: _Check, imap, found: replies.Headers, key: str, *, ju
 
     reply_to = _recipient(headers, sender)
     ours = replies.sent_subjects(conn, contact["lead_id"]) if contact else set()
-    # A stated failure means it may not be from this address, and a suppression is theirs to ask for (SEC-2, SEC-6).
+    wants_out = replies.opt_out_reason(subject, own, ours) if contact else None
+    # A stated failure means it may not be from this address. An emailed contact's own opt-out words are
+    # still honoured: a real one lost is worse than a forged one honoured, which R1 shows and can be
+    # undone (code review 01, S-4). Only a model's reading of it needs better proof (`own_sender`).
     forged = bool(sender) and replies.failed_verdict(headers, suppression.domain_of(sender))
-    wants_out = replies.opt_out_reason(subject, own, ours) if contact and not forged else None
     counted_already = contact is not None and replies.counted(conn, key)
     who = reply_to if from_form else (sender or reply_to or "")
     # The form's own display name is Jura's, so the person's name comes from what the form wrote.
