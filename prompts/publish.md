@@ -101,8 +101,9 @@ end with `FAIL:` and the reason.
 - **Permalink:** after posting, the post appears at the top of the Page. Its timestamp links to
   its own page, on the same host as the target URL: on Facebook, an address on
   `www.facebook.com` with `/posts/` or `story_fbid` in it. Use that address, never a feed or
-  notification link. For the live text, if the post is cut short with "See more", click it once
-  to show it all.
+  notification link. For the live text, write only the post's text: not the Page's name, the
+  time, reactions or comments. If the post is cut short with "See more", click it once to show it
+  all.
 - **Stop signals:** the "Log in to Facebook" page (`login`); "Confirm you're human" or a security
   check (`captcha`); "We noticed unusual activity" or a checkpoint asking you to confirm who you
   are (`checkpoint`); "You're temporarily restricted" or "Your Page has been restricted"

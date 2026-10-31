@@ -122,8 +122,8 @@ themes:
 #
 # publish_mode is `draft` (Ting Yu posts by hand from #social-drafts) or
 # `browser` (browser publishing PRD §5.10): each draft that passes the brand
-# gate becomes a publish item with its own approval card in #approvals, and the
-# publish job posts it through Chrome once he approves, by 17:00 on its day.
+# gate becomes a publish item with its own approval card in #approvals, which he
+# decides by 17:00 on its day, and the publish job posts it through Chrome by 18:00.
 # `browser` also needs page_url, the page the run posts to. identity is the
 # posting identity the run checks before typing (defaults to the Jura Solutions
 # page or account). Facebook first, then Instagram, then LinkedIn (BP §5.1).

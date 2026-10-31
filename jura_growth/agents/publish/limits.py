@@ -15,7 +15,8 @@ from jura_growth import caps, config, timeutil
 
 
 # A social post is decided this long before the window closes, so an approval always has a
-# publish slot left: the last run starts at 17:40, and a claim needs 20 minutes since the last one.
+# publish slot left: the last run starts at 17:40, and a claim needs 20 minutes since the last one
+# (`minutes_between_actions`, which config may lengthen: then fewer of those slots can claim).
 DECIDE_BEFORE_CLOSE = timedelta(hours=1)
 
 
@@ -59,6 +60,18 @@ def decide_by_on(day: date) -> datetime:
     """When a social post for `day` must be decided: 17:00 SGT, or earlier when the window narrows."""
     start, end = window_on(day)
     return max(start, end - DECIDE_BEFORE_CLOSE)
+
+
+def last_run_on(day: date) -> datetime:
+    """When the last publish run that can claim on `day` starts: the job's last slot inside the
+    window, or the window's end when the schedule names none."""
+    from jura_growth import schedule
+
+    start, end = window_on(day)
+    planned = (config.settings().get("jobs", {}).get("publish") or {}).get("schedule") or {}
+    slots = [datetime.combine(day, time(hour, minute), tzinfo=timeutil.SGT) for _, hour, minute in schedule.sgt_slots(planned)]
+    inside = [slot for slot in slots if start <= slot < end]
+    return max(inside) if inside else end
 
 
 def in_window(moment: datetime) -> bool:

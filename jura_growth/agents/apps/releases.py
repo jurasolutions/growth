@@ -386,7 +386,9 @@ def record_released(conn: sqlite3.Connection, app_id: str, *, task: str) -> Outc
                   level="error", agent=catalog.NAME)
         lines.append(f"The backlog couldn't be updated ({type(error).__name__}); mark {app_id} live in app-backlog.yaml by hand.")
     # The action's own report, as #outreach-sent and the publish run's update are (FD2).
-    discord.post(conn, "app-factory", f"**{app_id} released** · {builds.app_name(conn, app_id)} is live at {short(sha)} ({task}).",
+    from jura_growth.agents import apps  # the plug-in imports this module
+
+    discord.post(conn, apps.RUN_UPDATE_DISCORD_CHANNEL, f"**{app_id} released** · {builds.app_name(conn, app_id)} is live at {short(sha)} ({task}).",
                  username="Jura growth · apps", dedupe=False, suppress_embeds=True)
     return Outcome(True, lines, claimed)
 

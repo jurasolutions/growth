@@ -10,7 +10,7 @@ import pytest
 
 import approval_world as aw
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, cards, discord, feed, paths
+from jura_growth import approvals, cards, discord, feed, locks, paths
 
 FEED = "community"  # any channel the double listens on; the fake kind names it
 
@@ -299,3 +299,29 @@ def test_every_real_kind_names_its_feed_and_a_new_kind_fails_here_until_it_does(
 
 def test_every_feed_is_a_channel_discord_knows():
     assert set(FD1_CHANNELS.values()) <= set(discord.channels())
+
+
+# --- the sweep's other paths (test strategy R4) -----------------------------------------------------
+
+
+def test_a_failed_edit_gives_one_follow_up_and_still_one_line(conn, world, discord_double):
+    approval = posted(conn, world, discord_double)
+    aw.approve(conn, approval)
+    discord_double.mode = "edit-fails"
+    cards.sweep(conn)
+    cards.sweep(conn)
+    assert [m for m in discord_double.contents("approvals") if "couldn't be edited" in m] != []
+    assert len([m for m in discord_double.contents("approvals") if "couldn't be edited" in m]) == 1
+    assert len(lines(discord_double)) == 1
+
+
+def test_a_sweep_that_finds_the_lock_held_posts_no_line_and_the_next_posts_one(conn, world, discord_double):
+    approval = posted(conn, world, discord_double)
+    aw.approve(conn, approval)
+    with locks.held(cards.LOCK) as acquired:
+        assert acquired
+        cards.sweep(conn)
+        assert lines(discord_double) == []
+    cards.sweep(conn)
+    cards.sweep(conn)
+    assert len(lines(discord_double)) == 1

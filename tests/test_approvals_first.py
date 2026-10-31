@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+import approval_world as aw
 import publish_fake
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
@@ -84,6 +85,8 @@ def test_a_card_carries_the_sources_the_post_relies_on(conn, env, monkeypatch, d
     instagram = card_of(discord_double, "Instagram").content or ""
     assert f"Sources: <{IMDA}>, <{SHEETS}>" in instagram
     assert all(IMDA in (card.content or "") for card in discord_double.posts("approvals"))
+    slides = [name for name, _ in card_of(discord_double, "Instagram").files]
+    assert slides == [f"instagram-{n}-of-3-1080x1350.png" for n in (1, 2, 3)]
 
 
 def test_a_card_names_the_headline_and_the_title_is_not_hashed(conn, social_day):
@@ -119,24 +122,39 @@ def test_a_280_word_post_splits_its_card_cleanly_with_the_pictures_beside_the_an
     assert [line for line in shown if line in text.split("\n") and line] == [line for line in text.split("\n") if line]
 
 
-# --- own copy, and a card that can't show the post whole (functional S9) -------------------------
+# --- what the card can't show can't be approved (code review 02, SP-B1) ----------------------------
 
 
-def test_what_the_card_masks_it_says_it_masks(conn, env, monkeypatch, discord_double):
-    """A phone number is never shown in Discord, even in Jura's own copy, so the card says so
-    rather than let him approve words he can't see."""
+def phone_post(text: str = FB) -> str:
+    return text.replace("for you.", f"for you. Call {PHONE} to ask.", 1)
+
+
+def test_a_post_the_card_would_mask_fails_the_gate_and_uses_the_regeneration(conn, social_day):
+    outcome = submit_tip(conn, **{"facebook.md": phone_post()})
+    assert outcome.status == "retry" and "attempt 1 of 2" in outcome.text()
+    [reason] = [line for line in outcome.lines if "approval card" in line]
+    assert PHONE not in reason and "[phone removed]" in reason  # it says where, masked
+    assert db.rows(conn, "SELECT * FROM publish_items") == [] and social_day.posts("approvals") == []
+
+
+def test_a_second_failure_drops_that_variant_and_the_other_platform_still_gets_its_card(conn, social_day):
+    submit_tip(conn, **{"facebook.md": phone_post()})
+    outcome = submit_tip(conn, **{"facebook.md": phone_post()})
+    assert outcome.status == "partial" and outcome.variants["facebook"].status == "dropped"
+    [card] = social_day.posts("approvals")
+    assert "Instagram" in (card.content or "")
+    assert not any("removed]" in (post.content or "") for post in social_day.posts("approvals"))
+
+
+def test_a_card_never_shows_a_post_with_words_masked_even_past_the_gate(conn, env, monkeypatch, discord_double):
+    """A name can be learned between the gate and the card, and a row can change under an item."""
     pw.at(monkeypatch, pw.MORNING)
     pw.social_config(monkeypatch, browser=BOTH)
-    pw.item(conn, "facebook", text=f"Call us on {PHONE} about your invoices.\n\nhttps://jurasolutions.sg\n")
-    cards.sweep(conn)
-    [card] = discord_double.posts("approvals")
-    assert PHONE not in (card.content or "")
-    assert "goes out in full" in (card.content or "")
-
-
-def test_a_clean_post_gets_no_masking_note(conn, social_day):
-    submit_tip(conn)
-    assert all("goes out in full" not in (card.content or "") for card in social_day.posts("approvals"))
+    _, request = pw.item(conn, "facebook", text=f"Call us on {PHONE} about your invoices.\n\nhttps://jurasolutions.sg\n")
+    assert cards.sweep(conn) == 0
+    assert discord_double.posts("approvals") == []
+    assert approvals.get(conn, request.id).posted_at is None  # the one-pager lists it
+    assert aw.events(conn, "approval.card_refused")[0]["approval"] == request.id
 
 
 def test_jura_s_own_sender_address_stays_on_the_card_through_its_edit(conn, env, monkeypatch, discord_double):
@@ -227,6 +245,31 @@ def test_a_post_that_changes_after_the_decide_by_refuses_without_breaking_the_ru
     assert pw.next_item(conn).item is None
     assert db.rows(conn, "SELECT * FROM approvals WHERE used_at IS NOT NULL") == []
     assert approvals.get(conn, first.id).status == approvals.SUPERSEDED
+    [fresh] = [a for a in approvals.pending(conn) if a.subject == first.subject]
+    assert fresh.decide_by == "2026-11-10T18:00:00+08:00"  # the replacement has until the window's end
+
+
+@pytest.mark.parametrize(("moment", "words"), [
+    ("2026-11-10T17:39:00+08:00", "It goes out on a publish run today, by 18:00 SGT."),
+    ("2026-11-10T17:40:00+08:00", "No publish run is left today, so this lapses at 18:00 SGT."),
+    ("2026-11-10T17:45:00+08:00", "No publish run is left today, so this lapses at 18:00 SGT."),
+])
+def test_a_replacement_approved_late_never_promises_a_post_with_no_run_left(conn, social_day, monkeypatch, moment, words):
+    submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    pw.at(monkeypatch, JUST_IN_TIME)
+    pw.decide(conn, first, monkeypatch=monkeypatch)
+    conn.execute("UPDATE social_posts SET text = text || ' Changed.' WHERE platform = 'facebook'")
+    pw.at(monkeypatch, "2026-11-10T17:20:00+08:00")
+    pw.run(conn, monkeypatch=monkeypatch)
+    assert pw.next_item(conn).item is None
+    [fresh] = [a for a in approvals.pending(conn) if a.subject == first.subject]
+    cards.sweep(conn)
+    pw.at(monkeypatch, moment)
+    assert pw.decide(conn, fresh, monkeypatch=monkeypatch).answer == "recorded"
+    cards.sweep(conn)
+    [line] = [m for m in social_day.contents("social-drafts") if fresh.id in m]
+    assert words in line and ("goes out" in words) == ("goes out" in line)
 
 
 # --- AF3: browser mode with no card gets a note, and never a request to post -----------------------

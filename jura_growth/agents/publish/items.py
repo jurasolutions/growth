@@ -392,6 +392,13 @@ def raise_request(conn: sqlite3.Connection, item: Item, *, run_id: int | None) -
     return approvals.request(conn, APPROVAL_KINDS[item.kind], item.subject, reason=reason, run_id=run_id)
 
 
+def platforms_on_a_card(conn: sqlite3.Connection, day: str) -> set[str]:
+    """The platforms whose social post for `day` waits on a pending approval card."""
+    rows = conn.execute("SELECT * FROM publish_items WHERE day = ? AND kind = ?", (day, SOCIAL_ITEM)).fetchall()
+    found = (Item.from_row(row) for row in rows)
+    return {item.platform for item in found if (latest := latest_request(conn, item)) and latest.status == approvals.PENDING}
+
+
 def unless_paused(conn: sqlite3.Connection, promise: str) -> str:
     """A kind's next step (`feed.py`), which says so if the publish agent is paused."""
     if pause.is_paused(conn, AGENT):

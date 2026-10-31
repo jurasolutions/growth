@@ -29,7 +29,7 @@ from __future__ import annotations
 import re
 from functools import partial
 
-from jura_growth import brand_check
+from jura_growth import brand_check, privacy
 from jura_growth.brand_check import Channel, Issue
 from jura_growth.agents.social import history
 from jura_growth.agents.social.settings import PLATFORMS, Settings, load
@@ -43,8 +43,8 @@ MARKDOWN_RE = [
     (re.compile(r"\[[^\]\n]+\]\([^)\s]+\)"), "a markdown link"),
     (re.compile(r"^\s*>\s", re.M), "a block quote"),
     (re.compile(r"`[^`\n]+`"), "code formatting"),
-    # A fence line alone would also close the fence the post sits in on its approval card.
-    (re.compile(r"^\s*```", re.M), "a code fence"),
+    # Anywhere on a line, it would also close the fence the post sits in on its approval card.
+    (re.compile(r"```"), "a code fence"),
 ]
 QUOTE_RE = re.compile(r"“([^”]{1,600})”|\"([^\"\n]{1,600})\"")
 GRANT_RE = re.compile(
@@ -143,6 +143,7 @@ def check_post(platform: str, text: str, ctx: dict) -> list[Issue]:
         m = pattern.search(text)
         if m:
             issues.append(Issue("channel", f"Plain text only: {rules.label} doesn't render {what}", m.group(0)[:60]))
+    issues += _hidden_on_the_card(text)
 
     words = word_count(text)
     low, high = settings.words_for(platform, theme.get("id"))
@@ -219,6 +220,22 @@ def _grant_rules(text: str, link_mode: str, settings: Settings) -> list[Issue]:
     return issues
 
 
+def _hidden_on_the_card(text: str) -> list[Issue]:
+    """What the approval card can't show can't be approved. Discord masks a phone number, a named
+    address and a name learned from a lead, even in Jura's own copy, and Ting Yu must never approve
+    words he couldn't read. Judged by what the masking actually does, so a public figure's name
+    passes unless a lead's address taught it. The excerpt is the masked line, never the value."""
+    privacy.learn(None)
+    shown = privacy.own_copy_as_shown(text)
+    if shown == text:
+        return []
+    written = text.split("\n")
+    masked = shown.split("\n")
+    line = next((m for m, w in zip(masked, written) if m != w), shown)
+    return [Issue("channel", "Discord would mask part of this on the approval card, a phone, an address or a name "
+                             "known from a lead, so rewrite it without that", line.strip()[:120])]
+
+
 # --- the card channel --------------------------------------------------------
 
 
@@ -235,6 +252,7 @@ def check_card(text: str, ctx: dict) -> list[Issue]:
         m = pattern.search(every)
         if m:
             issues.append(Issue("channel", f"Image card text is plain: no {what}", m.group(0)[:60]))
+    issues += _hidden_on_the_card(every)
     for hit in blocked_topic_hits(every, settings.blocked_topics):
         issues.append(Issue("channel", "Off-limits topic for Jura's pages (politics, elections, tragedies)", hit))
     return issues

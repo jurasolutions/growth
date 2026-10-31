@@ -278,9 +278,12 @@ def test_social_post_cards_and_their_feed_lines_carry_nothing_planted(conn, env,
     # A draft row planted by raw SQL (past the gate), with its own item and card.
     pw.at(monkeypatch, pw.TEN)
     pw.social_config(monkeypatch, browser=("facebook", "linkedin"))
-    pw.item(conn, "linkedin", text=planted().text(), day=pw.DAY + timedelta(days=1))
+    _, unreadable = pw.item(conn, "linkedin", text=planted().text(), day=pw.DAY + timedelta(days=1))
     cards.sweep(conn)
-    assert len(discord_double.posts("approvals")) == 2
+    # Facebook's card only. The planted draft is past the gate, and its text would show masked, so
+    # it gets no card at all (code review 02, SP-B1).
+    assert len(discord_double.posts("approvals")) == 1
+    assert approvals.get(conn, unreadable.id).posted_at is None
     [first, *_] = approvals.pending(conn)
     pw.decide(conn, first, monkeypatch=monkeypatch)
     cards.sweep(conn)  # the planted label reaches a feed line

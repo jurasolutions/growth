@@ -207,7 +207,8 @@ _Avoid_: account, login
 **Posting window**:
 09:00 to 18:00 SGT, when the publish job may act (`caps.PUBLISH_WINDOW`). A social post's decide-by
 is an hour before the end of the posting window on its day, 17:00 SGT, so an approval always has a
-publish slot left, and its use-by is the end of the window.
+publish slot left, and its use-by is the end of the window. A claim that finds the post changed
+raises its replacement at once, and that one's decide-by is the end of the window, whatever the hour.
 _Avoid_: "publish window", alongside the outreach "send window"
 
 **Approval card**:

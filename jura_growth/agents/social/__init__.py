@@ -88,13 +88,10 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
 def _where_they_wait(conn: sqlite3.Connection, day: str, waiting: list[str]) -> str:
     """Where each draft really is: on a pending card in #approvals, in #social-drafts for a platform
     in draft mode, or nowhere, for a browser draft that got no card or whose card has closed."""
-    from jura_growth import db
-
+    from jura_growth.agents.publish import items
     from jura_growth.agents.social.settings import load
 
-    carded = {r["platform"] for r in db.rows(
-        conn, "SELECT i.platform FROM publish_items i JOIN approvals a ON a.subject = 'publish_item:' || i.id "
-              "WHERE i.day = ? AND i.kind = 'social_post' AND a.kind = 'social-post' AND a.status = 'pending'", (day,))}
+    carded = items.platforms_on_a_card(conn, day)
     platforms = load().platforms
     places = {"waiting in #approvals": [n for n in waiting if n in carded],
               "waiting in #social-drafts": [n for n in waiting if n not in carded and not platforms[n].browser],

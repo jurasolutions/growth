@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from jura_growth import approvals, db
+from jura_growth import approvals, db, discord, privacy, timeutil
 from jura_growth.agents.publish import items, limits
 
 KIND = items.SOCIAL_KIND
@@ -166,8 +166,16 @@ class SocialPost:
     used_word = "claimed by a publish run"
 
     def feed_approved(self, conn: sqlite3.Connection, subject: str) -> str:
-        """What happens next, kept true: the decide-by leaves a slot, and a pause holds it back."""
-        _, end = limits.window_on(date.fromisoformat(_item(conn, subject).day))
+        """What happens next, kept true: the decide-by leaves a slot, and a pause holds it back. A
+        claim's replacement can be approved after the last run has started (`deadlines`), and then
+        nothing is left to post it."""
+        item = _item(conn, subject)
+        day = date.fromisoformat(item.day)
+        _, end = limits.window_on(day)
+        latest = items.latest_request(conn, item)
+        decided = timeutil.parse(latest.decided_at) if latest and latest.decided_at else timeutil.now_sgt()
+        if decided >= limits.last_run_on(day):
+            return f"No publish run is left today, so this lapses at {end:%H:%M} SGT."
         return items.unless_paused(conn, f"It goes out on a publish run today, by {end:%H:%M} SGT. "
                                          "The run's update here gives the post's address.")
 
@@ -180,10 +188,7 @@ class SocialPost:
 
     def preview(self, conn: sqlite3.Connection, subject: str) -> approvals.Preview:
         """The card (AC-P1.1): the page and its URL, the day, the headline, the exact text, the
-        images, the links in the text, the sources and the brand-gate result. Discord never shows
-        a phone number or a prospect's name, even in Jura's own copy (`privacy`), so a post
-        holding one says so here: what he approves is what goes out, whatever the card can show."""
-        from jura_growth import privacy
+        images, the links in the text, the sources and the brand-gate result."""
         from jura_growth.agents.social.settings import load
 
         item = _item(conn, subject)
@@ -195,9 +200,7 @@ class SocialPost:
         qa = json.loads(post.get("qa_json") or "{}")
         theme = settings.themes.get(post.get("theme") or "")
         run = f", drafted by social run {post['run_id']}" if post.get("run_id") else ""
-        lines = [f"```\n{content['text'].strip()}\n```"]
-        if privacy.for_discord(content["text"], own_copy=[content["text"]]) != content["text"]:
-            lines.append("Part of this post is masked on this card, and goes out in full.")
+        lines = [f"```\n{discord.no_fence(content['text'].strip())}\n```"]
         links = list(dict.fromkeys(_LINK.findall(content["text"])))
         lines.append("Links in the text: " + (", ".join(f"<{link}>" for link in links) if links else "none"))
         sources = [url for url in json.loads(post.get("source_urls") or "[]") if url not in links]
@@ -228,6 +231,15 @@ class SocialPost:
         decide_by = limits.decide_by_on(day)
         _, end = limits.window_on(day)
         return approvals.Deadlines(decide_by=decide_by if now < decide_by else end, use_by=end)
+
+    def card_problem(self, conn: sqlite3.Connection, subject: str) -> str | None:
+        """Why the card can't go out: Discord would mask part of the post, and Ting Yu must never
+        approve words he couldn't read. The brand gate refuses these; this holds for a name
+        learned since the gate, or a draft changed past it."""
+        content = social_content(conn, _item(conn, subject).ref_id)
+        if content is not None and privacy.own_copy_as_shown(content["text"]) != content["text"]:
+            return "Discord would mask part of the post, so its card can't show the exact text"
+        return None
 
     def own_copy(self, conn: sqlite3.Connection, subject: str) -> tuple[str, ...]:
         """The post's text, as Jura's own copy on its card (`privacy`). A draft past the brand gate only."""

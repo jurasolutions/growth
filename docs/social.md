@@ -121,6 +121,7 @@ allowance (the email's "30-minute call"). The social channels add:
 | `social-linkedin` | Not used while LinkedIn is switched off; kept for `jura-growth check` and for switching it back on. 120–220 words; up to 3 hashtags, all on the last line; links as Facebook |
 | `social-instagram` | The theme's word range (below); up to 5 hashtags on the last line; at most 2200 characters; no URL or domain at all; says "Link in bio" |
 | `social-card` | The card's words, every word on the picture included: no links, no hashtags, no markdown. Headline and item titles are checked as headings (sentence case, not a question) |
+| All of these | No code fence anywhere, and nothing Discord would mask (a phone number, a named address, a name known from a lead, a link holding a phone-shaped number). The approval card must show the exact words. A public figure's name passes unless a lead's address taught it |
 
 A word-range miss is a brand-gate failure, so it uses the regeneration. Instagram's hashtag and
 character limits are set low on purpose: neither is confirmed from Meta, lowering them costs
@@ -316,9 +317,9 @@ per-platform weekend switch.
    The card in `#approvals` shows the A-id, the page and its URL, the day, the headline, the exact
    text, every image in order, the links in the text, the sources, the brand-gate result and
    "decide by <day>, 17:00 SGT". A long card splits with its code fence balanced, and its images sit
-   on the first piece, beside the buttons. Discord never shows a phone number or a person's name,
-   even in Jura's own copy, so a post holding one says on its card that part of it is masked and
-   goes out in full. Drafts written before a platform moved to `browser` mode get no item. A
+   on the first piece, beside the buttons. Discord masks a phone number, a named address and a name
+   known from a lead, even in Jura's own copy, so a post or a picture holding one fails the brand
+   gate: he never approves words he couldn't read. Drafts written before a platform moved to `browser` mode get no item. A
    platform in `browser` mode with no `page_url`, a submit after the decide-by, and a post with no
    images each get a note in `#social-drafts` saying why, and no card. Nothing in `browser` mode
    asks Ting Yu to post by hand. The social job's precheck skips before Claude starts once the
@@ -327,7 +328,9 @@ per-platform weekend switch.
    17:00, 17:20 and 17:40, so two approvals made together both go out. A skip, until the item is
    claimed, withdraws it and records `social skip <date> <platform>`, which drops that platform for
    the day: a card can't be edited or regenerated. Unanswered by 17:00, or approved and unclaimed
-   by the end of the posting window at 18:00, the request expires and the draft stays as it is. The
+   by the end of the posting window at 18:00, the request expires and the draft stays as it is. One
+   exception to 17:00: a claim that finds the post changed raises its replacement at once, and that
+   card has until 18:00. Approved after the last run has started, its line says it will lapse. The
    18:05 digest writes those lapses first, so an unanswered card closes that evening.
    Each decision or lapse sends one quiet line to `#social-drafts` (`feed.py`), naming the post.
 3. `publish next` claims at most one approved item inside one `BEGIN IMMEDIATE` transaction. In

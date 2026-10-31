@@ -7,6 +7,8 @@ piece and can put the files on it, beside the buttons.
 
 from __future__ import annotations
 
+import random
+
 import pytest
 
 from discord_double import discord_double  # noqa: F401 - a fixture
@@ -146,8 +148,8 @@ def test_files_first_puts_them_beside_the_buttons(conn, discord_double):
 # --- a post can't close the card's fence ------------------------------------------------------
 
 
-@pytest.mark.parametrize("line", ["```", "  ```", "```python"])
-def test_a_bare_fence_line_in_a_post_is_refused(line):
+@pytest.mark.parametrize("line", ["```", "  ```", "```python", "paragraph ```", "end ``` more"])
+def test_a_fence_anywhere_in_a_post_is_refused(line):
     found = [what for pattern, what in checks.MARKDOWN_RE if pattern.search(f"First line.\n{line}\nLast line.")]
     assert found == ["a code fence"]
 
@@ -155,3 +157,47 @@ def test_a_bare_fence_line_in_a_post_is_refused(line):
 @pytest.mark.parametrize("variant", [FB, IG])
 def test_the_fixture_posts_carry_no_fence(variant):
     assert not any(pattern.search(variant) for pattern, what in checks.MARKDOWN_RE)
+
+
+# --- no line is lost (code review 02, SEC-B2) ---------------------------------------------------
+
+
+def test_a_last_line_that_only_starts_with_a_fence_keeps_its_words():
+    text = "```\nshort ```\n```payload that goes out\n" + "z" * 1980 + "\nend\n```"
+    pieces = discord.split(text)
+    assert any("payload that goes out" in piece for piece in pieces)
+    assert all(len(piece) <= discord.MAX_CONTENT for piece in pieces)
+
+
+def test_any_mix_of_lines_and_fences_keeps_every_word_and_stays_balanced():
+    rng = random.Random(20261031)
+    for _ in range(400):
+        words: list[str] = []
+        lines = []
+        for n in range(rng.randint(1, 40)):
+            word = f"word{n}"
+            words.append(word)
+            shape = rng.choice(["{}", "{}", "{}", "``` {}", "{} ```", "```{}", "``` {} ```"])
+            lines.append(shape.format(word + " " + "x" * rng.randint(0, 400)))
+            if rng.random() < 0.2:
+                lines.append("```")
+        text = "\n".join(lines)
+        if text.count("```") % 2:
+            text += "\n```"
+        pieces = discord.split(text)
+        joined = "\n".join(pieces)
+        assert [word for word in words if word not in joined] == []
+        assert all(len(piece) <= discord.MAX_CONTENT for piece in pieces)
+        if len(text) > discord.MAX_CONTENT:
+            assert all(piece.count("```") % 2 == 0 for piece in pieces), text
+
+
+def test_a_fence_in_a_headline_fails_the_card_channel():
+    found = checks.check_card("Body words.", {"headings": ["A headline ``` with a fence"]})
+    assert any("a code fence" in issue.message for issue in found)
+
+
+def test_no_fence_leaves_ordinary_text_alone_and_breaks_a_fence():
+    assert discord.no_fence("plain `code` text") == "plain `code` text"
+    assert "```" not in discord.no_fence("a ``` b")
+    assert discord.no_fence("a ``` b").replace("\u200b", "") == "a ``` b"

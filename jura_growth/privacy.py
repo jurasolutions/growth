@@ -125,6 +125,12 @@ def for_discord(text: str, *, own_copy: Iterable[str] = ()) -> str:
     return "".join(_mask(part, is_own, names) for part, is_own in _split(text, own))
 
 
+def own_copy_as_shown(text: str) -> str:
+    """`text`, Jura's own outgoing words, as Discord would show them. Where this differs, Ting Yu
+    couldn't read those words on an approval card, so they can't be approved (`social/checks.py`)."""
+    return for_discord(text, own_copy=[text])
+
+
 def _bare(value: str) -> str:
     return re.sub(r"['’]s$", "", value.strip()).lower()
 

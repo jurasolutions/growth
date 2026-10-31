@@ -379,3 +379,14 @@ def test_a_failed_delete_holds_nothing_up(conn, world, discord_double, monkeypat
     discord_double.delete_fails = True
     assert cards.sweep(conn) == 0
     assert aw.events(conn, "discord.delete_failed")
+
+
+def test_a_fence_in_a_title_or_reason_can_not_turn_the_card_inside_out(conn, world, discord_double, monkeypatch):
+    def preview(self, conn, subject):
+        return approvals.Preview(title="a ``` title", text="the text", reason="a ``` reason")
+
+    monkeypatch.setattr(aw.FakeKind, "preview", preview)
+    raised(conn, world)
+    cards.sweep(conn)
+    [card] = discord_double.contents("approvals")
+    assert "```" not in card

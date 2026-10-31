@@ -126,6 +126,12 @@ def _engine_file(path: Path) -> bool:
     return False
 
 
+def no_fence(text: str) -> str:
+    """`text` with any code fence broken, to show inside or before a card's own fence, so what the
+    text says can't close it. It reads the same: only invisible characters are added."""
+    return text.replace(_FENCE, "`\u200b`\u200b`")
+
+
 def split(content: str, limit: int = MAX_CONTENT, *, first_room: int = 0) -> list[str]:
     """Break a long message at line boundaries into Discord-sized pieces.
 
@@ -143,7 +149,7 @@ def split(content: str, limit: int = MAX_CONTENT, *, first_room: int = 0) -> lis
         nonlocal current, room
         body = current.rstrip("\n")
         last = body.rsplit("\n", 1)[-1]
-        if fenced and last.lstrip().startswith(_FENCE) and last.count(_FENCE) % 2:
+        if fenced and last.strip() == _FENCE:
             body = body[: -len(last)].rstrip("\n")  # the opening line alone: it moves to the next piece
         elif fenced:
             body += _CLOSE

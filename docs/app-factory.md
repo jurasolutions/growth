@@ -178,7 +178,7 @@ MC §5.7 `app-release` row, §5.9 steps 3 and 4).
    refs/heads/main`, the branch, so a tag named `main` can't stand in for it. It never fetches, pulls or writes, so pull `main` after the merge. With the claimed
    approval and the commit on `main`, the build becomes `released`, the PRD moves to
    `prd/done/apps/` with "Shipped on <date>" at the top and a sign-off line naming the build and
-   release approvals, and the backlog row goes live.
+   release approvals, and the backlog row goes live. One "released" line goes to #app-factory.
 
 **Skip, no answer for 7 days, or an approval unused for 14 days** leave the build on its preview.
 The one-pager lists it with the preview link; reporting the build again with `apps built` asks

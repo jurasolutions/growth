@@ -238,3 +238,10 @@ def test_a_lead_that_closes_a_waiting_email_says_why_in_the_cards_words(conn, di
     cards.sweep(conn)
     [line] = discord_double.contents("outreach-sent")
     assert line.startswith(f"**{request.id} withdrawn**") and line.endswith("The request closed: lead unsubscribed.")
+
+
+def test_a_fence_in_an_email_draft_can_not_swallow_the_rest_of_the_card(conn, monkeypatch, discord_double, lead_233):
+    conn.execute("UPDATE outreach_messages SET draft_body = draft_body || ' ``` a fence' WHERE id = ?", (lead_233.message_id,))
+    registered = approvals.kinds()["outreach-email"]
+    text = registered.kind.preview(conn, f"outreach_message:{lead_233.message_id}").text
+    assert "```" not in text

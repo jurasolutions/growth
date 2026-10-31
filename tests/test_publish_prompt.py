@@ -310,3 +310,15 @@ def test_every_long_post_platform_says_to_show_all_the_text_before_reading_it_ba
     part = PROMPT.split(section, 1)[1].split(next_section, 1)[0]
     flat = " ".join(part.split())
     assert f"cut short with {word}" in flat and "click it once to show it all" in flat
+
+
+@pytest.mark.parametrize(("section", "next_section"), [
+    ("### Social post: Facebook Page", "### Social post: Instagram"),
+    ("### Social post: Instagram", "### Social post: LinkedIn company page"),
+    ("### Social post: LinkedIn company page", "### Community post: a Facebook group as the Jura Page"),
+    ("### Community post: a Facebook group as the Jura Page", "### Group join as the Jura Page"),
+])
+def test_every_post_section_says_what_to_write_as_the_live_text(section, next_section):
+    """The read-back is compared exactly, and a page's name or a like count reads as a mismatch."""
+    flat = " ".join(PROMPT.split(section, 1)[1].split(next_section, 1)[0].split())
+    assert "For the live text, write only the" in flat

@@ -27,7 +27,8 @@ The rules:
 - No `DISCORD_WEBHOOK_APPROVALS` means nothing is posted or saved to the
   outbox: the record waits, and the one-pager lists it as unposted.
 - A preview with more than ten files is refused before anything is posted,
-  rather than dropping one (AC-M5.5).
+  rather than dropping one (AC-M5.5). So is a card a kind says can't show what
+  it asks about (`card_problem`): it stays unposted, and the one-pager lists it.
 - Cards mention nobody and go through `discord.post()`'s masking, with the
   Keychain values loaded first (`privacy.load_for_masking`), because a
   preview carries text another process wrote.
@@ -140,15 +141,21 @@ def button_row(approval: approvals.Approval, kind: approvals.ApprovalKind) -> li
 
 
 def build(conn: sqlite3.Connection, approval: approvals.Approval, kind: approvals.ApprovalKind) -> tuple[str, list]:
-    """The card's text and files. Raises `CardRefused` for more than ten files."""
+    """The card's text and files. Raises `CardRefused` for more than ten files, or when the kind
+    says the card can't show what it asks about (`card_problem`). A fence in the title or the
+    reason can't turn the card's own fence inside out (`discord.no_fence`)."""
     preview = kind.preview(conn, approval.subject)
     files = list(preview.files or ())
     if len(files) > discord.MAX_FILES:
         raise CardRefused(f"the preview has {len(files)} files and a card takes at most {discord.MAX_FILES}")
+    hook = getattr(kind, "card_problem", None)
+    problem = hook(conn, approval.subject) if hook is not None else None
+    if problem:
+        raise CardRefused(problem)
     lines = [header(conn, approval)]
     if preview.title:
-        lines.append(preview.title)
-    lines.append(f"Why: {preview.reason or approval.reason}")
+        lines.append(discord.no_fence(preview.title))
+    lines.append(f"Why: {discord.no_fence(preview.reason or approval.reason)}")
     if preview.text:
         lines.append(preview.text)
     lines.append(answer_line(approval, kind))
