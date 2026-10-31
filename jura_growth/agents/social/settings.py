@@ -43,6 +43,10 @@ class Theme:
     max_sources: int = 3
     max_source_age_days: int | None = None
     needs_tool: bool = False
+    words: dict[str, tuple[int, int]] = field(default_factory=dict)  # platform: (low, high), over the platform's own
+    carousel: bool = False  # Instagram posts this theme as a carousel, whatever the day
+    min_items: int = 0  # the card's items that carry a detail: one carousel slide each
+    needs_visual: bool = False  # a headline card must draw a diagram, a list card an icon per item
 
 
 @dataclass(frozen=True)
@@ -110,6 +114,11 @@ class Settings:
     def enabled_platforms(self) -> list[Platform]:
         return [p for p in self.platforms.values() if p.enabled]
 
+    def words_for(self, platform: str, theme_id: str | None) -> tuple[int, int]:
+        """The word range for a post: its theme's, else its platform's."""
+        theme = self.themes.get(theme_id or "")
+        return (theme.words.get(platform) if theme else None) or self.platforms[platform].words
+
 
 # Every theme is about AI or automation, and no two days of the week share one (Ting Yu,
 # 2026-10-30: toolbox tools, AI facts, findings and good reads, and AI news, varied).
@@ -118,11 +127,13 @@ DEFAULT_THEMES = {
         label="AI this week",
         brief="2–3 developments that matter to a small business, with links.",
         layout="list", news=True, min_sources=2, max_sources=3, max_source_age_days=7,
+        carousel=True, min_items=2, needs_visual=True,
     ),
     "ai-finding": dict(
         label="AI finding",
         brief="One finding from a published AI study or survey: what it found, and what it means for a small business.",
         news=True, min_sources=1, max_sources=2, max_source_age_days=30,
+        carousel=True, min_items=3, needs_visual=True,
     ),
     "from-the-toolbox": dict(
         label="From the toolbox",
@@ -132,20 +143,22 @@ DEFAULT_THEMES = {
     "ai-fun-facts": dict(
         label="AI fun facts",
         brief="3–4 short, true and surprising facts about AI: its history, how it works or how people use it.",
-        layout="list", min_sources=1, max_sources=4,
+        layout="list", min_sources=1, max_sources=4, carousel=True, min_items=3, needs_visual=True,
     ),
     "ai-news": dict(
         label="AI news",
         brief="One AI story from the last few days: what happened, and what it means for a small business.",
-        news=True, min_sources=1, max_sources=2, max_source_age_days=3,
+        news=True, min_sources=2, max_sources=3, max_source_age_days=3,
+        carousel=True, min_items=3, needs_visual=True,
     ),
     "ai-good-read": dict(
         label="Worth reading",
         brief="One newsletter, report, podcast or long read about AI worth a weekend's attention, and what you get from it.",
-        min_sources=1, max_sources=1,
+        min_sources=1, max_sources=1, carousel=True, min_items=2, needs_visual=True,
     ),
     "automation-tip": dict(
         label="Automation tip", brief="One small thing a team can automate this week, with AI or without.", max_sources=2,
+        carousel=True, min_items=2, needs_visual=True,
     ),
 }
 DEFAULT_RHYTHM = {
@@ -157,9 +170,9 @@ DEFAULT_RHYTHM = {
 DEFAULT_THEME_GAP_DAYS = 2
 DEFAULT_PLATFORMS = {
     "linkedin": dict(label="LinkedIn page", words=[120, 220], hashtags_max=3, links="post", image={"width": 1200, "height": 627}),
-    "facebook": dict(label="Facebook Page", words=[60, 120], hashtags_max=2, links="post", image={"width": 1200, "height": 630}),
+    "facebook": dict(label="Facebook Page", words=[90, 180], hashtags_max=2, links="post", image={"width": 1200, "height": 630}),
     "instagram": dict(
-        label="Instagram", words=[50, 120], hashtags_max=8, links="bio", image={"width": 1080, "height": 1350},
+        label="Instagram", words=[80, 160], hashtags_max=8, links="bio", image={"width": 1080, "height": 1350},
         carousel={"days": ["mon", "thu"], "max_slides": 5},
     ),
 }
@@ -185,6 +198,10 @@ def load() -> Settings:
             max_sources=int(spec.get("max_sources", 3)),
             max_source_age_days=spec.get("max_source_age_days"),
             needs_tool=bool(spec.get("needs_tool", False)),
+            words={str(name): (int(pair[0]), int(pair[1])) for name, pair in (spec.get("words") or {}).items()},
+            carousel=bool(spec.get("carousel", False)),
+            min_items=int(spec.get("min_items", 0)),
+            needs_visual=bool(spec.get("needs_visual", False)),
         )
 
     rhythm = {**DEFAULT_RHYTHM, **(raw.get("rhythm") or {})}

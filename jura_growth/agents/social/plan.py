@@ -7,7 +7,7 @@ import sqlite3
 from datetime import date
 
 from jura_growth import caps, paths
-from jura_growth.agents.social import history, rhythm, submit, toolbox
+from jura_growth.agents.social import history, rhythm, submit, toolbox, visuals
 from jura_growth.agents.social.settings import Settings, load
 
 
@@ -28,6 +28,10 @@ def build(conn: sqlite3.Connection, day: date, settings: Settings | None = None)
             "id": t.id, "label": t.label, "brief": t.brief, "layout": t.layout, "news": t.news,
             "sources": {"min": t.min_sources, "max": t.max_sources, "max_age_days": t.max_source_age_days},
             "needs_tool": t.needs_tool,
+            "words": {p.name: list(settings.words_for(p.name, t.id)) for p in settings.enabled_platforms()},
+            "carousel": t.carousel,
+            "min_items": t.min_items,
+            "needs_visual": t.needs_visual,
         }
         if t.needs_tool and not tools["eligible"]:
             info["unavailable"] = tools["note"] or f"every live tool was featured in the last {caps.NO_REPEAT_DAYS} days"
@@ -60,7 +64,7 @@ def build(conn: sqlite3.Connection, day: date, settings: Settings | None = None)
                 "hashtags_max": p.hashtags_max,
                 "links": p.links,
                 "image": p.size,
-                "carousel_today": p.carousel_on(day),
+                "carousel_today": p.carousel_on(day) or theme.carousel,
                 "carousel_max": p.carousel_max,
                 "publish_mode": p.publish_mode,
                 "to_draft": name in active,
@@ -79,6 +83,7 @@ def build(conn: sqlite3.Connection, day: date, settings: Settings | None = None)
         "used_tools": used_tools,
         "toolbox": tools,
         "site": settings.site,
+        "icons": visuals.icon_names(),
         "work_dir": str(work),
         "submit": f"jura-growth social submit {work}",
     }
@@ -92,6 +97,12 @@ def render_text(plan: dict) -> str:
     theme = plan["theme"]
     out.append(f"Theme: {theme['id']} ({theme['label']}). {theme['brief']}")
     out.append(f"  Card layout: {theme['layout']}")
+    words = ", ".join(f"{name} {pair[0]}–{pair[1]}" for name, pair in theme["words"].items())
+    out.append(f"  Words: {words}")
+    if theme["min_items"]:
+        out.append(f"  Card items with a detail: at least {theme['min_items']}, one Instagram slide each")
+    if theme["needs_visual"]:
+        out.append("  Picture: required. A `visual` on a headline card, an `icon` on every item")
     src = theme["sources"]
     if theme["news"]:
         out.append(
@@ -109,10 +120,11 @@ def render_text(plan: dict) -> str:
     out.append("  If nothing good fits, take the next theme, in this order:")
     for t in plan["fallbacks"]:
         flag = f" (unavailable: {t['unavailable']})" if t.get("unavailable") else ""
-        out.append(f"    {t['id']}: {t['brief']}{flag}")
+        fits = ", ".join(f"{name} {pair[0]}–{pair[1]}" for name, pair in t["words"].items())
+        out.append(f"    {t['id']}: {t['brief']} Words: {fits}.{flag}")
     out.append("  Pass `--theme <id>` to submit when you use one of these.")
 
-    out += ["", "Platforms (publish mode: draft; Ting Yu posts by hand until block 3):"]
+    out += ["", "Platforms (word ranges here are the platform's own; the theme's above win):"]
     for name, p in plan["platforms"].items():
         links = "links in the post" if p["links"] == "post" else "write “Link in bio”, no URL"
         tags = f"up to {p['hashtags_max']} hashtags on the last line"
@@ -148,6 +160,8 @@ def render_text(plan: dict) -> str:
         out.append(f"  free to feature today: {eligible}")
         for t in tools["eligible"][:3]:
             out.append(f"    {t['slug']}: {t['description']} {plan['site']}/apps/{t['slug']}")
+
+    out += ["", "Icons for `visual` and `items` (nothing else is accepted):", "  " + " ".join(plan["icons"])]
 
     out += [
         "",

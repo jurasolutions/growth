@@ -112,6 +112,26 @@ def load(folder: Path, platforms: list[str], *, theme: Theme) -> Submission:
     return sub
 
 
+def _card_depth(card: render.CardSpec | None, theme: Theme) -> list[str]:
+    """A post carries a picture and something to read on it (Ting Yu, 2026-10-31)."""
+    if card is None:
+        return []
+    problems = []
+    with_detail = [item for item in card.items if item.detail]
+    if len(with_detail) < theme.min_items:
+        problems.append(
+            f"{theme.label} needs at least {theme.min_items} card items with a detail, one Instagram slide each; "
+            f"found {len(with_detail)}"
+        )
+    if theme.needs_visual and card.layout == "headline" and card.visual is None:
+        problems.append(f"{theme.label} needs a `visual` on its card: a flow, a compare or a figure")
+    if theme.needs_visual:
+        bare = [str(index) for index, item in enumerate(card.items) if not item.icon]
+        if bare:
+            problems.append(f"give every card item an `icon` (items {', '.join(bare)} have none)")
+    return problems
+
+
 def theme_problems(sub: Submission, theme: Theme, today: date) -> list[str]:
     """What the day's theme needs from the sources and the card."""
     problems = []
@@ -136,4 +156,5 @@ def theme_problems(sub: Submission, theme: Theme, today: date) -> list[str]:
                 )
     if sub.card and theme.needs_tool and sub.card.layout != "tool":
         problems.append(f"{theme.label} uses the tool card (layout \"tool\")")
+    problems += _card_depth(sub.card, theme)
     return problems

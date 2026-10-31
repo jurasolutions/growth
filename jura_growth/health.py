@@ -163,6 +163,8 @@ def strip(snapshot) -> list[str]:
             # A claude job's error is the model's own `FAIL:` line: untrusted (MC §4.3, final review Sp2).
             item += "\n> " + untrusted_line(failure.error)
         items.append(item)
+    if snapshot.drift is not None:
+        items.append(snapshot.drift.line)
     items += _missed(snapshot)
     waiting_in_outbox = max(snapshot.undelivered, snapshot.outbox)
     if waiting_in_outbox:
@@ -188,6 +190,51 @@ def strip(snapshot) -> list[str]:
     items += list(snapshot.plugin_lines)
     items += [f"A plug-in failed to load: {broken}" for broken in snapshot.broken]
     return items
+
+
+@dataclass(frozen=True)
+class Drift:
+    """Scheduled jobs firing at the wrong time of day, all by the same amount."""
+
+    job: str
+    due: str  # HH:MM SGT
+    ran: str  # HH:MM SGT
+    hours: float
+
+    @property
+    def line(self) -> str:
+        return (f"Scheduled jobs are running about {abs(self.hours):g} hours off: `{self.job}` is due at {self.due} SGT and "
+                f"ran at {self.ran} SGT. Posting and sending windows are missed while this lasts. launchd's calendar "
+                "keeps the time zone it started with, so restart the Mac once.")
+
+
+DRIFT_MINIMUM = timedelta(minutes=30)
+DRIFT_TOLERANCE = timedelta(minutes=5)
+DRIFT_JOBS_NEEDED = 2  # one job off by a steady amount could be chance; two can't be a wake-up catching up
+
+
+def schedule_drift(starts: Mapping[str, list[datetime]], jobs: Mapping[str, Mapping[str, Any]]) -> Drift | None:
+    """Whether the daily jobs fire at the wrong SGT time: for each job with one daily slot and two
+    runs, both runs off by the same amount, and at least `DRIFT_JOBS_NEEDED` jobs agreeing. A Mac
+    waking late moves one slot, by a different amount each day, so it never reads as drift."""
+    off: list[tuple[timedelta, str, str, str]] = []
+    for job, spec in jobs.items():
+        daily = (spec.get("schedule") or {}).get("daily")
+        runs = starts.get(job) or []
+        if not daily or len(runs) < 2:
+            continue
+        hour, minute = (int(part) for part in str(daily).split(":"))
+        gaps = []
+        for run in runs[:2]:
+            at = run.astimezone(timeutil.SGT)
+            minutes = ((at.hour * 60 + at.minute) - (hour * 60 + minute) + 720) % 1440 - 720
+            gaps.append(timedelta(minutes=minutes))
+        if abs(gaps[0]) >= DRIFT_MINIMUM and abs(gaps[0] - gaps[1]) <= DRIFT_TOLERANCE:
+            off.append((gaps[0], job, str(daily), runs[0].astimezone(timeutil.SGT).strftime("%H:%M")))
+    if len(off) < DRIFT_JOBS_NEEDED or max(o[0] for o in off) - min(o[0] for o in off) > DRIFT_TOLERANCE:
+        return None
+    gap, job, due, ran = off[0]
+    return Drift(job, due, ran, round(gap.total_seconds() / 1800) / 2)
 
 
 def _missed(snapshot) -> list[str]:

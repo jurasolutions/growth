@@ -4,7 +4,7 @@
 (function () {
   function overflowing(main) {
     if (main.scrollHeight > main.clientHeight + 1) return true;
-    var wide = main.querySelectorAll(".headline, .subtitle, .items .text, .panel");
+    var wide = main.querySelectorAll(".headline, .subtitle, .items .text, .panel, .visual");
     for (var i = 0; i < wide.length; i++) {
       if (wide[i].scrollWidth > wide[i].clientWidth + 1) return true;
     }

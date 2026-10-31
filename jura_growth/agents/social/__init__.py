@@ -50,6 +50,8 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     rows = [r for r in db.rows(conn, "SELECT platform, status, published_at FROM social_posts WHERE date = ?", (day,))
             if r["platform"] in on]
     waiting = sorted(r["platform"] for r in rows if r["status"] == "draft")
+    # A platform in browser mode waits in #approvals; only draft mode leaves it in #social-drafts.
+    where = "#approvals" if all(load().platforms[name].browser for name in waiting) else "#social-drafts"
     skipped_rows = {r["platform"] for r in rows if r["status"] == "skipped"}
     skips = {
         r["platform"] for r in db.rows(conn, "SELECT platform FROM social_skips WHERE date = ?", (day,))
@@ -75,7 +77,7 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     lines, brief = [], []
     if waiting:
         lines.append(
-            f"Social: {len(waiting)} draft{'s' if len(waiting) != 1 else ''} waiting in #social-drafts "
+            f"Social: {len(waiting)} draft{'s' if len(waiting) != 1 else ''} waiting in {where} "
             f"({', '.join(waiting)}), {skipped} skipped, {published} published"
         )
         brief.append(f"{len(waiting)} social draft{'s' if len(waiting) != 1 else ''} waiting")
@@ -128,7 +130,13 @@ def precheck(job: str, conn: sqlite3.Connection) -> str | None:
         return reason
     active, _ = submit.active_platforms(conn, day, settings)
     if not active:
-        return "today's drafts are already in #social-drafts, or every platform is skipped"
+        return "today's drafts are already in, or every platform is skipped"
+    if all(settings.platforms[name].browser for name in active):
+        from jura_growth.agents.publish import limits
+
+        closes = limits.window_on(day)[1]
+        if timeutil.now_sgt() >= closes:
+            return f"today's posting window closed at {closes:%H:%M} SGT, so a draft written now couldn't be approved and posted"
     done = [s for s in history.submissions(conn, day) if s["status"] in ("no-draft", "dropped")]
     if done:
         return "“No draft today” was already posted today"

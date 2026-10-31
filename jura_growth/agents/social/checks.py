@@ -7,8 +7,8 @@ platform rules from social PRD §5.3 and the news rules from §4:
 
     social-linkedin   120–220 words, up to 3 hashtags at the end, links in the post
                       (unused while LinkedIn is switched off, since 2026-10-29)
-    social-facebook   60–120 words, 0–2 hashtags at the end, links in the post
-    social-instagram  50–120 words, up to 8 hashtags at the end, "Link in bio", no URL
+    social-facebook   90–180 words (a news theme: 160–280), 0–2 hashtags at the end, links in the post
+    social-instagram  80–160 words (a news theme: 130–240), up to 8 hashtags at the end, "Link in bio", no URL
     social-card       the words on an image card: short, no links, no hashtags
 
 On LinkedIn and Facebook every source in `sources.md` must be linked in the
@@ -141,9 +141,9 @@ def check_post(platform: str, text: str, ctx: dict) -> list[Issue]:
             issues.append(Issue("channel", f"Plain text only: {rules.label} doesn't render {what}", m.group(0)[:60]))
 
     words = word_count(text)
-    low, high = rules.words
+    low, high = settings.words_for(platform, theme.get("id"))
     if not low <= words <= high:
-        issues.append(Issue("channel", f"{rules.label} posts are {low}–{high} words; this is {words}"))
+        issues.append(Issue("channel", f"{rules.label} posts are {low}–{high} words here; this is {words}"))
 
     tags = hashtags(text)
     if len(tags) > rules.hashtags_max:

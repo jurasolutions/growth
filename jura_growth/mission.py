@@ -112,6 +112,7 @@ class Snapshot:
     broken: tuple[str, ...] = ()  # plug-ins that failed to load
     yesterday: Yesterday | None = None
     spend_today: float = 0.0
+    drift: health.Drift | None = None  # scheduled jobs consistently firing at the wrong SGT time
 
 
 def db_problem(snapshot: Snapshot) -> DbWording | None:
@@ -282,6 +283,15 @@ def _missing_migrations(conn: sqlite3.Connection, tables: set[str]) -> tuple[str
     return tuple(m for m in expected if m not in done)
 
 
+def _recent_starts(conn: sqlite3.Connection, jobs: Mapping[str, Any]) -> dict[str, list[datetime]]:
+    """The last two start times of each job (`health.schedule_drift`), newest first."""
+    found = {}
+    for job in jobs:
+        rows = conn.execute("SELECT started_at FROM runs WHERE job = ? ORDER BY id DESC LIMIT 2", (job,)).fetchall()
+        found[job] = [timeutil.parse(row[0]) for row in rows]
+    return found
+
+
 def _from_db(
     conn: sqlite3.Connection, source: Source, now: datetime, days: tuple[date, ...], installs: dict[str, str], last: datetime
 ) -> dict:
@@ -296,6 +306,7 @@ def _from_db(
         found = slots.classify(source.jobs, records, now, days, installed=loaded)
         facts["slots"] = {key: [_clean_slot(slot) for slot in statuses] for key, statuses in found.items()}
         facts["failures"] = _failures(conn, now)
+        facts["drift"] = health.schedule_drift(_recent_starts(conn, source.jobs), source.jobs)
         facts["yesterday"], facts["spend_today"] = _yesterday(conn, now)
     if "pause_flags" in tables:
         rows = conn.execute("SELECT agent, reason FROM pause_flags WHERE paused = 1 ORDER BY agent").fetchall()

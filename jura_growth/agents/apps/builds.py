@@ -82,6 +82,7 @@ class AppBuild:
     """`app-build`: content is the PRD file's bytes; applied on decide."""
 
     name = KIND
+    feed_approved = "The build handoff is written."
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         found = pending_file(app_id_of(subject))

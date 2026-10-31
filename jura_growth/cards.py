@@ -16,7 +16,9 @@ one-pager lists it.
 When a request is decided, lapses, is superseded or is claimed, the sweep
 edits the card's first line in place (edits don't notify). If the edit fails,
 one follow-up line posts instead. Each change is edited once. Decisions come
-only from #approvals through Dispatch, so a card carries no code to type.
+only from #approvals through Dispatch, so a card carries no code to type. The
+same edit sends one line to the agent's own feed (`feed.py`): #approvals asks,
+the feed says what became of it.
 
 The rules:
 
@@ -41,7 +43,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from jura_growth import approval_settings, approvals, db, discord, locks, log, privacy, timeutil
+from jura_growth import approval_settings, approvals, db, discord, feed, locks, log, privacy, timeutil
 
 CHANNEL = "approvals"
 USERNAME = "Jura growth · approvals"
@@ -203,6 +205,12 @@ def _post_unposted(conn: sqlite3.Connection) -> int:
     return posted
 
 
+def _card_title(rest: list[str], approval: approvals.Approval) -> str:
+    """The title line the card was posted with (`build`), or the request's reason without one."""
+    lines = rest[1].split("\n", 1) if len(rest) > 1 else [""]
+    return lines[0] if lines[0] and not lines[0].startswith("Why:") else approval.reason
+
+
 def _edit_changed(conn: sqlite3.Connection) -> int:
     rows = conn.execute(
         "SELECT c.approval_id, c.message_id, c.first_piece, c.shows FROM approval_cards c "
@@ -229,5 +237,7 @@ def _edit_changed(conn: sqlite3.Connection) -> int:
             "UPDATE approval_cards SET shows = ?, updated_at = ? WHERE approval_id = ?",
             (now_shows, timeutil.stamp(), approval.number),
         )
+        feed.announce(conn, approval, row["shows"], now_shows, _card_title(rest, approval),
+                      has_successor=approvals.successor(conn, approval) is not None)
         edited += 1
     return edited

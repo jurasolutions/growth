@@ -1,5 +1,5 @@
-"""`jura-growth social submit <dir>`: from drafts in the scratch folder to
-#social-drafts.
+"""`jura-growth social submit <dir>`: from drafts in the scratch folder to an
+approval card in #approvals (or #social-drafts, for a platform in draft mode).
 
 In order:
 
@@ -14,15 +14,17 @@ In order:
    anywhere delivers nothing and lists every reason, so one regeneration can
    fix them all. The second is final: what passes is delivered and what fails
    is dropped. There is no third.
-6. Images, the output folder, `social_posts` rows, and one #social-drafts
-   message per platform with its images. If nothing passes, "No draft today"
-   with the reason.
+6. Images, the output folder and `social_posts` rows. If nothing passes, "No
+   draft today" with the reason.
 7. For each platform in `browser` mode, a publish item and its `social-post`
-   approval card in #approvals (browser publishing PRD §5.4). That platform's
-   #social-drafts message then points at the card instead of repeating the
-   post. A platform in browser mode that can't get an item (no page_url set,
-   or its posting window has closed) is posted for posting by hand, with a
-   note saying why.
+   approval card in #approvals (browser publishing PRD §5.4). The card carries
+   the post, its images and its sources; #social-drafts hears only what became
+   of it (Ting Yu, 2026-10-31: `feed.py`, and the publish run's update). A
+   platform in browser mode that can't get an item (no page_url set, or its
+   posting window has closed) gets a note in #social-drafts saying why, and
+   never a request to post by hand.
+8. A platform in `draft` mode gets one #social-drafts message with its images,
+   to post by hand.
 
 Steps 1 to 4 refuse without using up the regeneration; they are mistakes to
 correct, not brand failures.
@@ -205,7 +207,7 @@ def submit(
         sizes = [(p, settings.platforms[p].width, settings.platforms[p].height) for p in passing]
         carousel = {}
         ig = settings.platforms["instagram"]
-        if "instagram" in passing and ig.carousel_on(day) and card.carousel is not False:
+        if "instagram" in passing and (ig.carousel_on(day) or theme.carousel) and card.carousel is not False:
             carousel["instagram"] = ig.carousel_max
         try:
             if not offline:
@@ -239,7 +241,8 @@ def submit(
     if dropped:
         discord.alert(conn, _alert_text(day, {p: results[p] for p in dropped}, "dropped"), agent="social")
 
-    lines = [f"Delivered to #{CHANNEL}: {', '.join(passing)} ({theme.label}) in {out}"]
+    lines = [f"Delivered to #{'approvals' if len(requests) == len(passing) else CHANNEL}: "
+             f"{', '.join(passing)} ({theme.label}) in {out}"]
     lines += [f"Approval requested: {platform} as {approval.id} in #approvals" for platform, approval in requests.items()]
     if dropped:
         lines.append(f"Dropped after the brand check: {', '.join(dropped)}")
@@ -344,17 +347,12 @@ def _raise_publish_items(conn, day, passing, settings, notes) -> dict:
 def _post(conn, day, theme, settings, passing, sub, images, out, dropped, results, notes, requests=None) -> None:
     when = day.strftime("%A %-d %B %Y")
     requests = requests or {}
+    by_hand = []
     for platform in passing:
         rules = settings.platforms[platform]
-        if platform in requests:
-            discord.post(
-                conn, CHANNEL,
-                f"**{rules.label}** · {when} · {theme.label}\n"
-                f"Waiting for your decision in #approvals: {requests[platform].id}. "
-                f"Approve it there by 18:00 SGT to queue it for posting through the browser as {rules.identity}.",
-                username=USERNAME,
-            )
-            continue
+        if platform in requests or rules.browser:
+            continue  # its card in #approvals carries the post; without a card, `notes` below says why
+        by_hand.append(platform)
         files = images.get(platform, [])
         size = f"{rules.width}×{rules.height}"
         if len(files) > 1:
@@ -371,17 +369,20 @@ def _post(conn, day, theme, settings, passing, sub, images, out, dropped, result
         discord.post(conn, CHANNEL, content, files=files[: discord.MAX_FILES], username=USERNAME, own_copy=(body,))
 
     footer = []
-    if sub.urls:
-        footer.append("**Sources**")
-        footer += [f"- <{url}>" for url in sub.urls]
-    rel = out
-    try:
-        rel = out.relative_to(paths.JURA_ROOT)
-    except ValueError:
-        pass
-    footer.append(f"Saved in `{rel}`.")
+    if by_hand:
+        if sub.urls:
+            footer.append("**Sources**")
+            footer += [f"- <{url}>" for url in sub.urls]
+        rel = out
+        try:
+            rel = out.relative_to(paths.JURA_ROOT)
+        except ValueError:
+            pass
+        footer.append(f"Saved in `{rel}`.")
     if dropped:
         footer.append("Dropped after the brand check: " + ", ".join(dropped) + " (reasons in #alerts).")
     footer += [f"Note: {n}" for n in notes]
-    footer.append(f"Not posting one? `jura-growth social skip {day} <platform>`. Posted it? `jura-growth social published {day} <platform> --url <link>`.")
-    discord.post(conn, CHANNEL, "\n".join(footer), username=USERNAME)
+    if by_hand:
+        footer.append(f"Not posting one? `jura-growth social skip {day} <platform>`. Posted it? `jura-growth social published {day} <platform> --url <link>`.")
+    if footer:
+        discord.post(conn, CHANNEL, "\n".join(footer), username=USERNAME)

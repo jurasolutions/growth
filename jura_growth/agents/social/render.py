@@ -13,7 +13,8 @@ A card spec is JSON (see docs/social.md):
       "overline": "Automation tip",          optional, defaults to the theme label
       "headline": "Send the reminder before anyone has to remember it",
       "subtitle": "One rule in your accounting tool does it.",
-      "items": ["...", {"title": "...", "detail": "...", "source": "IMDA"}],
+      "items": ["...", {"title": "...", "detail": "...", "source": "IMDA", "icon": "landmark"}],
+      "visual": {"type": "flow", "steps": [...], "caption": "..."},  the picture: see visuals.py
       "tool": "quote-builder",                tool layout: a live toolbox slug
       "carousel": true | false,               optional, Instagram only
       "proper_nouns": ["Acme"]                optional, for the sentence-case check
@@ -32,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from jura_growth import images
-from jura_growth.agents.social import toolbox
+from jura_growth.agents.social import toolbox, visuals
 from jura_growth.agents.social.settings import LAYOUTS, Settings, load
 
 TEMPLATES = Path(__file__).parent / "templates"
@@ -63,6 +64,7 @@ class Item:
     title: str
     detail: str = ""
     source: str = ""
+    icon: str = ""
 
 
 @dataclass
@@ -77,6 +79,8 @@ class CardSpec:
     carousel: bool | None = None
     proper_nouns: list[str] = field(default_factory=list)
     tool_info: toolbox.Tool | None = None
+    visual: visuals.Visual | None = None
+    icon: str = ""  # a carousel slide's own icon, from its item
 
     @classmethod
     def parse(cls, data: dict, *, default_overline: str = "") -> tuple["CardSpec | None", list[str]]:
@@ -91,9 +95,17 @@ class CardSpec:
             if isinstance(raw, str):
                 items.append(Item(raw.strip()))
             elif isinstance(raw, dict) and str(raw.get("title", "")).strip():
-                items.append(Item(str(raw["title"]).strip(), str(raw.get("detail", "")).strip(), str(raw.get("source", "")).strip()))
+                icon = str(raw.get("icon", "")).strip()
+                wrong = visuals.icon_problem(icon, f"items[{index}].icon") if icon else None
+                if wrong:
+                    problems.append(wrong)
+                items.append(Item(str(raw["title"]).strip(), str(raw.get("detail", "")).strip(), str(raw.get("source", "")).strip(), icon))
             else:
                 problems.append(f"items[{index}] must be a string or an object with a title")
+        visual = None
+        if data.get("visual") is not None:
+            visual, found = visuals.parse(data["visual"])
+            problems += found
         spec = cls(
             layout=layout or "headline",
             headline=str(data.get("headline", "")).strip(),
@@ -104,7 +116,10 @@ class CardSpec:
             tool=(str(data["tool"]).strip() or None) if data.get("tool") else None,
             carousel=data.get("carousel"),
             proper_nouns=[str(n) for n in data.get("proper_nouns") or []],
+            visual=visual,
         )
+        if spec.visual is not None and spec.layout != "headline":
+            problems.append(f"a visual goes on the headline layout; the {spec.layout} layout draws its own")
         if spec.layout == "tool":
             if not spec.tool:
                 problems.append("the tool layout needs a `tool` slug from the toolbox registry")
@@ -143,6 +158,8 @@ class CardSpec:
         """Every other word the card prints, including the tool card's fixed
         strings, for the brand checker."""
         parts = [self.subtitle, self.caption] + [item.detail for item in self.items] + [item.source for item in self.items]
+        if self.visual is not None:
+            parts += self.visual.words()
         if self.layout == "tool":
             parts += list(tool_strings(self.tool_info).values())
         return "\n".join(p for p in parts if p)
@@ -157,6 +174,8 @@ class CardSpec:
             out["tool"] = self.tool
         if self.carousel is not None:
             out["carousel"] = self.carousel
+        if self.visual is not None:
+            out["visual"] = self.visual.as_dict()
         return out
 
     def slides(self, max_slides: int) -> list["CardSpec"]:
@@ -176,6 +195,7 @@ class CardSpec:
                     overline=f"{number:02d} / {total:02d}" + (f" · {self.overline}" if self.overline else ""),
                     caption=f"Source: {item.source}" if item.source else "",
                     proper_nouns=self.proper_nouns,
+                    icon=item.icon,
                 )
             )
         return slides
@@ -231,7 +251,8 @@ def build_html(spec: CardSpec, width: int, height: int, *, settings: Settings | 
         "ds_styles": _file_url(design_system() / "styles.css"),
         "card_css": _file_url(TEMPLATES / "card.css"),
         "card_js": _file_url(TEMPLATES / "card.js"),
-        "classes": " ".join(c for c in (format_class(width, height), f"layout-{spec.layout}", mode) if c),
+        "classes": " ".join(c for c in (format_class(width, height), f"layout-{spec.layout}", mode,
+                                        "has-visual" if spec.visual else "", "has-tile" if spec.icon else "") if c),
         "width": str(width),
         "height": str(height),
         "overline": spec.overline,
@@ -243,10 +264,13 @@ def build_html(spec: CardSpec, width: int, height: int, *, settings: Settings | 
         "mark_white": _asset("logo-mark-white.svg"),
         "caption": spec.caption,
         "items": "",
+        "visual": visuals.render(spec.visual),
+        "tile": visuals.tile(spec.icon, solid=True) if spec.icon else "",
     }
     if spec.layout == "list":
         values["items"] = "\n".join(
-            f'<li><span class="num">{index:02d}</span><span class="text">{_text(item.title)}</span></li>'
+            f'<li>{visuals.tile(item.icon) if item.icon else f"""<span class="num">{index:02d}</span>"""}'
+            f'<span class="text">{_text(item.title)}</span></li>'
             for index, item in enumerate(spec.items, start=1)
         )
     if spec.layout == "tool":

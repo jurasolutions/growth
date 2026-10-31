@@ -1,6 +1,6 @@
 <!doctype html>
-<!-- Headline card: overline, headline, short subtitle, jurasolutions.sg.
-     Also the carousel slides, the profile picture (mode-mark) and the covers. -->
+<!-- Headline card: overline, headline, short subtitle, the post's diagram, jurasolutions.sg.
+     Also the carousel slides (with their icon), the profile picture (mode-mark) and the covers. -->
 <html lang="en-SG">
 <head>
 <meta charset="utf-8">
@@ -13,11 +13,15 @@
   <div class="mark-only" aria-hidden="true">{{{mark}}}</div>
   <div class="mark-white" aria-hidden="true">{{{mark_white}}}</div>
   <main class="main">
-    <div class="overline">{{overline}}</div>
-    <h1 class="headline">{{{headline}}}</h1>
-    <p class="subtitle">{{{subtitle}}}</p>
-    <div class="caption">{{caption}}</div>
-    <div class="site site-inline">{{site}}</div>
+    <div class="intro">
+      {{{tile}}}
+      <div class="overline">{{overline}}</div>
+      <h1 class="headline">{{{headline}}}</h1>
+      <p class="subtitle">{{{subtitle}}}</p>
+      <div class="caption">{{caption}}</div>
+      <div class="site site-inline">{{site}}</div>
+    </div>
+    {{{visual}}}
   </main>
   <footer class="foot">
     <div class="lockup">{{{lockup}}}</div>

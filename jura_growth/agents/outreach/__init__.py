@@ -14,6 +14,8 @@ from pathlib import Path
 from jura_growth import db
 
 NAME = "outreach"
+# A decision on an email is reported beside the emails that went out (`feed.py`).
+FEED_CHANNEL = "outreach-sent"
 # Setup gaps (health.setup_gaps): what live sending and the suppression sync need.
 # The OUTREACH_IMAP_* settings are left out on purpose: reply detection is opt-in (replies.py).
 REQUIRED_SETTINGS = (

@@ -154,6 +154,7 @@ class SocialPost:
 
     name = KIND
     used_word = "claimed by a publish run"
+    feed_approved = "It goes out on the next publish run, by 18:00 SGT. The run's update here gives the post's address."
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         item = items.of(conn, subject)
@@ -178,7 +179,10 @@ class SocialPost:
         run = f", drafted by social run {post['run_id']}" if post.get("run_id") else ""
         lines = [f"```\n{content['text'].strip()}\n```"]
         links = list(dict.fromkeys(_LINK.findall(content["text"])))
-        lines.append("Links in the text: " + (", ".join(links) if links else "none"))
+        lines.append("Links in the text: " + (", ".join(f"<{link}>" for link in links) if links else "none"))
+        sources = [url for url in json.loads(post.get("source_urls") or "[]") if url not in links]
+        if sources:  # Instagram carries no links, so this is how the card shows what the post relies on
+            lines.append("Sources: " + ", ".join(f"<{url}>" for url in sources))
         if qa.get("passed"):
             lines.append(f"Brand check: passed on attempt {qa.get('attempt', 1)} of 2")
         images = [Path(image["path"]) for image in content["images"]]

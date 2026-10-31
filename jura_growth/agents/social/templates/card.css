@@ -105,6 +105,8 @@ body {
 
 .mark-only, .mark-white, .site-inline { display: none; }
 
+.intro { display: flex; flex-direction: column; gap: var(--gap); }
+
 /* --- formats ------------------------------------------------------------ */
 
 .fmt-landscape {
@@ -120,6 +122,14 @@ body {
   --foot-pad: var(--space-5);
   --headline-measure: 22ch;
   --subtitle-measure: 44ch;
+  --visual-pad: var(--space-4);
+  --step-tile: 52px;
+  --step-size: 21px;
+  --point-size: 17px;
+  --column-tile: 36px;
+  --ring-size: 128px;
+  --figure-size: 72px;
+  --slide-tile: 64px;
 }
 
 .fmt-portrait {
@@ -135,6 +145,14 @@ body {
   --foot-pad: var(--space-6);
   --headline-measure: 16ch;
   --subtitle-measure: 34ch;
+  --visual-pad: var(--space-7);
+  --step-tile: 124px;
+  --step-size: 30px;
+  --point-size: 28px;
+  --column-tile: 64px;
+  --ring-size: 280px;
+  --figure-size: 112px;
+  --slide-tile: 132px;
 }
 
 .fmt-square {
@@ -191,9 +209,179 @@ body {
   align-items: center;
 }
 
-.layout-list .intro { display: flex; flex-direction: column; gap: var(--gap); }
 .layout-list.fmt-portrait .main { justify-content: center; }
 .layout-list.fmt-portrait .items { margin-top: var(--space-4); }
+
+.items .tile { --tile: calc(var(--item-size) * 1.7); align-self: center; }
+
+/* --- the picture: a diagram, framed like the design system's MotionPanel --- */
+
+.tile {
+  --tile: 72px;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: var(--tile);
+  height: var(--tile);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--brand-border);
+  background: var(--brand-subtle);
+  color: var(--brand);
+}
+.tile svg { width: 56%; height: 56%; display: block; }
+.tile-solid { background: var(--brand); border-color: var(--brand); color: var(--brand-on); }
+
+.visual {
+  margin: 0;
+  box-sizing: border-box;
+  padding: var(--visual-pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  border: var(--border-hairline);
+  border-radius: var(--radius-lg);
+  background-color: var(--white);
+  background-image:
+    linear-gradient(var(--neutral-100) 1px, transparent 1px),
+    linear-gradient(90deg, var(--neutral-100) 1px, transparent 1px);
+  background-size: 32px 32px;
+  min-width: 0;
+}
+
+.visual-caption {
+  font-family: var(--font-mono);
+  font-size: var(--caption-size);
+  letter-spacing: 0.04em;
+  color: var(--neutral-500);
+}
+.fmt-landscape .visual { gap: var(--space-3); }
+
+.flow { list-style: none; margin: 0; padding: 0; display: flex; }
+.step {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+.step { --tile-now: calc(var(--step-tile) * var(--fit)); }
+.step .tile { --tile: var(--tile-now); position: relative; z-index: 1; }
+.step-label {
+  font-weight: var(--weight-medium);
+  font-size: calc(var(--step-size) * var(--fit));
+  line-height: var(--leading-snug);
+  color: var(--neutral-800);
+  padding: 0 var(--space-2);
+  overflow-wrap: break-word;
+}
+/* The line from each step to the next, with its arrowhead. */
+.step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--tile-now) / 2 - 1px);
+  left: 50%;
+  width: 100%;
+  height: 2px;
+  background: var(--green-300);
+}
+.step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: calc(var(--tile-now) / 2 - 7px);
+  left: calc(150% - var(--tile-now) / 2 - 12px);
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border-top: 2px solid var(--green-400);
+  border-right: 2px solid var(--green-400);
+  transform: rotate(45deg);
+}
+
+/* Beside the words on a landscape card, the steps run down the panel. */
+.fmt-landscape .flow { flex-direction: column; gap: var(--space-3); }
+.fmt-landscape .step { flex-direction: row; text-align: left; flex: 0 0 auto; gap: var(--space-3); }
+.fmt-landscape .step:not(:last-child)::after {
+  top: 50%;
+  left: calc(var(--tile-now) / 2 - 1px);
+  width: 2px;
+  height: calc(100% + var(--space-3));
+}
+.fmt-landscape .step:not(:last-child)::before { display: none; }
+
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border: var(--border-hairline);
+  border-radius: var(--radius-md);
+  background: var(--neutral-50);
+  min-width: 0;
+}
+.column-after { background: var(--brand-subtle); border-color: var(--brand-border); }
+.column-head { display: flex; align-items: center; gap: var(--space-3); }
+.column-head .tile { --tile: var(--column-tile); }
+.column-label {
+  font-family: var(--font-display);
+  font-weight: var(--weight-semibold);
+  font-size: calc(var(--step-size) * var(--fit));
+  line-height: var(--leading-snug);
+  color: var(--neutral-900);
+}
+.points {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-size: calc(var(--point-size) * var(--fit));
+  line-height: var(--leading-snug);
+  color: var(--neutral-700);
+}
+
+.figure { display: flex; align-items: center; gap: var(--space-6); }
+.figure-text { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.figure-ring { position: relative; flex: 0 0 auto; width: calc(var(--ring-size) * var(--fit)); height: calc(var(--ring-size) * var(--fit)); display: flex; align-items: center; justify-content: center; }
+.ring { position: absolute; inset: 0; width: 100%; height: 100%; }
+.ring circle { fill: none; stroke-width: 9; }
+.ring-track { stroke: var(--neutral-200); }
+.ring-fill { stroke: var(--brand); stroke-linecap: round; }
+.figure-value {
+  font-family: var(--font-display);
+  font-weight: var(--weight-semibold);
+  font-size: var(--figure-size);
+  line-height: 1;
+  letter-spacing: var(--tracking-display);
+  color: var(--brand);
+}
+.figure-with-ring .figure-value { font-size: calc(var(--ring-size) * 0.26 * var(--fit)); }
+.figure-label { font-size: calc(var(--step-size) * var(--fit)); line-height: var(--leading-snug); font-weight: var(--weight-medium); color: var(--neutral-800); }
+.figure-source { font-family: var(--font-mono); font-size: var(--caption-size); letter-spacing: 0.04em; color: var(--neutral-500); }
+
+.has-visual .headline { font-size: calc(var(--headline-size) * 0.8 * var(--fit)); }
+.has-visual .subtitle { font-size: calc(var(--subtitle-size) * 0.92 * var(--fit)); }
+.layout-headline.has-visual.fmt-landscape .main {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: var(--space-7);
+  align-items: center;
+}
+.layout-headline.has-visual.fmt-landscape .figure { flex-direction: column; align-items: flex-start; gap: var(--space-4); }
+.layout-headline.has-visual.fmt-landscape .compare { gap: var(--space-3); }
+.layout-headline.has-visual.fmt-landscape .column { padding: var(--space-3); gap: var(--space-3); }
+
+/* A carousel slide leads with its icon. */
+.has-tile .intro > .tile { --tile: var(--slide-tile); margin-bottom: var(--space-3); }
+.has-tile .main { justify-content: center; }
+.fmt-portrait.has-tile .subtitle { font-size: calc(var(--subtitle-size) * 1.2 * var(--fit)); max-width: 30ch; }
 
 /* --- tool card ---------------------------------------------------------- */
 
@@ -204,7 +392,6 @@ body {
   align-items: center;
 }
 
-.layout-tool .intro { display: flex; flex-direction: column; gap: var(--gap); }
 .layout-tool.fmt-landscape { --headline-size: 60px; --subtitle-size: 24px; }
 
 .tags { display: flex; flex-wrap: wrap; gap: var(--space-2); }
@@ -284,7 +471,7 @@ body {
   --headline-measure: 24ch;
   --subtitle-measure: 48ch;
 }
-.fmt-cover .main { align-items: center; text-align: center; }
+.fmt-cover .main, .fmt-cover .intro { align-items: center; text-align: center; }
 .fmt-cover .foot { display: none; }
 .fmt-cover .caption { display: none; }
 .fmt-cover .site-inline { display: block; margin-top: var(--space-2); }
@@ -299,7 +486,7 @@ body {
   --subtitle-size: 16px;
   --headline-measure: 40ch;
 }
-.fmt-banner .main { align-items: flex-end; text-align: right; }
+.fmt-banner .main, .fmt-banner .intro { align-items: flex-end; text-align: right; }
 .fmt-banner .subtitle, .fmt-banner .foot, .fmt-banner .caption { display: none; }
 .fmt-banner { --site-size: 15px; }
 .fmt-banner .site-inline { display: block; }

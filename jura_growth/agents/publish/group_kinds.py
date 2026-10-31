@@ -238,6 +238,8 @@ def _item(conn: sqlite3.Connection, subject: str, kinds: tuple[str, ...]) -> ite
 
 class _GroupKind:
     name = ""
+    feed_channel = "community"  # a group item's decision reports in #community, as its run update does
+    feed_approved = "It goes out on a publish run, inside the posting window."
     item_kinds: tuple[str, ...] = ()
     used_word = "claimed by a publish run"
 
