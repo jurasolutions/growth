@@ -257,7 +257,8 @@ body {
 .visual-caption {
   font-family: var(--font-mono);
   font-size: var(--caption-size);
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-overline);
+  text-transform: uppercase;
   color: var(--neutral-500);
 }
 .fmt-landscape .visual { gap: var(--space-3); }
@@ -374,7 +375,7 @@ body {
 .figure-with-ring .figure-value { font-size: calc(var(--ring-size) * 0.26 * var(--fit)); }
 .figure-with-ring .figure-value-tight { font-size: calc(var(--ring-size) * 0.2 * var(--fit)); }
 .figure-label { font-size: calc(var(--step-size) * var(--fit)); line-height: var(--leading-snug); font-weight: var(--weight-medium); color: var(--neutral-800); }
-.figure-source { font-family: var(--font-mono); font-size: var(--caption-size); letter-spacing: 0.04em; color: var(--neutral-500); }
+.figure-source { font-family: var(--font-mono); font-size: var(--caption-size); letter-spacing: var(--tracking-overline); text-transform: uppercase; color: var(--neutral-500); }
 
 .has-visual .headline { font-size: calc(var(--headline-size) * 0.8 * var(--fit)); }
 .has-visual .subtitle { font-size: calc(var(--subtitle-size) * 0.92 * var(--fit)); }

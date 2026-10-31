@@ -8,6 +8,7 @@ test_social_cards_real_chrome.py. The figures here are placeholders, and none re
 import json
 import re
 import xml.etree.ElementTree as ElementTree
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -84,6 +85,14 @@ def test_a_visual_goes_on_the_headline_layout_only():
 
 
 # --- the ring -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("rule", [".visual-caption", ".figure-source"])
+def test_a_mono_caption_is_small_and_uppercase_as_the_design_system_says(rule):
+    """`design-system/README.md`: IBM Plex Mono is "small and uppercase, never for reading"."""
+    css = (Path(render.__file__).parent / "templates" / "card.css").read_text(encoding="utf-8")
+    body = re.search(re.escape(rule) + r"\s*\{([^}]*)\}", css).group(1)
+    assert "var(--font-mono)" in body and "text-transform: uppercase" in body
 
 
 @pytest.mark.parametrize(
