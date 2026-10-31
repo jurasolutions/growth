@@ -44,7 +44,7 @@ from typing import Callable
 
 import click
 
-from jura_growth import approvals, approvals_cli, config, db, handoff_fit, log, origin, pause, privacy
+from jura_growth import approvals, approvals_cli, config, db, discord, handoff_fit, log, origin, pause, privacy
 
 CONTRACT = 1
 TEXT_LIMIT = 1900  # Dispatch adds its own words; Discord takes 2,000
@@ -249,8 +249,7 @@ def _answer_for(entry: Entry | None, code: int) -> str:
 
 def _defuse(text: str) -> str:
     """No mention in the answer can ping anyone, whatever Dispatch does."""
-    text = re.sub(r"@(everyone|here)", "@​\\1", text)
-    return text.replace("<@", "<@​")
+    return discord.defuse_mentions(text)
 
 
 def _cut(text: str, limit: int = TEXT_LIMIT) -> str:

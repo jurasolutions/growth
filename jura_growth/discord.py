@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -32,6 +33,7 @@ from jura_growth import config, images, log, paths, privacy, timeutil
 
 MAX_CONTENT = 2000
 MAX_FILES = 10
+_ZERO_WIDTH_SPACE = chr(0x200b)
 
 
 @dataclass
@@ -63,6 +65,13 @@ def webhook(channel: str) -> str | None:
 def webhook_set(channel: str) -> bool:
     """Whether the channel has a webhook, without reading it (setup gaps)."""
     return os.environ.get("JURA_GROWTH_DISCORD") != "off" and config.is_set(env_name(channel))
+
+
+def defuse_mentions(text: str) -> str:
+    """No mention in `text` can ping anyone, whatever the payload says: a zero-width space goes
+    after each `@everyone`, `@here`, `<@` and `<#`."""
+    text = re.sub(r"@(everyone|here)", "@" + _ZERO_WIDTH_SPACE + r"\1", text)
+    return text.replace("<@", "<@" + _ZERO_WIDTH_SPACE).replace("<#", "<#" + _ZERO_WIDTH_SPACE)
 
 
 def content_hash(content: str, files: list[tuple[str, bytes]]) -> str:

@@ -101,6 +101,11 @@ def effective(hard: int, configured: int | None) -> int:
     return max(0, min(int(configured), hard))
 
 
+def at_least(floor: int, configured: int | None) -> int:
+    """The configured value, never below the floor: for a minimum gap, which config may only lengthen."""
+    return floor if configured is None else max(floor, int(configured))
+
+
 def warmup_cap(days_since_first_live_send: int | None) -> int:
     """Today's daily cap under the warm-up schedule."""
     if days_since_first_live_send is None:

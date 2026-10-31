@@ -221,8 +221,7 @@ def _clean(text: str) -> str:
 def _escape(text: str) -> str:
     text = text.replace("\\", "\\\\").replace("`", "\\`")
     text = text.replace("](", "]\\(")  # no masked links: [approve here](https://...) stays plain text
-    text = re.sub(r"@(everyone|here)", "@​\\1", text)
-    return text.replace("<@", "<@​")
+    return discord.defuse_mentions(text)
 
 
 def _cut(text: str) -> str:
