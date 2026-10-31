@@ -46,7 +46,7 @@ home = Path(os.environ["FAKE_CLAUDE_HOME"])
 (home / "stdin.txt").write_text(sys.stdin.read())
 (home / "run-id.txt").write_text(os.environ.get("JURA_GROWTH_RUN_ID", ""))
 scenario = json.loads((home / "scenario.json").read_text())
-work = Path(os.environ["JURA_GROWTH_DATA_DIR"]) / "work" / "publish"
+work = Path(os.environ["JURA_GROWTH_DATA_DIR"]) / "work" / os.environ.get("JURA_GROWTH_JOB", "publish")
 values = {"{WORK}": str(work)}
 counter = [0]
 

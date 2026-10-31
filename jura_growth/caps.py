@@ -42,7 +42,7 @@ NO_REPEAT_DAYS = 14
 # Browser publishing (browser publishing PRD §4.4). A cap counts an item from
 # the moment a run claims it, whatever happens next, so a run that crashes
 # mid-post still uses up its slot.
-BROWSER_JOBS = frozenset({"publish"})  # the only jobs that may drive Chrome
+BROWSER_JOBS = frozenset({"publish", "inbox-watch", "inbox-reply"})  # the only jobs that may drive Chrome
 # Days a browser job's transcript is kept: it holds third-party page text (BP §4.7).
 BROWSER_TRANSCRIPT_DAYS = 7
 COMMUNITY_POSTS_PER_DAY = 1
@@ -74,6 +74,12 @@ INBOX_LOOK_BACK_DAYS = 45  # the limit the 16:45 reply check uses
 INBOX_OLD_AFTER_HOURS = 48  # older at intake: reported with no draft (F12)
 # SGT, both ends inclusive. Launchd can fire early until the Mac restarts, so the code checks too.
 INBOX_CHECK_WINDOW = ("07:00", "23:59")
+INBOX_WATCH_WINDOW = ("09:05", "21:05")  # SGT, both ends inclusive
+# W2 says hourly. A floor under launchd, which can fire twice: each read is more activity on the account.
+INBOX_WATCH_MINUTES_BETWEEN_RUNS = 55
+INBOX_OBSERVATIONS_PER_RUN = 40  # new messages one watch run may record: a flood waits for the next run
+INBOX_WATCH_POST_DAYS = 30  # F6: posts this recent are read in turn, the least recently read first
+INBOX_BLIND_SURFACE_HOURS = 3  # F13: of the watch's own hours, then it goes to Needs you
 
 # App factory
 APP_PRDS_PER_DAY = 1

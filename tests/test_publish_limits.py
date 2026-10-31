@@ -24,7 +24,7 @@ def configure(monkeypatch, **publish):
 
 
 def test_the_hard_values_are_in_caps():
-    assert caps.BROWSER_JOBS == frozenset({"publish"})
+    assert caps.BROWSER_JOBS == frozenset({"publish", "inbox-watch", "inbox-reply"})
     assert caps.COMMUNITY_POSTS_PER_DAY == 1
     assert caps.COMMUNITY_JOINS_PER_WEEK == 3
     assert caps.PUBLISH_ITEMS_PER_RUN == 1
