@@ -23,7 +23,8 @@ from jura_growth.agents.apps import backlog, catalog
 from jura_growth.agents.apps import prd as prd_mod
 
 SOURCE = "ting-yu"
-MAX_LENGTH = 500
+MAX_LENGTH = 2000  # a Discord message, "apps idea " included; the /growth slash option takes more
+ECHO_MAX = 1000  # how much of a long idea the reply shows, so it fits remote's TEXT_LIMIT (1,900)
 NAME_WORDS = 5  # the factory's name rule allows a few plain words; the factory may rename it
 NAME_MAX = 60
 SLUG_MAX = 60  # `validate_factory`'s slug limit
@@ -100,7 +101,7 @@ def add(conn: sqlite3.Connection, text: str, *, actor: str) -> Added:
     if not text:
         raise Refused("refused: say the idea: `apps idea <text>`", 2)
     if len(text) > MAX_LENGTH:
-        raise Refused(f"refused: the idea is {len(text)} characters; keep it to {MAX_LENGTH}", 2)
+        raise Refused(f"refused: the idea is {len(text):,} characters; keep it to {MAX_LENGTH:,}", 2)
     name = name_for(text)
     slug = slug_for(name)
     if not slug or not _LATIN.search(name):  # "2026", "<@123>" and "123 456" too
@@ -120,6 +121,20 @@ def add(conn: sqlite3.Connection, text: str, *, actor: str) -> Added:
     return Added(row, ahead)
 
 
+def _echo(text: str) -> str:
+    """The idea as the reply shows it: whole up to `ECHO_MAX` characters, else its start, cut at a
+    word, and its length. The rest of the reply is at most a few hundred characters (a name and a
+    slug of at most 60 each), so remote never has to cut the lines that follow."""
+    if len(text) <= ECHO_MAX:
+        return text
+    head = text[:ECHO_MAX]
+    at = head.rfind(" ")
+    if text[ECHO_MAX] != " " and at >= ECHO_MAX // 2:  # a word that runs on is cut only when very long
+        head = head[:at]
+    head = head.rstrip(_EDGE) or text[:ECHO_MAX]
+    return f"{head} … ({len(text):,} characters in all; the backlog keeps every word)"
+
+
 def reply(added: Added) -> str:
     row = added.row
     lines = [
@@ -127,7 +142,7 @@ def reply(added: Added) -> str:
         f"  name    {row['name']}",
         f"  slug    {row['slug']}",
         f"  status  {row['status']} (source: {row['source']}, added {row['added']} by {row['actor']})",
-        f"  does    {row['does']}",
+        f"  does    {_echo(row['does'])}",
     ]
     if added.ahead:
         count = f"{added.ahead} older idea{'s' if added.ahead != 1 else ''} of yours come{'s' if added.ahead == 1 else ''}"
