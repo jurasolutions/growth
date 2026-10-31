@@ -473,6 +473,13 @@ def test_a_figure_about_jura_cannot_pass_as_a_date_a_compound_or_a_year(text):
         "A 500-strong client base grows.",
         "A 500-client base grows.",
         "A 6-figure saving.",
+        # Code review 01, round 3: a figure with a thousands comma, fused to a noun.
+        "A 5,000-user rollout.",
+        "A 2,000-store chain.",
+        "A 12,000-person survey.",
+        "A 12,400-hour project.",
+        # R3-S1: a year's shape before "of" counts, so a claim split over two sentences fails.
+        "We help shops. 2000 of them renew.",
     ],
 )
 def test_a_figure_with_no_source_cannot_pass_as_a_date_a_compound_or_a_year(text):
@@ -638,6 +645,14 @@ def test_the_email_channels_allowance_is_only_its_call(text):
         "Book a 30-minute call.",
         # R2-S2: a position in a list, or a rate over time, is no share.
         "Step 2 out of 3.",
+        # Round 3: these must keep passing beside the thousands-comma fix.
+        "A 3rd-party tool.",
+        "A 2-step handover works.",
+        "Pick 3, then test them.",
+        "Version 1.2-beta is out.",
+        # A known limit, pinned: this can't be told from "The 2026 rates" without reading its meaning,
+        # it doesn't name Jura, and it passes on main too. Ting Yu's read of the card is the control.
+        "The 2000 shops use it.",
         "Page 2 of 3 is next.",
         "It sends one in five minutes.",
     ],

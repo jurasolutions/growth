@@ -407,12 +407,13 @@ EXEMPT_PATTERNS = [
     # identifiers: letters fused to digits (APP-001, A4, GPT-5, B2B, T-0042)
     re.compile(r"\b[A-Za-z]{1,10}-?\d+(?:[-.]\d+)*[A-Za-z]*\b"),
     # 2-step, 3-way, 3rd-party, 30-minute, but not a figure with a suffix or a fused quantity
-    re.compile(rf"\b\d+(?!(?:[xXkKmM]|[bB][nN])-)[A-Za-z]*-(?!(?i:{_FUSED_QUANTITY})\b)[A-Za-z]+\b"),
+    # The lookbehind keeps a thousands comma's figure whole: "5,000-user" is a figure, not "5," and a compound.
+    re.compile(rf"(?<![\d,])\b\d+(?!(?:[xXkKmM]|[bB][nN])-)[A-Za-z]*-(?!(?i:{_FUSED_QUANTITY})\b)[A-Za-z]+\b"),
 ]
 # A number shaped like a year is a year unless it counts something. These are always counts.
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 _YEAR_COUNTS_RE = re.compile(
-    r"\s*[%+]|\s+(?:[a-z]+\s+)?(?:businesses|clients|companies|customers|"
+    r"\s*[%+]|\s+of\b|\s+(?:[a-z]+\s+)?(?:businesses|clients|companies|customers|"
     r"users|people|teams|firms|smes|hours|jobs|invoices|receipts|documents|emails|leads|"
     r"projects|automations|staff|employees|members|downloads|visitors|orders)\b",
     re.I,

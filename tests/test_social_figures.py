@@ -174,6 +174,7 @@ def test_a_figure_anywhere_else_on_the_card_must_be_in_the_post_too(env, conn, v
         ("50-odd firms use it.", "50-odd"),
         ("A 500-strong client base.", "500-strong"),
         ("A 6-figure saving.", "6-figure"),
+        ("A 5,000-user rollout.", "5,000"),
     ],
 )
 def test_a_figure_in_any_form_is_tied_to_the_post(env, conn, detail, figure):
