@@ -167,11 +167,15 @@ class SocialPost:
 
     def feed_approved(self, conn: sqlite3.Connection, subject: str) -> str:
         """What happens next, kept true: the decide-by leaves a slot, and a pause holds it back. A
-        claim's replacement can be approved after the last run has started (`deadlines`), and then
-        nothing is left to post it."""
+        platform moved back to draft mode with its card open posts nothing (A13). A claim's
+        replacement can be approved after the last run has started (`deadlines`), and then nothing
+        is left to post it."""
         item = _item(conn, subject)
         day = date.fromisoformat(item.day)
         _, end = limits.window_on(day)
+        off = self.switched_off(conn, subject)
+        if off:
+            return f"{off[:1].upper()}{off[1:]}, and this lapses at {end:%H:%M} SGT."
         latest = items.latest_request(conn, item)
         decided = timeutil.parse(latest.decided_at) if latest and latest.decided_at else timeutil.now_sgt()
         if decided >= limits.last_run_on(day):

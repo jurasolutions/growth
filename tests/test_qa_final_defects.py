@@ -9,7 +9,8 @@ import sys
 
 import publish_world as pw
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, cards, config, paths
+from gate_adapter_community_post import ADAPTER as COMMUNITY_POST
+from jura_growth import approvals, cards, config, db, paths
 from jura_growth.agents import social
 from test_approvals_first import BOTH, LATE, feed_lines, refuse_facebook, social_day, submit_tip  # noqa: F401 - a fixture
 from test_social import env  # noqa: F401 - a fixture
@@ -117,6 +118,76 @@ def test_a_platform_moved_to_draft_mode_with_an_approved_post_says_so_and_offers
     assert "#social-drafts" not in social_line(found)
     assert found["figures"]["social_drafts_by_hand"] == 0
 
+
+
+# --- 06: an approved line that promises a post nothing can make -----------------------------------
+
+
+def test_an_approval_while_the_platform_is_in_draft_mode_promises_no_post(conn, social_day, monkeypatch):
+    submit_tip(conn)
+    first, _ = approvals.pending(conn)
+    pw.at(monkeypatch, pw.TEN)
+    pw.social_config(monkeypatch, browser=())  # the way back, with a card open
+    pw.decide(conn, first, monkeypatch=monkeypatch)
+    cards.sweep(conn)
+    [line] = feed_lines(social_day)
+    assert pw.next_item(conn).item is None  # nothing posts, as AF5 wants
+    assert "It goes out" not in line
+    assert "draft mode" in line and "lapses at 18:00 SGT" in line
+
+
+def _community_post(conn, monkeypatch, tmp_path):
+    monkeypatch.setenv("CONTROL_DISCORD_USER_ID", pw.CONTROL_ID)
+    gate = COMMUNITY_POST(conn=conn, monkeypatch=monkeypatch, tmp_path=tmp_path)
+    approval = gate.raise_request(gate.item())
+    cards.sweep(conn)
+    day = db.scalar(conn, "SELECT substr(decide_by, 1, 10) FROM approvals WHERE id = ?", (approval.number,))
+    return gate, approval, day
+
+
+def _community_line(discord_double, approval) -> str:
+    [line] = [m for m in discord_double.contents("community") if m.startswith(f"**{approval.id} approved")]
+    return line
+
+
+def test_a_community_post_approved_after_the_last_run_promises_no_post(conn, env, monkeypatch, discord_double, tmp_path):
+    gate, approval, day = _community_post(conn, monkeypatch, tmp_path)
+    pw.at(monkeypatch, f"{day}T17:50:00+08:00")  # the last publish slot started at 17:40
+    assert gate.approve(approval).answer == "recorded"
+    cards.sweep(conn)
+    line = _community_line(discord_double, approval)
+    assert "It goes out" not in line
+    assert "No publish run is left" in line and "18:00 SGT" in line
+
+
+def test_a_community_post_approved_in_time_with_nothing_in_its_way_goes_out(conn, env, monkeypatch, discord_double, tmp_path):
+    gate, approval, day = _community_post(conn, monkeypatch, tmp_path)
+    pw.at(monkeypatch, f"{day}T10:00:00+08:00")
+    assert gate.approve(approval).answer == "recorded"
+    cards.sweep(conn)
+    assert "It goes out on a publish run" in _community_line(discord_double, approval)
+
+
+def test_a_community_post_whose_group_rules_stop_it_says_so(conn, env, monkeypatch, discord_double, tmp_path):
+    gate, approval, day = _community_post(conn, monkeypatch, tmp_path)
+    conn.execute("UPDATE community_groups SET rules_confirmed = 0")
+    conn.commit()
+    pw.at(monkeypatch, f"{day}T10:00:00+08:00")
+    assert gate.approve(approval).answer == "recorded"
+    cards.sweep(conn)
+    line = _community_line(discord_double, approval)
+    assert "It goes out" not in line
+    assert "the group's rules aren't confirmed by Ting Yu" in line
+
+
+def test_a_community_post_approved_with_browser_off_says_nothing_goes_through_the_browser(conn, env, monkeypatch, discord_double, tmp_path):
+    gate, approval, day = _community_post(conn, monkeypatch, tmp_path)
+    pw.at(monkeypatch, f"{day}T10:00:00+08:00")
+    assert gate.approve(approval).answer == "recorded"
+    monkeypatch.setattr("jura_growth.agents.publish.group_kinds.browser_on", lambda: False)
+    cards.sweep(conn)
+    line = _community_line(discord_double, approval)
+    assert "It goes out" not in line and "community.browser is off" in line
 
 
 # --- 09: a typed approval of a refused card, in a new process ---------------------------------------

@@ -236,6 +236,17 @@ def _item(conn: sqlite3.Connection, subject: str, kinds: tuple[str, ...]) -> ite
     return found
 
 
+def _held_back(conn: sqlite3.Connection, item: items.Item, found) -> str | None:
+    """Why the group stops this item now, as the claim would say it. These may clear before it lapses."""
+    if found is None:
+        return None
+    group = _group(conn, found.content["group"])
+    reason = problem(group, STEP[item.kind])
+    if reason or group is None or item.kind != items.COMMUNITY_POST_ITEM:
+        return reason
+    return rules_problem(group, found.content["text"], date.fromisoformat(found.content["day"]))
+
+
 class _GroupKind:
     name = ""
     feed_channel = "community"  # a group item's decision reports in #community, as its run update does
@@ -243,6 +254,23 @@ class _GroupKind:
     used_word = "claimed by a publish run"
 
     def feed_approved(self, conn: sqlite3.Connection, subject: str) -> str:
+        """What happens next, kept true. The switch, the group's own rules and the last publish run
+        of the item's last day can each leave nothing to post it, and a pause holds it back."""
+        from jura_growth.agents.publish import kinds
+
+        item = _item(conn, subject, self.item_kinds)
+        found = kinds.read(conn, item)
+        end = closes(item, found.content if found else None)
+        off = self.switched_off(conn, subject)
+        if off:
+            return f"{off}, and this lapses {timeutil.when(end)}."  # it opens with a config key, as written
+        held = _held_back(conn, item, found)
+        if held:
+            return f"It can't go out yet: {held}. If that stands, this lapses {timeutil.when(end)}."
+        latest = items.latest_request(conn, item)
+        decided = timeutil.parse(latest.decided_at) if latest and latest.decided_at else timeutil.now_sgt()
+        if decided >= limits.last_run_on(end.date()):
+            return f"No publish run is left, so this lapses {timeutil.when(end)}."
         return items.unless_paused(conn, "It goes out on a publish run, inside the posting window.")
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
