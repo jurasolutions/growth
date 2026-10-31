@@ -171,7 +171,7 @@ def strip(snapshot, *, short: bool = False) -> list[str]:
         item = f"`{failure.job}` failed on {timeutil.when(failure.at)}." + (f"\n> {error}" if error else "")
         items.append(worded(item, f"Check `{failure.job}`: it failed on {timeutil.when(failure.at)}." + (f"\n> {error}" if error else "")))
     if snapshot.drift is not None:
-        items.append(snapshot.drift.line)
+        items.append(worded(snapshot.drift.line, snapshot.drift.short))
     items += _missed_counts(snapshot) if short else _missed(snapshot)
     waiting_in_outbox = max(snapshot.undelivered, snapshot.outbox)
     if waiting_in_outbox:
@@ -181,7 +181,8 @@ def strip(snapshot, *, short: bool = False) -> list[str]:
                             f"Run `jura-growth discord test`: {count} {verb} in the outbox."))
     requests = snapshot.approvals or ()
     waiting = [r for r in requests if not r.posted and r.reading in (mission.Reading.WAITING, mission.Reading.APPROVED)]
-    items += [f"{r.id} ({r.kind}) has no card: {r.refused}. Nothing goes out, and it lapses {timeutil.when(r.decide_by)}."
+    items += [worded(f"{r.id} ({r.kind}) has no card: {r.refused}. Nothing goes out, and it lapses {timeutil.when(r.decide_by)}.",
+                     f"Let {r.id} lapse {timeutil.when(r.decide_by)}: it has no card, so nothing goes out.")
               for r in waiting if r.refused]
     unposted = [r.id for r in waiting if not r.refused]
     if unposted:
@@ -219,6 +220,12 @@ class Drift:
         return (f"Scheduled jobs are running about {_plural(abs(self.hours), 'hour')} off: `{self.job}` is due at {self.due} SGT and "
                 f"ran at {self.ran} SGT. Posting and sending windows are missed while this lasts. Most likely launchd kept "
                 "an old time zone. Restart the Mac once. If it's still off tomorrow, run `jura-growth schedule install`.")
+
+    @property
+    def short(self) -> str:
+        """The line with the action first, short enough for a row on the morning picture."""
+        return (f"Restart the Mac once: scheduled jobs run about {_plural(abs(self.hours), 'hour')} off "
+                f"(`{self.job}` due {self.due}, ran {self.ran}).")
 
 
 DRIFT_MINIMUM = timedelta(minutes=30)

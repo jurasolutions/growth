@@ -190,6 +190,8 @@ REQUEST_FAILURE = mission.Failure("community", datetime(2026, 11, 9, 7, 30, tzin
     (dict(pause_file="holiday"), "Delete the PAUSE file on the Mac"),
     (dict(paused=(("outreach", "3 failed runs in a row"),)), "Send `/growth resume outreach`"),
     (dict(failures=(REQUEST_FAILURE,)), "Check `community`"),
+    (dict(drift=health.Drift("social", "07:30", "22:30", -9)), "Restart the Mac once: scheduled jobs run about 9 hours off (`social` due 07:30, ran 22:30)."),
+    (dict(approvals=(world.request(412, "social-post", refused="Discord would mask part of the post", posted=False),)), "Let A-0412 lapse Tue 10 Nov, 16:00 SGT: it has no card"),
     (dict(undelivered=2), "Run `jura-growth discord test`"),
     (dict(installs={"backup": health.NOT_INSTALLED}), "Run `jura-growth schedule install`"),
     (dict(installs={"social": health.OUT_OF_DATE}), "Run `jura-growth schedule install` again"),

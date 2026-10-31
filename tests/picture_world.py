@@ -120,6 +120,9 @@ def health_pages() -> dict[str, mission.Snapshot]:
     base = dict(slots=morning(), morning=figures(), yesterday=figures(), approvals=())
     pages = {cause: snap(**{**base, **fields}) for cause, fields, _ in HEALTH_ITEMS}
     pages.update({cause: snap(**base, plugin_lines=(line,)) for cause, line in PLUGIN_WORDINGS.items()})
+    pages["schedule drift"] = snap(**base, drift=health.Drift("scout-research", "06:30", "21:30", -9))
+    pages["a refused card"] = snap(**{**base, "approvals": (request(
+        412, "social-post", refused="Discord would mask part of the post, so its card can't show the exact text", posted=False),)})
     return pages
 
 
