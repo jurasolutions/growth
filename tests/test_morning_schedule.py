@@ -21,12 +21,11 @@ MORNING = {
     "outreach-requests": {"business_days": "08:30"},
     "one-pager": {"daily": "09:00"},
 }
-# The approvals-first PRD moves the digest to 18:05; that branch changes its line here when it lands.
 THE_REST = {
     "heartbeat": {"daily": "12:00"},
     "scout-send": {"business_days_every": {"start": "09:30", "end": "16:30", "minutes": 10}},
     "scout-sync": {"business_days": "16:45"},
-    "digest": {"daily": "17:30"},
+    "digest": {"daily": "18:05"},
     "publish": {"daily_every": {"start": "09:00", "end": "17:40", "minutes": 20}},
     "backup": {"daily": "23:30"},
 }

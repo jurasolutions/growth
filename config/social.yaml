@@ -43,6 +43,10 @@ themes:
     # The 48 hours before 07:30 on a Monday are a weekend, so "this week"
     # accepts developments from the last 7 days, newest first.
     max_source_age_days: 7
+    words: {facebook: [160, 280], instagram: [130, 240]}
+    carousel: true
+    min_items: 2
+    needs_visual: true
 
   ai-finding:
     label: AI finding
@@ -54,6 +58,10 @@ themes:
     # Studies take longer to be written up than news, so a finding may be a
     # month old.
     max_source_age_days: 30
+    words: {facebook: [160, 280], instagram: [130, 240]}
+    carousel: true
+    min_items: 3
+    needs_visual: true
 
   from-the-toolbox:
     label: From the toolbox
@@ -68,15 +76,26 @@ themes:
     layout: list
     min_sources: 1
     max_sources: 4
+    words: {facebook: [120, 220], instagram: [110, 200]}
+    carousel: true
+    min_items: 3
+    needs_visual: true
 
   ai-news:
     label: AI news
-    brief: "One AI story from the last few days: what happened, and what it means for a small business."
+    brief: "One AI story from the last few days, in depth: what happened, why it matters, and what a small business should do about it."
     layout: headline
     news: true
-    min_sources: 1
-    max_sources: 2
+    # The company's own announcement and one independent report: enough to say something
+    # the headline doesn't (Ting Yu, 2026-10-31: "more detailed insights").
+    min_sources: 2
+    min_hosts: 2
+    max_sources: 3
     max_source_age_days: 3
+    words: {facebook: [160, 280], instagram: [130, 240]}
+    carousel: true
+    min_items: 3
+    needs_visual: true
 
   ai-good-read:
     label: Worth reading
@@ -84,21 +103,28 @@ themes:
     layout: headline
     min_sources: 1
     max_sources: 1
+    words: {facebook: [120, 220], instagram: [110, 200]}
+    carousel: true
+    min_items: 2
+    needs_visual: true
 
   automation-tip:
     label: Automation tip
     brief: "One small thing a team can automate this week, with AI or without."
     layout: headline
     max_sources: 2
+    words: {facebook: [120, 220], instagram: [110, 200]}
+    carousel: true
+    min_items: 2
+    needs_visual: true
 
 # --- platforms (PRD §5.3) ----------------------------------------------------
 #
 # publish_mode is `draft` (Ting Yu posts by hand from #social-drafts) or
 # `browser` (browser publishing PRD §5.10): each draft that passes the brand
-# gate becomes a publish item with its own approval card in #approvals, and the
-# publish job posts it through Chrome once he approves, by 18:00 on its day.
-# `browser` also needs page_url, the page the run posts to; without it the
-# draft is posted to #social-drafts for posting by hand. identity is the
+# gate becomes a publish item with its own approval card in #approvals, which he
+# decides by 17:00 on its day, and the publish job posts it through Chrome by 18:00.
+# `browser` also needs page_url, the page the run posts to. identity is the
 # posting identity the run checks before typing (defaults to the Jura Solutions
 # page or account). Facebook first, then Instagram, then LinkedIn (BP §5.1).
 #
@@ -121,23 +147,26 @@ platforms:
   facebook:
     label: Facebook Page
     enabled: true
-    words: [60, 120]
+    words: [90, 180] # a theme's own `words` win
     hashtags_max: 2
     links: post
     image: {width: 1200, height: 630}
-    publish_mode: draft
-    page_url: null
+    publish_mode: browser
+    page_url: https://www.facebook.com/jurasolutionssg
 
   instagram:
     label: Instagram
     enabled: true
-    words: [50, 120]
-    hashtags_max: 8
+    words: [80, 160] # a theme's own `words` win
+    # Neither limit is confirmed from Meta. Lowering them costs nothing, and a caption the
+    # composer cuts short would read back as a mismatch and pause publishing.
+    hashtags_max: 5
+    chars_max: 2200
     links: bio # captions don't make links clickable: write "Link in bio", no URL
     image: {width: 1080, height: 1350}
-    carousel: {days: [mon, thu], max_slides: 5}
-    publish_mode: draft
-    page_url: null
+    carousel: {days: [mon, thu], max_slides: 5} # plus any theme with `carousel: true`
+    publish_mode: browser
+    page_url: https://www.instagram.com/jura_solutions/
 
 # --- brand rules specific to social posts (PRD §4) ---------------------------
 

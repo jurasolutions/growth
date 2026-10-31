@@ -1,0 +1,2 @@
+- https://www.example.com/press/invoice-reader | Example Software | {today} | Our new model reads supplier invoices
+- https://news.example.org/ai/invoice-reader-review | Example News | {today} | What the invoice reader gets right and wrong

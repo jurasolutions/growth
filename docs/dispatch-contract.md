@@ -159,6 +159,7 @@ and the contract version is unchanged.
 - `approvals` (only from `approvals`): the requests listed, each
   `{"id": "A-0412", "kind": "outreach-email", "decide_by": "2026-11-10T16:30:00+08:00", "title": "…", "args": []}`.
   A request whose `args` is not empty needs them typed (`group-rules`), so it gets no buttons.
+  A `social-post` or `outreach-email` request whose card hasn't gone out answers `refused` to an approve, and a skip is recorded as usual.
 - `handoff` (only from `apps handoffs`): the build handoffs waiting for a builder, oldest first,
   as `jura-growth apps handoffs --json` prints them on the Mac (Dispatch sends `--json` to
   `remote`, never to `apps handoffs`):

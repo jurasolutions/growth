@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
 
-from jura_growth import approvals, db, log, paths, timeutil
+from jura_growth import approvals, db, discord, log, paths, timeutil
 from jura_growth.agents import LISTED, YOU, PendingItem
 from jura_growth.agents.apps import backlog, builds, catalog
 
@@ -124,6 +124,9 @@ class AppRelease:
 
     name = KIND
     used_word = "claimed"
+
+    def feed_approved(self, conn: sqlite3.Connection, subject: str) -> str:
+        return f"Next: `/growth apps release-plan {builds.app_id_of(subject)}` prints the merge of exactly this commit."
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         row = _built(conn, builds.app_id_of(subject))
@@ -383,6 +386,11 @@ def record_released(conn: sqlite3.Connection, app_id: str, *, task: str) -> Outc
         log.event(conn, "apps.backlog.release_failed", {"app_id": app_id, "error": f"{type(error).__name__}: {error}"},
                   level="error", agent=catalog.NAME)
         lines.append(f"The backlog couldn't be updated ({type(error).__name__}); mark {app_id} live in app-backlog.yaml by hand.")
+    # The action's own report, as #outreach-sent and the publish run's update are (FD2).
+    from jura_growth.agents import apps  # the plug-in imports this module
+
+    discord.post(conn, apps.RUN_UPDATE_DISCORD_CHANNEL, f"**{app_id} released** · {builds.app_name(conn, app_id)} is live at {short(sha)} ({task}).",
+                 username="Jura growth · apps", dedupe=False, suppress_embeds=True)
     return Outcome(True, lines, claimed)
 
 

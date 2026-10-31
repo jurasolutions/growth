@@ -39,6 +39,26 @@ SPECS = {
         ],
     },
     "tool": {"layout": "tool", "overline": "From the toolbox", "tool": "quote-builder"},
+    "flow": {
+        "layout": "headline",
+        "overline": "Automation tip",
+        "headline": "Let your accounting software send the first invoice reminder",
+        "visual": {"type": "flow", "steps": [{"icon": "file-text", "label": "The invoice falls due"}, {"icon": "clock", "label": "A few days pass"},
+                                             {"icon": "mail", "label": "The reminder goes out"}]},
+    },
+    "compare": {
+        "layout": "headline",
+        "overline": "AI news",
+        "headline": "What changes when a tool reads the invoice first",
+        "visual": {"type": "compare", "left": {"icon": "clock", "label": "Before", "points": ["Typed in by hand", "Read at the end of the day"]},
+                   "right": {"icon": "zap", "label": "After", "points": ["Read on arrival", "Checked by your team"]}},
+    },
+    "figure": {
+        "layout": "headline",
+        "overline": "AI finding",
+        "headline": "A layout test for the figure card",
+        "visual": {"type": "figure", "value": "50%", "label": "a placeholder for a layout test", "source": "Sample"},
+    },
 }
 
 

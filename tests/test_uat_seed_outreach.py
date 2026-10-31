@@ -54,7 +54,7 @@ def test_today_dates_every_base_row_from_that_day(uat):
     first = rows("SELECT min(started_at) AS first FROM runs")[0]["first"]
     assert first.startswith("2026-11-09")  # eight days back
     factory = rows("SELECT started_at FROM runs WHERE job = 'app-factory' AND started_at LIKE '2026-11-17%'")
-    assert [r["started_at"] for r in factory] == ["2026-11-17T06:31:00+08:00"]
+    assert [r["started_at"] for r in factory] == ["2026-11-17T07:01:00+08:00"]
     lead_233 = rows("SELECT queued_at, send_after FROM outreach_messages WHERE lead_id = 233")[0]
     assert lead_233 == {"queued_at": "2026-11-16T09:12:00+08:00", "send_after": "2026-11-16"}
     batch = rows("SELECT DISTINCT send_after FROM outreach_messages WHERE lead_id BETWEEN 240 AND 260")
@@ -74,20 +74,20 @@ def test_the_previous_business_day_skips_a_public_holiday(uat):
 
 
 @pytest.mark.parametrize("day, why", [(date(2026, 11, 14), "weekend"), (date(2026, 11, 9), "Deepavali")])
-def test_a_day_that_isnt_a_business_day_is_refused_and_seeds_nothing(uat, day, why):
+def test_a_day_that_isnt_a_business_day_is_refused_for_outreach_and_seeds_nothing(uat, day, why):
     with pytest.raises(seed.Refused, match=why):
-        seed.seed(uat, today=day)
+        seed.seed(uat, scenario="shadow-trial", today=day)
     assert not (uat / "data" / "growth.db").exists()
 
 
 def test_the_default_day_is_today_in_sgt(uat):
     seed.seed(uat)
-    assert rows("SELECT 1 FROM runs WHERE job = 'app-factory' AND started_at = '2026-11-17T06:31:00+08:00'")
+    assert rows("SELECT 1 FROM runs WHERE job = 'app-factory' AND started_at = '2026-11-17T07:01:00+08:00'")
 
 
 def test_the_command_line_takes_today(uat):
     assert seed.main([str(uat), "--today", "2026-11-17"]) == 0
-    assert rows("SELECT 1 FROM runs WHERE started_at = '2026-11-17T07:00:00+08:00'")
+    assert rows("SELECT 1 FROM runs WHERE started_at = '2026-11-17T07:30:00+08:00'")
     assert seed.main([str(uat), "--scenario", "base", "--today", "2026-11-14"]) == 2
 
 
@@ -352,34 +352,110 @@ def test_shadow_trial_twice_is_refused(live, window):
 
 LIVE_DATA = paths.JURA_ROOT / "data" / "growth"
 REAL_CONFIG = paths.REPO_ROOT / "config"
-# What the live engine itself may change meanwhile: its database and run locks. The seed's
-# refusals come before it opens anything, and the script's exit status shows they did.
-ENGINE_CHURN = ("growth.db", "locks")
 
 
 def untouched_snapshot() -> dict:
-    found = stat_snapshot(REAL_CONFIG, LIVE_DATA)
-    churn = [str(LIVE_DATA / name) for name in ENGINE_CHURN]
-    return {path: info for path, info in found.items() if not any(path.startswith(c) for c in churn)}
+    """The real config folder, which no job writes. The live data folder can't be compared this
+    way: the live engine writes all over it, at any moment (ticket 08). `SEED_WATCHED` and
+    `planted_live` hold the seed to it instead, whatever the engine does meanwhile."""
+    return stat_snapshot(REAL_CONFIG)
 
 
-@pytest.mark.parametrize("scenario", list(seed.SCENARIOS))
-def test_every_scenario_refuses_the_live_folders_and_changes_nothing(scenario, tmp_path):
-    before = untouched_snapshot()
-    env = {
+# The seed with a planted live env file, so no run of it here can open the real one.
+SEED_PLANTED = """
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("planted_seed", sys.argv[2])
+seed = importlib.util.module_from_spec(spec)
+sys.modules["planted_seed"] = seed
+spec.loader.exec_module(seed)
+seed.LIVE_ENV_FILES = (pathlib.Path(sys.argv[1]),)
+sys.exit(seed.main(sys.argv[3:]))
+"""
+# The same, stopped dead the moment it opens or changes anything in the folder named first, so this
+# can neither race the live engine nor let a write land. Exit 99 is the seed reaching in.
+SEED_WATCHED = """
+import os, sys
+watched = os.path.realpath(sys.argv.pop(1))
+reaching_in = {"open", "sqlite3.connect", "os.mkdir", "os.remove", "os.rename", "os.rmdir", "os.truncate", "shutil.copytree"}
+
+def stop_at_the_folder(event, args):
+    if event in reaching_in and args and isinstance(args[0], (str, bytes, os.PathLike)):
+        path = os.path.realpath(os.fsdecode(args[0]))
+        if path == watched or path.startswith(watched + os.sep):
+            print(f"reached in: {event} {path}", flush=True)
+            os._exit(99)
+
+sys.addaudithook(stop_at_the_folder)
+""" + SEED_PLANTED
+
+
+def seed_args(driver: str, *first: object, tmp_path) -> list[str]:
+    """`driver`, then what it takes before the seed's own arguments, with the planted live file."""
+    planted = tmp_path / "planted-live.env"
+    planted.write_text("", encoding="utf-8")
+    return [sys.executable, "-c", driver, *map(str, first), str(planted), str(Path(seed.__file__))]
+
+
+def refusal_env(data, root, tmp_path) -> dict:
+    return {
         "PATH": "/usr/bin:/bin",
-        "JURA_ROOT": str(paths.JURA_ROOT),
-        "JURA_GROWTH_DATA_DIR": str(LIVE_DATA),
+        "JURA_ROOT": str(root),
+        "JURA_GROWTH_DATA_DIR": str(data),
         "JURA_GROWTH_OUTPUTS_DIR": str(tmp_path / "outputs"),
         "JURA_PRD_DIR": str(tmp_path / "prd"),
         "JURA_GROWTH_CONFIG_DIR": str(REAL_CONFIG),
         send.RESEND_BASE_ENV: STUB,
     }
-    args = [sys.executable, str(Path(seed.__file__)), str(LIVE_DATA), "--scenario", scenario, "--lead", "240"]
+
+
+def planted_live(tmp_path):
+    """A stand-in jurasolutions/ with a live-looking data folder that nothing else writes to, so
+    every file in it can be compared, with no exceptions for the engine's own."""
+    root = tmp_path / "jurasolutions"
+    data = root / "data" / "growth"
+    for name, text in (("growth.db", ""), ("daily-summary.json", "{}"), ("app-backlog.yaml", "[]"), ("runs/2026-11-01.jsonl", "{}\n"),
+                       ("discord-outbox/2026-11-01.jsonl", "{}\n"), ("locks/publish.lock", ""), ("one-pager/2026-11-01.png", "")):
+        (data / name).parent.mkdir(parents=True, exist_ok=True)
+        (data / name).write_text(text, encoding="utf-8")
+    return root, data
+
+
+@pytest.mark.parametrize("scenario", list(seed.SCENARIOS))
+def test_every_scenario_refuses_the_live_folders_without_opening_them(scenario, tmp_path):
+    env = refusal_env(LIVE_DATA, paths.JURA_ROOT, tmp_path)
+    args = [*seed_args(SEED_WATCHED, LIVE_DATA, tmp_path=tmp_path), str(LIVE_DATA), "--scenario", scenario, "--lead", "240"]
     ran = subprocess.run(args, env=env, capture_output=True, text=True, timeout=60)
     assert ran.returncode == 2 and ran.stdout.startswith("refused:"), ran.stdout + ran.stderr
-    assert untouched_snapshot() == before
     assert not (tmp_path / "outputs").exists() and not (tmp_path / "prd").exists()
+
+
+@pytest.mark.parametrize("scenario", list(seed.SCENARIOS))
+def test_every_scenario_refuses_a_live_looking_folder_and_changes_nothing(scenario, tmp_path):
+    root, data = planted_live(tmp_path)
+    before = stat_snapshot(root)
+    args = [*seed_args(SEED_PLANTED, tmp_path=tmp_path), str(data), "--scenario", scenario, "--lead", "240"]
+    ran = subprocess.run(args, env=refusal_env(data, root, tmp_path), capture_output=True, text=True, timeout=60)
+    assert ran.returncode == 2 and ran.stdout.startswith("refused:"), ran.stdout + ran.stderr
+    assert stat_snapshot(root) == before
+    assert not (tmp_path / "outputs").exists() and not (tmp_path / "prd").exists()
+
+
+def test_those_two_checks_would_catch_a_seed_that_got_in(tmp_path):
+    """The same folder, in a window the seed accepts. The planted snapshot shows what it wrote, and
+    the watcher stops it at its first touch, so a refusal that broke couldn't pass either test."""
+    _, data = planted_live(tmp_path)
+    elsewhere = tmp_path / "another-root"  # now the folder isn't inside jurasolutions/, so it's let in
+    env = {**refusal_env(data, elsewhere, tmp_path), "JURA_GROWTH_ENV_FILE": str(tmp_path / "no.env"),
+           "JURA_GROWTH_OUTPUTS_DIR": str(data / "outputs"), "JURA_PRD_DIR": str(data / "prd"),
+           "JURA_GROWTH_CONFIG_DIR": str(data / "config")}
+    before = stat_snapshot(data)
+    watched = [*seed_args(SEED_WATCHED, data, tmp_path=tmp_path), str(data), "--scenario", "drift"]
+    ran = subprocess.run(watched, env=env, capture_output=True, text=True, timeout=60)
+    assert ran.returncode == 99, ran.stdout + ran.stderr
+    let_in = [*seed_args(SEED_PLANTED, tmp_path=tmp_path), str(data), "--scenario", "drift"]
+    ran = subprocess.run(let_in, env=env, capture_output=True, text=True, timeout=60)
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert stat_snapshot(data) != before
 
 
 @pytest.mark.parametrize("scenario", list(seed.SCENARIOS))

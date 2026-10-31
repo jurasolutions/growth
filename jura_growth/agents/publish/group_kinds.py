@@ -38,7 +38,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from jura_growth import approvals, brand_check, db, timeutil
+from jura_growth import approvals, brand_check, db, discord, timeutil
 from jura_growth.agents.publish import hosts, items, limits
 
 ANSWERS_DAYS = 3  # BP §5.5: answers are decided by 18:00 on the third day after they are raised
@@ -236,10 +236,40 @@ def _item(conn: sqlite3.Connection, subject: str, kinds: tuple[str, ...]) -> ite
     return found
 
 
+def _held_back(conn: sqlite3.Connection, item: items.Item, found) -> str | None:
+    """Why the group stops this item now, as the claim would say it. These may clear before it lapses."""
+    if found is None:
+        return None
+    group = _group(conn, found.content["group"])
+    reason = problem(group, STEP[item.kind])
+    if reason or group is None or item.kind != items.COMMUNITY_POST_ITEM:
+        return reason
+    return rules_problem(group, found.content["text"], date.fromisoformat(found.content["day"]))
+
+
 class _GroupKind:
     name = ""
+    feed_channel = "community"  # a group item's decision reports in #community, as its run update does
     item_kinds: tuple[str, ...] = ()
     used_word = "claimed by a publish run"
+
+    def feed_approved(self, conn: sqlite3.Connection, subject: str) -> str:
+        """What happens next, kept true. The switch, the group's own rules and the last publish run
+        of the item's last day can each leave nothing to post it, and a pause holds it back."""
+        from jura_growth.agents.publish import kinds
+
+        item = _item(conn, subject, self.item_kinds)
+        found = kinds.read(conn, item)
+        end = closes(item, found.content if found else None)
+        off = self.switched_off(conn, subject)
+        if off:
+            return f"{off}, and this lapses {timeutil.when(end)}."  # it opens with a config key, as written
+        held = _held_back(conn, item, found)
+        if held:
+            return f"It can't go out yet: {held}. If that stands, this lapses {timeutil.when(end)}."
+        if items.no_run_left(conn, item, end.date()):
+            return f"No publish run is left, so this lapses {timeutil.when(end)}."
+        return items.unless_paused(conn, "It goes out on a publish run, inside the posting window.")
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         from jura_growth.agents.publish import kinds
@@ -299,7 +329,7 @@ class CommunityPost(_GroupKind):
         group = _group(conn, content["group"]) or {}
         day = date.fromisoformat(content["day"])
         qa = json.loads(post.get("qa_json") or "{}")
-        lines = [f"```\n{content['text'].strip()}\n```"]
+        lines = [f"```\n{discord.no_fence(content['text'].strip())}\n```"]
         links = list(dict.fromkeys(brand_check.find_links(content["text"])))
         lines.append("Links in the text: " + (", ".join(links) if links else "none"))
         if qa.get("brand") == "pass":

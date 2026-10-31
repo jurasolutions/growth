@@ -17,8 +17,9 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+import approval_world as aw
 from jura_growth import approvals, config, db, log, paths, timeutil
-from jura_growth.agents.publish import claim, items
+from jura_growth.agents.publish import claim, items, kinds
 from jura_growth.cli import cli
 from jura_growth.origin import Origin
 
@@ -112,12 +113,26 @@ def draft(conn, platform: str = "facebook", *, day: date = DAY, text: str = TEXT
 def item(conn, platform: str = "facebook", **given) -> tuple[items.Item, approvals.Approval]:
     """A draft, its publish item and its pending request."""
     post = draft(conn, platform, **given)
-    made = items.create_social(conn, post, run_id=None)
+    if given.get("images") == []:
+        # `create_social` raises no card for a post with no image; a text-only item from before
+        # that rule still reads like this, and the claim's tests still cover it.
+        content = kinds.social_content(conn, post)
+        assert content is not None
+        made = items._make(conn, items.SOCIAL_ITEM, platform, post, content, content["day"], run_id=None)
+    else:
+        made = items.create_social(conn, post, run_id=None)
     assert made.item is not None and made.approval is not None, made.why
     return made.item, made.approval
 
 
 def decide(conn, approval, decision: str = "approve", monkeypatch=None):
+    """Ting Yu's answer to a request whose card has gone out, as the sweep would have sent it."""
+    aw.card_goes_out(conn, approval)
+    return decide_with_no_card(conn, approval, decision, monkeypatch)
+
+
+def decide_with_no_card(conn, approval, decision: str = "approve", monkeypatch=None):
+    """A decision on the request exactly as it stands, whether or not its card went out."""
     if monkeypatch is not None:
         monkeypatch.setenv("CONTROL_DISCORD_USER_ID", CONTROL_ID)
     return approvals.decide(conn, approval.id, decision, actor=f"discord:{CONTROL_ID}", origin=Origin.ssh(),

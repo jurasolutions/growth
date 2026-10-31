@@ -15,7 +15,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from jura_growth import brand_check, config, db, digest, paths, runner, timeutil
+import publish_world as pw
+from discord_double import discord_double  # noqa: F401 - a fixture
+from jura_growth import approvals, brand_check, config, db, digest, paths, runner, timeutil
 from jura_growth.agents import social
 from jura_growth.agents.social import checks, history, linkcheck, plan, render, rhythm, submit, toolbox
 from jura_growth.agents.social.settings import load
@@ -48,9 +50,15 @@ If chasing payments takes up more of your week than it should, we're happy to lo
 
 #SmallBusiness #Automation #Invoicing
 """,
-    "facebook.md": """Chasing late invoices by hand? Your accounting software can send the first reminder for you.
+    "facebook.md": """Chasing late invoices yourself? Your accounting software can send the first reminder for you.
 
 Xero and QuickBooks both let you set an automatic reminder a few days after the due date. Write the message once, include the invoice number and a payment link, and it goes out for every unpaid invoice. Your team still decides who follows up by phone.
+
+The setting is already in the software you pay for, so there is nothing new to buy and nothing to install.
+
+Picture a small trading firm where the office manager spends Friday afternoon writing the same polite email. With the reminder on, those emails go out on their own, and Friday goes back to the customers who need a real conversation.
+
+This week, write one reminder in your own voice and switch it on for a single group of customers. Read what went out at the end of the week, then widen it.
 
 More small automations like this: https://jurasolutions.sg
 
@@ -60,9 +68,15 @@ More small automations like this: https://jurasolutions.sg
 
 Xero and QuickBooks both let you set an automatic reminder a few days after the due date. You write the message once, add the invoice number and a payment link, and it goes out for every unpaid invoice. Your team still decides when to pick up the phone.
 
+The setting is already in the software you pay for, so there is nothing new to buy.
+
+Picture a small trading firm where the office manager spends Friday afternoon writing the same polite email. With the reminder on, Friday goes back to the customers who need a real conversation.
+
+This week, write one reminder in your own voice and switch it on for a single group of customers.
+
 Link in bio for more small automations.
 
-#SmallBusiness #Automation #Invoicing #Xero #QuickBooks #Singapore
+#SmallBusiness #Automation #Invoicing #Singapore
 """,
     "sources.md": "",
     "card.json": json.dumps(
@@ -70,6 +84,19 @@ Link in bio for more small automations.
             "layout": "headline",
             "headline": "Let your accounting software send the first invoice reminder",
             "subtitle": "Write the message once. It goes out for every unpaid invoice.",
+            "visual": {
+                "type": "flow",
+                "caption": "How the first reminder runs",
+                "steps": [
+                    {"icon": "file-text", "label": "The invoice falls due"},
+                    {"icon": "clock", "label": "A few days pass"},
+                    {"icon": "mail", "label": "The reminder goes out"},
+                ],
+            },
+            "items": [
+                {"title": "Write the message once", "detail": "Add the invoice number and a payment link, so the customer can pay in one step.", "icon": "pen-line"},
+                {"title": "Keep the phone call for your team", "detail": "Decide who follows up when a reminder goes unanswered.", "icon": "phone"},
+            ],
         }
     ),
 }
@@ -89,11 +116,13 @@ If you'd like a second pair of eyes on where to begin, that's the work we do at 
 """,
     "facebook.md": f"""Two AI updates worth knowing about this week.
 
-IMDA has opened a programme to help smaller firms try AI on everyday work: {IMDA}
+IMDA has opened a programme to help smaller firms try AI on everyday work, starting with document handling and customer replies. The official page sets out who can apply and what help is on offer: {IMDA}
 
-Sheets can now suggest a formula from a plain sentence, according to Example News: {SHEETS}
+Sheets can now suggest a formula from a plain sentence, according to Example News. You describe the sum you want and it drafts the formula for you to check: {SHEETS}
 
-Small, low-risk ways to start with AI keep appearing. Pick the task your team repeats most often and try it there first, on your own data. More ideas at https://jurasolutions.sg
+Both arrive as more firms ask where to begin, and both make that first step smaller. Picture a small clinic that keeps its monthly claims in a spreadsheet. The person who closes the month can describe the total in plain words and check the answer, with nothing touching the accounts. You stay in charge, because the person who knows the work reads every answer before it goes anywhere else.
+
+This week, pick the task your team repeats most often and try it there first, on your own data. More ideas at https://jurasolutions.sg
 
 #AI #SmallBusiness
 """,
@@ -104,6 +133,10 @@ IMDA has opened a programme to help smaller firms try AI on everyday work, start
 Example News reports that Sheets can now suggest a formula from a plain sentence.
 
 The first step into automation keeps getting smaller. You can try a narrow task on your own data before anything touches your customers.
+
+Picture a small clinic that keeps its monthly claims in a spreadsheet. The person who closes the month can describe the total in plain words and check the answer. You stay in charge, because the person who knows the work reads every answer first.
+
+This week, pick the task your team repeats most often and try it there first.
 
 Link in bio for both stories.
 
@@ -116,8 +149,8 @@ Link in bio for both stories.
             "headline": "Two AI updates worth a look this week",
             "subtitle": "What changed, and what it means for a small team.",
             "items": [
-                {"title": "IMDA opens a programme for smaller firms trying AI", "detail": "It starts with documents and customer replies.", "source": "IMDA"},
-                {"title": "Sheets suggests formulas from a plain sentence", "detail": "Describe the sum you want and it drafts the formula.", "source": "Example News"},
+                {"title": "IMDA opens a programme for smaller firms trying AI", "detail": "It starts with documents and customer replies.", "source": "IMDA", "icon": "landmark"},
+                {"title": "Sheets suggests formulas from a plain sentence", "detail": "Describe the sum you want and it drafts the formula.", "source": "Example News", "icon": "file-check"},
             ],
         }
     ),
@@ -273,7 +306,8 @@ def test_carousel_days_and_publish_mode(monkeypatch):
     assert ig.carousel_on(date(2026, 10, 26)) and ig.carousel_on(date(2026, 10, 29))
     assert not ig.carousel_on(date(2026, 10, 27))
     assert not settings.platforms["linkedin"].carousel_on(date(2026, 10, 26))
-    assert all(p.publish_mode == "draft" for p in settings.platforms.values())
+    assert {p.name: p.publish_mode for p in settings.platforms.values()} == {
+        "facebook": "browser", "instagram": "browser", "linkedin": "draft"}
     # `auto` was dropped for `browser` (browser publishing PRD §3.3); see test_publish_items.py.
     platforms = dict(config.agent_config("social")["platforms"])
     platforms["facebook"] = {**platforms["facebook"], "publish_mode": "auto"}
@@ -373,9 +407,9 @@ def test_news_variants_pass_with_their_sources(platform):
 
 def test_word_ranges():
     assert any("120–220 words" in m for m in channel_messages(check("Short post. https://jurasolutions.sg", "linkedin")))
-    assert any("60–120 words" in m for m in channel_messages(check(LI, "facebook")))
+    assert any("90–180 words" in m for m in channel_messages(check("Short post. https://jurasolutions.sg", "facebook")))
     long_caption = IG.replace("Link in bio", " ".join(["Your team keeps the credentials."] * 20) + " Link in bio")
-    assert any("50–120 words" in m for m in channel_messages(check(long_caption, "instagram")))
+    assert any("80–160 words" in m for m in channel_messages(check(long_caption, "instagram")))
 
 
 def test_word_count_skips_links_and_hashtags():
@@ -386,9 +420,10 @@ def test_hashtag_limits_and_position():
     too_many = LI.replace("#SmallBusiness #Automation #Invoicing", "#SmallBusiness #Automation #Invoicing #Xero")
     assert any("at most 3 hashtags" in m for m in channel_messages(check(too_many, "linkedin")))
     assert any("at most 2 hashtags" in m for m in channel_messages(check(FB.replace("#Automation", "#Automation #Xero"), "facebook")))
-    nine = IG.replace("#Singapore", "#Singapore #A #B #C")
-    assert any("at most 8 hashtags" in m for m in channel_messages(check(nine, "instagram")))
-    assert check(IG.replace("#Singapore", "#Singapore #Admin #Finance"), "instagram").passed  # exactly 8
+    # Instagram's cap fell from 8 to 5 (reviews/technical.md N9).
+    too_many_tags = IG.replace("#Singapore", "#Singapore #A #B")
+    assert any("at most 5 hashtags" in m for m in channel_messages(check(too_many_tags, "instagram")))
+    assert check(IG.replace("#Singapore", "#Singapore #Admin"), "instagram").passed  # exactly 5
     middle = LI.replace("This week, try", "This week #Automation, try")
     assert any("last line" in m for m in channel_messages(check(middle, "linkedin")))
 
@@ -515,7 +550,9 @@ def run_submit(conn, folder, **kwargs):
     return submit.submit(conn, folder, offline=True, **kwargs)
 
 
-def test_submit_delivers_everything(env, conn, linkedin_on):
+def test_submit_delivers_everything(env, conn, monkeypatch, linkedin_on):
+    """Draft mode, the way back (AF5). The next test is the same day in browser mode."""
+    pw.social_config(monkeypatch, browser=())
     folder = write(paths.work_dir("social") / "2026-10-27", TIP)
     outcome = run_submit(conn, folder)
     assert outcome.status == "delivered", outcome.text()
@@ -523,7 +560,8 @@ def test_submit_delivers_everything(env, conn, linkedin_on):
     for name in ("linkedin.md", "facebook.md", "instagram.md", "card.json", "qa.json"):
         assert (out / name).exists(), name
     sizes = {p: [render.png_size(f) for f in files] for p, files in outcome.images.items()}
-    assert sizes == {"linkedin": [(1200, 627)], "facebook": [(1200, 630)], "instagram": [(1080, 1350)]}
+    # Instagram carries the card and one slide per item, on any day (DP3).
+    assert sizes == {"linkedin": [(1200, 627)], "facebook": [(1200, 630)], "instagram": [(1080, 1350)] * 3}
 
     rows = db.rows(conn, "SELECT * FROM social_posts ORDER BY platform")
     assert [r["platform"] for r in rows] == ["facebook", "instagram", "linkedin"]
@@ -539,7 +577,24 @@ def test_submit_delivers_everything(env, conn, linkedin_on):
     assert not [m for m in outbox() if m["channel"] == "alerts"]
 
 
+def test_browser_mode_writes_the_same_files_and_rows_and_raises_a_card_for_each(env, conn, monkeypatch, discord_double):
+    pw.social_config(monkeypatch, browser=("facebook", "instagram"))
+    outcome = run_submit(conn, write(paths.work_dir("social") / "2026-10-27", TIP))
+    assert outcome.status == "delivered", outcome.text()
+    out = paths.outputs_dir() / "social" / "2026-10-27"
+    for name in ("facebook.md", "instagram.md", "card.json", "qa.json"):
+        assert (out / name).exists(), name
+    sizes = {p: [render.png_size(f) for f in files] for p, files in outcome.images.items()}
+    assert sizes == {"facebook": [(1200, 630)], "instagram": [(1080, 1350)] * 3}
+    rows = db.rows(conn, "SELECT * FROM social_posts ORDER BY platform")
+    assert [(r["platform"], r["status"], r["theme"]) for r in rows] == [("facebook", "draft", "automation-tip"),
+                                                                        ("instagram", "draft", "automation-tip")]
+    assert len(approvals.pending(conn)) == 2 and len(discord_double.posts("approvals")) == 2
+    assert discord_double.posts("social-drafts") == []
+
+
 def test_submit_monday_news_with_carousel(env, conn, monkeypatch, linkedin_on):
+    pw.social_config(monkeypatch, browser=())
     monkeypatch.setenv("JURA_GROWTH_NOW", MONDAY)
     folder = write(paths.work_dir("social") / "2026-10-26", NEWS)
     outcome = run_submit(conn, folder)
@@ -763,7 +818,8 @@ def test_no_draft_command(env, conn):
 # --- digest and precheck ----------------------------------------------------------
 
 
-def test_digest_figures(env, conn, linkedin_on):
+def test_digest_figures(env, conn, monkeypatch, linkedin_on):
+    pw.social_config(monkeypatch, browser=())  # draft mode, the way back: each draft is his to post
     assert social.digest(conn, "2026-10-27")["figures"]["social_drafts_waiting"] == 0
     run_submit(conn, write(paths.work_dir("social") / "2026-10-27", TIP))
     part = social.digest(conn, "2026-10-27")

@@ -28,7 +28,7 @@ import re
 import sqlite3
 from datetime import date, datetime, time
 
-from jura_growth import approval_settings, approvals, caps, db, log, pause, timeutil
+from jura_growth import approval_settings, approvals, caps, db, discord, log, pause, timeutil
 from jura_growth.agents.outreach import store
 
 KIND = "outreach-email"
@@ -81,6 +81,8 @@ class OutreachEmail:
     """The kind `approvals` asks about every `outreach_message:<id>`."""
 
     name = KIND
+    feed_approved = "It goes out on a send run, inside the send window and the day's caps."
+    needs_card = True  # no card, no approval (`on_approve`)
 
     def content(self, conn: sqlite3.Connection, subject: str) -> bytes | None:
         from jura_growth.agents.outreach import queue
@@ -112,7 +114,7 @@ class OutreachEmail:
         lead, row = queue.recipient(conn, message["lead_id"])
         found_by = db.one(conn, "SELECT id, job FROM runs WHERE id = ?", (lead["run_id"],)) if lead["run_id"] else None
         origin = f" from {found_by['job']} run {found_by['id']}" if found_by else ""
-        draft = "\n".join(f"> {line}" if line else ">" for line in message["draft_body"].split("\n"))
+        draft = "\n".join(f"> {line}" if line else ">" for line in discord.no_fence(message["draft_body"]).split("\n"))
         # No address on these lines: privacy removes Ting Yu's own from Discord.
         button = f"Button: {design.CALL_LABEL} → {settings.CALL_URL}"
         template = (
@@ -134,6 +136,16 @@ class OutreachEmail:
             decide_by=_at_cutoff(store.add_business_days(today, decide)),
             use_by=_at_cutoff(store.add_business_days(today, use)),
         )
+
+    def on_approve(self, conn: sqlite3.Connection, subject: str, args: dict) -> None:
+        """No card, no approval: a typed approval of an email whose card hasn't gone out would send
+        words he hasn't read, to a real prospect. The heartbeat posts the card, and it stays open
+        for a skip. The refusal rolls the decision back."""
+        from jura_growth import cards  # cards reaches the kinds through the approvals registry
+
+        latest = approvals.latest(conn, self.name, subject)
+        if latest is not None and latest.posted_at is None:
+            cards.refuse_with_no_card(latest, cards.refusal(conn, latest.id))
 
     # The kind's own switch: `use()` refuses without claiming while it shows.
     def switched_off(self, conn: sqlite3.Connection, subject: str) -> str | None:

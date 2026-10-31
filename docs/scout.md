@@ -29,7 +29,7 @@ Settings: `config/scout.yaml`. Hard limits: `jura_growth/caps.py`. Prompt:
    `jura-growth outreach send-due` sends at most one email per run.
 4. **16:45 `scout-sync`**. `jura-growth outreach sync`: D1 suppression sync, bounces and
    complaints, reply detection (optional), follow-ups due, retention.
-5. **17:30 digest** includes the scout and outreach figures.
+5. **18:05 digest** includes the scout and outreach figures.
 
 ## Commands
 
@@ -276,6 +276,11 @@ reach levi@jurasolutions.sg, so reply detection (`OUTREACH_IMAP_*`) reads that o
 Outlook for Windows ignores `max-width`, so it gets a fixed 600 px table through an MSO
 conditional comment. Long links wrap (`overflow-wrap:anywhere`), and the signature's links are
 44 px tall on a phone.
+
+**No card, no approval.** A typed approval of an email whose card hasn't gone out is refused, and a
+skip still works. The email is the action least able to be taken back, and the card is where its
+words are read. The answer says the card may be posting now: read it in `#approvals` and decide there.
+If Discord didn't take the card, the heartbeat posts it.
 
 **The approval covers the frame.** An `outreach-email` request hashes the recipient, the
 subject, the draft and `compose.frame_fingerprint()`: everything the code adds around the draft,

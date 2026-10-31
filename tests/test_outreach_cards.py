@@ -14,14 +14,23 @@ full address. `queue`, `send-due` and `requeue-shadow` post and edit cards as th
 The sweep over email drafts and cards finds nothing planted (AC-M11.1, AC-M12.1).
 """
 
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
+import yaml
 
 from discord_double import discord_double  # noqa: F401 - a fixture
-from jura_growth import approvals, cards, config, db, discord, suppression, timeutil
+from jura_growth import approvals, cards, config, db, discord, paths, suppression, timeutil
 from jura_growth.agents.outreach import approval, compose, design, queue as queue_mod, requeue, send, store
 from sweep import MASKED_ADDRESS, NAMED_ADDRESS, PERSON, SOURCE_PAGE, assert_clean, d2_secrets, outbox_dir, planted  # noqa: F401
 
-from test_scout_support import at, body_for, decide, fake_resend, live_ready, outreach_requests, scout_env, seed  # noqa: F401
+from jura_growth.origin import Origin
+from test_scout_support import CONTROL_ID, at, body_for, decide, fake_resend, live_ready, outreach_requests, scout_env, seed  # noqa: F401
 
 FRIDAY_0912 = "2026-11-06T09:12:00+08:00"
 SUBJECT = "A free delivery order maker for Example"
@@ -160,6 +169,85 @@ def test_an_email_queued_by_the_morning_run_gets_its_card_ahead_of_the_send_wind
     assert db.scalar(conn, "SELECT status FROM outreach_messages WHERE id = ?", (queued.message_id,)) == "queued"
 
 
+# --- no card, no approval (ticket 11): an email is the action least able to be taken back ----------
+
+
+def decide_as_it_stands(conn, request, decision, monkeypatch):
+    """Ting Yu's answer, with no helper giving the request a card first."""
+    monkeypatch.setenv("CONTROL_DISCORD_USER_ID", CONTROL_ID)
+    return approvals.decide(conn, request.id, decision, actor=f"discord:{CONTROL_ID}", origin=Origin.ssh(), source_ref=None, args={})
+
+
+def test_a_typed_approval_of_an_email_whose_card_has_not_gone_out_is_refused_and_sends_nothing(conn, monkeypatch, lead_233):
+    request = approvals.get(conn, lead_233.approval)
+    assert request.posted_at is None  # no webhook here, so no sweep has posted it
+    at(monkeypatch, "2026-11-10T10:00:00+08:00")
+    answer = decide_as_it_stands(conn, request, "approve", monkeypatch)
+    assert answer.answer == approvals.REFUSED, answer.text
+    assert "card hasn't gone out" in answer.text
+    assert approvals.get(conn, request.id).status == approvals.PENDING
+    sent = fake_resend(monkeypatch)
+    at(monkeypatch, "2026-11-10T10:10:00+08:00")
+    send.send_due(conn)
+    assert sent == []
+    assert approvals.get(conn, request.id).used_at is None
+
+
+def test_an_email_whose_card_has_not_gone_out_can_still_be_skipped(conn, monkeypatch, lead_233):
+    request = approvals.get(conn, lead_233.approval)
+    at(monkeypatch, "2026-11-10T10:00:00+08:00")
+    assert decide_as_it_stands(conn, request, "skip", monkeypatch).answer == approvals.RECORDED
+    assert approvals.get(conn, request.id).status == approvals.SKIPPED
+
+
+def test_an_email_whose_card_went_out_can_be_approved_and_sends(conn, monkeypatch, discord_double):
+    live_ready(monkeypatch)
+    at(monkeypatch, FRIDAY_0912)
+    lead(conn, 233, "info@example.com.sg", "https://example.com.sg/contact")
+    request = approvals.get(conn, queue(conn, 233).approval)
+    assert request.posted_at is not None  # the sweep at the end of `queue` posted it
+    at(monkeypatch, "2026-11-10T10:00:00+08:00")
+    assert decide_as_it_stands(conn, request, "approve", monkeypatch).answer == approvals.RECORDED
+    sent = fake_resend(monkeypatch)
+    at(monkeypatch, "2026-11-10T10:10:00+08:00")
+    send.send_due(conn)
+    assert len(sent) == 1
+
+
+def test_over_remote_an_email_with_no_card_is_refused_and_says_to_read_it_in_approvals(conn, monkeypatch, tmp_path, lead_233):
+    """In a new process. An email is the action least able to be taken back, so the reason matters."""
+    request = approvals.get(conn, lead_233.approval)
+    conn.commit()
+    env_file = tmp_path / "remote.env"
+    env_file.write_text(f"CONTROL_DISCORD_USER_ID={CONTROL_ID}\n", encoding="utf-8")
+    env_file.chmod(0o600)  # as a real one is: a permissions warning would lead the captured answer
+    monkeypatch.setenv("JURA_GROWTH_ENV_FILE", str(env_file))
+    monkeypatch.delenv("CONTROL_DISCORD_USER_ID", raising=False)
+    # The fixture's settings are a patch in this process, and the new one reads files, so it gets
+    # them as files: the same frame, so the same hash, and it isn't superseded.
+    shutil.copytree(paths.REPO_ROOT / "config", tmp_path / "config")
+    (tmp_path / "config" / "scout.yaml").write_text(yaml.safe_dump(config.agent_config("scout")), encoding="utf-8")
+    child = str(Path(__file__).parent / "remote_child.py")
+    env = {**os.environ, "JURA_GROWTH_CONFIG_DIR": str(tmp_path / "config"), "JURA_GROWTH_NOW": "2026-11-10T10:00:00+08:00"}
+    ran = subprocess.run([sys.executable, child, "remote", "--actor", f"discord:{CONTROL_ID}", "--json", "--", "approve", request.id],
+                         capture_output=True, text=True, env=env, timeout=120)
+    body = json.loads(ran.stdout)
+    assert body["exit_code"] == 2 and body["answer"] == approvals.REFUSED, body
+    assert body["text"].startswith("refused: ") and "not understood" not in body["text"]
+    assert "card hasn't gone out" in body["text"] and "read it in #approvals and decide there" in body["text"]
+    assert approvals.get(conn, request.id).status == approvals.PENDING
+
+
+def test_pending_says_an_email_with_no_card_can_t_be_approved_yet(conn, lead_233):
+    from jura_growth import pending
+
+    request = approvals.get(conn, lead_233.approval)
+    conn.commit()
+    answer = pending.render(pending.read())
+    line = next(line for line in answer.splitlines() if line.startswith(f"- {request.id}"))
+    assert line.endswith("no card yet, so it can't be approved")
+
+
 def test_send_due_edits_the_card_to_claimed_after_the_send(conn, monkeypatch, discord_double, lead_233):
     request = approvals.get(conn, lead_233.approval)
     at(monkeypatch, "2026-11-10T10:00:00+08:00")
@@ -229,3 +317,34 @@ def test_the_sweep_finds_nothing_planted_in_email_cards(conn, monkeypatch, disco
     assert_clean(discord_double, outbox_dir(), planted())
     seen = "\n".join(t for r in discord_double.requests for t in r.texts())
     assert MASKED_ADDRESS in seen and SOURCE_PAGE in seen
+
+
+# --- what the feed hears (FD1, functional S7) ----------------------------------------------------
+
+
+def test_an_approved_email_says_when_it_goes_without_promising_today(conn, monkeypatch, discord_double, lead_233):
+    cards.sweep(conn)
+    [request] = outreach_requests(conn)
+    decide(conn, request, "approve", monkeypatch)
+    cards.sweep(conn)
+    [line] = discord_double.contents("outreach-sent")
+    assert line.startswith(f"**{request.id} approved**") and "info@example.com.sg" in line
+    assert "inside the send window and the day's caps" in line and "today" not in line
+
+
+def test_a_lead_that_closes_a_waiting_email_says_why_in_the_cards_words(conn, discord_double, lead_233):
+    cards.sweep(conn)
+    [request] = outreach_requests(conn)
+    store.cancel_queued(conn, [233], "suppressed (unsubscribe)")
+    store.set_lead_status(conn, [233], "unsubscribed")
+    approvals.expire_due(conn)
+    cards.sweep(conn)
+    [line] = discord_double.contents("outreach-sent")
+    assert line.startswith(f"**{request.id} withdrawn**") and line.endswith("The request closed: lead unsubscribed.")
+
+
+def test_a_fence_in_an_email_draft_can_not_swallow_the_rest_of_the_card(conn, monkeypatch, discord_double, lead_233):
+    conn.execute("UPDATE outreach_messages SET draft_body = draft_body || ' ``` a fence' WHERE id = ?", (lead_233.message_id,))
+    registered = approvals.kinds()["outreach-email"]
+    text = registered.kind.preview(conn, f"outreach_message:{lead_233.message_id}").text
+    assert "```" not in text

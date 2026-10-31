@@ -11,8 +11,10 @@ It refuses unless `$UAT` is a temporary folder (made with `mktemp -d`) outside `
 `outputs/growth/`, PRD or `config/` folders. It also refuses a folder it has already seeded. A
 config folder inside `$UAT` starts as a copy of the repo's `config/`.
 
-Every row is dated from `--today` (default: today in SGT), which must be a business day: Dispatch
-stamps decisions with the real clock, so deadlines must line up with the day the UAT runs.
+Every row is dated from `--today` (default: today in SGT): Dispatch stamps decisions with the real
+clock, so deadlines must line up with the day the UAT runs. The outreach scenarios (`outreach-live`,
+`edit-draft`, `shadow-trial`) refuse a day that isn't a business day. The rest don't: social runs
+daily.
 
 - `base` holds S1 (eight days of run history, with the previous business day's scout-send
   traces missing slots and a quiet run six minutes late), S2 (today's app-factory and social
@@ -35,7 +37,7 @@ own scenarios to `SCENARIOS`.
 Part C's publish scenarios (BP-02a) put Facebook in `browser` mode in `$UAT/config` and seed the
 day's Facebook draft through the same code `social submit` uses, which raises its card:
 
-- `social-post` (C1): one pending `social-post` card, decide by 18:00 on the seeded day.
+- `social-post` (C1): one pending `social-post` card, decide by 17:00 on the seeded day.
 - `social-approved` (C2): that card approved through the Dispatch origin, not yet claimed.
 - `claimed-not-closed` (C2): claimed by a publish run that recorded neither done nor stopped, so
   it is `unknown`, publish is paused and #alerts says how to settle it. Seed it between 09:00 and
@@ -56,6 +58,18 @@ target is a page of the fixture site, named with `--page`:
   `--page` names a stop page, `link-out.html`, `injection.html` or `other-identity.html`.
 - `fixture-join` (R5): a join for G9, a good-fit group whose address is `join.html` (membership
   questions) unless `--page profile-only-join.html`, approved.
+
+The approvals-first scenarios (`.scratch/approvals-first-social-depth/reviews/uat.md`, H1 to H5) let
+Ting Yu rehearse the Discord flow with no live post and no Dispatch UAT key. Each prints what it did:
+
+- `social-day [--theme ID] [--offline]`: `tests/uat/social-day/` through the real `social submit`, for
+  today's pending Facebook and Instagram cards. `--offline` keeps Chrome off the network, as a test does.
+- `decide --approval A-nnnn --decision approve|skip`: a decision through the origin Dispatch uses,
+  and the sweep that edits the card and posts the feed line.
+- `app-prd`: a new factory PRD with its `app-build` request.
+- `app-built [--app APP-nnn]`: Dispatch's report of a handed-off build, raising its `app-release`
+  request. It needs `JURA_SITE_REPO` inside `$UAT`, where it makes the stand-in repository.
+- `drift` and `late-wake`: the run rows in the schedule check's criterion (SC1).
 """
 
 from __future__ import annotations
@@ -63,22 +77,35 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
+from urllib.parse import unquote, urlsplit
 
 import yaml
 
-from jura_growth import cards, cloudflare, config, db, holidays, paths, schedule, suppression, timeutil, uat_stub
+from jura_growth import cards, cloudflare, config, db, discord, holidays, paths, schedule, suppression, timeutil, uat_stub
 from jura_growth.agents.outreach import send, store
 
 FOLDERS = ("JURA_GROWTH_DATA_DIR", "JURA_GROWTH_OUTPUTS_DIR", "JURA_PRD_DIR")
 # Folders the seed writes to only when they are set, and then only inside the UAT folder.
 OPTIONAL_FOLDERS = ("JURA_GROWTH_CONFIG_DIR",)
+
+
+def live_env_places() -> tuple[Path, ...]:
+    """Where the live webhooks are. Only a real seed run reads them, read-only: the suite plants
+    `LIVE_ENV_FILES`."""
+    return (paths.REPO_ROOT / ".env", paths.JURA_ROOT / "repos" / "growth" / ".env")
+
+
+LIVE_ENV_FILES = live_env_places()
 HISTORY_DAYS = 8  # S1: run history from eight days before the seeded day
+OUTREACH_SCENARIOS = ("outreach-live", "edit-draft", "shadow-trial")  # only email waits for a business day; social runs daily
 
 # Datasets D2 and D3 (test strategy v3 §3), as uat.md S5 and S6 plant them.
 RESEND_KEY = "re_uat_9Xq7Lm2Pz"
@@ -126,7 +153,7 @@ def day_refusal(day: date) -> str | None:
     if holidays.is_business_day(day):
         return None
     why = holidays.holiday(day) or "weekend"
-    return f"{day.isoformat()} is not a business day ({why}): run the UAT on a business day"
+    return f"{day.isoformat()} is not a business day ({why}): run the outreach steps on a business day"
 
 
 # --- the refusal ----------------------------------------------------------------------------
@@ -152,6 +179,75 @@ def refusal(folder: str | os.PathLike[str]) -> str | None:
         value = os.environ.get(variable)
         if value and not paths.is_within(value, folder):
             return f"{variable} ({value}) is outside {folder}"
+    return _webhook_refusal()
+
+
+def _cannot_leave_this_mac(url: str) -> bool:
+    """A recorder on this Mac, or the suite's double on a host that can't exist (RFC 2606)."""
+    if uat_stub.loopback_url_ok(url, uat_stub.LOOPBACK):
+        return True
+    return not uat_stub._UNSAFE.search(url) and (urlsplit(url).hostname or "").endswith(".invalid")
+
+
+def _webhook_refusal() -> str | None:
+    """Why this window could post to the live Discord, or None. Every scenario's sweep posts to
+    whatever webhooks it finds, and a card's button could decide a live request. A value is never
+    printed: it is a secret."""
+    value = os.environ.get("JURA_GROWTH_ENV_FILE")
+    if not value:
+        return "JURA_GROWTH_ENV_FILE isn't set, so the repo's .env and its live webhooks would be used: point it at your UAT env file"
+    if paths.is_within(value, paths.REPO_ROOT) or paths.is_within(value, paths.JURA_ROOT):
+        return f"JURA_GROWTH_ENV_FILE ({value}) is inside the repo or jurasolutions/, where the live webhooks are: use a file of its own"
+    for name, url in os.environ.items():
+        if name.startswith(discord.WEBHOOK_ENV_PREFIX) and url and not _cannot_leave_this_mac(url):
+            return f"{name} is set in this shell: unset it, and put the test server's webhook in the UAT env file"
+    return _live_webhook_refusal(Path(value))
+
+
+def _webhook_ids(url: str) -> set[int]:
+    """Every number in a Discord webhook's path, as numbers, however it is spelled: any host, API
+    version, slash, query, percent-encoding or leading zero. Empty when it can't be read as a webhook:
+    no ASCII digits for an id, or a `.` or `..` segment, which `httpx` resolves before it sends."""
+    path = urlsplit(url).path
+    while (decoded := unquote(path)) != path:
+        path = decoded
+    parts = [part for part in path.replace("\\", "/").split("/") if part]
+    lowered = [part.lower() for part in parts]
+    if "." in parts or ".." in parts or "webhooks" not in lowered:
+        return set()
+    after = parts[lowered.index("webhooks") + 1:]
+    if not after or not re.fullmatch(r"[0-9]+", after[0]):
+        return set()
+    return {int(part) for part in after if re.fullmatch(r"[0-9]+", part)}
+
+
+def _live_webhook_refusal(env_file: Path) -> str | None:
+    """Why the UAT env file could reach a live webhook, or None. It compares ids, and it refuses
+    what it can't compare: nothing to compare against, a `keychain:` value that `config.secret`
+    would resolve only after this check, or a value with no id."""
+    found = [path for path in LIVE_ENV_FILES if path.exists()]
+    if not found:
+        return "no live env file to compare the webhooks against: export JURA_ROOT, as uat.md says"
+    live: set[int] = set()
+    for path in found:
+        for name, url in config._parse_env(path).items():
+            if not name.startswith(discord.WEBHOOK_ENV_PREFIX) or not url:
+                continue
+            resolved = config._keychain(url.removeprefix("keychain:")) if url.startswith("keychain:") else url
+            found_ids = _webhook_ids(resolved or "")
+            if not found_ids:
+                return f"{name} in the live env file can't be read to compare against: check it, then run this again"
+            live |= found_ids
+    for name, url in config._parse_env(env_file).items():
+        if not name.startswith(discord.WEBHOOK_ENV_PREFIX) or not url or _cannot_leave_this_mac(url):
+            continue
+        if url.startswith("keychain:"):
+            return f"{name} in the UAT env file is a keychain value, which can't be checked: write the test server's webhook itself"
+        found_ids = _webhook_ids(url)
+        if not found_ids:
+            return f"{name} in the UAT env file isn't a webhook address that can be checked: write the test server's webhook itself"
+        if found_ids & live:
+            return f"{name} in the UAT env file is a live webhook: use the test server's"
     return None
 
 
@@ -160,7 +256,8 @@ def _prepare_config() -> None:
     which is only read, so every command in the window has its settings. The copy's outreach
     starts in shadow mode, with no legal review and no sending domain, whatever `config/scout.yaml`
     ships (live since 2026-10-31): only `outreach-live` (S3) turns live mode on, and then only
-    towards the stub."""
+    towards the stub. Its cards carry no buttons: `config/settings.yaml` ships `post_buttons: true`
+    for Dispatch's own webhook, and the test server's plain webhooks can't carry them."""
     value = os.environ.get("JURA_GROWTH_CONFIG_DIR")
     if value and not (Path(value) / "settings.yaml").exists():
         shutil.copytree(paths.REPO_ROOT / "config", value, dirs_exist_ok=True)
@@ -168,7 +265,11 @@ def _prepare_config() -> None:
         def shadow(scout: dict) -> None:
             scout.update(mode="shadow", legal_review_done=False, sending_domain=None)
 
+        def no_buttons(settings: dict) -> None:
+            settings.setdefault("approvals", {})["post_buttons"] = False
+
         _rewrite_yaml(Path(value) / "scout.yaml", shadow)
+        _rewrite_yaml(Path(value) / "settings.yaml", no_buttons)
 
 
 # --- building blocks ------------------------------------------------------------------------
@@ -235,9 +336,9 @@ def s1_history(conn) -> None:
 
 
 def s2_today(conn) -> None:
-    run_row(conn, "app-factory", "app-factory", at(today(), "06:31"), minutes=6, cost=1.20,
+    run_row(conn, "app-factory", "app-factory", at(today(), "07:01"), minutes=6, cost=1.20,
             summary="OK: filed APP-014 PayNow QR for small shops")
-    run_row(conn, "social", "social", at(today(), "07:00"), minutes=4.2, cost=0.41,
+    run_row(conn, "social", "social", at(today(), "07:30"), minutes=4.2, cost=0.41,
             summary="OK: drafted Facebook and Instagram for \"PayNow QR for small shops\"")
 
 
@@ -312,7 +413,7 @@ def s4_queued_emails(conn) -> None:
 
 def s5_s6_planted(conn) -> None:
     previous = previous_business_day()
-    run_row(conn, "scout", "scout-research", at(previous, "09:00:30"), summary=f"OK: 3 leads (token {RESEND_KEY})")
+    run_row(conn, "scout", "scout-research", at(previous, "06:30:30"), summary=f"OK: 3 leads (token {RESEND_KEY})")
     failed = run_row(conn, "outreach", "scout-sync", at(previous, "16:45:30"), status="failed",
                      error=f"ResendError: 401 for key {RESEND_KEY}")
     folder = paths.data_dir() / "transcripts" / today().isoformat()
@@ -527,17 +628,37 @@ def _facebook_item(conn, page_url: str = UAT_PAGE_URL, platform: str = "facebook
     return made
 
 
-def _approve(conn, approval) -> None:
-    """Approve through the only origin that decides, as Dispatch delivers it."""
+def _decided(conn, approval_id: str, decision: str):
+    """A decision through the only origin that decides, as Dispatch delivers it, and the sweep that
+    edits its card and posts its feed line. Returns the answer."""
     from jura_growth import approvals, cards
     from jura_growth.origin import Origin
 
     control = config.secret("CONTROL_DISCORD_USER_ID")
-    answer = approvals.decide(conn, approval.id, "approve", actor=f"discord:{control}", origin=Origin.ssh(),
+    if not control:
+        raise Refused("CONTROL_DISCORD_USER_ID isn't set: add it to the file JURA_GROWTH_ENV_FILE names")
+    answer = approvals.decide(conn, approval_id, decision, actor=f"discord:{control}", origin=Origin.ssh(),
                               source_ref=None, args={})
+    cards.sweep_safely(conn)
+    return answer
+
+
+def _card_goes_out(conn, approval) -> None:
+    """The scenario's card, in a window with no webhook to send it to: production would have posted it."""
+    from jura_growth import approvals
+
+    cards.sweep_safely(conn)
+    fresh = approvals.get(conn, approval.id)
+    if fresh is not None and fresh.status == approvals.PENDING and fresh.posted_at is None and not cards.refusal(conn, fresh.id):
+        with db.transaction(conn):
+            approvals.mark_posted(conn, fresh, None)
+
+
+def _approve(conn, approval) -> None:
+    _card_goes_out(conn, approval)
+    answer = _decided(conn, approval.id, "approve")
     if answer.answer != "recorded":
         raise Refused(f"{approval.id} couldn't be approved: {answer.text}")
-    cards.sweep_safely(conn)
 
 
 def social_post(conn) -> None:
@@ -681,8 +802,176 @@ def fixture_join(conn) -> None:
     _approve(conn, made.approval)
 
 
+# --- the approvals-first scenarios (`.scratch/approvals-first-social-depth/reviews/uat.md`) ---------
+#
+# They rehearse the Discord flow on the fixture with no live post and no Dispatch UAT key. H1 to H5 in
+# that script.
+
+SOCIAL_SAMPLE = Path(__file__).parent / "social-day"  # 280 and 240 words, 3 detailed items, a visual, 2 sources
+SOCIAL_THEME = "ai-news"  # the theme the sample is written for
+UAT_INSTAGRAM_URL = "https://www.instagram.com/jura-uat-test-page"
+
+
+def _social_pages() -> dict[str, str]:
+    """Where the day's items post: the fixture's composers, or test pages. Never the shipped pages,
+    which `$UAT/config` starts with."""
+    from jura_growth.agents.publish import fixture
+
+    if os.environ.get(fixture.ENV):
+        return {"facebook": _fixture_page("page.html"), "instagram": _fixture_page("instagram.html")}
+    return {"facebook": UAT_PAGE_URL, "instagram": UAT_INSTAGRAM_URL}
+
+
+def social_day(conn) -> list[str]:
+    """H1: today's post for both platforms, handed to the real `social submit`, which gates it,
+    renders its pictures and raises its cards. Each platform's `publish_mode` stays as `$UAT/config`
+    has it, so S10 can set Facebook to `draft`."""
+    from jura_growth.agents.social import submit
+
+    folder = os.environ.get("JURA_GROWTH_CONFIG_DIR")
+    if not folder:
+        raise Refused("JURA_GROWTH_CONFIG_DIR isn't set: social-day turns the link check off in $UAT/config, never config/")
+    if today() != timeutil.today():
+        raise Refused(f"social submit dates its rows from the clock ({timeutil.today()}), not --today ({today()}): "
+                      "drop --today, or set JURA_GROWTH_NOW to that day")
+    pages = _social_pages()
+
+    def rehearsal(social: dict) -> None:
+        social["verify_links"] = False  # the sample's sources are example addresses
+        for platform, url in pages.items():
+            social["platforms"][platform]["page_url"] = url
+
+    _rewrite_yaml(Path(folder) / "social.yaml", rehearsal)
+    config.reset_caches()
+    work = paths.work_dir("social") / today().isoformat()
+    work.mkdir(parents=True, exist_ok=True)
+    for sample in SOCIAL_SAMPLE.iterdir():
+        (work / sample.name).write_text(sample.read_text(encoding="utf-8").replace("{today}", today().isoformat()), encoding="utf-8")
+    outcome = submit.submit(conn, work, theme_id=_options.get("theme") or SOCIAL_THEME, offline=bool(_options.get("offline")))
+    if outcome.status != "delivered":
+        raise Refused(outcome.text())
+    return outcome.lines
+
+
+def decide(conn) -> list[str]:
+    """H2: Ting Yu's tap on a card, with no Dispatch and no UAT key. Whatever the answer, it is the
+    answer he reads: a tap after the deadline answers expired, and that is a step passing."""
+    from jura_growth import approvals
+
+    approval = option("approval", "--approval A-nnnn")
+    decision = option("decision", "--decision approve|skip")
+    if decision not in approvals.DECISIONS:
+        raise Refused(f"--decision must be approve or skip, not {decision!r}")
+    return [_decided(conn, approval, decision).text]
+
+
+APP_PRD = Path(__file__).parent / "app-prd.md"  # factory shape, with {placeholders}
+FIRST_UAT_APP = 101  # clear of `base`'s APP-014
+
+
+def app_prd(conn) -> list[str]:
+    """H3: a new factory PRD in `prd/pending/apps/`, its backlog row, and its `app-build` request
+    through the kind's own code. Written as `apps submit-prd` writes it, without the factory's
+    one-a-day limit, because Part A seeds one per step."""
+    from jura_growth.agents.apps import backlog, builds, catalog
+
+    taken = [int(found.app_id.removeprefix("APP-")) for found in catalog.prd_files() if found.app_id]
+    number = max([FIRST_UAT_APP - 1, *taken]) + 1
+    app_id = f"APP-{number:03d}"
+    word = NAMES[number % len(NAMES)]
+    name, slug, day = f"{word} delivery order maker", f"{word.lower()}-delivery-order-maker", today().isoformat()
+    text = APP_PRD.read_text(encoding="utf-8")
+    for placeholder, value in (("{app_id}", app_id), ("{number}", f"{number:03d}"), ("{name}", name), ("{slug}", slug), ("{day}", day)):
+        text = text.replace(placeholder, value)
+    folder = paths.prd_dir() / "pending" / "apps"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"prd-app-{number:03d}-{slug}-{day}.md"
+    path.write_text(text, encoding="utf-8")
+    backlog.mark_written(name=name, slug=slug, app_id=app_id, prd_path=f"prd/pending/apps/{path.name}", tier="browser",
+                         category="Documents", does="Delivery orders with your logo.")
+    with db.transaction(conn):
+        raised = builds.request(conn, app_id, reason="the app factory filed it", run_id=None)
+    if raised is None:
+        raise Refused(f"no app-build request could be raised for {app_id}")
+    cards.sweep_safely(conn)
+    return [f"{raised.id}: {app_id} {name}"]
+
+
+def _site_git(repo: Path, *args: str) -> str:
+    """Git in the stand-in landing-page repository, with no global or system config."""
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "UAT",
+           "GIT_AUTHOR_EMAIL": "uat@example.com", "GIT_COMMITTER_NAME": "UAT", "GIT_COMMITTER_EMAIL": "uat@example.com"}
+    done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True, env=env)
+    return done.stdout.strip()
+
+
+def _stand_in_site() -> Path:
+    """The landing-page repository the release is checked against, made inside the UAT folder.
+    `app-built` refuses any other: the real one is never read or written from here."""
+    value = os.environ.get("JURA_SITE_REPO")
+    if not value or _folder is None or not paths.is_within(value, _folder):
+        raise Refused(f"JURA_SITE_REPO ({value or 'not set'}) must be inside the UAT folder: export JURA_SITE_REPO=\"$UAT/site\"")
+    repo = Path(value)
+    if not (repo / ".git").exists():
+        repo.mkdir(parents=True, exist_ok=True)
+        _site_git(repo, "init", "-q", "-b", "main")
+        (repo / "README.md").write_text("The UAT's stand-in landing page.\n", encoding="utf-8")
+        _site_git(repo, "add", "README.md")
+        _site_git(repo, "commit", "-q", "-m", "First commit")
+    return repo
+
+
+def app_built(conn) -> list[str]:
+    """H4: Dispatch's report, with a stand-in commit and preview, which raises the `app-release`
+    request. For `--app`, or else the newest handoff still waiting for a builder."""
+    from jura_growth.agents.apps import builds, releases
+
+    repo = _stand_in_site()
+    waiting = builds.open_handoffs(conn)
+    app_id = _options.get("app") or (waiting[-1]["app_id"] if waiting else None)
+    if app_id is None or releases.current_build(conn, app_id) is None:
+        raise Refused(f"{app_id or 'this folder'} has no build handed off: seed app-prd and approve it first")
+    number = int(app_id.removeprefix("APP-"))
+    task, branch = f"T-{number:04d}", f"claude/T-{number:04d}-tool"
+    _site_git(repo, "switch", "-q", "-C", branch, "main")
+    (repo / f"{app_id}.txt").write_text("built\n", encoding="utf-8")
+    _site_git(repo, "add", f"{app_id}.txt")
+    _site_git(repo, "commit", "-q", "-m", f"Build {app_id}")
+    sha = _site_git(repo, "rev-parse", "HEAD")
+    _site_git(repo, "switch", "-q", "main")
+    outcome = releases.report_built(conn, app_id, task=task, branch=branch, sha=sha, run_id=None,
+                                    preview=f"https://t-{number:04d}-tool.{releases.pages_project()}.pages.dev")
+    if not outcome.ok:
+        raise Refused("; ".join(outcome.lines))
+    cards.sweep_safely(conn)
+    return outcome.lines
+
+
+def _runs_yesterday_and_before(conn, runs: dict[str, tuple[str, str]]) -> None:
+    """Each job's last two runs at these SGT times, newest first: yesterday and the day before, so
+    they are in the past and inside the check's window whatever time the step is run."""
+    jobs = config.settings()["jobs"]
+    for job, (newest, older) in runs.items():
+        run_row(conn, jobs[job]["agent"], job, at(today() - timedelta(days=2), older))
+        run_row(conn, jobs[job]["agent"], job, at(today() - timedelta(days=1), newest))
+
+
+def drift(conn) -> None:
+    """H5, C1: SC1's steady drift, the jobs firing about 9 hours early by their real slots."""
+    _runs_yesterday_and_before(conn, {"social": ("22:30", "22:31"), "one-pager": ("00:00", "00:00")})
+
+
+def late_wake(conn) -> None:
+    """H5, C2: SC1's hardest quiet case, a Mac waking at 09:30 two days running, with `social` 2
+    hours past its slot and `app-factory` 2.5."""
+    _runs_yesterday_and_before(conn, {"social": ("09:30", "09:30"), "app-factory": ("09:30", "09:30")})
+
+
+for _scenario in (social_day, decide, app_prd, app_built):
+    _scenario.reports = True  # type: ignore[attr-defined]  # its lines are the answer: they name the A-ids
+
 for _scenario in (social_post, social_approved, claimed_not_closed, community_plan, fixture_post, fixture_post_instagram,
-                  fixture_join):
+                  fixture_join, social_day, decide, app_prd, app_built):
     _scenario.own_transactions = True  # type: ignore[attr-defined]
 
 
@@ -699,6 +988,12 @@ SCENARIOS: dict[str, Callable] = {
     "fixture-post": fixture_post,
     "fixture-post-instagram": fixture_post_instagram,
     "fixture-join": fixture_join,
+    "social-day": social_day,
+    "decide": decide,
+    "app-prd": app_prd,
+    "app-built": app_built,
+    "drift": drift,
+    "late-wake": late_wake,
 }
 
 
@@ -719,7 +1014,7 @@ def seed(folder: str | os.PathLike[str], scenario: str = "base", *, today: date 
     _prepare_config()
     config.reset_caches()
     day = today or timeutil.today()
-    problem = day_refusal(day)
+    problem = day_refusal(day) if scenario in OUTREACH_SCENARIOS else None
     if problem:
         raise Refused(problem)
     _day, _folder, _options = day, Path(folder).resolve(), {k: v for k, v in options.items() if v is not None}
@@ -752,13 +1047,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lead", type=int, help="edit-draft: the lead whose queued draft to change")
     parser.add_argument("--group", type=int, help="note-rules: the group whose rules to raise, such as 4 for G4")
     parser.add_argument("--page", help="fixture-post, fixture-join: the fixture page the item targets, such as login.html")
+    parser.add_argument("--theme", help="social-day: the theme to submit the sample under (default: ai-news)")
+    parser.add_argument("--offline", action="store_true", default=None,
+                        help="social-day: render with Chrome's network off, so the pictures use fallback fonts")
+    parser.add_argument("--approval", help="decide: the request, such as A-0012")
+    parser.add_argument("--decision", help="decide: approve or skip")
+    parser.add_argument("--app", help="app-built: the app, such as APP-101 (default: the newest handoff waiting)")
     options = parser.parse_args(argv)
     try:
         notes = seed(options.folder, options.scenario, today=options.today, lead=options.lead, group=options.group,
-                     page=options.page)
+                     page=options.page, theme=options.theme, offline=options.offline, approval=options.approval,
+                     decision=options.decision, app=options.app)
     except Refused as refused:
         print(f"refused: {refused}")
         return 2
+    if getattr(SCENARIOS[options.scenario], "reports", False):
+        print("\n".join(notes))
+        return 0
     print(f"seeded {options.scenario} into {paths.data_dir()}")
     for note in notes:
         print(f"still needed: {note}")

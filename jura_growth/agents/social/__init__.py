@@ -40,15 +40,23 @@ def channels() -> dict:
 
 
 def pending(conn: sqlite3.Connection) -> list:
-    """`jura-growth pending`: drafts for today onward. Only the platforms switched on count, as in
-    the digest: a draft for one switched off is never going out."""
+    """`jura-growth pending`: drafts for today onward that something is still going to happen to,
+    read as the digest reads them. Only the platforms switched on count: a draft for one switched
+    off is never going out."""
     from jura_growth import agents, db, timeutil
 
     from jura_growth.agents.social.settings import load
 
-    on = {p.name for p in load().enabled_platforms()}
-    rows = db.rows(conn, "SELECT platform FROM social_posts WHERE status = 'draft' AND date >= ?", (timeutil.today_str(),))
-    drafts = sum(1 for row in rows if row["platform"] in on)
+    platforms = load().enabled_platforms()
+    on = {p.name for p in platforms}
+    browser = {p.name for p in platforms if p.browser}
+    rows = db.rows(conn, "SELECT date, platform FROM social_posts WHERE status = 'draft' AND date >= ? ORDER BY platform", (timeutil.today_str(),))
+    days: dict[str, list[str]] = {}
+    for row in rows:
+        if row["platform"] in on:
+            days.setdefault(row["date"], []).append(row["platform"])
+    # A closed card, a refused one or a draft that never had a card is going nowhere, so it isn't pending.
+    drafts = sum(len(_where_they_are(conn, day, names, browser)[1]) for day, names in days.items())
     return [agents.PendingItem(agents.GROWTH, f"{drafts} social draft{'s' if drafts != 1 else ''} for today onward.", order=agents.COUNT)] if drafts else []
 
 
@@ -61,10 +69,11 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
     # 2026-10-29) is never going out, so it isn't waiting.
     platforms = load().enabled_platforms()
     on = {p.name for p in platforms}
-    by_hand = {p.name for p in platforms if not p.browser}  # a `browser` platform's draft goes through its card
     rows = [r for r in db.rows(conn, "SELECT platform, status, published_at FROM social_posts WHERE date = ?", (day,))
             if r["platform"] in on]
-    waiting = sorted(r["platform"] for r in rows if r["status"] == "draft")
+    drafts = sorted(r["platform"] for r in rows if r["status"] == "draft")
+    browser = {p.name for p in platforms if p.browser}  # a `browser` platform's draft goes through its card
+    places, waiting = _where_they_are(conn, day, drafts, browser) if drafts else ({}, [])
     skipped_rows = {r["platform"] for r in rows if r["status"] == "skipped"}
     skips = {
         r["platform"] for r in db.rows(conn, "SELECT platform FROM social_skips WHERE date = ?", (day,))
@@ -84,17 +93,17 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
 
     figures = {
         "social_drafts_waiting": len(waiting),
-        "social_drafts_by_hand": sum(1 for platform in waiting if platform in by_hand),
+        "social_drafts_by_hand": len(places.get(_BY_HAND, [])),
         "social_skipped": skipped,
         "social_published": published,
     }
     lines, brief = [], []
     if waiting:
-        lines.append(
-            f"Social: {len(waiting)} draft{'s' if len(waiting) != 1 else ''} waiting in #social-drafts "
-            f"({', '.join(waiting)}), {skipped} skipped, {published} published"
-        )
         brief.append(f"{len(waiting)} social draft{'s' if len(waiting) != 1 else ''} waiting")
+    if places:
+        said = ", ".join(f"{len(names)} draft{'s' if len(names) != 1 else ''} {place} ({', '.join(names)})"
+                         for place, names in places.items())
+        lines.append(f"Social: {said}, {skipped} skipped, {published} published")
     elif rows or skipped or published:
         lines.append(f"Social: no drafts waiting, {skipped} skipped, {published} published")
     if no_draft and not rows:
@@ -102,6 +111,50 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         lines.append(f"Social: no draft ({no_draft['reason']})")  # no day: see MC X15
         brief.append("no social draft today")
     return {"figures": figures, "lines": lines, "brief": brief}
+
+
+_ON_A_CARD, _BY_HAND, _NO_CARD = "waiting in #approvals", "waiting in #social-drafts", "with no card"
+_APPROVED, _HELD, _CLAIMED = "approved, waiting on a publish run", "approved, held by draft mode", "claimed by a publish run"
+_EXPIRED, _CLOSED = "expired", "closed"
+_PLACES = (_ON_A_CARD, _BY_HAND, _APPROVED, _HELD, _CLAIMED, _NO_CARD, _EXPIRED, _CLOSED)
+
+
+def _where_they_are(conn: sqlite3.Connection, day: str, drafts: list[str], browser: set[str]) -> tuple[dict[str, list[str]], list[str]]:
+    """Each place a draft really is, in `_PLACES` order, and the drafts still waiting."""
+    from jura_growth.agents.publish import items
+
+    requests = items.requests_by_platform(conn, day)
+    found: dict[str, list[str]] = {}
+    waiting = []
+    for name in drafts:
+        place, waits = _place(conn, requests.get(name), name in browser)
+        found.setdefault(place, []).append(name)
+        if waits:
+            waiting.append(name)
+    return {place: found[place] for place in _PLACES if place in found}, waiting
+
+
+def _place(conn: sqlite3.Connection, request, browser: bool) -> tuple[str, bool]:
+    """Where a draft is, from its newest request, and whether anything is still going to happen to
+    it. A closed card isn't "no card", and a card the sweep refused will never go out. A card
+    Discord hasn't taken yet still waits: the heartbeat posts it."""
+    from jura_growth import cards, mission, timeutil
+
+    if request is None:  # never a card: too late, no image, or from before browser mode
+        return (_NO_CARD, False) if browser else (_BY_HAND, True)
+    reading = mission.reading_of(
+        request.status, decide_by=timeutil.parse(request.decide_by), use_by=timeutil.parse(request.use_by) if request.use_by else None,
+        decided_at=request.decided_at, used_at=request.used_at, now=timeutil.now_sgt(),
+    )
+    if reading == mission.Reading.WAITING:
+        return (_ON_A_CARD, True) if request.posted_at else (_NO_CARD, cards.refusal(conn, request.id) is None)
+    if reading == mission.Reading.APPROVED:
+        return (_APPROVED, True) if browser else (_HELD, False)
+    if reading == mission.Reading.USED:
+        return _CLAIMED, False
+    if reading in (mission.Reading.LAPSED, mission.Reading.LAPSED_UNUSED):
+        return _EXPIRED, False  # closed, whether or not this read may write the lapse
+    return _CLOSED, False
 
 
 RUN_UPDATE_DISCORD_CHANNEL = "social-drafts"
@@ -144,7 +197,13 @@ def precheck(job: str, conn: sqlite3.Connection) -> str | None:
         return reason
     active, _ = submit.active_platforms(conn, day, settings)
     if not active:
-        return "today's drafts are already in #social-drafts, or every platform is skipped"
+        return "today's drafts are already in, or every platform is skipped"
+    if all(settings.platforms[name].browser for name in active):
+        from jura_growth.agents.publish import limits
+
+        decide_by = limits.decide_by_on(day)
+        if timeutil.now_sgt() >= decide_by:
+            return f"today's posts had to be decided by {decide_by:%H:%M} SGT, so a draft written now couldn't be approved and posted"
     done = [s for s in history.submissions(conn, day) if s["status"] in ("no-draft", "dropped")]
     if done:
         return "“No draft today” was already posted today"

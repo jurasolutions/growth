@@ -123,6 +123,7 @@ class Snapshot:
     yesterday: Yesterday | None = None
     spend_today: float = 0.0
     morning: Yesterday | None = None  # today's figures so far, for the morning picture
+    drift: health.Drift | None = None  # scheduled jobs consistently firing at the wrong SGT time
 
 
 def unavailable(snapshot: Snapshot) -> str:
@@ -191,6 +192,7 @@ class Request:
     posted: bool
     close_reason: str | None
     reason: str = ""  # why the engine asked: the row's own words, no kind's content()
+    refused: str | None = None  # why the sweep refused its card: it will never post
 
 
 # The one-pager job's own schedule (config/settings.yaml); without the job, its planned 09:00.
@@ -330,6 +332,28 @@ def _missing_migrations(conn: sqlite3.Connection, tables: set[str]) -> tuple[str
     return tuple(m for m in expected if m not in done)
 
 
+def _recent_starts(conn: sqlite3.Connection, jobs: Mapping[str, Any], installed_at: Callable[[str], datetime | None]) -> dict[str, list[datetime]]:
+    """The last two start times of each job (`health.schedule_drift`), newest first. A run from
+    before the job's plist was installed ran on its old time, so it says nothing about the clock.
+    A job with no install time keeps all of its runs."""
+    found = {}
+    for job in jobs:
+        rows = conn.execute("SELECT started_at FROM runs WHERE job = ? ORDER BY id DESC LIMIT 2", (job,)).fetchall()
+        starts = [timeutil.parse(row[0]) for row in rows]
+        since = installed_at(job)
+        found[job] = [start for start in starts if since is None or start >= since]
+    return found
+
+
+def _drift(conn: sqlite3.Connection, jobs: Mapping[str, Any], now: datetime, installed_at: Callable[[str], datetime | None]) -> health.Drift | None:
+    """A malformed `started_at` costs this one check, never the one-pager. `sqlite3.Error` still
+    raises: a hot journal or a lock is the snapshot's `db_state`."""
+    try:
+        return health.schedule_drift(_recent_starts(conn, jobs, installed_at), jobs, now)
+    except ValueError:
+        return None
+
+
 def _from_db(
     conn: sqlite3.Connection, source: Source, now: datetime, days: tuple[date, ...], installs: dict[str, str], last: datetime
 ) -> dict:
@@ -344,6 +368,7 @@ def _from_db(
         found = slots.classify(source.jobs, records, now, days, installed=loaded, installed_at=source.installed_at)
         facts["slots"] = {key: [_clean_slot(slot) for slot in statuses] for key, statuses in found.items()}
         facts["failures"] = _failures(conn, now)
+        facts["drift"] = _drift(conn, source.jobs, now, source.installed_at)
         facts["yesterday"], facts["spend_today"] = _yesterday(conn, now, _claude_jobs(source.jobs))
         facts["morning"] = _morning(conn, now)
     if "pause_flags" in tables:
@@ -352,7 +377,7 @@ def _from_db(
     if "discord_posts" in tables:
         facts["undelivered"] = conn.execute("SELECT count(*) FROM discord_posts WHERE delivered = 0 AND ts > ?", (since,)).fetchone()[0]
     if "approvals" in tables:
-        facts["approvals"] = _requests(conn, now, last_one_pager=last)
+        facts["approvals"] = _requests(conn, now, last_one_pager=last, events="events" in tables)
     facts["plugin_lines"] = _plugin_lines(conn)
     return facts
 
@@ -365,7 +390,14 @@ def _failures(conn: sqlite3.Connection, now: datetime) -> tuple[Failure, ...]:
         " ORDER BY started_at, id",
         (day_ago,),
     ).fetchall()
-    return tuple(Failure(_clean(row["job"]), timeutil.parse(row["started_at"]).astimezone(SGT), _clean(row["error"] or "")[:300] or None) for row in rows)
+    found = []
+    for row in rows:
+        try:
+            at = timeutil.parse(row["started_at"]).astimezone(SGT)
+        except ValueError:  # as in `_record`: a stamp that doesn't parse drops its row, not the one-pager
+            continue
+        found.append(Failure(_clean(row["job"]), at, _clean(row["error"] or "")[:300] or None))
+    return tuple(found)
 
 
 def _claude_jobs(jobs: Mapping[str, Mapping[str, Any]]) -> list[str]:
@@ -471,14 +503,17 @@ def _last_one_pager(conn: sqlite3.Connection, now: datetime, scheduled: datetime
     ).fetchone()[0]
     if not found:
         return scheduled
-    ran = timeutil.parse(found).astimezone(SGT)
+    try:
+        ran = timeutil.parse(found).astimezone(SGT)
+    except ValueError:  # a stamp that doesn't parse never breaks the one-pager
+        return scheduled
     return ran if ran >= now - ONE_PAGER_LOOKBACK else scheduled
 
 
 # --- approval requests ----------------------------------------------------------------
 
 
-def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: datetime) -> tuple[Request, ...]:
+def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: datetime, events: bool = False) -> tuple[Request, ...]:
     """Live requests, and those decided or closed since the last one-pager.
     Its own SELECT: approvals.py may supersede on a read, which is a write."""
     since = last_one_pager.isoformat(timespec="seconds")
@@ -488,23 +523,35 @@ def _requests(conn: sqlite3.Connection, now: datetime, *, last_one_pager: dateti
         " ORDER BY requested_at, id",
         (since, since),
     ).fetchall()
-    return tuple(_request(row, now) for row in rows)
+    from jura_growth import cards  # imported here so the read model loads without the card sweep
+
+    # A card the sweep refused, which the heartbeat won't post.
+    refused = dict(conn.execute(
+        "SELECT json_extract(payload_json, '$.approval'), json_extract(payload_json, '$.why') FROM events WHERE kind = ?",
+        (cards.REFUSED_EVENT,),
+    ).fetchall()) if events else {}
+    return tuple(dataclasses.replace(request, refused=_clean_or_none(refused.get(request.id)))
+                 for request in (_request(row, now) for row in rows))
+
+
+def reading_of(status: str, *, decide_by: datetime, use_by: datetime | None, decided_at: str | None, used_at: str | None, now: datetime) -> str:
+    """How a request reads at `now`, by its clock as well as its row: a request past its time has
+    closed, whether or not anything has written the lapse yet."""
+    if status == "pending":
+        return Reading.WAITING if now < decide_by else Reading.LAPSED
+    if status == "approved" and used_at:
+        return Reading.USED
+    if status == "approved":
+        return Reading.APPROVED if use_by is None or now < use_by else Reading.LAPSED_UNUSED
+    if status == "expired":
+        return Reading.LAPSED_UNUSED if decided_at else Reading.LAPSED  # expired after a yes, or unanswered
+    return Reading.SKIPPED if status == "skipped" else Reading.SUPERSEDED
 
 
 def _request(row: sqlite3.Row, now: datetime) -> Request:
     decide_by = timeutil.parse(row["decide_by"]).astimezone(SGT)
     use_by = timeutil.parse(row["use_by"]).astimezone(SGT) if row["use_by"] else None
-    status = row["status"]
-    if status == "pending":
-        reading = Reading.WAITING if now < decide_by else Reading.LAPSED
-    elif status == "approved" and row["used_at"]:
-        reading = Reading.USED
-    elif status == "approved":
-        reading = Reading.APPROVED if use_by is None or now < use_by else Reading.LAPSED_UNUSED
-    elif status == "expired":
-        reading = Reading.LAPSED_UNUSED if row["decided_at"] else Reading.LAPSED  # expired after a yes, or unanswered
-    else:
-        reading = Reading.SKIPPED if status == "skipped" else Reading.SUPERSEDED
+    reading = reading_of(row["status"], decide_by=decide_by, use_by=use_by, decided_at=row["decided_at"], used_at=row["used_at"], now=now)
     return Request(
         id=f"A-{row['id']:04d}",
         kind=_clean(row["kind"]),

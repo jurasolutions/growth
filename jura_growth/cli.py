@@ -93,15 +93,18 @@ def check(text, file_, subject, headings, buttons, channel_name, sources, proper
     elif text == "-" or (text is None and not sys.stdin.isatty()):
         text = sys.stdin.read()
     text = text or ""
-    result = brand_check.check(
-        text,
-        subject=subject,
-        headings=headings,
-        buttons=buttons,
-        channel_name=channel_name,
-        sources=sources,
-        proper_nouns=proper_nouns,
-    )
+    try:
+        result = brand_check.check(
+            text,
+            subject=subject,
+            headings=headings,
+            buttons=buttons,
+            channel_name=channel_name,
+            sources=sources,
+            proper_nouns=proper_nouns,
+        )
+    except brand_check.BuzzwordListMissing as error:
+        raise click.ClickException(str(error)) from error
     if as_json:
         click.echo(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
     elif result.passed:
@@ -460,8 +463,12 @@ def pending_cmd() -> None:
 @click.option("--date", "day", help="SGT date, default today.")
 @click.option("--no-post", is_flag=True, help="Write the files without posting to Discord.")
 def digest(day, no_post) -> str:
-    """Write today's summary and post it to #daily-digest."""
+    """Write today's due approval lapses, then today's summary, and post it to #daily-digest."""
     with db.session() as conn:
+        # After 18:00, so a card nobody answered closes the same evening, its feed line goes
+        # out, and the digest counts it. Edits don't notify; new cards wait for the heartbeat.
+        if not no_post:
+            _approval_upkeep(conn, post=False)
         summary = digest_mod.run(conn, day, post=not no_post)
     click.echo(digest_mod.render(summary))
     click.echo("")

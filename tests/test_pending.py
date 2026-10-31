@@ -20,6 +20,7 @@ import pytest
 from click.testing import CliRunner
 
 import approval_world as aw
+import publish_world as pw
 import mission_world as mw
 import site_repo
 from sweep import d2_secrets  # noqa: F401 - the fixture
@@ -403,7 +404,8 @@ def test_one_queued_email_reads_in_the_singular(conn):
     assert "- 1 outreach email queued." in section(text(), GROWTH)
 
 
-def test_social_drafts_for_today_onward_are_counted_on_growth(conn):
+def test_social_drafts_for_today_onward_are_counted_on_growth(conn, monkeypatch):
+    pw.social_config(monkeypatch, browser=())  # draft mode: a row with no request is his to post
     post(conn, 1)
     post(conn, 2, platform="instagram", day="2026-11-11")
     post(conn, 3, day="2026-11-09")  # yesterday's, past

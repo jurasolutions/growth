@@ -90,7 +90,7 @@ everything ran and what needs Ting Yu: the morning picture and a short message t
 phone. When the picture can't be drawn, the long text goes instead: the health strip, approvals
 waiting, today's slots and yesterday's figures. `--no-post` prints that long text, and `--grid`
 draws the 14-day grid to a file; the grid is no longer posted.
-_Avoid_: report, summary, dashboard (the 17:30 digest is a separate message)
+_Avoid_: report, summary, dashboard (the 18:05 digest is a separate message)
 
 **Morning picture**:
 The image the one-pager posts: a verdict in words, then Decide, Fix, This morning, Yesterday and
@@ -103,7 +103,9 @@ _Avoid_: morning brief (that is the AI OS brief, a different thing at 08:00), br
 The "Needs you" section at the top of the long text, and "Fix" on the morning picture, which words
 each item on one line with the action first and adds any growth agent whose slot passed with no
 trace. It holds: the PAUSE file, paused agents, recent
-failures, missed slots, undelivered Discord posts, unposted approval requests, approved emails that
+failures, schedule drift (daily jobs firing at a steady wrong time, with the advice to restart the
+Mac once), missed slots, undelivered Discord posts, unposted approval requests, refused cards (a request
+whose card can't show the exact text, so nothing goes out and it lapses), approved emails that
 lapsed unsent, jobs not installed or out of date, setup gaps, build handoffs waiting for a builder,
 built apps not yet released (left on their preview, approved and waiting for `release-plan`, or
 claimed and waiting for `main`), and a growth.db with an unfinished write.
@@ -226,9 +228,34 @@ join or post is skipped.
 _Avoid_: account, login
 
 **Posting window**:
-09:00 to 18:00 SGT, when the publish job may act (`caps.PUBLISH_WINDOW`). A post's decide-by and
-use-by are the end of the posting window on its day.
+09:00 to 18:00 SGT, when the publish job may act (`caps.PUBLISH_WINDOW`). A social post's decide-by
+is an hour before the end of the posting window on its day, 17:00 SGT, so an approval always has a
+publish slot left, and its use-by is the end of the window. A claim that finds the post changed
+raises its replacement at once, and that one's decide-by is the end of the window, whatever the hour.
 _Avoid_: "publish window", alongside the outreach "send window"
+
+**Approval card**:
+The message in #approvals for one approval request.
+_Avoid_: bare "card"
+
+**Agent feed**:
+The Discord channel where an agent reports what became of its work: its run updates and one line
+per decision. #approvals asks; the feed says what happened.
+_Avoid_: drafts channel
+
+**Feed line**:
+The one message an agent feed gets when a request that had an approval card is approved, skipped,
+expired or closed with nothing replacing it. Sent silently, at most once by design. It isn't a run
+update.
+_Avoid_: notification
+
+**Image card**:
+The rendered picture attached to a post, specified in `card.json`. A carousel is several.
+_Avoid_: bare "card"
+
+**Visual**:
+The diagram on an image card: a flow, a compare or a figure, drawn from the post's own facts.
+_Avoid_: picture (in specs), illustration, photo
 
 **Stop signal**:
 Anything on a page that makes a publish run stop at once without clicking further: a login wall, a

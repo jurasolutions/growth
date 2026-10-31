@@ -158,7 +158,9 @@ buttons and labels. No exclamation marks, no emoji, no buzzwords (leverage, seam
 empower, robust, AI-powered…), no manufactured urgency, no question marks in headings or buttons,
 at most one em dash per 60 words, no "this, not that" constructions. **No figures** except
 interface quantities ("up to 3 files", "under 1 MB"), dates, and a statutory rate with its
-official source. A number word from two up ("twelve") is a figure too. Never claim the tool saves
+official source. A number word from two up ("twelve") is a figure too. Never put a digit in a
+sentence that contains "we", "our", "us" or "Jura": not a date, a year or a compound either. The
+checker refuses any digit there. Never claim the tool saves
 time or money ("saves you hours", "in seconds"). Never mention Jura client counts or results.
 
 ## 4. Check, then file

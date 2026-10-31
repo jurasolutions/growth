@@ -2,7 +2,7 @@
 
 The guides are drafted in the feature folder (`.scratch/mission-control/setup/`, ticket review N4);
 the release persona copies them to `outputs/growth/setup/` after the merge, where E6 checks them
-again. The 17:30 digest keeps writing `daily-summary.json` after the brief line is retired.
+again. The 18:05 digest keeps writing `daily-summary.json` after the brief line is retired.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def test_every_configured_channel_is_in_the_discord_guide():
         assert f"`{discord.env_name(channel)}=`" in text, channel
 
 
-def test_the_1730_digest_still_writes_daily_summary_json(conn, monkeypatch):
+def test_the_1805_digest_still_writes_daily_summary_json(conn, monkeypatch):
     monkeypatch.setenv("JURA_GROWTH_NOW", "2026-11-10T17:30:00+08:00")
     outcome = runner.run("digest", ignore_schedule=True)
     assert outcome.status == "ok", outcome

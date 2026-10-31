@@ -182,6 +182,29 @@ def dispatch() -> Origin:
     return Origin.ssh()
 
 
+def card_goes_out(conn, approval) -> None:
+    """What a sweep does for a pending request, with no Discord: it builds the card (`cards.build`),
+    and `posted_at` is set (`approvals.mark_posted`), unless the sweep has refused it, or would, or
+    the card can't be built. A test of the card's own path uses the Discord double and `cards.sweep`."""
+    from jura_growth import cards
+
+    fresh = approvals.get(conn, approval.id)
+    if fresh is None or fresh.status != approvals.PENDING or fresh.posted_at is not None or cards.refusal(conn, fresh.id):
+        return
+    registered = approvals.kinds().get(fresh.kind)
+    if registered is None:
+        return
+    try:
+        cards.build(conn, fresh, registered.kind)
+    except Exception:  # noqa: BLE001 - a refusal or a bad preview: the sweep posts nothing here either
+        return
+    if conn.in_transaction:
+        approvals.mark_posted(conn, fresh, f"card-{fresh.number}")
+    else:
+        with db.transaction(conn):
+            approvals.mark_posted(conn, fresh, f"card-{fresh.number}")
+
+
 def approve(conn, approval, *, args=None, origin=None, actor=CONTROL, source_ref=None):
     return approvals.decide(
         conn,

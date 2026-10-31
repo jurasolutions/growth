@@ -62,7 +62,7 @@ def _requests(conn: sqlite3.Connection) -> list[PendingItem]:
     try:
         waiting = approvals_cli.waiting(conn, None)[0]
         registry = approvals.kinds()
-        items = [PendingItem(YOU, f"{request.id} · {_title(conn, request, registry)} · decide by {timeutil.when(due)}")
+        items = [PendingItem(YOU, f"{request.id} · {_title(conn, request, registry)} · {_when(conn, request, due, registry)}")
                  for request, due in waiting[:REQUESTS_SHOWN]]
     except Exception as error:  # noqa: BLE001 - the plug-ins' lines still go out
         if db.is_lock(error):
@@ -71,6 +71,20 @@ def _requests(conn: sqlite3.Connection) -> list[PendingItem]:
     if len(waiting) > REQUESTS_SHOWN:
         items.append(PendingItem(YOU, f"and {len(waiting) - REQUESTS_SHOWN} more: send `/growth approvals`"))
     return [*items, PendingItem(YOU, DECIDE)] if items else []
+
+
+def _when(conn: sqlite3.Connection, request: approvals.Approval, due: datetime, registry: dict) -> str:
+    """The deadline, and what stands in its way. A kind that needs its card out before a yes
+    (`needs_card`) can't take the typed approval the line below offers until then. A card the sweep
+    refused isn't coming, so this says why, as the health strip does, and not "yet"."""
+    decide_by = f"decide by {timeutil.when(due)}"
+    registered = registry.get(request.kind)
+    if registered is None or not getattr(registered.kind, "needs_card", False) or request.posted_at is not None:
+        return decide_by
+    refused = cards.refusal(conn, request.id)
+    if refused:
+        return f"no card: {refused}. Nothing goes out, and it lapses {timeutil.when(due)}"
+    return f"{decide_by} · no card yet, so it can't be approved"
 
 
 def _title(conn: sqlite3.Connection, request: approvals.Approval, registry: dict) -> str:

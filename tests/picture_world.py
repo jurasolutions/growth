@@ -79,7 +79,7 @@ def typical() -> mission.Snapshot:
     later = {
         ("publish", NOW.date()): [slot("publish", "upcoming", at=NOW.replace(hour=hour)) for hour in (10, 16)],
         ("scout-send", NOW.date()): [slot("scout-send", "upcoming", at=NOW.replace(hour=9, minute=30))],
-        ("digest", NOW.date()): [slot("digest", "upcoming", at=NOW.replace(hour=17, minute=30))],
+        ("digest", NOW.date()): [slot("digest", "upcoming", at=NOW.replace(hour=18, minute=5))],
     }
     return snap(
         slots={**morning(community=None, social="skipped"), **later},
@@ -120,6 +120,9 @@ def health_pages() -> dict[str, mission.Snapshot]:
     base = dict(slots=morning(), morning=figures(), yesterday=figures(), approvals=())
     pages = {cause: snap(**{**base, **fields}) for cause, fields, _ in HEALTH_ITEMS}
     pages.update({cause: snap(**base, plugin_lines=(line,)) for cause, line in PLUGIN_WORDINGS.items()})
+    pages["schedule drift"] = snap(**base, drift=health.Drift("scout-research", "06:30", "21:30", -9))
+    pages["a refused card"] = snap(**{**base, "approvals": (request(
+        412, "social-post", refused="Discord would mask part of the post, so its card can't show the exact text", posted=False),)})
     return pages
 
 

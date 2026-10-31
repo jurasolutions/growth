@@ -14,6 +14,9 @@ Modes:
   the outbox. Retry waits are skipped.
 - `unreachable`: every request raises `httpx.ConnectError`.
 - `edit-fails`: posts are accepted, `PATCH …/messages/<id>` answers 404.
+
+`fail_posts_after = n` accepts n posts, then answers 500 to the rest, for a long message whose
+later piece fails. `delete_fails = True` answers 404 to a `DELETE …/messages/<id>`.
 """
 
 from __future__ import annotations
@@ -46,6 +49,7 @@ class Request:
     payload_json: str | None = None
     files: list[tuple[str, bytes]] = field(default_factory=list)
     message_id: str | None = None
+    timeout: dict | None = None  # the read, write, connect and pool seconds this request allowed
 
     def texts(self) -> list[str]:
         """Everything in the request a person could read: the payload and each attachment."""
@@ -69,6 +73,8 @@ class Request:
 class DiscordDouble:
     def __init__(self, monkeypatch: pytest.MonkeyPatch):
         self.mode = "accept"
+        self.fail_posts_after: int | None = None
+        self.delete_fails = False
         self.requests: list[Request] = []
         self.urls: dict[str, str] = {}
         self._channel_by_id: dict[str, str] = {}
@@ -100,7 +106,8 @@ class DiscordDouble:
     def _handle(self, request: httpx.Request) -> httpx.Response:
         parts = request.url.path.split("/")  # ['', 'api', 'webhooks', n, token, ...]
         channel = self._channel_by_id.get(parts[3] if len(parts) > 3 else "", "?")
-        recorded = Request(channel=channel, method=request.method, url=str(request.url))
+        recorded = Request(channel=channel, method=request.method, url=str(request.url),
+                           timeout=request.extensions.get("timeout"))
         self._decode(request, recorded)
         self.requests.append(recorded)
 
@@ -110,6 +117,13 @@ class DiscordDouble:
             return httpx.Response(500)
         if self.mode == "429":
             return httpx.Response(429, json={"retry_after": 0.01})
+        if request.method == "DELETE":
+            recorded.message_id = parts[-1]
+            return httpx.Response(404 if self.delete_fails else 204)
+        if request.method == "POST" and self.fail_posts_after is not None:
+            if self.fail_posts_after <= 0:
+                return httpx.Response(500)
+            self.fail_posts_after -= 1
         if request.method == "PATCH":
             recorded.message_id = parts[-1]
             return httpx.Response(404) if self.mode == "edit-fails" else httpx.Response(200, json={"id": parts[-1]})

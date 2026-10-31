@@ -3,8 +3,14 @@
    `render.fonts_loaded`). */
 (function () {
   function overflowing(main) {
-    if (main.scrollHeight > main.clientHeight + 1) return true;
-    var wide = main.querySelectorAll(".headline, .subtitle, .items .text, .panel");
+    if (main.scrollHeight > main.clientHeight) return true;
+    // Centred content spills over the top as well, which scrollHeight doesn't count.
+    var box = main.getBoundingClientRect();
+    for (var c = 0; c < main.children.length; c++) {
+      var child = main.children[c].getBoundingClientRect();
+      if (child.top < box.top - 0.5 || child.bottom > box.bottom + 0.5) return true;
+    }
+    var wide = main.querySelectorAll(".headline, .subtitle, .items .text, .panel, .visual, .step-label, .column, .figure-text");
     for (var i = 0; i < wide.length; i++) {
       if (wide[i].scrollWidth > wide[i].clientWidth + 1) return true;
     }

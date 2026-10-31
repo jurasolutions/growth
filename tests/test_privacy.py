@@ -5,9 +5,11 @@ names learned from named addresses, Jura's own copy, values a process registers,
 plug-ins share.
 """
 
+import re
+
 import pytest
 
-from jura_growth import config, db, privacy
+from jura_growth import config, db, privacy, role_addresses
 
 SOURCE = "https://example.com.sg/team"
 
@@ -329,3 +331,54 @@ def test_db_migrate_is_enough_for_learning(conn):
     db.migrate(conn)
     privacy.learn(conn)  # no rows: nothing learned, nothing raised
     assert privacy.for_discord("Jane Tan") == "Jane Tan"
+
+
+# --- a word Jura's posts can't avoid is never learned as a name (round 2) ----------------------------
+
+
+# The shared-inbox vocabulary, from its own source: `sales.singapore@` is not a person.
+ROLE_WORDS = sorted({word for role in (*role_addresses.ENQUIRY_ROLES, *role_addresses.OTHER_ROLES, *role_addresses.NOT_FOR_ENQUIRIES)
+                     for word in re.split(r"[^a-z]+", role) if len(word) >= privacy.MIN_NAME_PART})
+# What this feed says every day, and every word of a theme's label as it ships.
+EVERYDAY_WORDS = ["ai", "automation", "automate", "automated", "tool", "tools", "software", "app", "apps", "business",
+                  "businesses", "small", "team", "teams", "work", "workflow", "workflows", "invoice", "invoices", "data",
+                  # Jura's own name, and what the scout stores as "named" from a company's own addresses.
+                  "jura", "solutions", "finance", "design", "digital", "manager", "managers", "purchasing", "asia",
+                  "facebook", "instagram", "linkedin"]
+THEME_WORDS = sorted({word.lower() for theme in config.agent_config("social")["themes"].values()
+                      for word in re.findall(r"[A-Za-z]+", theme["label"]) if len(word) >= privacy.MIN_NAME_PART})
+
+
+@pytest.mark.parametrize("word", sorted({*ROLE_WORDS, *EVERYDAY_WORDS, *THEME_WORDS}))
+def test_a_word_a_post_uses_every_day_is_never_learned_from_an_address(word):
+    privacy.remember_address(f"{word}.ling@example.com.sg")
+    privacy.remember_address(f"{word}@example.com.sg")
+    privacy.remember_address(f"{word}.{word}2@example.com.sg")
+    for written in (word.title(), word.upper(), word):
+        assert privacy.for_discord(f"{written} helps here.") == f"{written} helps here."
+
+
+@pytest.mark.parametrize("text", ["AI tools help small teams.", "Automation saves the sales team time.", "Info on our marketing tools."])
+def test_a_real_sentence_survives_addresses_built_from_its_words(text):
+    for address in ("ai.ling@x.sg", "ai@x.sg", "sales.singapore@x.sg", "marketing.team@x.sg", "automation.tools@x.sg", "info.team@x.sg"):
+        privacy.remember_address(address)
+    assert privacy.for_discord(text) == text
+
+
+def test_jura_s_own_name_survives_a_lead_with_that_address():
+    for address in ("solutions@acme.sg", "jura@acme.sg", "finance@acme.sg", "asia@acme.sg"):
+        privacy.remember_address(address)
+    assert privacy.for_discord("Jura Solutions helps finance teams across Asia.") == "Jura Solutions helps finance teams across Asia."
+
+
+def test_the_person_in_such_an_address_is_still_masked():
+    privacy.remember_address("ai.ling@example.com.sg")
+    assert privacy.for_discord("Ling wrote back.") == "[name removed] wrote back."
+    privacy.remember_address("sales.tan@example.com.sg")
+    assert privacy.for_discord("Tan wrote back.") == "[name removed] wrote back."
+
+
+def test_a_name_that_is_also_a_word_is_still_masked():
+    """The accepted cost: "Mark" and "Grant" are people too, so they stay."""
+    privacy.remember_address("mark.lee@example.com.sg")
+    assert privacy.for_discord("Mark wrote back.") == "[name removed] wrote back."

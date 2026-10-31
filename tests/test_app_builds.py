@@ -19,7 +19,7 @@ import mission_world as mw
 from discord_double import discord_double  # noqa: F401 - the fixture
 from sweep import d2_secrets  # noqa: F401 - the fixture
 from gate_adapter_app_build import DispatchDouble, file_prd, prd_path
-from jura_growth import approvals, config, db, log, mission, one_pager, pause, paths, timeutil
+from jura_growth import approvals, cards, config, db, log, mission, one_pager, paths, pause, timeutil
 from jura_growth.agents.apps import builds
 from jura_growth.cli import cli
 from test_apps import GOOD, TODAY
@@ -554,3 +554,24 @@ def test_a_paused_factory_refuses_the_approval_without_claiming(tmp_path, conn, 
         pause.resume(conn, "app-factory")
     assert aw.approve(conn, request, args={}).answer == "recorded"
     assert db.scalar(conn, "SELECT count(*) FROM app_builds") == 1 and aw.claims(conn) == 1
+
+
+# --- the feed line says who builds it (functional S2, FD3) ----------------------------------------
+
+
+@pytest.mark.parametrize("on", [False, True], ids=["dispatch_builds false", "dispatch_builds true"])
+def test_the_feed_line_says_who_builds_it_and_posts_once(tmp_path, conn, monkeypatch, discord_double, on):
+    dispatch_builds(monkeypatch, on)
+    request = filed(tmp_path, conn)
+    cards.sweep(conn)
+    answer = aw.approve(conn, request, args={})
+    cards.sweep(conn)
+    cards.sweep(conn)
+    [line] = [m for m in discord_double.contents("app-factory") if request.id in m]
+    assert line.split(" · ")[0] == f"**{request.id} approved**" and "APP-003 Delivery order maker" in line
+    said = answer.text.removeprefix(f"{request.id} approved. ")
+    assert line.endswith("\n" + said)  # the same words as the decision's answer
+    if on:
+        assert "Handed to Dispatch" in line and "Build it" not in line
+    else:
+        assert "Build it: open Claude Code" in line and "Dispatch" not in line
