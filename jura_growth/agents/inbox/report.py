@@ -20,7 +20,9 @@ import re
 import sqlite3
 from typing import Callable
 
-from jura_growth import discord, log, privacy, timeutil
+from datetime import timedelta
+
+from jura_growth import approvals, caps, discord, log, privacy, timeutil
 from jura_growth.agents.inbox import settings, store
 
 CHANNEL = "mission-control"
@@ -42,7 +44,7 @@ _ZERO_WIDTH_SPACE = chr(0x200b)
 _NOT_A_BACKTICK = chr(0x02cb)
 
 
-def _neutral(line: str) -> str:
+def neutral(line: str) -> str:
     """One line of someone's text, unable to restyle anything or ping anyone (N5, A4, A5): no
     backticks to open a fence, no spoiler, no mention, and no masked link at any depth of nesting.
     A link target's address stays readable and can't be clicked, so what it is shows."""
@@ -54,14 +56,20 @@ def _neutral(line: str) -> str:
 
 def quoted(text: str) -> str:
     """`text` as a Discord quote: every line marked, whatever line break it used."""
-    return "\n".join(f"> {_neutral(line)}".rstrip() for line in store.clean_text(text).split("\n"))
+    return "\n".join(f"> {neutral(line)}".rstrip() for line in store.clean_text(text).split("\n"))
 
 
-def _heading(item: dict) -> str:
+def heading(item: dict) -> str:
     if item["source"] in SOCIAL_HEADINGS:
         return SOCIAL_HEADINGS[item["source"]]
     if item["source"] == RUN_MESSAGE:
         return "From the watch"
+    if item["source"] == store.APP_USAGE:
+        return "App usage"
+    if item["source"] == store.EMAIL_SIGNAL:
+        return "From the mail service"
+    if item["source"] == store.ENGINE_NOTE:
+        return "Inbox"
     if item["source"] == "enquiry":
         return "Website enquiry"
     return "Answer to our email" if item["lead_id"] else "Email"
@@ -84,7 +92,7 @@ def _extras(item: dict) -> list[str]:
     return extras
 
 
-def _no_text(item: dict) -> str:
+def no_text(item: dict) -> str:
     """Fixed words for a message with no text. No model guesses what a voice note says (F7)."""
     from jura_growth.agents.inbox import watch
 
@@ -106,7 +114,7 @@ def _block(items: list[dict], texts: list[str], cuts: list[bool]) -> str:
         if number:
             lines += ["", f"(then, {_when(item)})"]
         social = item["source"] in SOCIAL_HEADINGS
-        lines.append(text if text else _no_text(item) if social else "(no text: see the mailbox)")
+        lines.append(text if text else no_text(item) if social else "(no text: see the mailbox)")
         if cut:
             lines.append(CUT_NOTE_SOCIAL if social else CUT_NOTE)
         lines += _extras(item)
@@ -142,30 +150,43 @@ def card_quote(items: list[dict], room: int) -> str:
 
 def shown_name(name: str) -> str:
     """A display name outside a quote block, unable to restyle anything or ping anyone."""
-    return _neutral(store.clean_line(name))[:NAME_SHOWN]
+    return neutral(store.clean_line(name))[:NAME_SHOWN]
 
 
 def shows_as_written(text: str) -> bool:
     """Whether `text` reaches a card byte for byte: nothing to neutralise, and nothing to mask."""
-    return _neutral(text) == text and privacy.for_discord(text, conversation=[text]) == text
+    return neutral(text) == text and privacy.for_discord(text, conversation=[text]) == text
+
+
+def _next_step(newest: dict) -> str:
+    """S2: the two commands he can type, on the report they are for. A suppressed person's note already
+    says how to lift it, and a draft is refused until he does."""
+    label = store.label(newest["id"])
+    if newest["state"] == store.NEEDS_HAND_REPLY:
+        return f"`/growth inbox done {label}` clears it once you have."
+    if newest["state"] == store.REPORTED and newest["text"] and not newest["suppressed_by_this"]:
+        return f"Want a reply anyway? `/growth inbox draft {label} [guidance]`"
+    return ""
 
 
 def _build(items: list[dict]) -> tuple[str, str]:
     """One conversation's report and the quote block in it, always one Discord message, measured
     masked: masking can lengthen text, and a piece past the limit would split the report."""
     newest = items[-1]
-    if newest["source"] == RUN_MESSAGE:
-        return f"**{store.label(newest['id'])} · {_heading(newest)}** · {_when(newest)}\n{newest['note']}", ""
+    if newest["source"] in store.NO_PERSON_SOURCES:
+        high = " · **high priority**" if newest["priority"] == "high" else ""
+        return f"**{store.label(newest['id'])} · {heading(newest)}**{high} · {_when(newest)}\n{newest['note']}", ""
     where = newest["sender_domain"] or "an unknown sender"
     count = f", {len(items)} messages" if len(items) > 1 else ""
     high = " · **high priority**" if newest["priority"] == "high" else ""
-    head = f"**{store.label(newest['id'])} · {_heading(newest)}{count}**{high} · {where}, {_when(newest)}"
+    head = f"**{store.label(newest['id'])} · {heading(newest)}{count}**{high} · {where}, {_when(newest)}"
     if newest["target"]:
         head += f"\nOpen: <{newest['target']}>"
     note = " ".join(dict.fromkeys(item["note"] for item in items if item["note"]))
+    hint = _next_step(newest)
 
     def whole(block: str) -> str:
-        return "\n".join(part for part in (head, block, note) if part)
+        return "\n".join(part for part in (head, block, note, hint) if part)
 
     block = _fit(items, lambda block: len(privacy.for_discord(whole(block), conversation=[block])) - discord.MAX_CONTENT)
     return whole(block), block
@@ -233,3 +254,54 @@ def report_due(conn: sqlite3.Connection) -> int:
 def _post(conn: sqlite3.Connection, content: str, conversation: tuple[str, ...]) -> bool:
     return discord.post(conn, CHANNEL, content, username=USERNAME, dedupe=False, suppress_embeds=True,
                         conversation=conversation).delivered
+
+
+# --- #alerts for a high item (S7) ------------------------------------------------------------------
+
+
+def _alert_text(conn: sqlite3.Connection, item: dict, *, again: bool) -> str:
+    """Their domain and the fixed words for it, never what they said: this channel notifies. A conversation
+    gets one line, for its newest high message."""
+    label = store.label(item["id"])
+    what = "a spam complaint" if item["source"] == store.EMAIL_SIGNAL else item["class"].replace("-", " ") if item["class"] else "a message"
+    who = item["sender_domain"] or "an unknown sender"
+    record = approvals.latest_for_subject(conn, store.approval_subject(item["id"]))
+    if record and record.status == approvals.PENDING:
+        action = f"Decide {record.id} in #approvals by {timeutil.when(record.decide_by)}."
+    elif item["state"] == store.TRIAGED:
+        action = "Its card follows in #approvals."
+    elif item["state"] == store.NEEDS_HAND_REPLY:
+        action = f"It needs a hand reply, then `/growth inbox done {label}`."
+    else:
+        action = "See #mission-control."
+    first = f"{label} is still undecided after {caps.INBOX_HIGH_REPEAT_HOURS} hours" if again else f"{label} is high priority"
+    return f"{first}: {what} from {who} ({heading(item)}). {action}"
+
+
+def _still_undecided(conn: sqlite3.Connection, item: dict) -> bool:
+    if item["state"] != store.WAITING:
+        return True
+    record = approvals.latest_for_subject(conn, store.approval_subject(item["id"]))
+    return record is None or record.status == approvals.PENDING
+
+
+def alert_high(conn: sqlite3.Connection) -> int:
+    """Each high conversation once at once, and once more at 24 hours if he hasn't decided (S7). An
+    alert Discord refuses goes again at the next check, and nothing is attempted with no webhook set."""
+    if not discord.webhook_set("alerts"):
+        return 0
+    sent = 0
+    for items in store.by_conversation(store.high_not_yet_alerted(conn)).values():
+        if not discord.alert(conn, _alert_text(conn, items[-1], again=False), agent="inbox").delivered:
+            return sent
+        store.mark_alerted(conn, [item["id"] for item in items])
+        sent += 1
+    cutoff = timeutil.stamp(timeutil.now_sgt() - timedelta(hours=caps.INBOX_HIGH_REPEAT_HOURS))
+    for items in store.by_conversation(store.high_alerted_before(conn, cutoff)).values():
+        if not _still_undecided(conn, items[-1]):
+            continue
+        if not discord.alert(conn, _alert_text(conn, items[-1], again=True), agent="inbox").delivered:
+            return sent
+        store.mark_alerted(conn, [item["id"] for item in items], repeat=True)
+        sent += 1
+    return sent

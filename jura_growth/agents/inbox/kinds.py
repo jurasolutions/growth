@@ -52,7 +52,7 @@ REFERENCES_SENT = 20
 # What `cards.build` puts around a preview, past its title and reason: the header and the answer line,
 # as an edited card's header is longest. A card never splits, so this is counted before the quote is.
 CARD_FRAME = 150
-_SUBJECT = "inbox_item:"
+_SUBJECT = store.SUBJECT_PREFIX
 _WROTE_AGAIN = "they wrote again"
 _TOO_LONG = "The draft and its card won't fit one Discord message, so there is no card. Answer by hand if it needs one."
 _NO_ADDRESS = "It has no single address to answer: reply by hand if it matters."
@@ -60,7 +60,7 @@ _LAPSED = "Lapsed: answer by hand if it still matters."
 
 
 def subject_of(item_id: int) -> str:
-    return f"{_SUBJECT}{int(item_id)}"
+    return store.approval_subject(item_id)
 
 
 def item_id_of(subject: str) -> int | None:
@@ -258,14 +258,14 @@ def _card_lines(conn: sqlite3.Connection, item: dict, reply: Reply, record: appr
     return before, after
 
 
-def _reason(item: dict) -> str:
+def reason_of(item: dict) -> str:
     return f"{store.label(item['id'])}, {item['class'] or 'a message'}"
 
 
 def _room_for_quote(item: dict, before: list[str], after: list[str]) -> int:
     """What a quote may take: a card is always one message, and the draft is never what gives way (B8).
     Measured masked, because masking can lengthen text."""
-    return discord.MAX_CONTENT - CARD_FRAME - report.masked_length("\n".join([_title(item), f"Why: {_reason(item)}", *before, *after]))
+    return discord.MAX_CONTENT - CARD_FRAME - report.masked_length("\n".join([_title(item), f"Why: {reason_of(item)}", *before, *after]))
 
 
 def card_fits(conn: sqlite3.Connection, item: dict, reply: Reply) -> bool:
@@ -303,7 +303,7 @@ class EmailReply:
             raise LookupError(f"no reply for {subject}")
         before, after = _card_lines(conn, item, reply, approvals.latest(conn, KIND, subject))
         quote = report.card_quote(_unanswered(conn, item), _room_for_quote(item, before, after))
-        return approvals.Preview(title=_title(item), reason=_reason(item), text="\n".join([*before, quote, *after]))
+        return approvals.Preview(title=_title(item), reason=reason_of(item), text="\n".join([*before, quote, *after]))
 
     def deadlines(self, conn: sqlite3.Connection | None, subject: str, now: datetime) -> approvals.Deadlines:
         return approvals.Deadlines(decide_by=now + timedelta(days=settings.limit("decide_by_days")),
@@ -383,7 +383,7 @@ def raise_due(conn: sqlite3.Connection) -> list[approvals.Approval]:
                 store.set_item_state(conn, item["id"], store.NEEDS_HAND_REPLY, note=_TOO_LONG)
                 continue
             store.set_item_state(conn, item["id"], store.WAITING)
-            found = raise_request(conn, subject_of(item["id"]), reason=_reason(item))
+            found = raise_request(conn, subject_of(item["id"]), reason=reason_of(item))
             if found is not None:
                 raised.append(found)
     return raised

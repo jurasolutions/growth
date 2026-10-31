@@ -1,5 +1,7 @@
-"""Nightly backup of `growth.db`, keeping 14 days, plus pruning of transcripts
-and the one-pager's grid PNGs (`retention` in config/settings.yaml)."""
+"""Nightly backup of `growth.db`, keeping 14 days, plus pruning of transcripts, the
+one-pager's grid PNGs and the Discord outbox (`retention` in config/settings.yaml).
+Each plug-in's own `retention(conn)` hook runs first, so tonight's copy doesn't hold
+what it removed."""
 
 from __future__ import annotations
 
@@ -8,10 +10,26 @@ import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 
-from jura_growth import caps, config, log, paths, timeutil
+from jura_growth import agents, caps, config, discord, log, paths, timeutil
+
+
+def plugin_retention(conn: sqlite3.Connection) -> dict:
+    """Each plug-in's `retention(conn)`, by name. One that breaks never stops the backup."""
+    found: dict = {}
+    for module in agents.plugins():
+        hook = getattr(module, "retention", None)
+        if not callable(hook):
+            continue
+        name = getattr(module, "NAME", module.__name__)
+        try:
+            found[name] = hook(conn)
+        except Exception as error:  # noqa: BLE001
+            log.event(conn, "backup.retention_failed", {"agent": name, "error": type(error).__name__}, level="error")
+    return found
 
 
 def backup(conn: sqlite3.Connection) -> Path:
+    retained = plugin_retention(conn)
     target = paths.writable(paths.data_dir() / "backups" / f"growth-{timeutil.today_str()}.db")
     if target.exists():
         target.unlink()
@@ -24,9 +42,29 @@ def backup(conn: sqlite3.Connection) -> Path:
     pruned = prune_transcripts()
     work = prune_browser_work()
     grids = prune_grids()
+    outbox = prune_outbox()
     log.event(conn, "backup.written", {"file": str(target), "removed": removed, "transcripts_pruned": pruned,
-                                       "browser_work_pruned": work, "grids_pruned": grids})
+                                       "browser_work_pruned": work, "grids_pruned": grids, "outbox_pruned": outbox,
+                                       **{f"{name.replace('-', '_')}_retention": kept for name, kept in retained.items()}})
     return target
+
+
+def prune_outbox() -> int:
+    """Delete Discord outbox days older than `caps.OUTBOX_DAYS`, or `retention.outbox_days` if shorter. A
+    message Discord refused can hold what a person wrote, and nothing replays this folder."""
+    keep = caps.effective(caps.OUTBOX_DAYS, config.settings().get("retention", {}).get("outbox_days"))
+    cutoff = timeutil.today() - timedelta(days=keep - 1)
+    folder = discord.outbox_dir()
+    count = 0
+    for file in sorted(folder.glob("*.jsonl")) if folder.exists() else []:
+        try:
+            day = date.fromisoformat(file.stem)
+        except ValueError:
+            continue
+        if day < cutoff:
+            file.unlink()
+            count += 1
+    return count
 
 
 def prune_grids() -> int:

@@ -181,6 +181,20 @@ is reported anyway, and a failed triage run alerts once without counting toward 
 A report Discord refused goes again on the next check. `jura-growth pause inbox` stops all of it, and the
 16:45 check carries on.
 
+The one-pager's **Replies waiting** section, between Needs you and Approvals waiting, gives one line per open
+conversation: who wrote, where, how long ago, an excerpt and what Ting Yu must do. A promised reply comes
+first, then anything high priority. Under the lines are the noise it filtered and each surface's last good
+read. It reads on the read model's read-only connection through the plug-in hook `one_pager_section(conn,
+since)`, and calls no kind's `content()`. `/growth inbox list` shows the same on request.
+
+From Discord he can steer it: `/growth inbox redraft A-nnnn <guidance>`, `reword A-nnnn <his words>`, `draft
+I-nnnn [guidance]`, `done I-nnnn` and `unsuppress I-nnnn`. They come only through `remote` and are refused to
+every run (`docs/dispatch-contract.md`). A high item goes to `#alerts` at once, and again at 24 hours if he
+hasn't decided. The first check after 08:00 reports the days of app usage not yet reported, at most 7. A
+spam complaint gets a high report. The nightly backup removes a person's words from `growth.db` 90 days after
+their item closes, and `agents/inbox/text_retention.py` says what closes means for each state. The cards and
+reports already posted are Discord's copies, and stay until he deletes them there.
+
 `inbox-watch` (hourly, 09:05 to 21:05 SGT, plug-in `inbox-browser`) reads Facebook and Instagram through
 Chrome and records what people said with `inbox observe --file`. It starts in an empty folder as triage does,
 and what it recorded goes on to triage once it has been checked. It can't click: `computer`, `form_input`,
@@ -246,6 +260,8 @@ imports it by name. The module may define:
 | `REQUIRED_SETTINGS` | The `.env` settings the agent needs, by name. Each one not set is a setup gap in `jura-growth status` and the one-pager |
 | `setup_gaps()` | `[health.Gap(name, ok=...)]` in place of `REQUIRED_SETTINGS`: names and booleans only, never a value. `Gap(name, ok=..., must_be_unset=True)` is a setting that must *not* be set (the publish job's `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`), shown as "set, and must not be" |
 | `health(conn)` | Extra "Needs you" lines for the one-pager. `conn` is the read model's read-only connection, so a write raises |
+| `one_pager_section(conn, since)` | The plug-in's own section of the one-pager, `(name, lines)` or `None`, between Needs you and Approvals waiting. `conn` is the same read-only connection, and `since` is when the last one-pager went out. It may not call a kind's `content()`. An exception shows as one line naming its type |
+| `retention(conn)` | Called first by the nightly backup, so tonight's copy doesn't hold what it removed: remove what the plug-in may no longer keep, and return counts for the backup's event. An exception is logged and the backup goes on |
 
 Every hook except `NAME` is optional and found with `getattr`. Its prompt goes in
 `prompts/<job>.md`, its settings in `config/<name>.yaml`, and its hard limits in `caps.py`.

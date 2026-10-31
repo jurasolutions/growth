@@ -11,12 +11,16 @@ This agent sees mail, triages it, reports it, and sends the replies Ting Yu appr
 - `report`: one message per conversation in #mission-control, retried until delivered.
 - `kinds`: the `email-reply` approval kind: what a reply is, its card, and what each answer does.
 - `send`: `inbox send-due`, which claims an approved reply and sends exactly that.
+- `steer`: `redraft`, `reword`, `draft`, `done` and `unsuppress`, which come only from Discord through `remote`.
+- `signals`: reactions with no person writing: app usage and spam complaints.
+- `text_retention`: what "closes" means for each state, and removing a person's words 90 days after.
+- `one_pager`: R4's section, Replies waiting, which `/growth inbox list` shows on request.
 - `watch`: what a watch run may record, and what its records come to. The jobs that drive the browser
   belong to the `inbox_browser` plug-in, which has its own pause flag. Its commands are here, because
   a second `inbox` click group would silently replace this one.
 - `job`: the job's precheck.
-- `commands`: `jura-growth inbox status | pending | submit | send-due`, and a watch run's `watch-targets`,
-  `observe` and `stopped`.
+- `commands`: `jura-growth inbox status | pending | submit | send-due`, a watch run's `watch-targets`,
+  `observe` and `stopped`, and Ting Yu's `list`, `reword`, `redraft`, `draft`, `done` and `unsuppress`.
 - `settings`: the limits in `caps.py`, tightened by `config/inbox.yaml`.
 
 Job `inbox-check` runs every 15 minutes, 07:00 to 23:45 SGT. Its precheck reads the mail and reports
@@ -120,6 +124,20 @@ def health(conn: sqlite3.Connection) -> list[str]:
     return lines
 
 
+def retention(conn: sqlite3.Connection) -> dict:
+    """PRD §4, from the nightly backup, which keeps running when `inbox` is paused."""
+    from jura_growth.agents.inbox import text_retention
+
+    return text_retention.prune(conn)
+
+
+def one_pager_section(conn: sqlite3.Connection, since: str):
+    """R4, on the read model's read-only connection: reads only, and calls no kind's `content()`."""
+    from jura_growth.agents.inbox import one_pager
+
+    return one_pager.section(conn, since)
+
+
 def digest(conn: sqlite3.Connection, day: str) -> dict:
     """R5: counts only, never a name, an address or a word anyone wrote."""
     from jura_growth.agents.inbox import store
@@ -129,6 +147,8 @@ def digest(conn: sqlite3.Connection, day: str) -> dict:
         return {"figures": {}, "lines": [], "brief": []}
     reactions = counts["reactions"]
     parts = [f"{reactions} reaction{'s' if reactions != 1 else ''}", f"{counts['noise']} filtered as noise"]
+    if counts["waiting"]:
+        parts.append(f"{counts['waiting']} waiting on you")
     if counts["hand_replies"]:
         parts.append(f"{counts['hand_replies']} needing a hand reply")
     if counts["unreported"]:

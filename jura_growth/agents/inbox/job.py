@@ -14,7 +14,7 @@ import sqlite3
 from typing import Callable, TypeVar
 
 from jura_growth import agents, caps, locks, log
-from jura_growth.agents.inbox import mail, report, settings, store, triage, watch
+from jura_growth.agents.inbox import mail, report, settings, signals, store, triage, watch
 
 T = TypeVar("T")
 
@@ -56,7 +56,10 @@ def precheck(conn: sqlite3.Connection) -> agents.NothingToDo | None:
     found = _guarded(conn, "intake", lambda: mail.intake(conn), mail.Intake(failed=1))
     _guarded(conn, "settle-held", lambda: _settle_held(conn), None)
     _guarded(conn, "settle", lambda: triage.settle(conn), 0)
+    _guarded(conn, "usage", lambda: signals.report_usage(conn), None)
+    _guarded(conn, "complaints", lambda: signals.report_complaints(conn), None)
     reported = _guarded(conn, "report", lambda: report.report_due(conn), 0)
+    _guarded(conn, "high", lambda: report.alert_high(conn), 0)
     if _guarded(conn, "waiting", lambda: triage.waiting(conn), False):
         return None
     return agents.NothingToDo(f"{found.recorded} new, {found.noise} noise, {reported} reported")
