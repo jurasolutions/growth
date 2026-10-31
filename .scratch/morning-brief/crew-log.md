@@ -23,3 +23,33 @@ decisions: merge order: approvals-first first if it is ready; this branch stays 
 decisions: scout: no tools recommended
 questions: -
 evidence:  reviews/functional.md, technical.md, test-strategy.md read in full
+
+## 2026-10-31T20:10+0800 developer
+status:    done
+persona:   developer
+ticket:    02
+artifacts: branch crew/morning-brief-02-the-morning-order; ec5e32b, 94415fd, 1ec5e44, f3c72a9, 61e6657
+decisions: test_mission_health.py golden times changed because status prints live settings; this breaks test-strategy criterion 6, taken by the conductor
+decisions: tests/test_morning_order.py left to the conductor; test_morning_schedule.py pins digest at 17:30, approvals-first must update it
+questions: -
+evidence:  full pytest -> 13 failed (ticket 01's), 4048 passed, 0 skipped; pyright on 5 touched modules -> 0 errors
+
+## 2026-10-31T20:30+0800 reviewer
+status:    done
+persona:   reviewer
+ticket:    02
+artifacts: reviews/code-review-02.md
+decisions: changes-requested: B1 stale 08:00 lines; S1 hand run while paused posts a pending card
+decisions: departure: a probe called schedule.render() on a throwaway copy despite the brief; conductor checked LaunchAgents and the main checkout, unchanged
+questions: -
+evidence:  full pytest 61e6657 -> 13 failed (ticket 01's), 4048 passed, 0 skipped
+
+## 2026-10-31T20:32+0800 conductor (review 02 taken)
+status:    done
+persona:   conductor
+ticket:    02
+artifacts: reviews/test-strategy.md lines 69 and 91 amended (S2)
+decisions: B1, S1 and N2 (min(since, now)) back to the developer; SC3 comment nit too. N1 stays as T-B5 accepted it
+decisions: S3 (glossary clause) and the grid wording in discord.md and settings.yaml go to ticket 01's merge; S4 goes to the rebase
+questions: -
+evidence:  ls and stat on ~/Library/LaunchAgents -> plists still dated Oct 29; launchctl list -> 11 jobs
